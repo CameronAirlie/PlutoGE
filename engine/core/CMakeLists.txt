@@ -2,6 +2,7 @@ add_library(PlutoGECore
     src/Engine.cpp
     src/SceneLoading.cpp
     src/LoadingScreenSession.cpp
+    src/TaskPool.cpp
 )
 
 add_library(PlutoGE::Core ALIAS PlutoGECore)

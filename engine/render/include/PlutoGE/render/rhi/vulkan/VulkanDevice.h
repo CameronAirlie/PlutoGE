@@ -21,7 +21,9 @@ namespace PlutoGE::render::rhi::vulkan
         std::uint32_t imageCount = 0;
     };
 
+    class VulkanRecorder;
     class VulkanCommandContext;
+    class VulkanSegmentContext;
     class VulkanSwapchain;
 
     // Initial off-screen Vulkan implementation. Submission is deliberately
@@ -74,7 +76,9 @@ namespace PlutoGE::render::rhi::vulkan
     private:
         TextureHandle CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data);
 
+        friend class VulkanRecorder;
         friend class VulkanCommandContext;
+        friend class VulkanSegmentContext;
         friend class VulkanSwapchain;
         struct Impl;
         std::unique_ptr<Impl> m_impl;

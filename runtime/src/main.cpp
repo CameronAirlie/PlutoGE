@@ -798,6 +798,7 @@ int RunRuntime(int argc, char **argv)
                     const auto &update = scene->GetUpdateTimingStats();
                     const auto &render = engine.GetRhiRenderService().GetTimingStats();
                     const auto &ui = PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming();
+                    const auto rhiDevice = useVulkanRenderer ? engine.GetRenderDevice()->GetTimingStats("Scene") : PlutoGE::render::rhi::RenderDeviceTimingStats{};
                     double scriptsMs = 0, animationMs = 0;
                     for (const auto &timing : update.scriptUpdateTimings) scriptsMs += timing.totalMs;
                     for (const auto &timing : update.componentTimings)
@@ -812,7 +813,8 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.recordedShadowDrawCount),
                         static_cast<double>(render.renderSize.width), static_cast<double>(render.renderSize.height),
                         static_cast<double>(render.outputSize.width), static_cast<double>(render.outputSize.height),
-                        static_cast<double>(render.geometryTriangles[0]), static_cast<double>(render.recordedGeometryInstanceCount), 0};
+                        static_cast<double>(render.geometryTriangles[0]), static_cast<double>(render.recordedGeometryInstanceCount),
+                        render.parallelRecording ? 1.0 : 0.0, rhiDevice.descriptorCpuMs, static_cast<double>(rhiDevice.descriptorBindCalls), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)

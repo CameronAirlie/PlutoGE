@@ -13,6 +13,7 @@
 #include "TerrainLayerRenderingChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "OpaqueBatchingChecks.h"
+#include "ParallelRecordingChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "DecalRenderingChecks.h"
@@ -192,6 +193,10 @@ int main(int argc, char **argv)
         if (argc > 3 && std::string_view(argv[3]) == "--reference-stages") shaders.ssrStages = {};
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
+
+        // Before the other checks: parallel and streamed recording must match serial, bound recording exactly.
+        if (argc <= 1)
+            CheckParallelRecording(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
 
         if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")
         {

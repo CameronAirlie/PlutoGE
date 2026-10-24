@@ -86,7 +86,10 @@ namespace PlutoGE::render
         {
             // Mixed-winding instance batches and graph deformation are conservative
             // fallbacks. Rigid mirrored models invert which face is front-facing.
-            if (!instanced && !(draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z != 0))
+            // Decided by the draw's own instances, not the vertex input: one object read through the instanced
+            // input (an object-stream entry) keeps its culling.
+            const bool multipleInstances = draw.instanceModels && draw.instanceModels->size() > 1;
+            if (!multipleInstances && !(draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z != 0))
             {
                 const auto &model = draw.instanceModels && draw.instanceModels->size() == 1
                     ? draw.instanceModels->front() : draw.model;

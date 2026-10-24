@@ -470,10 +470,12 @@ namespace PlutoGE::render::rhi::opengl
         }
 
         void DrawIndexedInstanced(std::uint32_t count, std::uint32_t instanceCount,
-                                  std::uint32_t firstIndex, std::int32_t vertexOffset) override
+                                  std::uint32_t firstIndex, std::int32_t vertexOffset, std::uint32_t firstInstance) override
         {
             if (!m_rendering || !m_pipeline)
                 throw std::logic_error("RHI instanced indexed draw requires active rendering and a pipeline");
+            if (firstInstance != 0)
+                throw std::logic_error("OpenGL RHI draws do not support a first instance");
             const auto indices = reinterpret_cast<const void *>(m_indexOffset + firstIndex * sizeof(std::uint32_t));
             if (vertexOffset != 0)
                 glDrawElementsInstancedBaseVertex(GL_TRIANGLES, static_cast<GLsizei>(count), GL_UNSIGNED_INT,

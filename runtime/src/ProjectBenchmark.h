@@ -109,7 +109,8 @@ namespace PlutoGE
             "preparation_ms", "runtime_ui_ms", "components_ms", "physics_ms", "late_scripts_ms", "audio_ms", "scene_submission_ms",
             "translation_ms", "skinning_upload_ms", "scene_setup_ms", "recording_ms", "begin_frame_ms", "shadow_recording_ms", "geometry_recording_ms", "post_recording_ms", "submit_ms",
             "scripts_ms", "animation_components_ms", "skinning_wait_ms", "skinning_caller_ms", "hud_sync_ms", "hud_update_ms", "hud_render_ms", "skinning_vertices", "geometry_draws", "shadow_draws",
-            "internal_width", "internal_height", "output_width", "output_height", "opaque_triangles", "geometry_instances", "gpu_observation_id"};
+            "internal_width", "internal_height", "output_width", "output_height", "opaque_triangles", "geometry_instances",
+            "parallel_recording", "descriptor_cpu_ms", "descriptor_binds", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

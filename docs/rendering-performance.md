@@ -15,6 +15,8 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 
 * `<out.gpu.csv>` lists every GPU scope (mean, p95, max). Nested scopes such as
   `RHI VCT GI / Cone trace` sit inside their parent; do not add them together.
+* The CSV's `parallel_recording`, `descriptor_cpu_ms` and `descriptor_binds` columns show whether shadows and geometry
+  recorded on worker threads and what descriptor work cost (see [parallel-recording.md](parallel-recording.md)).
 * `<out.cpu.csv>` lists the scene update's CPU cost per component type, animation
   phase, script `OnUpdate` and script `OnLateUpdate` (same columns). A script's
   row includes whatever it calls, so a spawner's max shows its `Instantiate` cost.

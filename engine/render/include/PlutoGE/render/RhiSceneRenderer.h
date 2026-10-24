@@ -53,6 +53,7 @@ namespace PlutoGE::render
         float beginFrameMs = 0.0f;
         float shadowRecordingMs = 0.0f;
         float geometryRecordingMs = 0.0f;
+        bool parallelRecording = false;   // Shadows and geometry recorded on worker threads.
         float postProcessRecordingMs = 0.0f;
         float cameraCompositionMs = 0.0f;
         float temporalUpscalerMs = 0.0f;

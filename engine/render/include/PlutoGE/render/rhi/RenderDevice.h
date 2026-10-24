@@ -119,13 +119,16 @@ namespace PlutoGE::render::rhi
         virtual bool QueueBufferReadback(BufferHandle, std::size_t, BufferReadbackCallback) { return false; }
         virtual void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0) = 0;
         virtual void DrawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0) = 0;
+        // firstInstance offsets the instance index shaders see (nonzero requires SupportsFirstInstance).
         virtual void DrawIndexedInstanced(std::uint32_t indexCount, std::uint32_t instanceCount,
-                                          std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0)
+                                          std::uint32_t firstIndex = 0, std::int32_t vertexOffset = 0,
+                                          std::uint32_t firstInstance = 0)
         {
-            if (instanceCount != 1)
+            if (instanceCount != 1 || firstInstance != 0)
                 throw std::logic_error("Instanced indexed drawing is unsupported by this command context");
             DrawIndexed(indexCount, firstIndex, vertexOffset);
         }
+        [[nodiscard]] virtual bool SupportsFirstInstance() const noexcept { return false; }
         virtual void Dispatch(std::uint32_t, std::uint32_t, std::uint32_t) {}
         // Makes prior shader writes visible to subsequent shader reads/writes.
         virtual void ShaderMemoryBarrier() {}
@@ -134,6 +137,26 @@ namespace PlutoGE::render::rhi
         // Backends without resource-scoped barriers may use the broad fallback.
         virtual void ComputeImageBarrier(std::span<const TextureHandle>) { ShaderMemoryBarrier(); }
         virtual void ClearStorageImageUint(TextureHandle, std::uint32_t = 0) {}
+        // Parallel recording. BeginParallelRecording returns `count` contexts (at most
+        // MaxParallelRecordingContexts) whose commands execute in that order, after
+        // everything recorded on this context so far and before anything it records
+        // once EndParallelRecording returns. Each returned context may be recorded on
+        // its own thread; this context must not record in between. Rendering begins and
+        // ends within one context, and resource state left by an earlier context
+        // (texture layouts, writes) is visible to later ones. Zero means the backend
+        // records serially: callers record the same work on this context, in order.
+        [[nodiscard]] virtual std::uint32_t MaxParallelRecordingContexts() const noexcept { return 0; }
+        virtual std::span<ICommandContext *const> BeginParallelRecording(std::uint32_t count)
+        {
+            (void)count;
+            throw std::logic_error("Parallel recording is unsupported by this command context");
+        }
+        virtual void EndParallelRecording() {}
+        // Device calls made on the calling thread that record commands (buffer
+        // uploads) go into this context until it is unbound. Parallel contexts need
+        // this; a context recorded on the device's own thread does not.
+        virtual void BindToCurrentThread() {}
+        virtual void UnbindFromCurrentThread() {}
         // Submit all rendering recorded since the previous call. Explicit APIs
         // use this as the frame boundary; immediate APIs may make it a no-op.
         virtual void Submit() {}

@@ -44,6 +44,7 @@ namespace PlutoGE::render
     class PostProcessResourcePool;
     class PersistentParameterCache;
     class MaterialPreparationCache;
+    class GeometryObjectStream;
     class ShaderGraphVariantCache;
     class OpaqueShadowBatches;
     class CascadedShadowLayers;
@@ -621,6 +622,8 @@ namespace PlutoGE::render
         float cameraCompositionMs = 0.0f;
         float temporalUpscalerMs = 0.0f;
         float submitMs = 0.0f;
+        // Shadows and geometry recorded on worker threads this frame.
+        bool parallelRecording = false;
     };
 
     class BasicRenderer
@@ -675,6 +678,12 @@ namespace PlutoGE::render
         // Reference switches for controlled rendering/performance comparisons.
         void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
         { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
+        // Records shadows and geometry on worker threads when the device supports it. The output is identical;
+        // switching it off is for comparisons and debugging.
+        void SetParallelRecordingEnabled(bool enabled) noexcept { m_parallelRecording = enabled; }
+        // Single objects read their constants from a per-frame stream indexed by first instance (devices that
+        // support it). The output is identical; switching it off is for comparisons and debugging.
+        void SetObjectStreamingEnabled(bool enabled) noexcept { m_objectStreaming = enabled; }
         void SetOpaqueShadowBatchingEnabled(bool enabled) noexcept
         {
             if (m_opaqueShadowBatchingEnabled != enabled)
@@ -796,6 +805,7 @@ namespace PlutoGE::render
                                                             std::uint32_t width,
                                                             std::uint32_t height,
                                                             rhi::Format format = rhi::Format::R16G16B16A16Float);
+        void EnsurePointShadowAtlas();
         void EnsureShadowTargets(const BasicLighting &lighting);
         std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
         VirtualShadowReceivers m_directionalShadowReceivers, m_reusedShadowReceivers;
@@ -846,6 +856,8 @@ namespace PlutoGE::render
         std::unique_ptr<OpaqueShadowBatches> m_opaqueShadowBatches;
         std::vector<rhi::Buffer> m_opaqueShadowInstanceBuffers;
         bool m_opaqueShadowBatchingEnabled = true;
+        bool m_parallelRecording = true;
+        bool m_objectStreaming = true;
         rhi::GraphicsPipeline m_shadowDepthSeedPipeline;
         std::unique_ptr<CascadedShadowLayers> m_shadowLayers;
         // Opt-in: full-resolution depth seeding can cost more than rerasterizing.
@@ -868,6 +880,7 @@ namespace PlutoGE::render
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::unique_ptr<PersistentParameterCache> m_geometryParameters;
+        std::unique_ptr<GeometryObjectStream> m_objectStream;
         std::unique_ptr<MaterialPreparationCache> m_materialPreparation;
 
         rhi::Texture m_fallbackTexture;

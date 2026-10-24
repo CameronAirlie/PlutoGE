@@ -1886,6 +1886,7 @@ namespace PlutoGE::render
         m_timingStats.beginFrameMs = rendererTiming.beginFrameMs;
         m_timingStats.shadowRecordingMs = rendererTiming.shadowRecordingMs;
         m_timingStats.geometryRecordingMs = rendererTiming.geometryRecordingMs;
+        m_timingStats.parallelRecording = rendererTiming.parallelRecording;
         m_timingStats.postProcessRecordingMs = rendererTiming.postProcessRecordingMs;
         m_timingStats.cameraCompositionMs = rendererTiming.cameraCompositionMs;
         m_timingStats.temporalUpscalerMs = rendererTiming.temporalUpscalerMs;

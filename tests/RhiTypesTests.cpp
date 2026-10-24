@@ -2,9 +2,12 @@
 #include "PlutoGE/render/rhi/Resource.h"
 #include "rhi/HandleRegistry.h"
 
+#include <atomic>
 #include <cassert>
+#include <thread>
 #include <type_traits>
 #include <stdexcept>
+#include <vector>
 
 namespace
 {
@@ -72,6 +75,30 @@ int main()
     assert(newHandle.index == oldHandle.index);
     assert(newHandle.generation != oldHandle.generation);
     assert(registry.Get(oldHandle) == nullptr);
+
+    {
+        // Parallel recording reads resources while caches create others on another thread.
+        detail::HandleRegistry<BufferHandle, int> shared;
+        std::vector<BufferHandle> seeded;
+        for (int i = 0; i < 1000; ++i) seeded.push_back(shared.Insert(i));
+        std::atomic<bool> done{false}, failed{false};
+        std::vector<std::thread> readers;
+        for (int reader = 0; reader < 2; ++reader)
+            readers.emplace_back([&]
+            {
+                while (!done.load())
+                    for (int i = 0; i < 1000; ++i)
+                        if (const auto *value = shared.Get(seeded[static_cast<std::size_t>(i)]); !value || *value != i)
+                            failed.store(true);
+            });
+        for (int i = 0; i < 200000; ++i) (void)shared.Insert(i);
+        done.store(true);
+        for (auto &reader : readers) reader.join();
+        if (failed.load())
+            throw std::runtime_error("Resource lookups failed while another thread inserted");
+        if (shared.Size() != 201000)
+            throw std::runtime_error("Concurrent registry lost an insertion");
+    }
 
     FakeDevice device;
     {

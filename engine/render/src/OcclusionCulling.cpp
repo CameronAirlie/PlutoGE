@@ -74,13 +74,12 @@ namespace PlutoGE::render
         m_counters = Buffer(device, device.CreateBuffer({64, BufferUsage::Storage, "Occlusion counters"}));
     }
 
-    bool OcclusionCulling::Record(rhi::IRenderDevice &device, std::span<const BasicDraw> draws,
+    bool OcclusionCulling::Record(rhi::IRenderDevice &device, rhi::ICommandContext &commands, std::span<const BasicDraw> draws,
                                   const glm::mat4 &viewProjection, std::uint32_t width, std::uint32_t height,
                                   OcclusionMode mode, const SubmitDepth &submit, rhi::TextureHandle compatibleDepth)
     {
         using namespace rhi;
         if (mode == OcclusionMode::Off || !m_testPipeline || draws.empty() || width == 0 || height == 0) return false;
-        auto &commands = device.GetImmediateContext();
         Parameters parameters;
         parameters.viewProjection = viewProjection;
         parameters.config = {draws.size(), (device.UsesZeroToOneClipDepth() ? 1u : 0u) | (device.GetApi() == GraphicsApi::Vulkan ? 2u : 0u), mode == OcclusionMode::Cull ? 1u : 0u, 0};

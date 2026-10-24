@@ -714,6 +714,9 @@ add_test(NAME PlutoGEAnimationBlendSpaceTests COMMAND PlutoGEAnimationBlendSpace
 add_executable(PlutoGEAnimationClipSharingTests AnimationClipSharingTests.cpp)
 pluto_link_engine(PlutoGEAnimationClipSharingTests)
 add_test(NAME PlutoGEAnimationClipSharingTests COMMAND PlutoGEAnimationClipSharingTests)
+add_executable(PlutoGETaskPoolTests TaskPoolTests.cpp)
+target_link_libraries(PlutoGETaskPoolTests PRIVATE PlutoGE::Core)
+add_test(NAME PlutoGETaskPoolTests COMMAND PlutoGETaskPoolTests)
 
 add_executable(PlutoGEViewportOverlayLayoutTests ViewportOverlayLayoutTests.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ViewportOverlayLayout.cpp)

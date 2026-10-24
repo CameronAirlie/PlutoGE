@@ -24,6 +24,7 @@ add_library(PlutoGERender
     src/GeometryRendering.cpp
     src/VirtualShadowMaps.cpp
     src/OcclusionCulling.cpp
+    src/ParallelRecording.cpp
     src/SceneEnvironment.cpp
     src/PhysicalSkyModel.cpp
     src/RhiRenderService.cpp

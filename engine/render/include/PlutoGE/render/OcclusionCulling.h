@@ -30,7 +30,8 @@ namespace PlutoGE::render
     public:
         void Initialize(rhi::IRenderDevice &device, const OcclusionShaders &shaders);
         using SubmitDepth = std::function<void(const BasicDraw &)>;
-        bool Record(rhi::IRenderDevice &device, std::span<const BasicDraw> draws,
+        // Records into `commands` (the frame's context, or a parallel one).
+        bool Record(rhi::IRenderDevice &device, rhi::ICommandContext &commands, std::span<const BasicDraw> draws,
                     const glm::mat4 &viewProjection, std::uint32_t width, std::uint32_t height,
                     OcclusionMode mode, const SubmitDepth &submit,
                     rhi::TextureHandle compatibleDepth = {});

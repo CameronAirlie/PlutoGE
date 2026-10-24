@@ -1,6 +1,9 @@
 #include "PlutoGE/render/VctRelighting.h"
 #include "PlutoGE/render/SkyEnvironmentConfig.h"
 #include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/core/TaskPool.h"
+#include "ParallelRecording.h"
+#include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
 #include "CascadedShadowLayers.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -181,6 +184,8 @@ namespace PlutoGE::render
         {
             std::array<BasicObjectParameters, kMaxInstancesPerDraw> instances{};
         };
+        static_assert(sizeof(BasicInstanceObjectParameters) == kMaxInstancesPerDraw * sizeof(BasicObjectParameters),
+                      "Object stream blocks must match the instanced shader input");
         struct alignas(16) BasicShadowInstanceParameters
         {
             std::array<glm::mat4, kMaxInstancesPerDraw> models{};
@@ -567,6 +572,11 @@ namespace PlutoGE::render
     }
 
     BasicRenderer::BasicRenderer() = default;
+    // Geometry object constants, in blocks shaped like the instanced vertex input (BasicInstanceObjectParameters).
+    class GeometryObjectStream : public ObjectStream<BasicObjectParameters, kMaxInstancesPerDraw>
+    {
+    };
+
     BasicRenderer::~BasicRenderer() = default;
 
     bool BasicRenderer::Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders)
@@ -1771,6 +1781,16 @@ namespace PlutoGE::render
         return nullptr;
     }
 
+    void BasicRenderer::EnsurePointShadowAtlas()
+    {
+        if (m_pointShadowColor)
+            return;
+        m_pointShadowColor = rhi::Texture(*m_device, m_device->CreateTexture(
+            {3072, 2048, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment, "Point shadow atlas", true}));
+        m_pointShadowDepth = rhi::Texture(*m_device, m_device->CreateTexture(
+            {3072, 2048, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "Point shadow depth", true}));
+    }
+
     void BasicRenderer::EnsureShadowTargets(const BasicLighting &lighting)
     {
         const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
@@ -2186,494 +2206,489 @@ namespace PlutoGE::render
                 m_skyEnvironmentValid = true;
             }
         }
-        if (virtualShadowsActive)
+        shadowScope.End();
+        // Shadows and geometry record into their own command contexts, on worker threads when the device allows,
+        // and execute on the GPU in that order. Inside each job `commands` is the job's context. A job writes only
+        // its own caches and statistics; everything both read is prepared before Run.
+        ParallelRecording recording(commands, m_parallelRecording ? &core::TaskPool::Shared() : nullptr);
+        recording.Add([&](rhi::ICommandContext &commands)
         {
-            const BasicMesh *boundShadowMesh = nullptr;
-            core::CpuScope recordScope("VSM recording", core::CpuCategory::Rendering);
-            m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
+            if (virtualShadowsActive)
             {
-                const auto &mesh = *submission.draw->mesh;
-                // OpenGL pipelines own VAOs, so a pipeline switch requires
-                // rebinding even when the mesh itself has not changed.
-                if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowMesh != &mesh)
+                const BasicMesh *boundShadowMesh = nullptr;
+                core::CpuScope recordScope("VSM recording", core::CpuCategory::Rendering);
+                m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
                 {
-                    commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
-                    commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
-                    boundShadowMesh = &mesh;
-                }
-                if (submission.indirect)
-                {
-                    if (submission.commandCount > 1)
-                        commands.DrawIndexedIndirectBatch(submission.indirect, submission.indirectOffset, submission.commandCount);
-                    else commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
-                }
-                else
-                    commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
-            });
-            m_frameStats.virtualShadows = m_virtualShadows->GetStats();
-        }
-        if (cascadedShadowsActive)
-        {
-            if (m_staticShadowCachingEnabled && m_shadowLayers) m_shadowLayers->Observe(m_shadowDrawSignatures);
-            const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
-            m_shadowVisibleInAnyCascade.assign(shadowDraws.size(), 0u);
-            // Validate scene inputs once before repeating any per-cascade
-            // visibility work. Include bounds and eligibility so previously
-            // invisible casters can enter a cached cascade correctly.
-            m_shadowDrawSignatures.resize(shadowDraws.size());
-            std::uint64_t sceneSignature = 14695981039346656037ull;
-            HashVctValue(sceneSignature, shadowDraws.size());
-            for (std::size_t index = 0; index < shadowDraws.size(); ++index)
-            {
-                const auto &draw = shadowDraws[index];
-                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
-                    continue;
-                HashVctValue(sceneSignature, index);
-                HashVctValue(sceneSignature, m_shadowDrawSignatures[index]);
-                HashVctValue(sceneSignature, draw.shadowBoundsCenter);
-                HashVctValue(sceneSignature, draw.shadowBoundsRadius);
+                    const auto &mesh = *submission.draw->mesh;
+                    // OpenGL pipelines own VAOs, so a pipeline switch requires
+                    // rebinding even when the mesh itself has not changed.
+                    if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowMesh != &mesh)
+                    {
+                        commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
+                        commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
+                        boundShadowMesh = &mesh;
+                    }
+                    if (submission.indirect)
+                    {
+                        if (submission.commandCount > 1)
+                            commands.DrawIndexedIndirectBatch(submission.indirect, submission.indirectOffset, submission.commandCount);
+                        else commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
+                    }
+                    else
+                        commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
+                });
+                m_frameStats.virtualShadows = m_virtualShadows->GetStats();
             }
-            std::array<bool, 4> cascadeNeedsUpdate{};
-            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+            if (cascadedShadowsActive)
             {
-                auto inputSignature = sceneSignature;
-                HashVctValue(inputSignature, lighting.shadowMatrices[cascade]);
-                HashVctValue(inputSignature, m_shadowResolutions[cascade]);
-                if (m_shadowCacheValid[cascade] && m_shadowInputSignatures[cascade] == inputSignature)
+                if (m_staticShadowCachingEnabled && m_shadowLayers) m_shadowLayers->Observe(m_shadowDrawSignatures);
+                const std::uint32_t cascadeCount = std::clamp(lighting.shadowCascadeCount, 1u, 4u);
+                m_shadowVisibleInAnyCascade.assign(shadowDraws.size(), 0u);
+                // Validate scene inputs once before repeating any per-cascade
+                // visibility work. Include bounds and eligibility so previously
+                // invisible casters can enter a cached cascade correctly.
+                m_shadowDrawSignatures.resize(shadowDraws.size());
+                std::uint64_t sceneSignature = 14695981039346656037ull;
+                HashVctValue(sceneSignature, shadowDraws.size());
+                for (std::size_t index = 0; index < shadowDraws.size(); ++index)
                 {
-                    ++m_frameStats.shadowCascadeCacheHits;
-                    continue;
-                }
-                m_shadowInputSignatures[cascade] = inputSignature;
-                const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
-                auto &indices = m_shadowCascadeDrawIndices[cascade];
-                indices.clear();
-                indices.reserve(shadowDraws.size());
-                for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
-                {
-                    const auto &draw = shadowDraws[drawIndex];
-                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2 ||
-                        !shadowFrustum.Intersects(draw))
+                    const auto &draw = shadowDraws[index];
+                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
                         continue;
-                    indices.push_back(drawIndex);
+                    HashVctValue(sceneSignature, index);
+                    HashVctValue(sceneSignature, m_shadowDrawSignatures[index]);
+                    HashVctValue(sceneSignature, draw.shadowBoundsCenter);
+                    HashVctValue(sceneSignature, draw.shadowBoundsRadius);
                 }
-                const auto signature = ShadowContentSignature(
-                    lighting.shadowMatrices[cascade], m_shadowResolutions[cascade], m_shadowDrawSignatures, indices);
-                cascadeNeedsUpdate[cascade] = !m_shadowCacheValid[cascade] ||
-                                              m_shadowContentSignatures[cascade] != signature;
-                if (cascadeNeedsUpdate[cascade])
+                std::array<bool, 4> cascadeNeedsUpdate{};
+                for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
                 {
-                    m_shadowContentSignatures[cascade] = signature;
-                    ++m_frameStats.shadowCascadeUpdates;
-                    for (const auto drawIndex : indices)
-                        m_shadowVisibleInAnyCascade[drawIndex] = 1u;
-                }
-                else
-                {
-                    ++m_frameStats.shadowCascadeCacheHits;
-                }
-            }
-            for (std::uint32_t cascade = cascadeCount; cascade < m_shadowCascadeDrawIndices.size(); ++cascade)
-                m_shadowCascadeDrawIndices[cascade].clear();
-            const std::size_t shadowUploadCount = m_frameStats.shadowCascadeUpdates ? shadowDraws.size() : 0;
-            if (m_shadowObjectBuffers.size() < shadowUploadCount) m_shadowObjectBuffers.resize(shadowUploadCount);
-            std::vector<std::size_t> shadowInstanceBufferStarts(shadowUploadCount);
-            if (m_shadowMaterialBuffers.size() < shadowUploadCount) m_shadowMaterialBuffers.resize(shadowUploadCount);
-            const bool batchOpaqueShadows = m_opaqueShadowBatchingEnabled && m_opaqueShadowPipeline && m_opaqueShadowBatches;
-            std::size_t shadowInstanceBufferCursor = 0;
-            for (std::size_t drawIndex = 0; drawIndex < shadowUploadCount; ++drawIndex)
-            {
-                const auto &draw = shadowDraws[drawIndex];
-                if (m_shadowVisibleInAnyCascade[drawIndex] != 0u &&
-                    !(batchOpaqueShadows && OpaqueShadowBatches::Eligible(draw)))
-                {
-                    if (!m_shadowMaterialBuffers[drawIndex])
-                        m_shadowMaterialBuffers[drawIndex] = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                            {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Shadow graph material"}));
-                    m_device->UpdateBuffer(m_shadowMaterialBuffers[drawIndex].Get(), 0,
-                            Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
-                    if (draw.instanceModels && draw.instanceModels->size() > 1)
+                    auto inputSignature = sceneSignature;
+                    HashVctValue(inputSignature, lighting.shadowMatrices[cascade]);
+                    HashVctValue(inputSignature, m_shadowResolutions[cascade]);
+                    if (m_shadowCacheValid[cascade] && m_shadowInputSignatures[cascade] == inputSignature)
                     {
-                        shadowInstanceBufferStarts[drawIndex] = shadowInstanceBufferCursor;
-                        for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
-                        {
-                            if (shadowInstanceBufferCursor == m_shadowInstanceBuffers.size())
-                                m_shadowInstanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                                    {sizeof(BasicShadowInstanceParameters), rhi::BufferUsage::Uniform,
-                                     "BasicRenderer shadow instances"}));
-                            BasicShadowInstanceParameters parameters;
-                            const auto count = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
-                            std::copy_n(draw.instanceModels->begin() + first, count, parameters.models.begin());
-                            m_device->UpdateBuffer(m_shadowInstanceBuffers[shadowInstanceBufferCursor++].Get(), 0,
-                                                   Bytes(parameters));
-                            ++m_frameStats.shadowObjectUploads;
-                        }
+                        ++m_frameStats.shadowCascadeCacheHits;
+                        continue;
                     }
-                    else
-                    {
-                        if (!m_shadowObjectBuffers[drawIndex])
-                            m_shadowObjectBuffers[drawIndex] = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
-                        m_device->UpdateBuffer(m_shadowObjectBuffers[drawIndex].Get(), 0,
-                                               Bytes(BasicObjectParameters{draw.model, draw.model}));
-                        ++m_frameStats.shadowObjectUploads;
-                    }
-                }
-            }
-            const auto submitShadowDraw = [&](std::size_t drawIndex, std::uint32_t cascade, rhi::BufferHandle camera)
-            {
-                const auto &draw = shadowDraws[drawIndex];
-                const bool instanced = draw.instanceModels && draw.instanceModels->size() > 1;
-                const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline && m_maskedShadowInstancedPipeline;
-                commands.BindPipeline(masked
-                    ? (instanced ? m_maskedShadowInstancedPipeline.Get() : m_maskedShadowPipeline.Get())
-                    : (instanced ? m_shadowInstancedPipeline.Get() : m_shadowPipeline.Get()));
-                commands.BindUniformBuffer(0, camera);
-                {
-                    commands.BindUniformBuffer(8, m_shadowMaterialBuffers[drawIndex].Get());
-                    commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
-                    commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
-                    commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                    commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
-                    for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
-                }
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
-                const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
-                if (count)
-                {
-                    if (instanced)
-                    {
-                        std::size_t bufferIndex = shadowInstanceBufferStarts[drawIndex];
-                        for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
-                        {
-                            const auto instanceCount = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
-                            commands.BindUniformBuffer(17, m_shadowInstanceBuffers[bufferIndex++].Get());
-                            commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
-                            ++m_frameStats.shadowDrawsByCascade[cascade];
-                            m_frameStats.shadowInstances += instanceCount;
-                        }
-                    }
-                    else
-                    {
-                        commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
-                        commands.DrawIndexed(count, draw.firstIndex);
-                        ++m_frameStats.shadowDrawsByCascade[cascade];
-                        ++m_frameStats.shadowInstances;
-                    }
-                }
-            };
-            std::size_t opaqueInstanceBufferCursor = 0;
-            for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
-            {
-                if (!cascadeNeedsUpdate[cascade])
-                    continue;
-                const auto scopeName = "RHI Shadow Cascade " + std::to_string(cascade);
-                commands.BeginGpuScope(scopeName);
-                m_device->UpdateBuffer(m_shadowCameraBuffers[cascade].Get(), 0, Bytes(lighting.shadowMatrices[cascade]));
-                rhi::RenderingInfo shadowInfo;
-                shadowInfo.colorAttachments = {m_shadowColorTargets[cascade].Get()};
-                shadowInfo.depthAttachment = m_shadowDepthTargets[cascade].Get();
-                shadowInfo.width = m_shadowResolutions[cascade];
-                shadowInfo.height = m_shadowResolutions[cascade];
-                shadowInfo.clearColorValue[0] = 1.0f;
-                shadowInfo.clearDepthValue = 1.0f;
-                const auto recordCasters = [&](std::span<const std::size_t> visible)
-                {
-                    if (batchOpaqueShadows)
-                    {
-                        m_opaqueShadowBatches->Build(shadowDraws, visible);
-                        for (const auto &batch : m_opaqueShadowBatches->batches)
-                        {
-                            const auto available = batch.firstIndex < batch.mesh->m_indexCount
-                                ? batch.mesh->m_indexCount - batch.firstIndex : 0u;
-                            const auto count = std::min(batch.indexCount == 0 ? available : batch.indexCount, available);
-                            if (count == 0) continue;
-                            // Each cascade/batch owns a distinct buffer until submit.
-                            // Later uploads must never overwrite earlier recorded draws.
-                            if (opaqueInstanceBufferCursor == m_opaqueShadowInstanceBuffers.size())
-                                m_opaqueShadowInstanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
-                                    {sizeof(BasicShadowInstanceParameters), rhi::BufferUsage::Uniform, "Opaque shadow batch models"}));
-                            const auto buffer = m_opaqueShadowInstanceBuffers[opaqueInstanceBufferCursor++].Get();
-                            m_device->UpdateBuffer(buffer, 0, Bytes(batch.models));
-                            commands.BindPipeline(m_opaqueShadowPipeline.Get());
-                            commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
-                            commands.BindUniformBuffer(17, buffer);
-                            commands.BindVertexBuffer(batch.mesh->m_vertexBuffer.Get());
-                            commands.BindIndexBuffer(batch.mesh->m_indexBuffer.Get());
-                            commands.DrawIndexedInstanced(count, batch.count, batch.firstIndex);
-                            ++m_frameStats.shadowDrawsByCascade[cascade];
-                            m_frameStats.shadowInstances += batch.count;
-                            ++m_frameStats.shadowObjectUploads;
-                        }
-                        for (const auto drawIndex : m_opaqueShadowBatches->fallback)
-                            submitShadowDraw(drawIndex, cascade, m_shadowCameraBuffers[cascade].Get());
-                    }
-                    else
-                        for (const auto drawIndex : visible)
-                            submitShadowDraw(drawIndex, cascade, m_shadowCameraBuffers[cascade].Get());
-                };
-                std::uint64_t projectionSignature = 14695981039346656037ull;
-                HashVctValue(projectionSignature, lighting.shadowMatrices[cascade]);
-                HashVctValue(projectionSignature, m_shadowResolutions[cascade]);
-                const bool splitLayers = m_staticShadowCachingEnabled && m_shadowLayers && m_shadowDepthSeedPipeline &&
-                    m_shadowLayers->CanAllocate(cascade, m_shadowResolutions[cascade]) &&
-                    m_shadowLayers->Partition(cascade, projectionSignature, m_shadowCascadeDrawIndices[cascade]);
-                if (splitLayers)
-                {
-                    auto &layer = m_shadowLayers->cascades[cascade];
-                    const auto resolution = m_shadowResolutions[cascade];
-                    if (layer.resolution != resolution || !layer.depth || !layer.color)
-                    {
-                        layer.color = rhi::Texture(*m_device, m_device->CreateTexture(
-                            {resolution, resolution, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment, "Static shadow layer", true}));
-                        layer.depth = rhi::Texture(*m_device, m_device->CreateTexture(
-                            {resolution, resolution, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "Static shadow layer depth", true}));
-                        layer.resolution = resolution;
-                        layer.valid = false;
-                    }
-                    const auto content = ShadowContentSignature(lighting.shadowMatrices[cascade], resolution,
-                                                                 m_shadowDrawSignatures, layer.stationary);
-                    if (!layer.valid || layer.content != content)
-                    {
-                        commands.BeginGpuScope(scopeName + " / Static layer rebuild");
-                        auto staticInfo = shadowInfo;
-                        staticInfo.colorAttachments = {layer.color.Get()};
-                        staticInfo.depthAttachment = layer.depth.Get();
-                        commands.BeginRendering(staticInfo);
-                        recordCasters(layer.stationary);
-                        commands.EndRendering();
-                        commands.EndGpuScope();
-                        layer.content = content;
-                        layer.valid = true;
-                    }
-                    commands.BeginRendering(shadowInfo);
-                    commands.BeginGpuScope(scopeName + " / Static depth seed");
-                    commands.BindPipeline(m_shadowDepthSeedPipeline.Get());
-                    commands.BindTexture(1, layer.depth.Get(), m_shadowSampler.Get());
-                    commands.Draw(3);
-                    commands.EndGpuScope();
-                    recordCasters(layer.moving);
-                    commands.EndRendering();
-                }
-                else
-                {
-                    commands.BeginRendering(shadowInfo);
-                    recordCasters(m_shadowCascadeDrawIndices[cascade]);
-                    commands.EndRendering();
-                }
-                commands.EndGpuScope();
-                m_shadowCacheValid[cascade] = true;
-            }
-        }
-        // A global key skips face culling for fully unchanged scenes. On a
-        // miss, independently validate only the casters intersecting each face.
-        std::uint64_t pointSignature = 14695981039346656037ull;
-        std::array<ShadowFaceKey, 24> pointFaceKeys{};
-        std::array<bool, 24> pointFaceUpdates{};
-        std::vector<std::uint64_t> pointCasterSignatures(shadowDraws.size());
-        const bool regionalPointClear = commands.SupportsDepthRegionClear() && commands.SupportsColorRegionClear();
-        if (pointShadowCount > 0)
-        {
-            core::CpuScope cacheScope("Point shadow cache validation", core::CpuCategory::Rendering);
-            HashVctValue(pointSignature, pointShadowCount);
-            for (std::size_t index = 0; index < shadowDraws.size(); ++index)
-            {
-                const auto &draw = shadowDraws[index];
-                if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2) continue;
-                pointCasterSignatures[index] = PointShadowCasterSignature(draw, m_shadowDrawSignatures[index], lighting.cameraPosition, graphTime);
-                pointSignature += MixShadowMember(pointCasterSignatures[index]);
-            }
-            for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
-                HashVctValue(pointSignature, frameParameters.pointShadowMatrices[face]);
-            if (!m_pointShadowCacheValid || m_pointShadowSignature != pointSignature)
-            {
-                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
-                {
-                    auto &key = pointFaceKeys[face];
-                    key = {14695981039346656037ull, 14695981039346656037ull, 14695981039346656037ull};
-                    HashVctValue(key.projection, frameParameters.pointShadowMatrices[face]);
-                    const ShadowFrustum frustum(frameParameters.pointShadowMatrices[face]);
-                    auto &indices = m_pointShadowFaceDraws[face];
+                    m_shadowInputSignatures[cascade] = inputSignature;
+                    const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
+                    auto &indices = m_shadowCascadeDrawIndices[cascade];
                     indices.clear();
-                    for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+                    indices.reserve(shadowDraws.size());
+                    for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
                     {
-                        const auto &draw = shadowDraws[index];
-                        if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 ||
-                            draw.alphaMode == 2 || !frustum.Intersects(draw)) continue;
-                        indices.push_back(index);
-                        std::uint64_t member = 14695981039346656037ull;
-                        HashVctValue(member, draw.mesh);
-                        HashVctValue(member, draw.firstIndex);
-                        HashVctValue(member, draw.indexCount);
-                        key.casters += MixShadowMember(member);
-                        key.content += MixShadowMember(pointCasterSignatures[index]);
+                        const auto &draw = shadowDraws[drawIndex];
+                        if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2 ||
+                            !shadowFrustum.Intersects(draw))
+                            continue;
+                        indices.push_back(drawIndex);
                     }
-                    HashVctValue(key.casters, indices.size());
-                    const auto reasons = m_pointShadowFaces[face].Invalidation(key);
-                    pointFaceUpdates[face] = reasons != 0;
-                    for (std::size_t reason = 0; reason < 4; ++reason)
-                        if (reasons & (1u << reason)) ++m_frameStats.pointShadowInvalidations[reason];
-                }
-                if (!regionalPointClear && std::any_of(pointFaceUpdates.begin(), pointFaceUpdates.end(), [](bool dirty) { return dirty; }))
-                    std::fill_n(pointFaceUpdates.begin(), pointShadowCount * 6, true);
-            }
-            m_frameStats.pointShadowFaceUpdates = std::count(pointFaceUpdates.begin(), pointFaceUpdates.end(), true);
-            m_frameStats.pointShadowFaceHits = pointShadowCount * 6 - m_frameStats.pointShadowFaceUpdates;
-            if (m_frameStats.pointShadowFaceUpdates == 0) ++m_frameStats.pointShadowAtlasCacheHits;
-        }
-        if (m_frameStats.pointShadowFaceUpdates > 0)
-        {
-            core::CpuScope pointScope("Point shadow recording", core::CpuCategory::Rendering);
-            commands.BeginGpuScope("RHI Point Shadows");
-            ++m_frameStats.pointShadowAtlasUpdates;
-            if (!m_pointShadowColor)
-            {
-                m_pointShadowColor =
-                    rhi::Texture(*m_device, m_device->CreateTexture({3072, 2048, rhi::Format::R32Float,
-                                                                     rhi::TextureUsage::ColorAttachment,
-                                                                     "Point shadow atlas", true}));
-                m_pointShadowDepth =
-                    rhi::Texture(*m_device, m_device->CreateTexture({3072, 2048, rhi::Format::D32Float,
-                                                                     rhi::TextureUsage::DepthStencilAttachment,
-                                                                     "Point shadow depth", true}));
-            }
-            rhi::RenderingInfo info;
-            info.colorAttachments = {m_pointShadowColor.Get()};
-            info.depthAttachment = m_pointShadowDepth.Get();
-            info.width = 3072;
-            info.height = 2048;
-            info.clearColorValue[0] = 1;
-            info.clearDepthValue = 1;
-            info.clearColor = info.clearDepth = !regionalPointClear;
-            if (!regionalPointClear)
-                for (std::size_t face = pointShadowCount * 6; face < m_pointShadowFaces.size(); ++face)
-                    m_pointShadowFaces[face].Reset();
-            commands.BeginRendering(info);
-            m_pointShadowResources.resize(shadowDraws.size());
-            std::vector<bool> prepared(shadowDraws.size(), false);
-            for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
-            {
-                if (!pointFaceUpdates[face]) continue;
-                if (regionalPointClear)
-                {
-                    const rhi::Scissor region{static_cast<std::int32_t>((face % 6) * 512),
-                        static_cast<std::int32_t>((face / 6) * 512), 512, 512};
-                    commands.ClearDepthRegion(region, 1.0f);
-                    commands.ClearColorRegion(region, 0, {1, 1, 1, 1});
-                }
-                if (!m_pointShadowCameras[face])
-                    m_pointShadowCameras[face] = rhi::Buffer(
-                        *m_device,
-                        m_device->CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow camera"}));
-                m_device->UpdateBuffer(m_pointShadowCameras[face].Get(), 0,
-                                       Bytes(frameParameters.pointShadowMatrices[face]));
-                commands.SetViewport(
-                    {static_cast<float>((face % 6) * 512), static_cast<float>((face / 6) * 512), 512, 512});
-                commands.SetScissor({static_cast<std::int32_t>((face % 6) * 512),
-                                     static_cast<std::int32_t>((face / 6) * 512), 512, 512});
-                rhi::PipelineHandle boundPointPipeline;
-                const BasicMesh *boundPointMesh = nullptr;
-                std::array<rhi::TextureHandle, 8> boundPointTextures{};
-                std::array<rhi::SamplerHandle, 8> boundPointSamplers{};
-                const auto bindPointTexture = [&](std::size_t index, std::uint32_t slot,
-                    rhi::TextureHandle texture, rhi::SamplerHandle sampler)
-                {
-                    if (boundPointTextures[index] != texture || boundPointSamplers[index] != sampler)
+                    const auto signature = ShadowContentSignature(
+                        lighting.shadowMatrices[cascade], m_shadowResolutions[cascade], m_shadowDrawSignatures, indices);
+                    cascadeNeedsUpdate[cascade] = !m_shadowCacheValid[cascade] ||
+                                                  m_shadowContentSignatures[cascade] != signature;
+                    if (cascadeNeedsUpdate[cascade])
                     {
-                        commands.BindTexture(slot, texture, sampler);
-                        boundPointTextures[index] = texture; boundPointSamplers[index] = sampler;
+                        m_shadowContentSignatures[cascade] = signature;
+                        ++m_frameStats.shadowCascadeUpdates;
+                        for (const auto drawIndex : indices)
+                            m_shadowVisibleInAnyCascade[drawIndex] = 1u;
                     }
-                };
-                for (const auto drawIndex : m_pointShadowFaceDraws[face])
+                    else
+                    {
+                        ++m_frameStats.shadowCascadeCacheHits;
+                    }
+                }
+                for (std::uint32_t cascade = cascadeCount; cascade < m_shadowCascadeDrawIndices.size(); ++cascade)
+                    m_shadowCascadeDrawIndices[cascade].clear();
+                const std::size_t shadowUploadCount = m_frameStats.shadowCascadeUpdates ? shadowDraws.size() : 0;
+                if (m_shadowObjectBuffers.size() < shadowUploadCount) m_shadowObjectBuffers.resize(shadowUploadCount);
+                std::vector<std::size_t> shadowInstanceBufferStarts(shadowUploadCount);
+                if (m_shadowMaterialBuffers.size() < shadowUploadCount) m_shadowMaterialBuffers.resize(shadowUploadCount);
+                const bool batchOpaqueShadows = m_opaqueShadowBatchingEnabled && m_opaqueShadowPipeline && m_opaqueShadowBatches;
+                std::size_t shadowInstanceBufferCursor = 0;
+                for (std::size_t drawIndex = 0; drawIndex < shadowUploadCount; ++drawIndex)
                 {
                     const auto &draw = shadowDraws[drawIndex];
-                    const auto available =
-                        draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
-                    const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
-                    if (!count)
-                        continue;
-                    const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline;
-                    const auto pipeline = masked ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get();
-                    if (pipeline != boundPointPipeline)
+                    if (m_shadowVisibleInAnyCascade[drawIndex] != 0u &&
+                        !(batchOpaqueShadows && OpaqueShadowBatches::Eligible(draw)))
                     {
-                        commands.BindPipeline(pipeline);
-                        commands.BindUniformBuffer(0, m_pointShadowCameras[face].Get());
-                        boundPointPipeline = pipeline;
-                        boundPointMesh = nullptr; // OpenGL VAOs are pipeline-owned.
-                        boundPointTextures.fill({}); boundPointSamplers.fill({});
-                    }
-                    if (boundPointMesh != draw.mesh)
-                    {
-                        commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                        commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                        boundPointMesh = draw.mesh;
-                    }
-                    auto &resources = m_pointShadowResources[drawIndex];
-                    const auto models = draw.instanceModels && !draw.instanceModels->empty()
-                        ? std::span<const glm::mat4>(*draw.instanceModels) : std::span<const glm::mat4>(&draw.model, 1);
-                    if (!prepared[drawIndex])
-                    {
-                        prepared[drawIndex] = true;
-                        const auto material = ShadowMaterial(draw,
-                            draw.shaderGraphProgram && draw.shaderGraphProgram->usesViewDirection ? lighting.cameraPosition : glm::vec3(0),
-                            draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime ? graphTime : 0);
-                        const auto bytes = Bytes(material);
-                        if (!resources.material)
-                            resources.material = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                {sizeof(material), rhi::BufferUsage::Uniform, "Point shadow material"}));
-                        if (resources.materialBytes.size() != bytes.size() ||
-                            std::memcmp(resources.materialBytes.data(), bytes.data(), bytes.size()) != 0)
+                        if (!m_shadowMaterialBuffers[drawIndex])
+                            m_shadowMaterialBuffers[drawIndex] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Shadow graph material"}));
+                        m_device->UpdateBuffer(m_shadowMaterialBuffers[drawIndex].Get(), 0,
+                                Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
+                        if (draw.instanceModels && draw.instanceModels->size() > 1)
                         {
-                            m_device->UpdateBuffer(resources.material.Get(), 0, bytes);
-                            resources.materialBytes.assign(bytes.begin(), bytes.end());
-                            ++m_frameStats.pointShadowMaterialUploads;
-                        }
-                        const auto previousCount = resources.models.size();
-                        resources.objects.resize(models.size());
-                        resources.models.resize(models.size());
-                        for (std::size_t model = 0; model < models.size(); ++model)
-                        {
-                            const bool newObject = !resources.objects[model];
-                            if (newObject)
-                                resources.objects[model] = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                    {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
-                            if (newObject || model >= previousCount || resources.models[model] != models[model])
+                            shadowInstanceBufferStarts[drawIndex] = shadowInstanceBufferCursor;
+                            for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
                             {
-                                m_device->UpdateBuffer(resources.objects[model].Get(), 0, Bytes(models[model]));
-                                resources.models[model] = models[model];
-                                ++m_frameStats.pointShadowObjectUploads;
+                                if (shadowInstanceBufferCursor == m_shadowInstanceBuffers.size())
+                                    m_shadowInstanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                                        {sizeof(BasicShadowInstanceParameters), rhi::BufferUsage::Uniform,
+                                         "BasicRenderer shadow instances"}));
+                                BasicShadowInstanceParameters parameters;
+                                const auto count = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
+                                std::copy_n(draw.instanceModels->begin() + first, count, parameters.models.begin());
+                                m_device->UpdateBuffer(m_shadowInstanceBuffers[shadowInstanceBufferCursor++].Get(), 0,
+                                                       Bytes(parameters));
+                                ++m_frameStats.shadowObjectUploads;
                             }
                         }
-                    }
-                    commands.BindUniformBuffer(8, resources.material.Get());
-                    bindPointTexture(0, 9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
-                    bindPointTexture(1, 10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
-                    bindPointTexture(2, 11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
-                    bindPointTexture(3, 12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
-                    for (unsigned i = 0; i < 4; ++i)
-                        bindPointTexture(4 + i, 22 + i, draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get(), m_graphSamplers[draw.graphSamplers[i] & 3].Get());
-                    for (const auto &object : resources.objects)
-                    {
-                        commands.BindUniformBuffer(16, object.Get());
-                        commands.DrawIndexed(count, draw.firstIndex);
-                        ++m_frameStats.pointShadowDraws;
+                        else
+                        {
+                            if (!m_shadowObjectBuffers[drawIndex])
+                                m_shadowObjectBuffers[drawIndex] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                    {sizeof(BasicObjectParameters), rhi::BufferUsage::Uniform, "BasicRenderer shadow object"}));
+                            m_device->UpdateBuffer(m_shadowObjectBuffers[drawIndex].Get(), 0,
+                                                   Bytes(BasicObjectParameters{draw.model, draw.model}));
+                            ++m_frameStats.shadowObjectUploads;
+                        }
                     }
                 }
-                m_pointShadowFaces[face].Publish(pointFaceKeys[face]);
+                const auto submitShadowDraw = [&](std::size_t drawIndex, std::uint32_t cascade, rhi::BufferHandle camera)
+                {
+                    const auto &draw = shadowDraws[drawIndex];
+                    const bool instanced = draw.instanceModels && draw.instanceModels->size() > 1;
+                    const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline && m_maskedShadowInstancedPipeline;
+                    commands.BindPipeline(masked
+                        ? (instanced ? m_maskedShadowInstancedPipeline.Get() : m_maskedShadowPipeline.Get())
+                        : (instanced ? m_shadowInstancedPipeline.Get() : m_shadowPipeline.Get()));
+                    commands.BindUniformBuffer(0, camera);
+                    {
+                        commands.BindUniformBuffer(8, m_shadowMaterialBuffers[drawIndex].Get());
+                        commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                        commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
+                        commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                        commands.BindTexture(12,draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());
+                        for(unsigned i=0;i<4;++i)commands.BindTexture(22+i,draw.graphTextures[i]?draw.graphTextures[i]:m_fallbackDataTexture.Get(),m_graphSamplers[draw.graphSamplers[i]&3].Get());
+                    }
+                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    const std::uint32_t available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                    const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
+                    if (count)
+                    {
+                        if (instanced)
+                        {
+                            std::size_t bufferIndex = shadowInstanceBufferStarts[drawIndex];
+                            for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
+                            {
+                                const auto instanceCount = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
+                                commands.BindUniformBuffer(17, m_shadowInstanceBuffers[bufferIndex++].Get());
+                                commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
+                                ++m_frameStats.shadowDrawsByCascade[cascade];
+                                m_frameStats.shadowInstances += instanceCount;
+                            }
+                        }
+                        else
+                        {
+                            commands.BindUniformBuffer(16, m_shadowObjectBuffers[drawIndex].Get());
+                            commands.DrawIndexed(count, draw.firstIndex);
+                            ++m_frameStats.shadowDrawsByCascade[cascade];
+                            ++m_frameStats.shadowInstances;
+                        }
+                    }
+                };
+                std::size_t opaqueInstanceBufferCursor = 0;
+                for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
+                {
+                    if (!cascadeNeedsUpdate[cascade])
+                        continue;
+                    const auto scopeName = "RHI Shadow Cascade " + std::to_string(cascade);
+                    commands.BeginGpuScope(scopeName);
+                    m_device->UpdateBuffer(m_shadowCameraBuffers[cascade].Get(), 0, Bytes(lighting.shadowMatrices[cascade]));
+                    rhi::RenderingInfo shadowInfo;
+                    shadowInfo.colorAttachments = {m_shadowColorTargets[cascade].Get()};
+                    shadowInfo.depthAttachment = m_shadowDepthTargets[cascade].Get();
+                    shadowInfo.width = m_shadowResolutions[cascade];
+                    shadowInfo.height = m_shadowResolutions[cascade];
+                    shadowInfo.clearColorValue[0] = 1.0f;
+                    shadowInfo.clearDepthValue = 1.0f;
+                    const auto recordCasters = [&](std::span<const std::size_t> visible)
+                    {
+                        if (batchOpaqueShadows)
+                        {
+                            m_opaqueShadowBatches->Build(shadowDraws, visible);
+                            for (const auto &batch : m_opaqueShadowBatches->batches)
+                            {
+                                const auto available = batch.firstIndex < batch.mesh->m_indexCount
+                                    ? batch.mesh->m_indexCount - batch.firstIndex : 0u;
+                                const auto count = std::min(batch.indexCount == 0 ? available : batch.indexCount, available);
+                                if (count == 0) continue;
+                                // Each cascade/batch owns a distinct buffer until submit.
+                                // Later uploads must never overwrite earlier recorded draws.
+                                if (opaqueInstanceBufferCursor == m_opaqueShadowInstanceBuffers.size())
+                                    m_opaqueShadowInstanceBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                                        {sizeof(BasicShadowInstanceParameters), rhi::BufferUsage::Uniform, "Opaque shadow batch models"}));
+                                const auto buffer = m_opaqueShadowInstanceBuffers[opaqueInstanceBufferCursor++].Get();
+                                m_device->UpdateBuffer(buffer, 0, Bytes(batch.models));
+                                commands.BindPipeline(m_opaqueShadowPipeline.Get());
+                                commands.BindUniformBuffer(0, m_shadowCameraBuffers[cascade].Get());
+                                commands.BindUniformBuffer(17, buffer);
+                                commands.BindVertexBuffer(batch.mesh->m_vertexBuffer.Get());
+                                commands.BindIndexBuffer(batch.mesh->m_indexBuffer.Get());
+                                commands.DrawIndexedInstanced(count, batch.count, batch.firstIndex);
+                                ++m_frameStats.shadowDrawsByCascade[cascade];
+                                m_frameStats.shadowInstances += batch.count;
+                                ++m_frameStats.shadowObjectUploads;
+                            }
+                            for (const auto drawIndex : m_opaqueShadowBatches->fallback)
+                                submitShadowDraw(drawIndex, cascade, m_shadowCameraBuffers[cascade].Get());
+                        }
+                        else
+                            for (const auto drawIndex : visible)
+                                submitShadowDraw(drawIndex, cascade, m_shadowCameraBuffers[cascade].Get());
+                    };
+                    std::uint64_t projectionSignature = 14695981039346656037ull;
+                    HashVctValue(projectionSignature, lighting.shadowMatrices[cascade]);
+                    HashVctValue(projectionSignature, m_shadowResolutions[cascade]);
+                    const bool splitLayers = m_staticShadowCachingEnabled && m_shadowLayers && m_shadowDepthSeedPipeline &&
+                        m_shadowLayers->CanAllocate(cascade, m_shadowResolutions[cascade]) &&
+                        m_shadowLayers->Partition(cascade, projectionSignature, m_shadowCascadeDrawIndices[cascade]);
+                    if (splitLayers)
+                    {
+                        auto &layer = m_shadowLayers->cascades[cascade];
+                        const auto resolution = m_shadowResolutions[cascade];
+                        if (layer.resolution != resolution || !layer.depth || !layer.color)
+                        {
+                            layer.color = rhi::Texture(*m_device, m_device->CreateTexture(
+                                {resolution, resolution, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment, "Static shadow layer", true}));
+                            layer.depth = rhi::Texture(*m_device, m_device->CreateTexture(
+                                {resolution, resolution, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "Static shadow layer depth", true}));
+                            layer.resolution = resolution;
+                            layer.valid = false;
+                        }
+                        const auto content = ShadowContentSignature(lighting.shadowMatrices[cascade], resolution,
+                                                                     m_shadowDrawSignatures, layer.stationary);
+                        if (!layer.valid || layer.content != content)
+                        {
+                            commands.BeginGpuScope(scopeName + " / Static layer rebuild");
+                            auto staticInfo = shadowInfo;
+                            staticInfo.colorAttachments = {layer.color.Get()};
+                            staticInfo.depthAttachment = layer.depth.Get();
+                            commands.BeginRendering(staticInfo);
+                            recordCasters(layer.stationary);
+                            commands.EndRendering();
+                            commands.EndGpuScope();
+                            layer.content = content;
+                            layer.valid = true;
+                        }
+                        commands.BeginRendering(shadowInfo);
+                        commands.BeginGpuScope(scopeName + " / Static depth seed");
+                        commands.BindPipeline(m_shadowDepthSeedPipeline.Get());
+                        commands.BindTexture(1, layer.depth.Get(), m_shadowSampler.Get());
+                        commands.Draw(3);
+                        commands.EndGpuScope();
+                        recordCasters(layer.moving);
+                        commands.EndRendering();
+                    }
+                    else
+                    {
+                        commands.BeginRendering(shadowInfo);
+                        recordCasters(m_shadowCascadeDrawIndices[cascade]);
+                        commands.EndRendering();
+                    }
+                    commands.EndGpuScope();
+                    m_shadowCacheValid[cascade] = true;
+                }
             }
-            commands.EndRendering();
-            commands.EndGpuScope();
-        }
-        if (pointShadowCount > 0)
-        {
-            m_pointShadowSignature = pointSignature;
-            m_pointShadowCacheValid = true;
-        }
-        shadowScope.End();
-        const auto shadowRecordingEnd = std::chrono::steady_clock::now();
-        m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, shadowRecordingEnd);
+            // A global key skips face culling for fully unchanged scenes. On a
+            // miss, independently validate only the casters intersecting each face.
+            std::uint64_t pointSignature = 14695981039346656037ull;
+            std::array<ShadowFaceKey, 24> pointFaceKeys{};
+            std::array<bool, 24> pointFaceUpdates{};
+            std::vector<std::uint64_t> pointCasterSignatures(shadowDraws.size());
+            const bool regionalPointClear = commands.SupportsDepthRegionClear() && commands.SupportsColorRegionClear();
+            if (pointShadowCount > 0)
+            {
+                core::CpuScope cacheScope("Point shadow cache validation", core::CpuCategory::Rendering);
+                HashVctValue(pointSignature, pointShadowCount);
+                for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+                {
+                    const auto &draw = shadowDraws[index];
+                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2) continue;
+                    pointCasterSignatures[index] = PointShadowCasterSignature(draw, m_shadowDrawSignatures[index], lighting.cameraPosition, graphTime);
+                    pointSignature += MixShadowMember(pointCasterSignatures[index]);
+                }
+                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                    HashVctValue(pointSignature, frameParameters.pointShadowMatrices[face]);
+                if (!m_pointShadowCacheValid || m_pointShadowSignature != pointSignature)
+                {
+                    for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                    {
+                        auto &key = pointFaceKeys[face];
+                        key = {14695981039346656037ull, 14695981039346656037ull, 14695981039346656037ull};
+                        HashVctValue(key.projection, frameParameters.pointShadowMatrices[face]);
+                        const ShadowFrustum frustum(frameParameters.pointShadowMatrices[face]);
+                        auto &indices = m_pointShadowFaceDraws[face];
+                        indices.clear();
+                        for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+                        {
+                            const auto &draw = shadowDraws[index];
+                            if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 ||
+                                draw.alphaMode == 2 || !frustum.Intersects(draw)) continue;
+                            indices.push_back(index);
+                            std::uint64_t member = 14695981039346656037ull;
+                            HashVctValue(member, draw.mesh);
+                            HashVctValue(member, draw.firstIndex);
+                            HashVctValue(member, draw.indexCount);
+                            key.casters += MixShadowMember(member);
+                            key.content += MixShadowMember(pointCasterSignatures[index]);
+                        }
+                        HashVctValue(key.casters, indices.size());
+                        const auto reasons = m_pointShadowFaces[face].Invalidation(key);
+                        pointFaceUpdates[face] = reasons != 0;
+                        for (std::size_t reason = 0; reason < 4; ++reason)
+                            if (reasons & (1u << reason)) ++m_frameStats.pointShadowInvalidations[reason];
+                    }
+                    if (!regionalPointClear && std::any_of(pointFaceUpdates.begin(), pointFaceUpdates.end(), [](bool dirty) { return dirty; }))
+                        std::fill_n(pointFaceUpdates.begin(), pointShadowCount * 6, true);
+                }
+                m_frameStats.pointShadowFaceUpdates = std::count(pointFaceUpdates.begin(), pointFaceUpdates.end(), true);
+                m_frameStats.pointShadowFaceHits = pointShadowCount * 6 - m_frameStats.pointShadowFaceUpdates;
+                if (m_frameStats.pointShadowFaceUpdates == 0) ++m_frameStats.pointShadowAtlasCacheHits;
+            }
+            if (m_frameStats.pointShadowFaceUpdates > 0)
+            {
+                core::CpuScope pointScope("Point shadow recording", core::CpuCategory::Rendering);
+                commands.BeginGpuScope("RHI Point Shadows");
+                ++m_frameStats.pointShadowAtlasUpdates;
+                EnsurePointShadowAtlas();
+                rhi::RenderingInfo info;
+                info.colorAttachments = {m_pointShadowColor.Get()};
+                info.depthAttachment = m_pointShadowDepth.Get();
+                info.width = 3072;
+                info.height = 2048;
+                info.clearColorValue[0] = 1;
+                info.clearDepthValue = 1;
+                info.clearColor = info.clearDepth = !regionalPointClear;
+                if (!regionalPointClear)
+                    for (std::size_t face = pointShadowCount * 6; face < m_pointShadowFaces.size(); ++face)
+                        m_pointShadowFaces[face].Reset();
+                commands.BeginRendering(info);
+                m_pointShadowResources.resize(shadowDraws.size());
+                std::vector<bool> prepared(shadowDraws.size(), false);
+                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                {
+                    if (!pointFaceUpdates[face]) continue;
+                    if (regionalPointClear)
+                    {
+                        const rhi::Scissor region{static_cast<std::int32_t>((face % 6) * 512),
+                            static_cast<std::int32_t>((face / 6) * 512), 512, 512};
+                        commands.ClearDepthRegion(region, 1.0f);
+                        commands.ClearColorRegion(region, 0, {1, 1, 1, 1});
+                    }
+                    if (!m_pointShadowCameras[face])
+                        m_pointShadowCameras[face] = rhi::Buffer(
+                            *m_device,
+                            m_device->CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow camera"}));
+                    m_device->UpdateBuffer(m_pointShadowCameras[face].Get(), 0,
+                                           Bytes(frameParameters.pointShadowMatrices[face]));
+                    commands.SetViewport(
+                        {static_cast<float>((face % 6) * 512), static_cast<float>((face / 6) * 512), 512, 512});
+                    commands.SetScissor({static_cast<std::int32_t>((face % 6) * 512),
+                                         static_cast<std::int32_t>((face / 6) * 512), 512, 512});
+                    rhi::PipelineHandle boundPointPipeline;
+                    const BasicMesh *boundPointMesh = nullptr;
+                    std::array<rhi::TextureHandle, 8> boundPointTextures{};
+                    std::array<rhi::SamplerHandle, 8> boundPointSamplers{};
+                    const auto bindPointTexture = [&](std::size_t index, std::uint32_t slot,
+                        rhi::TextureHandle texture, rhi::SamplerHandle sampler)
+                    {
+                        if (boundPointTextures[index] != texture || boundPointSamplers[index] != sampler)
+                        {
+                            commands.BindTexture(slot, texture, sampler);
+                            boundPointTextures[index] = texture; boundPointSamplers[index] = sampler;
+                        }
+                    };
+                    for (const auto drawIndex : m_pointShadowFaceDraws[face])
+                    {
+                        const auto &draw = shadowDraws[drawIndex];
+                        const auto available =
+                            draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                        const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
+                        if (!count)
+                            continue;
+                        const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline;
+                        const auto pipeline = masked ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get();
+                        if (pipeline != boundPointPipeline)
+                        {
+                            commands.BindPipeline(pipeline);
+                            commands.BindUniformBuffer(0, m_pointShadowCameras[face].Get());
+                            boundPointPipeline = pipeline;
+                            boundPointMesh = nullptr; // OpenGL VAOs are pipeline-owned.
+                            boundPointTextures.fill({}); boundPointSamplers.fill({});
+                        }
+                        if (boundPointMesh != draw.mesh)
+                        {
+                            commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                            commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                            boundPointMesh = draw.mesh;
+                        }
+                        auto &resources = m_pointShadowResources[drawIndex];
+                        const auto models = draw.instanceModels && !draw.instanceModels->empty()
+                            ? std::span<const glm::mat4>(*draw.instanceModels) : std::span<const glm::mat4>(&draw.model, 1);
+                        if (!prepared[drawIndex])
+                        {
+                            prepared[drawIndex] = true;
+                            const auto material = ShadowMaterial(draw,
+                                draw.shaderGraphProgram && draw.shaderGraphProgram->usesViewDirection ? lighting.cameraPosition : glm::vec3(0),
+                                draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime ? graphTime : 0);
+                            const auto bytes = Bytes(material);
+                            if (!resources.material)
+                                resources.material = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                    {sizeof(material), rhi::BufferUsage::Uniform, "Point shadow material"}));
+                            if (resources.materialBytes.size() != bytes.size() ||
+                                std::memcmp(resources.materialBytes.data(), bytes.data(), bytes.size()) != 0)
+                            {
+                                m_device->UpdateBuffer(resources.material.Get(), 0, bytes);
+                                resources.materialBytes.assign(bytes.begin(), bytes.end());
+                                ++m_frameStats.pointShadowMaterialUploads;
+                            }
+                            const auto previousCount = resources.models.size();
+                            resources.objects.resize(models.size());
+                            resources.models.resize(models.size());
+                            for (std::size_t model = 0; model < models.size(); ++model)
+                            {
+                                const bool newObject = !resources.objects[model];
+                                if (newObject)
+                                    resources.objects[model] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                        {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
+                                if (newObject || model >= previousCount || resources.models[model] != models[model])
+                                {
+                                    m_device->UpdateBuffer(resources.objects[model].Get(), 0, Bytes(models[model]));
+                                    resources.models[model] = models[model];
+                                    ++m_frameStats.pointShadowObjectUploads;
+                                }
+                            }
+                        }
+                        commands.BindUniformBuffer(8, resources.material.Get());
+                        bindPointTexture(0, 9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
+                        bindPointTexture(1, 10, draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(), m_fallbackSampler.Get());
+                        bindPointTexture(2, 11, draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
+                        bindPointTexture(3, 12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
+                        for (unsigned i = 0; i < 4; ++i)
+                            bindPointTexture(4 + i, 22 + i, draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get(), m_graphSamplers[draw.graphSamplers[i] & 3].Get());
+                        for (const auto &object : resources.objects)
+                        {
+                            commands.BindUniformBuffer(16, object.Get());
+                            commands.DrawIndexed(count, draw.firstIndex);
+                            ++m_frameStats.pointShadowDraws;
+                        }
+                    }
+                    m_pointShadowFaces[face].Publish(pointFaceKeys[face]);
+                }
+                commands.EndRendering();
+                commands.EndGpuScope();
+            }
+            if (pointShadowCount > 0)
+            {
+                m_pointShadowSignature = pointSignature;
+                m_pointShadowCacheValid = true;
+            }
+        });
         rhi::RenderingInfo renderingInfo;
         EnsureGeometryTargets(geometryLayout);
         renderingInfo.colorAttachments = {m_colorTarget.Get()};
@@ -2732,20 +2747,8 @@ namespace PlutoGE::render
         else if (geometryLayout < GeometryOutputLayout::SurfaceIndirect) renderingInfo.clearColorValues.resize(5);
         if (geometryLayout == GeometryOutputLayout::ColorMotion) renderingInfo.clearColorValues = {renderingInfo.clearColorValues[0], renderingInfo.clearColorValues[3]};
         else if (geometryLayout == GeometryOutputLayout::Color) renderingInfo.clearColorValues.resize(1);
-        const auto geometryRecordingStart = std::chrono::steady_clock::now();
         const std::string geometryScopeName = automaticSweep
             ? std::string("RHI Geometry sweep / ") + GeometryDiagnosticName(geometryMode) : "RHI Geometry";
-        commands.BeginGpuScope(geometryScopeName);
-        // Transition shadow outputs before entering dynamic rendering.
-        commands.BindPipeline(m_pipeline.Get());
-        commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-        for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
-            commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-        if (receiverShadows)
-        {
-            commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
-            commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
-        }
         if (!m_geometryParameters) m_geometryParameters = std::make_unique<PersistentParameterCache>();
         m_geometryParameters->BeginFrame();
         rhi::BufferHandle objectBuffer;
@@ -2781,18 +2784,32 @@ namespace PlutoGE::render
         rhi::TextureHandle previousEmissionTexture;
         rhi::PipelineHandle boundDrawPipeline;
         const BasicMesh *boundDrawMesh = nullptr;
+        // Single objects read their constants from the frame's object stream through the instanced vertex input
+        // (ObjectStream): one block bind per 64 draws instead of a descriptor rebind per draw.
+        const bool objectStreaming = m_objectStreaming && commands.SupportsFirstInstance();
+        if (objectStreaming)
+        {
+            if (!m_objectStream) m_objectStream = std::make_unique<GeometryObjectStream>();
+            m_objectStream->BeginFrame();
+        }
+        GeometryObjectStream::Slot objectSlot;
+        rhi::BufferHandle boundObjectBlock;
         rhi::BufferHandle boundMaterial;
         bool recordingParticleBoundary = false;
-        const auto recordDraw = [&](const BasicDraw &draw, bool transparent, std::size_t historyIndex)
+        const auto recordDraw = [&](rhi::ICommandContext &commands, const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
+            // Occlusion-culled indirect draws keep their own buffer: the GPU writes their arguments.
+            const bool streamed = objectStreaming && !instanced && !transparent &&
+                !(occlusionActive && !recordingDepth && !draw.outlinePass);
+            const bool instancedInput = instanced || streamed;
             const auto pipeline = transparent
                 ? (recordingParticleBoundary
                     ? (draw.twoSided ? m_particleBoundaryTwoSidedPipeline.Get() : m_particleBoundaryPipeline.Get())
                     : (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()))
-                : GeometryPipeline(draw, instanced, geometryLayout, recordingDepth,
+                : GeometryPipeline(draw, instancedInput, geometryLayout, recordingDepth,
                     depthPrepassActive && prepassEligible(draw) && !recordingDepth);
             if (boundDrawPipeline != pipeline)
             {
@@ -2822,16 +2839,23 @@ namespace PlutoGE::render
                 // Submeshes of one object share transforms and often LOD data.
                 // Compare previous transforms too: motion vectors must retain
                 // each draw's history even when current transforms match.
-                if (!objectBuffer ||
-                    std::memcmp(&previousObjectParameters, &objectParameters, sizeof(objectParameters)) != 0)
+                const bool changed = std::memcmp(&previousObjectParameters, &objectParameters, sizeof(objectParameters)) != 0;
+                if (streamed && (!objectSlot.block || changed))
+                {
+                    objectSlot = m_objectStream->Append(*m_device, objectParameters);
+                    objectBuffer = {};
+                    previousObjectParameters = objectParameters;
+                }
+                else if (!streamed && (!objectBuffer || changed))
                 {
                     objectBuffer = objectParameters.model == objectParameters.previousModel
                         ? m_geometryParameters->Acquire(*m_device, Bytes(objectParameters))
                         : m_geometryParameters->AcquireTransient(*m_device, Bytes(objectParameters));
+                    objectSlot = {};
                     previousObjectParameters = objectParameters;
                 }
             }
-            const auto depthResources = recordingDepth ? GeometryDepthResources(draw, instanced) : DepthResources::Full;
+            const auto depthResources = recordingDepth ? GeometryDepthResources(draw, instancedInput) : DepthResources::Full;
             const bool leanDepth = depthResources != DepthResources::Full;
             if (depthResources != DepthResources::Opaque)
             {
@@ -2977,12 +3001,25 @@ namespace PlutoGE::render
                             ? m_geometryParameters->AcquireTransient(*m_device, Bytes(parameters))
                             : m_geometryParameters->Acquire(*m_device, Bytes(parameters), instanceKey);
                         commands.BindUniformBuffer(17, instanceBuffer);
+                        boundObjectBlock = {};
                         commands.DrawIndexedInstanced(drawCount, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
                         ++m_frameStats.geometryDraws;
                         m_frameStats.geometryInstances += instanceCount;
                         m_frameStats.geometryTriangles[draw.outlinePass ? 3 : transparent ? 2 : draw.alphaMode == 1 ? 1 : 0] +=
                             static_cast<std::uint64_t>(drawCount / 3) * instanceCount;
                     }
+                }
+                else if (streamed)
+                {
+                    if (boundObjectBlock != objectSlot.block)
+                    {
+                        commands.BindUniformBuffer(17, objectSlot.block);
+                        boundObjectBlock = objectSlot.block;
+                    }
+                    commands.DrawIndexedInstanced(drawCount, 1, draw.firstIndex, 0, objectSlot.index);
+                    ++m_frameStats.geometryDraws;
+                    ++m_frameStats.geometryInstances;
+                    m_frameStats.geometryTriangles[draw.outlinePass ? 3 : draw.alphaMode == 1 ? 1 : 0] += drawCount / 3;
                 }
                 else
                 {
@@ -2997,132 +3034,155 @@ namespace PlutoGE::render
                 }
             }
         };
-        if (depthPrepassActive)
-        {
-            commands.BeginGpuScope("RHI Geometry / Coverage depth");
-            rhi::RenderingInfo depth;
-            depth.depthAttachment = m_depthTarget.Get();
-            depth.width = m_width; depth.height = m_height;
-            depth.clearColor = false;
-            commands.BeginRendering(depth);
-            recordingDepth = true;
-            for (std::size_t index = 0; index < draws.size(); ++index)
-                if (prepassEligible(draws[index])) recordDraw(draws[index], false, index);
-            recordingDepth = false;
-            commands.EndRendering();
-            commands.EndGpuScope();
-            m_frameStats.geometryDepthDraws = m_frameStats.geometryDraws;
-            m_frameStats.geometryDraws = m_frameStats.geometryInstances = 0;
-            m_frameStats.geometryTriangles = {};
-            renderingInfo.clearDepth = false;
-        }
-        // The legacy simplified occluder pass is two-sided. With material
-        // culling it is only safe to use the exact coverage depth produced above.
-        occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, draws, occlusionProjection,
-            m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
-            {
-                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
-                commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
-                const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
-                commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
-            }, depthPrepassActive ? m_depthTarget.Get() : reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
-        m_frameStats.occlusionActive = occlusionActive;
-        if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
-        // Compute/coverage passes invalidate all cached graphics bindings.
-        boundDrawPipeline = {};
-        boundDrawMesh = nullptr;
-        geometryResourcesBound = false;
-        skyTextureBound = false;
-        boundMaterial = {};
-        commands.BeginRendering(renderingInfo);
-        m_frameStats.geometryColorOutputs = static_cast<std::uint32_t>(renderingInfo.colorAttachments.size());
-        std::size_t historyIndex = 0;
         std::vector<BasicDraw> transparentDraws;
-        commands.BeginGpuScope("RHI Geometry / Opaque and alpha-tested");
-        // At most eight additional query pairs; avoid per-draw queries exhausting
-        // the backend timestamp pool or materially changing submission cost.
-        const bool rangeTimings = geometryMode == GeometryDiagnosticMode::DrawRanges;
-        const std::size_t rangeSize = std::max<std::size_t>(1, (draws.size() + 7) / 8);
-        bool rangeScopeOpen = false;
-        for (const auto &draw : draws)
+        recording.Add([&](rhi::ICommandContext &commands)
         {
-            const auto drawIndex = static_cast<std::size_t>(&draw - draws.data());
-            if (rangeTimings && drawIndex % rangeSize == 0)
+            commands.BeginGpuScope(geometryScopeName);
+            // Transition shadow outputs before entering dynamic rendering.
+            commands.BindPipeline(m_pipeline.Get());
+            commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+            for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
+                commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+            if (receiverShadows)
             {
-                if (rangeScopeOpen) commands.EndGpuScope();
-                commands.BeginGpuScope("RHI Geometry draws " + std::to_string(drawIndex) + "-" +
-                    std::to_string(std::min(drawIndex + rangeSize, draws.size()) - 1));
-                rangeScopeOpen = true;
+                commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
+                commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
             }
-            if (!draw.mesh || !draw.mesh->IsValid())
-                continue;
-            if (draw.surfaceType == 1 || draw.alphaMode == 2)
+            if (depthPrepassActive)
             {
-                // BLEND textures can contain solid interior surfaces as well as
-                // cutouts. Resolve their near-opaque fragments with depth writes;
-                // the transparent shader draws only the remaining coverage.
-                // Refractive glass must stay entirely in the transparent pass.
-                if (draw.surfaceType == 0 && !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures))
-                    recordDraw(draw, false, historyIndex);
-                // Expand instances so each pane is sorted individually.
-                if (draw.instanceModels && !draw.instanceModels->empty())
+                commands.BeginGpuScope("RHI Geometry / Coverage depth");
+                rhi::RenderingInfo depth;
+                depth.depthAttachment = m_depthTarget.Get();
+                depth.width = m_width; depth.height = m_height;
+                depth.clearColor = false;
+                commands.BeginRendering(depth);
+                recordingDepth = true;
+                for (std::size_t index = 0; index < draws.size(); ++index)
+                    if (prepassEligible(draws[index])) recordDraw(commands, draws[index], false, index);
+                recordingDepth = false;
+                commands.EndRendering();
+                commands.EndGpuScope();
+                m_frameStats.geometryDepthDraws = m_frameStats.geometryDraws;
+                m_frameStats.geometryDraws = m_frameStats.geometryInstances = 0;
+                m_frameStats.geometryTriangles = {};
+                renderingInfo.clearDepth = false;
+            }
+            // The legacy simplified occluder pass is two-sided. With material
+            // culling it is only safe to use the exact coverage depth produced above.
+            occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, commands, draws, occlusionProjection,
+                m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
                 {
-                    for (const auto &model : *draw.instanceModels)
+                    commands.BindVertexBuffer(draw.mesh->m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(draw.mesh->m_indexBuffer.Get());
+                    const auto available = draw.firstIndex < draw.mesh->m_indexCount ? draw.mesh->m_indexCount - draw.firstIndex : 0;
+                    commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
+                }, depthPrepassActive ? m_depthTarget.Get() : reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
+            m_frameStats.occlusionActive = occlusionActive;
+            if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
+            // Compute/coverage passes invalidate all cached graphics bindings.
+            boundDrawPipeline = {};
+            boundDrawMesh = nullptr;
+            geometryResourcesBound = false;
+            skyTextureBound = false;
+            boundMaterial = {};
+            boundObjectBlock = {};
+            commands.BeginRendering(renderingInfo);
+            m_frameStats.geometryColorOutputs = static_cast<std::uint32_t>(renderingInfo.colorAttachments.size());
+            std::size_t historyIndex = 0;
+            commands.BeginGpuScope("RHI Geometry / Opaque and alpha-tested");
+            // At most eight additional query pairs; avoid per-draw queries exhausting
+            // the backend timestamp pool or materially changing submission cost.
+            const bool rangeTimings = geometryMode == GeometryDiagnosticMode::DrawRanges;
+            const std::size_t rangeSize = std::max<std::size_t>(1, (draws.size() + 7) / 8);
+            bool rangeScopeOpen = false;
+            for (const auto &draw : draws)
+            {
+                const auto drawIndex = static_cast<std::size_t>(&draw - draws.data());
+                if (rangeTimings && drawIndex % rangeSize == 0)
+                {
+                    if (rangeScopeOpen) commands.EndGpuScope();
+                    commands.BeginGpuScope("RHI Geometry draws " + std::to_string(drawIndex) + "-" +
+                        std::to_string(std::min(drawIndex + rangeSize, draws.size()) - 1));
+                    rangeScopeOpen = true;
+                }
+                if (!draw.mesh || !draw.mesh->IsValid())
+                    continue;
+                if (draw.surfaceType == 1 || draw.alphaMode == 2)
+                {
+                    // BLEND textures can contain solid interior surfaces as well as
+                    // cutouts. Resolve their near-opaque fragments with depth writes;
+                    // the transparent shader draws only the remaining coverage.
+                    // Refractive glass must stay entirely in the transparent pass.
+                    if (draw.surfaceType == 0 && !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures))
+                        recordDraw(commands, draw, false, historyIndex);
+                    // Expand instances so each pane is sorted individually.
+                    if (draw.instanceModels && !draw.instanceModels->empty())
                     {
-                        auto pane = draw;
-                        pane.model = model;
-                        pane.shadowBoundsRadius = -1.0f;
-                        pane.instanceModels.reset();
-                        transparentDraws.push_back(std::move(pane));
+                        for (const auto &model : *draw.instanceModels)
+                        {
+                            auto pane = draw;
+                            pane.model = model;
+                            pane.shadowBoundsRadius = -1.0f;
+                            pane.instanceModels.reset();
+                            transparentDraws.push_back(std::move(pane));
+                        }
                     }
+                    else
+                        transparentDraws.push_back(draw);
                 }
                 else
-                    transparentDraws.push_back(draw);
+                    recordDraw(commands, draw, false, historyIndex);
+                ++historyIndex;
             }
-            else
-                recordDraw(draw, false, historyIndex);
-            ++historyIndex;
-        }
-        if (rangeScopeOpen) commands.EndGpuScope();
-        commands.EndGpuScope();
-        commands.BeginGpuScope("RHI Geometry / Outlines");
-        // Draw shells after all opaque surfaces so foreground geometry occludes them.
-        historyIndex = 0;
-        for (const auto &draw : draws)
-        {
-            if (draw.outlineWidth > 0.0f && draw.alphaMode == 0 && draw.surfaceType == 0)
+            if (rangeScopeOpen) commands.EndGpuScope();
+            commands.EndGpuScope();
+            commands.BeginGpuScope("RHI Geometry / Outlines");
+            // Draw shells after all opaque surfaces so foreground geometry occludes them.
+            historyIndex = 0;
+            for (const auto &draw : draws)
             {
-                auto shell = draw;
-                shell.outlinePass = true;
-                shell.baseColor = glm::vec4(draw.outlineColor, 1.0f);
-                recordDraw(shell, false, historyIndex);
+                if (draw.outlineWidth > 0.0f && draw.alphaMode == 0 && draw.surfaceType == 0)
+                {
+                    auto shell = draw;
+                    shell.outlinePass = true;
+                    shell.baseColor = glm::vec4(draw.outlineColor, 1.0f);
+                    recordDraw(commands, shell, false, historyIndex);
+                }
+                ++historyIndex;
             }
-            ++historyIndex;
-        }
-        commands.EndGpuScope();
-        // Project each center once and sort small indices. Sorting whole draw
-        // packets repeatedly copied shared ownership and recomputed view depths.
-        std::vector<float> transparentDepths;
-        std::vector<std::size_t> transparentOrder;
-        transparentDepths.reserve(transparentDraws.size());
-        transparentOrder.reserve(transparentDraws.size());
-        for (const auto &draw : transparentDraws)
-        {
-            const auto center = draw.shadowBoundsRadius >= 0 ? draw.shadowBoundsCenter : glm::vec3(draw.model[3]);
-            transparentDepths.push_back(-(lighting.view * glm::vec4(center, 1)).z);
-            transparentOrder.push_back(transparentOrder.size());
-        }
-        std::stable_sort(transparentOrder.begin(), transparentOrder.end(), [&](auto a, auto b) {
-            return transparentDepths[a] == transparentDepths[b]
-                ? transparentDraws[a].graphPassOrder < transparentDraws[b].graphPassOrder
-                : transparentDepths[a] > transparentDepths[b];
+            commands.EndGpuScope();
+            // Project each center once and sort small indices. Sorting whole draw
+            // packets repeatedly copied shared ownership and recomputed view depths.
+            std::vector<float> transparentDepths;
+            std::vector<std::size_t> transparentOrder;
+            transparentDepths.reserve(transparentDraws.size());
+            transparentOrder.reserve(transparentDraws.size());
+            for (const auto &draw : transparentDraws)
+            {
+                const auto center = draw.shadowBoundsRadius >= 0 ? draw.shadowBoundsCenter : glm::vec3(draw.model[3]);
+                transparentDepths.push_back(-(lighting.view * glm::vec4(center, 1)).z);
+                transparentOrder.push_back(transparentOrder.size());
+            }
+            std::stable_sort(transparentOrder.begin(), transparentOrder.end(), [&](auto a, auto b) {
+                return transparentDepths[a] == transparentDepths[b]
+                    ? transparentDraws[a].graphPassOrder < transparentDraws[b].graphPassOrder
+                    : transparentDepths[a] > transparentDepths[b];
+            });
+            std::vector<BasicDraw> sortedTransparency;
+            sortedTransparency.reserve(transparentDraws.size());
+            for (const auto index : transparentOrder) sortedTransparency.push_back(std::move(transparentDraws[index]));
+            transparentDraws.swap(sortedTransparency);
+            commands.EndRendering();
+            commands.EndGpuScope();
         });
-        std::vector<BasicDraw> sortedTransparency;
-        sortedTransparency.reserve(transparentDraws.size());
-        for (const auto index : transparentOrder) sortedTransparency.push_back(std::move(transparentDraws[index]));
-        transparentDraws.swap(sortedTransparency);
-        commands.EndRendering();
-        commands.EndGpuScope();
+        // Created up front: shadows draw into it while geometry samples it.
+        if (pointShadowCount > 0)
+            EnsurePointShadowAtlas();
+        const auto recordingStart = std::chrono::steady_clock::now();
+        m_timingStats.parallelRecording = recording.Run();
+        const auto recordingEnd = std::chrono::steady_clock::now();
+        // CPU time each pass took to record (they overlap when recorded in parallel).
+        m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, recordingStart) + recording.JobMilliseconds()[0];
         geometryScope.End();
         // Before decals, which relight from the composed surface colour.
         if (deferProbeIrradiance)
@@ -3134,7 +3194,7 @@ namespace PlutoGE::render
                 .width = m_width, .height = m_height, .inverseViewProjection = m_inverseViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
-        m_timingStats.geometryRecordingMs = elapsedMs(geometryRecordingStart, geometryRecordingEnd);
+        m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[1] + elapsedMs(recordingEnd, geometryRecordingEnd);
 
         m_outputColor = m_colorTarget.Get();
         core::CpuScope postScope("Post processing", core::CpuCategory::Rendering);
@@ -3422,6 +3482,7 @@ namespace PlutoGE::render
             geometryResourcesBound = false;
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
+            boundObjectBlock = {};
             bool rendering = false;
             std::size_t snapshotGroupEnd = 0;
             for (std::size_t paneIndex = 0; paneIndex < transparentDraws.size(); ++paneIndex)
@@ -3449,13 +3510,14 @@ namespace PlutoGE::render
                     geometryResourcesBound = false;
                     boundDrawPipeline = {};
                     boundDrawMesh = nullptr;
+                    boundObjectBlock = {};
                     commands.BindTexture(17, particleLowerDepth, m_shadowSampler.Get());
                     // The boundary pipeline shares the glass layout. Before the first pane's glass
                     // draw nothing has bound these yet, so bind them explicitly every time.
                     commands.BindTexture(18, m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                     commands.BindUniformBuffer(3, m_glassReflectionBuffer.Get());
                     commands.BindTexture(32, m_fallbackDataTexture.Get(), m_screenSampler.Get());
-                    recordDraw(pane, true, m_previousModels.size());
+                    recordDraw(commands, pane, true, m_previousModels.size());
                     recordingParticleBoundary = false;
                     commands.EndRendering();
                     renderParticles(false, &glassRasterFootprints[paneIndex]);
@@ -3464,6 +3526,7 @@ namespace PlutoGE::render
                     geometryResourcesBound = false;
                     boundDrawPipeline = {};
                     boundDrawMesh = nullptr;
+                    boundObjectBlock = {};
                     skyTextureBound = false;
                     damage.MarkWritten({0, 0, m_width, m_height});
                     snapshotGroupEnd = paneIndex;
@@ -3526,7 +3589,7 @@ namespace PlutoGE::render
                 commands.BindTexture(18, sceneColor ? m_glassDepthCopy.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
                 commands.BindUniformBuffer(3, m_glassReflectionBuffer.Get());
                 commands.BindTexture(32, graphSnapshot ? graphSnapshot : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-                recordDraw(pane, true, m_previousModels.size());
+                recordDraw(commands, pane, true, m_previousModels.size());
                 const auto damageStart = std::chrono::steady_clock::now();
                 m_frameStats.glassDrawRecordingCpuMs += elapsedMs(drawStart, damageStart);
                 if (hasGlass) damage.MarkWritten(glassRasterFootprints[paneIndex]);

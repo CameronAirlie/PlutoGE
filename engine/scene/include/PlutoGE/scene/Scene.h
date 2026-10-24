@@ -167,6 +167,10 @@ namespace PlutoGE::scene
         // Synchronize authoring edits before queries made outside Scene::Update.
         // Does not step simulation or rebuild an unchanged collision world.
         void SynchronizePhysicsQueries() const { RefreshPhysicsQueryCache(); }
+        // During Scene::Update, re-reads collider transforms moved since the last query (render extrapolation, late
+        // followers) without revalidating membership or configuration. Those are validated once per update, after
+        // an invalidation, and by SynchronizePhysicsQueries, which authoring tools outside the update must use.
+        void SynchronizePhysicsQueryTransforms() const;
         std::vector<Entity *> FindEntitiesByTag(const std::string &tag) const; // Utility function to find entities by tag (can be useful for scripting and editor)
         // Static-only queries reject movable rigidbodies and non-static mesh,
         // terrain or foliage components on the collider's ancestor chain.
@@ -354,6 +358,7 @@ namespace PlutoGE::scene
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
         uint64_t m_updateSequence = 0;
+        bool m_updateInProgress = false;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
         std::vector<PendingRigidbodyForce> m_pendingRigidbodyForces;
         bool m_inFixedScriptUpdate = false;
@@ -372,6 +377,8 @@ namespace PlutoGE::scene
         void RebuildBakedProbeTexture();
         PhysicsQueryCache &GetPhysicsQueryCache() const;
         void RefreshPhysicsQueryCache() const;
+        void RefreshPhysicsQueryMembership() const;
+        void SynchronizePhysicsQueryBodyTransforms() const;
         void InvalidatePhysicsQueryCache() const;
         void ResetRuntimePhysicsState();
         void RestoreRuntimePhysicsTransforms();

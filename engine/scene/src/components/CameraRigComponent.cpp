@@ -150,7 +150,8 @@ namespace PlutoGE::scene
         }
         if (m_settings.collisionRadius > 0)
         {
-            scene->SynchronizePhysicsQueries();
+            // Bodies were just moved to their render-extrapolated poses; membership was validated this update.
+            scene->SynchronizePhysicsQueryTransforms();
             PhysicsRaycastHit hit;
             // Sweep the final shaken/blended boom; never smooth back through a wall.
             if (scene->SweepSphere(m_focus, output, m_settings.collisionRadius, hit, target->GetID(), owner->GetID()))

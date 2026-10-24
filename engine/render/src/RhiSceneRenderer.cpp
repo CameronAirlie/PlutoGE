@@ -1,5 +1,6 @@
 #include "PlutoGE/render/RhiOcean.h"
 #include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/core/TaskPool.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 
 #include "BasicDrawBatching.h"
@@ -811,6 +812,36 @@ namespace PlutoGE::render
             m_skinningGrowth.clear();
             if (pendingSkinning.empty()) return;
             const auto start = std::chrono::steady_clock::now();
+            // A GPU-skinned mesh needs preparation when its pose must be uploaded or its deformed prefix grows.
+            const auto needsGpuPreparation = [](const auto &pending)
+            {
+                const auto &entry = *pending.entry;
+                if (!entry.gpuSource) return false;
+                const bool recreate = !entry.mesh.IsValid() || pending.topologyChanged;
+                return pending.upload || recreate || entry.gpuSource->layout.VertexCount(entry.requiredLevel) > entry.deformedVertexCount;
+            };
+            {
+                // Refitting shadow bounds is the costly CPU part of that preparation and touches only its own entry
+                // (each mesh/pose is claimed once per frame), so meshes refit across the task pool. Device and
+                // renderer updates below stay on this thread.
+                auto &refits = m_skinningRefits;
+                refits.clear();
+                for (std::size_t index = 0; index < pendingSkinning.size(); ++index)
+                    if (needsGpuPreparation(pendingSkinning[index])) refits.push_back(index);
+                const auto refit = [&](std::size_t index)
+                {
+                    const auto &pending = pendingSkinning[refits[index]];
+                    auto &entry = *pending.entry;
+                    entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
+                    const auto bounds = MergeShadowGeometryClusters(entry.shadowClusters);
+                    entry.boundsCenter = bounds.center;
+                    entry.boundsExtents = bounds.extents;
+                    entry.boundsRadius = glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))) ? glm::length(bounds.extents) : -1;
+                };
+                core::CpuScope refitScope("Skeletal shadow bounds refit", core::CpuCategory::Rendering);
+                if (refits.size() > 1) core::TaskPool::Shared().Run(refits.size(), refit);
+                else if (!refits.empty()) refit(0);
+            }
             if (!skinningJobs.empty())
             {
                 core::CpuScope skinScope("Skeletal vertex deformation", core::CpuCategory::Rendering);
@@ -844,14 +875,10 @@ namespace PlutoGE::render
                     // Slots beyond the last deformed prefix hold an older pose:
                     // deform them even when the pose is unchanged.
                     const bool grows = recreate || vertexCount > entry.deformedVertexCount;
-                    if (pending.upload || grows)
+                    if (needsGpuPreparation(pending))
                     {
+                        // Shadow clusters and bounds were refit above.
                         core::CpuScope gpuScope("Skeletal GPU preparation", core::CpuCategory::Rendering);
-                        entry.shadowBounds->Refit(*pending.pose, entry.shadowClusters);
-                        const auto bounds = MergeShadowGeometryClusters(entry.shadowClusters);
-                        entry.boundsCenter = bounds.center;
-                        entry.boundsExtents = bounds.extents;
-                        entry.boundsRadius = glm::all(glm::greaterThanEqual(bounds.extents, glm::vec3(0))) ? glm::length(bounds.extents) : -1;
                         if (recreate)
                         {
                             entry.mesh = m_renderer->CreateGpuSkinnedMesh(entry.gpuSource, entry.shadowClusters);

@@ -604,52 +604,54 @@ namespace PlutoGE::render
         commands.BindStorageImage(0, m_requests.Get());
         commands.BindStorageImage(1, m_table.Get());
     }
-    void VirtualShadowMaps::Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
+    std::uint32_t VirtualShadowMaps::RecordChunks(rhi::ICommandContext &commands, const SubmitMesh &submit,
+                                                  const std::vector<Chunk> &chunks, std::size_t count,
+                                                  std::size_t instancedPipeline, std::size_t rigidPipeline)
     {
-        m_stats->pageDrawBatches = 0;
-        if (m_reuseFrame) return;
         // Submission callbacks only bind mesh buffers and issue the draw.
         // Retain pass-local state rather than repeating backend handle lookups
         // for every submesh of an imported architectural model.
-        const auto recordChunks = [&](const std::vector<Chunk> &chunks, std::size_t count,
-                                      std::size_t instancedPipeline, std::size_t rigidPipeline)
+        std::uint32_t submissions = 0;
+        std::size_t boundPipeline = m_raster.size();
+        rhi::TextureHandle boundTexture;
+        for (std::size_t index = 0; index < count; ++index)
         {
-            std::size_t boundPipeline = m_raster.size();
-            rhi::TextureHandle boundTexture;
-            for (std::size_t index = 0; index < count; ++index)
+            const auto &chunk = chunks[index];
+            const bool batch = m_batchRigid && instancedPipeline == 1 && chunk.submission.instances == 1;
+            const auto pipeline = batch ? 5 : chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
+            if (pipeline != boundPipeline)
             {
-                const auto &chunk = chunks[index];
-                const bool batch = m_batchRigid && instancedPipeline == 1 && chunk.submission.instances == 1;
-                const auto pipeline = batch ? 5 : chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
-                if (pipeline != boundPipeline)
-                {
-                    commands.BindPipeline(m_raster[pipeline].Get());
-                    boundPipeline = pipeline;
-                }
-                if (batch) commands.BindStorageBuffer(5, m_rigidDraws.Get());
-                else commands.BindUniformBuffer(1, chunk.uniform.Get());
-                if (!boundTexture || (chunk.submission.draw->alphaMode == 1 && chunk.texture != boundTexture))
-                {
-                    commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
-                    boundTexture = chunk.texture;
-                }
-                auto submission = chunk.submission;
-                if (batch)
-                {
-                    const auto limit = std::min(count - index, std::size_t(commands.MaxIndexedIndirectBatchSize()));
-                    while (submission.commandCount < limit)
-                    {
-                        const auto &next = chunks[index + submission.commandCount];
-                        if (next.submission.instances != 1 || next.mesh != chunk.mesh ||
-                            (next.submission.draw->alphaMode == 1 && next.texture != boundTexture)) break;
-                        ++submission.commandCount;
-                    }
-                }
-                submit(submission);
-                if (instancedPipeline == 1) ++m_stats->pageDrawBatches;
-                index += submission.commandCount - 1;
+                commands.BindPipeline(m_raster[pipeline].Get());
+                boundPipeline = pipeline;
             }
-        };
+            if (batch) commands.BindStorageBuffer(5, m_rigidDraws.Get());
+            else commands.BindUniformBuffer(1, chunk.uniform.Get());
+            if (!boundTexture || (chunk.submission.draw->alphaMode == 1 && chunk.texture != boundTexture))
+            {
+                commands.BindTexture(9, chunk.texture, m_materialSampler.Get());
+                boundTexture = chunk.texture;
+            }
+            auto submission = chunk.submission;
+            if (batch)
+            {
+                const auto limit = std::min(count - index, std::size_t(commands.MaxIndexedIndirectBatchSize()));
+                while (submission.commandCount < limit)
+                {
+                    const auto &next = chunks[index + submission.commandCount];
+                    if (next.submission.instances != 1 || next.mesh != chunk.mesh ||
+                        (next.submission.draw->alphaMode == 1 && next.texture != boundTexture)) break;
+                    ++submission.commandCount;
+                }
+            }
+            submit(submission);
+            ++submissions;
+            index += submission.commandCount - 1;
+        }
+        return submissions;
+    }
+    void VirtualShadowMaps::RecordPlanning(rhi::ICommandContext &commands, const SubmitMesh &submit)
+    {
+        if (m_reuseFrame) return;
         commands.BeginGpuScope("RHI VSM Receiver Depth");
         rhi::RenderingInfo depth;
         depth.colorAttachments = {m_receiverColor.Get()}; depth.depthAttachment = m_receiverDepth.Get();
@@ -657,7 +659,7 @@ namespace PlutoGE::render
         commands.BeginRendering(depth);
         commands.BindPipeline(m_raster[0].Get());
         commands.BindUniformBuffer(0, m_parameters.Get());
-        recordChunks(m_receiverChunks, m_receiverCount, 0, 3);
+        RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, 0, 3);
         commands.EndRendering(); commands.EndGpuScope();
         commands.BeginGpuScope("RHI VSM GPU Planning");
         commands.ShaderMemoryBarrier();
@@ -678,6 +680,11 @@ namespace PlutoGE::render
             commands.EndGpuScope();
         }
         commands.EndGpuScope();
+    }
+    void VirtualShadowMaps::RecordPages(rhi::ICommandContext &commands, const SubmitMesh &submit)
+    {
+        m_stats->pageDrawBatches = 0;
+        if (m_reuseFrame) return;
         commands.BeginGpuScope("RHI Virtual Shadow Pages");
         rhi::RenderingInfo atlas;
         atlas.colorAttachments = {m_color.Get()}; atlas.depthAttachment = m_depth.Get();
@@ -690,7 +697,7 @@ namespace PlutoGE::render
         commands.BindPipeline(m_raster[1].Get());
         commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
         commands.BindStorageBuffer(4, m_lists.Get());
-        recordChunks(m_casterChunks, m_casterCount, 1, 4);
+        m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, m_casterCount, 1, 4);
         commands.EndRendering(); commands.EndGpuScope();
         commands.ShaderMemoryBarrier();
         BindCompute(commands, 6);

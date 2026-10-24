@@ -60,10 +60,12 @@ arena is lock-free for that reason.
 ## What a job may do
 
 A job may read anything prepared before `ParallelRecording::Run` and create or update resources through the device.
-It may write only state no other job of the same run touches. `BasicRenderer` records two jobs:
+It may write only state no other job of the same run touches. `BasicRenderer` records up to three jobs:
 
-- **Shadows:** VSM receiver depth, planning and caster pages, the cascaded fallback, point shadows. Writes only shadow
-  caches, shadow buffers and the shadow fields of `m_frameStats`.
+- **VSM planning** (when VSM is active): receiver depth and the GPU planning dispatches
+  (`VirtualShadowMaps::RecordPlanning`). Writes nothing on the CPU beyond its own context.
+- **Shadows:** VSM caster pages and the residency pass (`RecordPages`, the longest shadow recording), the cascaded
+  fallback, point shadows. Writes only shadow caches, shadow buffers and the shadow fields of `m_frameStats`.
 - **Geometry:** coverage depth, occlusion, opaque and alpha-tested draws, outlines, and collecting transparent draws.
   Writes only the geometry parameter, material and object-stream caches and the geometry fields of `m_frameStats`.
 
@@ -83,7 +85,10 @@ support keep binding a buffer per draw.
 
 ## Extending
 
-- **More parallelism:** add jobs to the same `ParallelRecording` run. Splitting a pass across jobs needs a render pass
+- **More parallelism:** add jobs to the same `ParallelRecording` run (`Add` returns the job's index into
+  `JobMilliseconds`). Split at GPU scope boundaries: a scope begun in one job cannot end in another, and consumers
+  read some scopes by name (the VSM budget policy reads `RHI Virtual Shadow Pages`), so a pass split across jobs
+  needs a scope per part. Splitting a pass across jobs needs a render pass
   per job (attachments load instead of clear after the first) and per-job state for anything a job writes (binding
   trackers, parameter caches, an object stream each). Pipeline selection (`GeometryPipeline`) creates pipelines lazily
   and is not thread-safe; resolve pipelines before `Run` or guard that cache before calling it from two jobs.

@@ -27,7 +27,12 @@ namespace PlutoGE::render
 
         ParallelRecording(rhi::ICommandContext &commands, core::TaskPool *pool) : m_commands(commands), m_pool(pool) {}
 
-        void Add(Job job) { m_jobs.push_back(std::move(job)); }
+        // Returns the job's index into JobMilliseconds.
+        std::size_t Add(Job job)
+        {
+            m_jobs.push_back(std::move(job));
+            return m_jobs.size() - 1;
+        }
 
         // Records every job added, then forgets them. Returns true when they recorded in parallel.
         bool Run();

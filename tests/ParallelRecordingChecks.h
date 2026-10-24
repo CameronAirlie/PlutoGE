@@ -89,13 +89,21 @@ void CheckParallelRecording(PlutoGE::render::BasicRenderer &renderer, ReadPixels
     lighting.pointLights.push_back(point);
     const auto projection = glm::perspectiveRH_ZO(glm::radians(60.0f), 128.0f / 96.0f, 100.0f, 0.1f);
 
-    // Converges VSM pages and caches, then returns the image and the frame's draw statistics.
+    // Converges VSM pages and caches, then returns the image and the frame's draw statistics. The first frame lights
+    // from elsewhere so every mode re-plans and re-records its VSM pages instead of reusing the previous mode's.
+    const auto sunDirection = lighting.directionalDirection;
     const auto render = [&](bool parallel, bool streaming)
     {
         renderer.SetParallelRecordingEnabled(parallel);
         renderer.SetObjectStreamingEnabled(streaming);
+        std::uint32_t pageBatches = 0;
         for (int frame = 0; frame < 6; ++frame)
+        {
+            lighting.directionalDirection = frame == 0 ? glm::normalize(glm::vec3(.5f, -1, .2f)) : sunDirection;
             renderer.Render(projection * lighting.view, lighting, draws);
+            pageBatches += renderer.GetFrameStats().virtualShadows.pageDrawBatches;
+        }
+        require(pageBatches > 0, "VSM recorded no caster pages");
         return std::pair{readPixels(renderer.GetColorTexture()), renderer.GetFrameStats()};
     };
     const auto [reference, referenceStats] = render(false, false);

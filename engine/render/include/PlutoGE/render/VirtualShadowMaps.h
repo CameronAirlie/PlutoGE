@@ -72,7 +72,16 @@ namespace PlutoGE::render
         bool Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                      std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
                      std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height);
-        void Record(rhi::ICommandContext &commands, const SubmitMesh &submit);
+        // Recording has two phases that execute on the GPU in this order and share no CPU state, so they may record
+        // concurrently into separate contexts: receiver depth and GPU planning, then the caster pages (which read the
+        // planning results) and the final residency pass. Record runs both on one context.
+        void RecordPlanning(rhi::ICommandContext &commands, const SubmitMesh &submit);
+        void RecordPages(rhi::ICommandContext &commands, const SubmitMesh &submit);
+        void Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
+        {
+            RecordPlanning(commands, submit);
+            RecordPages(commands, submit);
+        }
         [[nodiscard]] static VirtualShadowParameters BuildClipmaps(const BasicLighting &lighting,
                                                                   const VirtualShadowParameters *previous = nullptr,
                                                                   float resolutionScale = 1.0f);
@@ -101,6 +110,9 @@ namespace PlutoGE::render
       };
         void ResizePool(rhi::IRenderDevice &device, std::uint32_t tiles);
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
+        // Records `count` chunks with pass-local binding state; returns the number of submissions issued.
+        std::uint32_t RecordChunks(rhi::ICommandContext &commands, const SubmitMesh &submit, const std::vector<Chunk> &chunks,
+                                   std::size_t count, std::size_t instancedPipeline, std::size_t rigidPipeline);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, 6> m_raster;
         rhi::Buffer m_rigidDraws;

@@ -690,7 +690,12 @@ namespace PlutoGE::scene
             const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
             const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
             shape->setLocalScaling(btVector3(scaleX, scaleY, scaleZ));
-            shape->setUseDiamondSubdivision(true);
+            // Keep Bullet's default quad split, the (x+1,z)-(x,z+1) diagonal TerrainComponent renders. With diamond
+            // subdivision this Bullet version ray-casts each cell with the opposite diagonal to the one convex sweeps
+            // and contacts collide with (performRaycast tests odd x+z parity, processAllTriangles even), so rays and
+            // capsules disagreed by 0.1-0.3 m (up to 1 m) in most cells of rough terrain: ground probes, foot IK and character collision
+            // each saw a different surface, and neither matched the rendered one.
+            shape->setUseDiamondSubdivision(false);
 
             auto compoundShape = std::make_unique<btCompoundShape>();
             btTransform childTransform;
@@ -1628,15 +1633,39 @@ namespace PlutoGE::scene
         return *m_physicsQueryCache;
     }
 
+    void Scene::SynchronizePhysicsQueryTransforms() const
+    {
+        // Outside an update nothing bounds how stale membership is, so callers there get a full refresh.
+        if (!m_updateInProgress || !m_physicsQueryCache || m_physicsQueryCache->refreshSequence != m_updateSequence)
+        {
+            RefreshPhysicsQueryCache();
+            return;
+        }
+        core::CpuScope scope("Physics query transform synchronization", core::CpuCategory::Physics);
+        SynchronizePhysicsQueryBodyTransforms();
+    }
+
     void Scene::RefreshPhysicsQueryCache() const
     {
         core::CpuScope scope("Physics query synchronization", core::CpuCategory::Physics);
+        RefreshPhysicsQueryMembership();
+        SynchronizePhysicsQueryBodyTransforms();
+        m_physicsQueryCache->refreshSequence = m_updateSequence;
+    }
+
+    void Scene::RefreshPhysicsQueryMembership() const
+    {
         m_runtimeComponents->Refresh(m_rootEntities);
+        std::vector<ColliderComponent *> queryColliders;
         std::vector<Entity *> queryEntities;
+        queryColliders.reserve(m_runtimeComponents->colliders.size());
         queryEntities.reserve(m_runtimeComponents->colliders.size());
         for (auto *collider : m_runtimeComponents->colliders)
             if (RuntimeComponentIndex::Active(collider) && !collider->IsTrigger())
+            {
+                queryColliders.push_back(collider);
                 queryEntities.push_back(collider->GetOwner());
+            }
 
         bool rebuild = !m_physicsQueryCache || !m_physicsQueryCache->world;
         if (!rebuild)
@@ -1649,7 +1678,7 @@ namespace PlutoGE::scene
             for (size_t index = 0; !rebuild && index < queryEntities.size(); ++index)
             {
                 auto *entity = queryEntities[index];
-                auto *collider = entity->GetComponent<ColliderComponent>();
+                auto *collider = queryColliders[index];
                 auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
                 if (bodies[index].entity != entity ||
                     bodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbody))
@@ -1684,7 +1713,10 @@ namespace PlutoGE::scene
                 m_physicsQueryCache->world = BuildBulletQueryWorld(queryEntities, m_foliageComponents);
             }
         }
+    }
 
+    void Scene::SynchronizePhysicsQueryBodyTransforms() const
+    {
         if (m_physicsQueryCache->world)
         {
             for (auto &body : m_physicsQueryCache->world->bodies)
@@ -1705,7 +1737,6 @@ namespace PlutoGE::scene
                 body.synchronizedWorldTransform = worldTransform;
             }
         }
-        m_physicsQueryCache->refreshSequence = m_updateSequence;
     }
 
     void Scene::InvalidatePhysicsQueryCache() const
@@ -3072,6 +3103,12 @@ namespace PlutoGE::scene
 
     void Scene::Update(float deltaTime)
     {
+        struct UpdateInProgress
+        {
+            bool &flag;
+            explicit UpdateInProgress(bool &value) : flag(value) { flag = true; }
+            ~UpdateInProgress() { flag = false; }
+        } updateInProgress(m_updateInProgress);
         if (m_streaming)
             m_streaming->Pump();
         using Clock = std::chrono::high_resolution_clock;

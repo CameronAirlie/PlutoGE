@@ -280,6 +280,8 @@ namespace PlutoGE::render
           std::size_t jobIndex;
       };
       std::vector<PendingSkinning> m_pendingSkinning;
+      // Indices into m_pendingSkinning whose shadow bounds refit this flush.
+      std::vector<std::size_t> m_skinningRefits;
       // Entries deformed earlier this frame that a later list or view needs at a finer LOD.
       std::vector<SkinnedMesh *> m_skinningGrowth;
       std::vector<RhiSkinningJob> m_skinningJobs;

@@ -2211,32 +2211,46 @@ namespace PlutoGE::render
         // and execute on the GPU in that order. Inside each job `commands` is the job's context. A job writes only
         // its own caches and statistics; everything both read is prepared before Run.
         ParallelRecording recording(commands, m_parallelRecording ? &core::TaskPool::Shared() : nullptr);
-        recording.Add([&](rhi::ICommandContext &commands)
+        // Each job submits VSM meshes with binding state of its own.
+        const auto virtualShadowSubmitter = [this](rhi::ICommandContext &commands)
+        {
+            return [this, &commands, boundShadowMesh = static_cast<const BasicMesh *>(nullptr)](
+                const VirtualShadowMaps::Submission &submission) mutable
+            {
+                const auto &mesh = *submission.draw->mesh;
+                // OpenGL pipelines own VAOs, so a pipeline switch requires
+                // rebinding even when the mesh itself has not changed.
+                if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowMesh != &mesh)
+                {
+                    commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
+                    commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
+                    boundShadowMesh = &mesh;
+                }
+                if (submission.indirect)
+                {
+                    if (submission.commandCount > 1)
+                        commands.DrawIndexedIndirectBatch(submission.indirect, submission.indirectOffset, submission.commandCount);
+                    else commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
+                }
+                else
+                    commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
+            };
+        };
+        // VSM receiver depth and planning record apart from the caster pages that consume them: the pages are the
+        // longest shadow recording, and splitting there keeps every GPU scope inside one job.
+        std::vector<std::size_t> shadowJobs;
+        if (virtualShadowsActive)
+            shadowJobs.push_back(recording.Add([&](rhi::ICommandContext &commands)
+            {
+                core::CpuScope recordScope("VSM planning recording", core::CpuCategory::Rendering);
+                m_virtualShadows->RecordPlanning(commands, virtualShadowSubmitter(commands));
+            }));
+        shadowJobs.push_back(recording.Add([&](rhi::ICommandContext &commands)
         {
             if (virtualShadowsActive)
             {
-                const BasicMesh *boundShadowMesh = nullptr;
-                core::CpuScope recordScope("VSM recording", core::CpuCategory::Rendering);
-                m_virtualShadows->Record(commands, [&](const VirtualShadowMaps::Submission &submission)
-                {
-                    const auto &mesh = *submission.draw->mesh;
-                    // OpenGL pipelines own VAOs, so a pipeline switch requires
-                    // rebinding even when the mesh itself has not changed.
-                    if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundShadowMesh != &mesh)
-                    {
-                        commands.BindVertexBuffer(mesh.m_vertexBuffer.Get());
-                        commands.BindIndexBuffer(mesh.m_indexBuffer.Get());
-                        boundShadowMesh = &mesh;
-                    }
-                    if (submission.indirect)
-                    {
-                        if (submission.commandCount > 1)
-                            commands.DrawIndexedIndirectBatch(submission.indirect, submission.indirectOffset, submission.commandCount);
-                        else commands.DrawIndexedIndirect(submission.indirect, submission.indirectOffset);
-                    }
-                    else
-                        commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
-                });
+                core::CpuScope recordScope("VSM page recording", core::CpuCategory::Rendering);
+                m_virtualShadows->RecordPages(commands, virtualShadowSubmitter(commands));
                 m_frameStats.virtualShadows = m_virtualShadows->GetStats();
             }
             if (cascadedShadowsActive)
@@ -2688,7 +2702,7 @@ namespace PlutoGE::render
                 m_pointShadowSignature = pointSignature;
                 m_pointShadowCacheValid = true;
             }
-        });
+        }));
         rhi::RenderingInfo renderingInfo;
         EnsureGeometryTargets(geometryLayout);
         renderingInfo.colorAttachments = {m_colorTarget.Get()};
@@ -3035,7 +3049,7 @@ namespace PlutoGE::render
             }
         };
         std::vector<BasicDraw> transparentDraws;
-        recording.Add([&](rhi::ICommandContext &commands)
+        const auto geometryJob = recording.Add([&](rhi::ICommandContext &commands)
         {
             commands.BeginGpuScope(geometryScopeName);
             // Transition shadow outputs before entering dynamic rendering.
@@ -3182,7 +3196,9 @@ namespace PlutoGE::render
         m_timingStats.parallelRecording = recording.Run();
         const auto recordingEnd = std::chrono::steady_clock::now();
         // CPU time each pass took to record (they overlap when recorded in parallel).
-        m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, recordingStart) + recording.JobMilliseconds()[0];
+        m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, recordingStart);
+        for (const auto job : shadowJobs)
+            m_timingStats.shadowRecordingMs += recording.JobMilliseconds()[job];
         geometryScope.End();
         // Before decals, which relight from the composed surface colour.
         if (deferProbeIrradiance)
@@ -3194,7 +3210,7 @@ namespace PlutoGE::render
                 .width = m_width, .height = m_height, .inverseViewProjection = m_inverseViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
-        m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[1] + elapsedMs(recordingEnd, geometryRecordingEnd);
+        m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[geometryJob] + elapsedMs(recordingEnd, geometryRecordingEnd);
 
         m_outputColor = m_colorTarget.Get();
         core::CpuScope postScope("Post processing", core::CpuCategory::Rendering);

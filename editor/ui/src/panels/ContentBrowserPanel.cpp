@@ -1,4 +1,5 @@
 #include "PlutoGE/asset_import/AssetMoveService.h"
+#include "PlutoGE/asset_import/ModelSourcePackageCopy.h"
 #include "PlutoGE/asset_import/ModelObjectExtractionService.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
@@ -1001,8 +1002,8 @@ namespace PlutoGE::ui
             {
                 packageName = "ImportedModel";
             }
-            const auto packageDirectory = project.GetAssetDirectoryPath() / "SourceModels" / packageName;
-            std::filesystem::create_directories(packageDirectory, errorCode);
+            const auto modelsDirectory = project.GetAssetDirectoryPath() / "SourceModels";
+            std::filesystem::create_directories(modelsDirectory, errorCode);
             if (errorCode)
             {
                 if (errorMessage)
@@ -1012,75 +1013,20 @@ namespace PlutoGE::ui
                 return false;
             }
 
-            const auto sourceParent = sourceFilePath.parent_path();
-            for (std::filesystem::recursive_directory_iterator iterator(sourceParent, errorCode), end; iterator != end && !errorCode; iterator.increment(errorCode))
+            // Copy only the files the model references, never the rest of the
+            // folder it was picked from. A fresh folder per import keeps
+            // previously imported copies intact.
+            assetimport::ModelPackageCopyPlan plan;
+            if (!assetimport::CopyModelSourcePackage(sourceFilePath, MakeUniqueContentPath(modelsDirectory, packageName, {}), plan, errorMessage))
             {
-                const auto &entry = *iterator;
-                if (!entry.is_regular_file(errorCode) || errorCode)
-                {
-                    errorCode.clear();
-                    continue;
-                }
-
-                const auto relativePath = std::filesystem::relative(entry.path(), sourceParent, errorCode);
-                if (errorCode)
-                {
-                    break;
-                }
-
-                const auto destinationPath = packageDirectory / relativePath;
-                std::filesystem::create_directories(destinationPath.parent_path(), errorCode);
-                if (errorCode)
-                {
-                    break;
-                }
-
-                std::filesystem::copy_file(entry.path(), destinationPath, std::filesystem::copy_options::overwrite_existing, errorCode);
-                if (errorCode)
-                {
-                    break;
-                }
-            }
-
-            if (errorCode)
-            {
-                if (errorMessage)
-                {
-                    *errorMessage = "Failed to copy source model package: " + errorCode.message();
-                }
                 return false;
             }
-
-            importedSourcePath = packageDirectory / sourceFilePath.filename();
-            const auto sourceSize = std::filesystem::file_size(sourceFilePath, errorCode);
-            if (errorCode)
+            for (const auto &file : plan.flattened)
             {
-                if (errorMessage)
-                {
-                    *errorMessage = "Failed to read selected model size: " + errorCode.message();
-                }
-                return false;
+                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning,
+                                               "'" + file.filename().string() + "' is outside the model's folder and was placed beside it.");
             }
-
-            const auto importedSize = std::filesystem::file_size(importedSourcePath, errorCode);
-            if (errorCode)
-            {
-                if (errorMessage)
-                {
-                    *errorMessage = "Failed to read copied model size: " + errorCode.message();
-                }
-                return false;
-            }
-
-            if (importedSize == 0 || importedSize != sourceSize)
-            {
-                if (errorMessage)
-                {
-                    *errorMessage = "Copied model file is incomplete. Source size=" + std::to_string(sourceSize) +
-                                    " bytes, copied size=" + std::to_string(importedSize) + " bytes.";
-                }
-                return false;
-            }
+            importedSourcePath = plan.copiedSource;
             return true;
         }
 
@@ -2657,10 +2603,6 @@ namespace PlutoGE::ui
                                  minimum.y + metrics.labelTop + metrics.lineStep, ImGui::GetColorU32(ImGuiCol_TextDisabled, alpha));
         }
 
-        bool IsSupportedModelFile(const std::filesystem::path &path)
-        {
-            return IsSupportedImportedModelReference(path.string());
-        }
     }
 
     // ---------------------------------------------------------------------
@@ -3057,7 +2999,8 @@ namespace PlutoGE::ui
         case ContentCommand::Cut:
         case ContentCommand::Copy:
         case ContentCommand::Duplicate:
-        case ContentCommand::Delete: return anyEditable();
+        case ContentCommand::Delete:
+        case ContentCommand::DeletePermanently: return anyEditable();
         case ContentCommand::Paste: return !m_clipboardKeys.empty() && folderOnDisk;
         case ContentCommand::SelectAll: return !m_items.empty() && m_openModelReference.empty();
         case ContentCommand::RevealInFileManager:
@@ -3183,7 +3126,9 @@ namespace PlutoGE::ui
             break;
         }
         case ContentCommand::Delete:
+        case ContentCommand::DeletePermanently:
             m_pendingDeletePaths = ContentFileOperations::RemoveNested(PathsForKeys(scope.keys));
+            m_pendingDeleteMode = command == ContentCommand::Delete ? ContentDeleteMode::Trash : ContentDeleteMode::Permanent;
             m_openDeletePopup = !m_pendingDeletePaths.empty();
             break;
         case ContentCommand::SelectAll:
@@ -3248,6 +3193,10 @@ namespace PlutoGE::ui
         for (const auto &error : report.errors)
         {
             shell.Log(EditorShell::ConsoleSeverity::Error, error);
+        }
+        for (const auto &warning : report.warnings)
+        {
+            shell.Log(EditorShell::ConsoleSeverity::Warning, warning);
         }
         if (!project || !report.Changed())
         {
@@ -3886,6 +3835,7 @@ namespace PlutoGE::ui
         CommandMenuItem(ContentCommand::Duplicate, scope);
         CommandMenuItem(ContentCommand::Rename, scope, icons::Rename);
         CommandMenuItem(ContentCommand::Delete, scope, icons::Trash);
+        CommandMenuItem(ContentCommand::DeletePermanently, scope);
         ImGui::Separator();
         CommandMenuItem(ContentCommand::RevealInFileManager, scope, icons::FolderOpen);
         if (!item.folder) CommandMenuItem(ContentCommand::OpenWithSystem, scope, icons::OpenExternal);
@@ -3915,6 +3865,7 @@ namespace PlutoGE::ui
             CommandMenuItem(ContentCommand::Duplicate, scope);
             CommandMenuItem(ContentCommand::Rename, scope, icons::Rename);
             CommandMenuItem(ContentCommand::Delete, scope, icons::Trash);
+            CommandMenuItem(ContentCommand::DeletePermanently, scope);
         }
         ImGui::Separator();
         CommandMenuItem(ContentCommand::RevealInFileManager, scope, icons::FolderOpen);
@@ -4309,9 +4260,9 @@ namespace PlutoGE::ui
             if (std::filesystem::is_directory(imported, error))
             {
                 for (std::filesystem::recursive_directory_iterator it(imported, error), end; it != end && !error; it.increment(error))
-                    if (it->is_regular_file(error) && IsSupportedModelFile(it->path())) models.push_back(it->path());
+                    if (it->is_regular_file(error) && assetimport::IsSupportedModelSourceFile(it->path())) models.push_back(it->path());
             }
-            else if (IsSupportedModelFile(imported))
+            else if (assetimport::IsSupportedModelSourceFile(imported))
             {
                 models.push_back(imported);
             }
@@ -4339,12 +4290,14 @@ namespace PlutoGE::ui
             return;
         }
         const auto count = m_pendingDeletePaths.size();
+        const bool permanent = m_pendingDeleteMode == ContentDeleteMode::Permanent;
         const bool anyFolder = std::any_of(m_pendingDeletePaths.begin(), m_pendingDeletePaths.end(), [](const std::filesystem::path &path)
                                            { std::error_code error; return std::filesystem::is_directory(path, error); });
+        const char *verb = permanent ? "Permanently delete" : "Move to the trash:";
         if (count == 1)
-            ImGui::TextWrapped("Permanently delete '%s'?", PathToUtf8(m_pendingDeletePaths.front().filename()).c_str());
+            ImGui::TextWrapped(permanent ? "%s '%s'?" : "%s '%s'", verb, PathToUtf8(m_pendingDeletePaths.front().filename()).c_str());
         else
-            ImGui::Text("Permanently delete %zu items?", count);
+            ImGui::Text(permanent ? "%s %zu items?" : "%s %zu items", verb, count);
         constexpr std::size_t kListed = 8;
         if (count > 1)
         {
@@ -4352,18 +4305,32 @@ namespace PlutoGE::ui
                 ImGui::BulletText("%s", PathToUtf8(m_pendingDeletePaths[index].filename()).c_str());
             if (count > kListed) ImGui::TextDisabled("...and %zu more", count - kListed);
         }
-        if (anyFolder) ImGui::TextDisabled("Folders are deleted with all of their contents.");
-        ImGui::TextDisabled("This cannot be undone. Scenes that use these assets will lose them.");
+        if (anyFolder) ImGui::TextDisabled("Folders are removed with all of their contents.");
+        ImGui::TextDisabled(permanent ? "This cannot be undone. Scenes that use these assets will lose them."
+                                      : "Restore items from the system trash to bring them back.");
         ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Button, GetEditorColorU32(EditorColor::Error, 0.75f));
-        const bool confirmed = ImGui::Button("Delete") || ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+        const auto remove = [&](ContentDeleteMode mode)
+        {
+            const auto report = ContentFileOperations(project).Delete(m_pendingDeletePaths, mode);
+            const auto removed = std::to_string(report.moved.size()) + " item(s)";
+            ApplyReport(report, mode == ContentDeleteMode::Trash ? "Moved " + removed + " to the trash." : "Deleted " + removed + ".");
+            if (mode == ContentDeleteMode::Trash && !report.errors.empty())
+                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning,
+                                               "Items that could not be trashed were kept; use Delete Permanently (Shift+Del) to remove them.");
+            m_pendingDeletePaths.clear();
+            ImGui::CloseCurrentPopup();
+        };
+        ImGui::PushStyleColor(ImGuiCol_Button, GetEditorColorU32(permanent ? EditorColor::Error : EditorColor::Accent, 0.75f));
+        const bool confirmed = ImGui::Button(permanent ? "Delete Permanently" : "Move to Trash") || ImGui::IsKeyPressed(ImGuiKey_Enter, false);
         ImGui::PopStyleColor();
         if (confirmed)
         {
-            const auto report = ContentFileOperations(project).Delete(m_pendingDeletePaths);
-            ApplyReport(report, "Deleted " + std::to_string(report.moved.size()) + " item(s).");
-            m_pendingDeletePaths.clear();
-            ImGui::CloseCurrentPopup();
+            remove(m_pendingDeleteMode);
+        }
+        else if (!permanent)
+        {
+            ImGui::SameLine();
+            if (ImGui::Button("Delete Permanently")) remove(ContentDeleteMode::Permanent);
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false))

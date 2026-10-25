@@ -5,6 +5,7 @@ add_library(PlutoGEAssetImport
     src/ModelObjectExtractionService.cpp
     src/ModelGenerationExtraction.cpp
     src/AssetMoveService.cpp
+    src/ModelSourcePackageCopy.cpp
     src/ImportWatch.cpp
     src/ImportDependencyIndex.cpp
     src/ImportState.cpp

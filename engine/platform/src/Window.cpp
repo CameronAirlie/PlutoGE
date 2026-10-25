@@ -4,6 +4,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 extern "C" int plutoSetJoystickRumble(int, unsigned short, unsigned short);
 
 #ifdef _WIN32
@@ -74,6 +75,50 @@ namespace PlutoGE::platform
             }
         }
 #endif
+    }
+
+    namespace
+    {
+        // Native windows whose drops are delivered to another Window.
+        std::unordered_map<GLFWwindow *, Window *> &DropForwarding()
+        {
+            static std::unordered_map<GLFWwindow *, Window *> forwarding;
+            return forwarding;
+        }
+    }
+
+    void GLFWDropCallback(GLFWwindow *window, int count, const char **paths)
+    {
+        const auto forwarded = DropForwarding().find(window);
+        auto *instance = forwarded != DropForwarding().end() ? forwarded->second
+                                                             : static_cast<Window *>(glfwGetWindowUserPointer(window));
+        if (!instance)
+        {
+            return;
+        }
+        // GLFW reports UTF-8 paths.
+        for (int index = 0; index < count; ++index)
+        {
+            instance->m_droppedPaths.emplace_back(std::u8string(reinterpret_cast<const char8_t *>(paths[index])));
+        }
+    }
+
+    void Window::ForwardDropsFrom(GLFWwindow *window)
+    {
+        if (!window || window == m_window)
+        {
+            return;
+        }
+        DropForwarding()[window] = this;
+        glfwSetDropCallback(window, GLFWDropCallback);
+    }
+
+    void Window::StopForwardingDropsFrom(GLFWwindow *window)
+    {
+        if (DropForwarding().erase(window) > 0)
+        {
+            glfwSetDropCallback(window, nullptr);
+        }
     }
 
     void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height)
@@ -230,18 +275,7 @@ namespace PlutoGE::platform
             instance->m_inputState.mouseState.scrollDeltaX += xOffset;
             instance->m_inputState.mouseState.scrollDeltaY += yOffset; });
 
-        glfwSetDropCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, int count, const char **paths)
-                            {
-            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
-            if (!instance)
-            {
-                return;
-            }
-            // GLFW reports UTF-8 paths.
-            for (int index = 0; index < count; ++index)
-            {
-                instance->m_droppedPaths.emplace_back(std::u8string(reinterpret_cast<const char8_t *>(paths[index])));
-            } });
+        glfwSetDropCallback(static_cast<GLFWwindow *>(m_window), GLFWDropCallback);
 
         glfwSetWindowCloseCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window)
                                    {
@@ -369,6 +403,7 @@ namespace PlutoGE::platform
     void Window::Close()
     {
         StopGamepadVibration();
+        std::erase_if(DropForwarding(), [this](const auto &entry) { return entry.second == this; });
         if (m_window)
         {
             glfwDestroyWindow(m_window);

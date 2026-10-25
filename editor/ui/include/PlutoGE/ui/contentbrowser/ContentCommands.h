@@ -19,6 +19,7 @@ namespace PlutoGE::ui
         Paste,
         Duplicate,
         Delete,
+        DeletePermanently,
         SelectAll,
         RevealInFileManager,
         OpenWithSystem,

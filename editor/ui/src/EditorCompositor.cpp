@@ -21,6 +21,64 @@ namespace PlutoGE::ui
 {
     namespace
     {
+        // ImGui creates a native window for each detached viewport. Wrapping its
+        // platform hooks lets those windows deliver OS file drops to the main
+        // window, so the content browser receives them wherever it is docked.
+        struct ViewportDropForwarding
+        {
+            platform::Window *target = nullptr;
+            void (*create)(ImGuiViewport *) = nullptr;
+            void (*destroy)(ImGuiViewport *) = nullptr;
+        };
+
+        ViewportDropForwarding &DropForwarding()
+        {
+            static ViewportDropForwarding forwarding;
+            return forwarding;
+        }
+
+        void InstallViewportDropForwarding(platform::Window &window)
+        {
+            auto &forwarding = DropForwarding();
+            auto &platformIO = ImGui::GetPlatformIO();
+            forwarding.target = &window;
+            forwarding.create = platformIO.Platform_CreateWindow;
+            forwarding.destroy = platformIO.Platform_DestroyWindow;
+            if (forwarding.create)
+            {
+                platformIO.Platform_CreateWindow = [](ImGuiViewport *viewport)
+                {
+                    auto &state = DropForwarding();
+                    state.create(viewport);
+                    if (state.target && viewport->PlatformHandle)
+                        state.target->ForwardDropsFrom(static_cast<GLFWwindow *>(viewport->PlatformHandle));
+                };
+            }
+            if (forwarding.destroy)
+            {
+                platformIO.Platform_DestroyWindow = [](ImGuiViewport *viewport)
+                {
+                    auto &state = DropForwarding();
+                    if (state.target && viewport->PlatformHandle)
+                        state.target->StopForwardingDropsFrom(static_cast<GLFWwindow *>(viewport->PlatformHandle));
+                    state.destroy(viewport);
+                };
+            }
+        }
+
+        // Call before the GLFW backend shuts down, which destroys viewport windows.
+        void RemoveViewportDropForwarding()
+        {
+            auto &forwarding = DropForwarding();
+            if (ImGui::GetCurrentContext())
+            {
+                auto &platformIO = ImGui::GetPlatformIO();
+                if (forwarding.create) platformIO.Platform_CreateWindow = forwarding.create;
+                if (forwarding.destroy) platformIO.Platform_DestroyWindow = forwarding.destroy;
+            }
+            forwarding = {};
+        }
+
         class OpenGlEditorCompositor final : public IEditorCompositor
         {
         public:
@@ -33,7 +91,10 @@ namespace PlutoGE::ui
                     return false;
                 m_device = &device;
                 m_window = static_cast<GLFWwindow *>(window.GetWindow());
-                return m_window && ImGui_ImplGlfw_InitForOpenGL(m_window, true) && ImGui_ImplOpenGL3_Init("#version 330 core");
+                if (!m_window || !ImGui_ImplGlfw_InitForOpenGL(m_window, true) || !ImGui_ImplOpenGL3_Init("#version 330 core"))
+                    return false;
+                InstallViewportDropForwarding(window);
+                return true;
             }
 
             void Shutdown() override
@@ -46,6 +107,7 @@ namespace PlutoGE::ui
                     }
                 m_textures.clear();
                 ImGui_ImplOpenGL3_Shutdown();
+                RemoveViewportDropForwarding();
                 ImGui_ImplGlfw_Shutdown();
                 m_window = nullptr;
                 m_device = nullptr;
@@ -272,6 +334,7 @@ namespace PlutoGE::ui
                     for (const auto &entry : m_textures)
                         if (entry.inUse)
                             m_device->PrepareTextureForEditorSampling(commandContext, entry.texture); });
+                InstallViewportDropForwarding(window);
                 return true;
             }
 
@@ -297,6 +360,7 @@ namespace PlutoGE::ui
                 }
                 m_retiredDescriptors.clear();
                 ImGui_ImplVulkan_Shutdown();
+                RemoveViewportDropForwarding();
                 ImGui_ImplGlfw_Shutdown();
                 m_drawData = nullptr;
                 m_swapchain = nullptr;

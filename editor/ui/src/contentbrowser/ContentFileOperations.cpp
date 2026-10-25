@@ -1,10 +1,12 @@
 #include "PlutoGE/ui/contentbrowser/ContentFileOperations.h"
 
 #include "PlutoGE/asset_import/AssetMoveService.h"
+#include "PlutoGE/asset_import/ModelSourcePackageCopy.h"
 #include "PlutoGE/asset_import/ProjectImportLock.h"
 #include "PlutoGE/assets/AssetMetadata.h"
 #include "PlutoGE/assets/AssetPathPolicy.h"
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/ui/SystemShell.h"
 #include "PlutoGE/ui/contentbrowser/ContentPaths.h"
 
 #include <algorithm>
@@ -70,9 +72,13 @@ namespace PlutoGE::ui
         }
     }
 
-    ContentFileOperations::ContentFileOperations(const assets::Project &project)
-        : m_project(project), m_assetRoot(project.GetAssetDirectoryPath().lexically_normal())
+    ContentFileOperations::ContentFileOperations(const assets::Project &project, ContentTrashFunction trash)
+        : m_project(project), m_trash(std::move(trash)), m_assetRoot(project.GetAssetDirectoryPath().lexically_normal())
     {
+        if (!m_trash)
+        {
+            m_trash = [](const std::filesystem::path &path, std::string *error) { return MoveToTrash(path, error); };
+        }
     }
 
     bool ContentFileOperations::IsInside(const std::filesystem::path &path) const
@@ -274,7 +280,7 @@ namespace PlutoGE::ui
         return report;
     }
 
-    ContentOperationReport ContentFileOperations::Delete(std::span<const std::filesystem::path> items) const
+    ContentOperationReport ContentFileOperations::Delete(std::span<const std::filesystem::path> items, ContentDeleteMode mode) const
     {
         ContentOperationReport report;
         // Imports and cooks hold the same lock; never delete underneath them.
@@ -285,6 +291,17 @@ namespace PlutoGE::ui
             report.errors.push_back("Cannot delete while assets are being imported: " + lockError);
             return report;
         }
+        const auto removeOne = [&](const std::filesystem::path &path, std::string &error)
+        {
+            if (mode == ContentDeleteMode::Trash)
+            {
+                return m_trash(path, &error);
+            }
+            std::error_code code;
+            IsDirectory(path) ? std::filesystem::remove_all(path, code) : std::filesystem::remove(path, code);
+            if (code) error = code.message();
+            return !code;
+        };
         for (const auto &item : RemoveNested(items))
         {
             if (!IsEditable(item))
@@ -292,29 +309,61 @@ namespace PlutoGE::ui
                 report.errors.push_back("'" + DisplayName(item) + "' cannot be deleted.");
                 continue;
             }
-            std::error_code error;
-            if (IsDirectory(item))
+            std::string error;
+            if (!removeOne(item, error))
             {
-                std::filesystem::remove_all(item, error);
-            }
-            else
-            {
-                std::filesystem::remove(item, error);
-                if (!error)
-                {
-                    std::error_code sidecarError;
-                    std::filesystem::remove(assets::GetAssetMetadataPath(item), sidecarError);
-                    if (IsMesh(item)) std::filesystem::remove(MaterialOverridesPath(item), sidecarError);
-                }
-            }
-            if (error)
-            {
-                report.errors.push_back("Could not delete '" + DisplayName(item) + "': " + error.message());
+                report.errors.push_back("Could not delete '" + DisplayName(item) + "': " + error);
                 continue;
+            }
+            if (!IsDirectory(item))
+            {
+                // Sidecars follow their asset; a failure here leaves only a
+                // stale sidecar, which the next asset scan ignores.
+                std::vector<std::filesystem::path> sidecars{assets::GetAssetMetadataPath(item)};
+                if (IsMesh(item)) sidecars.push_back(MaterialOverridesPath(item));
+                for (const auto &sidecar : sidecars)
+                {
+                    if (!Exists(sidecar)) continue;
+                    std::string sidecarError;
+                    if (!removeOne(sidecar, sidecarError))
+                        report.warnings.push_back("Could not remove '" + DisplayName(sidecar) + "': " + sidecarError);
+                }
             }
             report.moved.emplace_back(item, std::filesystem::path{});
         }
         return report;
+    }
+
+    bool ContentFileOperations::ImportModel(const std::filesystem::path &source, const std::filesystem::path &destination,
+                                            ContentOperationReport &report) const
+    {
+        std::vector<std::filesystem::path> dependencies;
+        std::string error;
+        if (!assetimport::CollectModelSourceDependencies(source, dependencies, &error))
+        {
+            report.errors.push_back("Could not read '" + DisplayName(source) + "': " + error);
+            return false;
+        }
+        if (dependencies.empty())
+        {
+            return CopyOne(source, MakeUniqueContentPath(destination, PathToUtf8(source.stem()), PathToUtf8(source.extension())), report);
+        }
+        // Keep a model and the files it references together in their own folder.
+        const auto package = MakeUniqueContentPath(destination, PathToUtf8(source.stem()), {});
+        assetimport::ModelPackageCopyPlan plan;
+        if (!assetimport::CopyModelSourcePackage(source, dependencies, package, plan, &error))
+        {
+            report.errors.push_back("Could not import '" + DisplayName(source) + "': " + error);
+            return false;
+        }
+        RemoveIdentitySidecars(package);
+        for (const auto &file : plan.flattened)
+        {
+            report.warnings.push_back("'" + DisplayName(file) + "' is outside the model's folder and was placed beside '" +
+                                      DisplayName(source) + "'; check the model's references to it.");
+        }
+        report.results.push_back(package);
+        return true;
     }
 
     ContentOperationReport ContentFileOperations::Import(std::span<const std::filesystem::path> externalItems,
@@ -342,6 +391,11 @@ namespace PlutoGE::ui
                 continue;
             }
             const bool directory = IsDirectory(item);
+            if (!directory && assetimport::IsSupportedModelSourceFile(item))
+            {
+                ImportModel(item, target, report);
+                continue;
+            }
             const auto name = directory ? item.filename() : item.stem();
             const auto extension = directory ? std::filesystem::path{} : item.extension();
             CopyOne(item, MakeUniqueContentPath(target, PathToUtf8(name), PathToUtf8(extension)), report);

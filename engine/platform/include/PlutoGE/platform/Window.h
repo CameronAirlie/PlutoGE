@@ -66,6 +66,10 @@ namespace PlutoGE::platform
         // Valid until the next poll; consumers check where the cursor is.
         [[nodiscard]] const std::vector<std::filesystem::path> &GetDroppedPaths() const { return m_droppedPaths; }
         void ClearDroppedPaths() { m_droppedPaths.clear(); }
+        // Delivers OS file drops on another native window (such as a detached
+        // editor viewport) through this window's GetDroppedPaths.
+        void ForwardDropsFrom(GLFWwindow *window);
+        void StopForwardingDropsFrom(GLFWwindow *window);
 
         void SetResizeCallback(const std::function<void(int, int)> &callback);
         void SetCursorLocked(bool locked);
@@ -82,6 +86,7 @@ namespace PlutoGE::platform
 
     private:
         friend void GLFWFramebufferResizeCallback(GLFWwindow *window, int width, int height);
+        friend void GLFWDropCallback(GLFWwindow *window, int count, const char **paths);
 
         std::array<int, MaxGamepads> m_gamepadJoysticks = [] { std::array<int, MaxGamepads> ids{}; ids.fill(-1); return ids; }();
         std::array<double, 16> m_rumbleUntil{};

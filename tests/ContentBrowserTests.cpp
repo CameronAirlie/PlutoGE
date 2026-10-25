@@ -1,3 +1,4 @@
+#include "PlutoGE/asset_import/ModelSourcePackageCopy.h"
 #include "PlutoGE/assets/AssetMetadata.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/ui/contentbrowser/ContentCommands.h"
@@ -9,6 +10,7 @@
 #include "PlutoGE/ui/contentbrowser/ContentSorting.h"
 #include "PlutoGE/ui/SystemShell.h"
 
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -186,12 +188,13 @@ namespace
         Require(ui::ContentFileOperations::RemoveNested(nested).size() == 2, "Items inside listed folders must be dropped");
 
         const std::vector<fs::path> deleteItems{folder / "Ground.plutomesh"};
-        auto deleted = operations.Delete(deleteItems);
+        auto deleted = operations.Delete(deleteItems, ui::ContentDeleteMode::Permanent);
         Require(deleted.Succeeded() && !fs::exists(folder / "Ground.plutomesh") && !fs::exists(folder / "Ground.plutomesh.materials") &&
                     !fs::exists(assets::GetAssetMetadataPath(folder / "Ground.plutomesh")) && deleted.moved.front().second.empty(),
                 "Deletes must remove the asset and its sidecars");
         const std::vector<fs::path> forbidden{assetsRoot, scratch.root / "Content.plutoproject"};
-        Require(operations.Delete(forbidden).errors.size() == 2 && fs::exists(assetsRoot), "The asset root and outside files must be protected");
+        Require(operations.Delete(forbidden, ui::ContentDeleteMode::Permanent).errors.size() == 2 && fs::exists(assetsRoot),
+                "The asset root and outside files must be protected");
 
         const auto outside = scratch.root / "Outside";
         Write(outside / "Texture.png", "png");
@@ -203,6 +206,84 @@ namespace
         Require(imported.Succeeded() && Read(folder / "Texture 2.png") == "png" && Read(folder / "Texture.png") == "existing" &&
                     fs::exists(folder / "Pack" / "Inner.txt") && !fs::exists(folder / "Pack" / "Inner.txt.plutometa"),
                 "Imports must keep names, avoid collisions and drop foreign identities");
+
+        // Trashing goes through the injected trash and takes sidecars along.
+        const auto trash = scratch.root / "Trash";
+        const ui::ContentFileOperations trashing(project, [&](const fs::path &path, std::string *message)
+                                                 { return ui::MoveToFreedesktopTrash(path, trash, message); });
+        Write(folder / "Old.plutomesh", "old");
+        Write(folder / "Old.plutomesh.materials", "old overrides");
+        Require(assets::SaveAssetMetadata(assets::GetAssetMetadataPath(folder / "Old.plutomesh"), {.id = "old-mesh"},
+                                          assets::AssetMetadataWriteMode::CreateOnly, &error), error);
+        const std::vector<fs::path> trashItems{folder / "Old.plutomesh"};
+        auto trashed = trashing.Delete(trashItems);
+        Require(trashed.Succeeded() && !fs::exists(folder / "Old.plutomesh") && Read(trash / "files" / "Old.plutomesh") == "old" &&
+                    fs::exists(trash / "files" / "Old.plutomesh.materials") &&
+                    fs::exists(trash / "files" / assets::GetAssetMetadataPath(folder / "Old.plutomesh").filename()),
+                "Trashing must keep the asset and its sidecars recoverable");
+    }
+
+    void TestTrash()
+    {
+        Scratch scratch;
+        const auto trash = scratch.root / "Trash";
+        const auto item = scratch.root / "Assets" / "My File #1.txt";
+        Write(item, "first");
+        std::string error;
+        Require(ui::MoveToFreedesktopTrash(item, trash, &error) && !fs::exists(item), error);
+        const auto info = Read(trash / "info" / "My File #1.txt.trashinfo");
+        Require(info.starts_with("[Trash Info]\nPath=") && info.find("My%20File%20%231.txt\n") != std::string::npos &&
+                    info.find("\nDeletionDate=") != std::string::npos,
+                "Trash info must record the percent-encoded original path and date");
+        Write(item, "second");
+        Require(ui::MoveToFreedesktopTrash(item, trash, &error) && Read(trash / "files" / "My File #1.2.txt") == "second" &&
+                    Read(trash / "files" / "My File #1.txt") == "first",
+                "Trashing a second item with the same name must not replace the first");
+        Require(!ui::MoveToFreedesktopTrash(item, trash, &error), "Trashing a missing item must fail");
+    }
+
+    void TestModelPackages()
+    {
+        using assetimport::PlanModelPackageCopy;
+        const fs::path model = "/work/models/car/car.gltf";
+        const std::vector<fs::path> nearby{"/work/models/car/textures/paint.png", "/work/models/shared/tyre.png",
+                                           "/work/models/car/car.bin"};
+        const auto plan = PlanModelPackageCopy(model, nearby, "/project/Assets/Car");
+        Require(plan.copiedSource == "/project/Assets/Car/car/car.gltf" && plan.flattened.empty() && plan.files.size() == 4,
+                "Packages must root at the deepest folder holding every nearby file");
+        Require(std::find(plan.files.begin(), plan.files.end(),
+                          std::pair<fs::path, fs::path>{"/work/models/shared/tyre.png", "/project/Assets/Car/shared/tyre.png"}) != plan.files.end(),
+                "Sibling-folder dependencies must keep their relative path");
+
+        const std::vector<fs::path> distant{"/elsewhere/library/stone.png", "/other/stone.png"};
+        const auto flat = PlanModelPackageCopy(model, distant, "/project/Assets/Car");
+        Require(flat.copiedSource == "/project/Assets/Car/car.gltf" && flat.flattened.size() == 2 &&
+                    flat.files[1].second == "/project/Assets/Car/stone.png" && flat.files[2].second == "/project/Assets/Car/stone_2.png",
+                "Distant dependencies must be placed beside the model with unique names");
+        Require(assetimport::IsSupportedModelSourceFile("a.GLB") && !assetimport::IsSupportedModelSourceFile("a.png"),
+                "Model detection must ignore case");
+
+        // A real glTF whose buffer lives in a subfolder; unrelated neighbours must stay behind.
+        Scratch scratch;
+        const auto source = scratch.root / "Download";
+        Write(source / "tri.gltf", R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0]}],"nodes":[{"mesh":0}],
+            "meshes":[{"primitives":[{"attributes":{"POSITION":0}}]}],
+            "buffers":[{"uri":"buffers/tri.bin","byteLength":36}],
+            "bufferViews":[{"buffer":0,"byteOffset":0,"byteLength":36}],
+            "accessors":[{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}]})");
+        const float positions[9] = {0, 0, 0, 1, 0, 0, 0, 1, 0};
+        fs::create_directories(source / "buffers");
+        std::ofstream(source / "buffers" / "tri.bin", std::ios::binary).write(reinterpret_cast<const char *>(positions), sizeof(positions));
+        Write(source / "unrelated.txt", "not part of the model");
+
+        assets::Project project(scratch.root / "Models.plutoproject", assets::ProjectManifest{});
+        const ui::ContentFileOperations operations(project);
+        const std::vector<fs::path> drop{source / "tri.gltf"};
+        const auto imported = operations.Import(drop, scratch.root / "Assets");
+        const auto package = scratch.root / "Assets" / "tri";
+        Require(imported.Succeeded() && imported.results == std::vector<fs::path>{package} && fs::exists(package / "tri.gltf") &&
+                    fs::file_size(package / "buffers" / "tri.bin") == sizeof(positions) && !fs::exists(package / "unrelated.txt"),
+                "A dropped glTF must bring exactly its buffers: " + (imported.errors.empty() ? std::string{} : imported.errors.front()));
     }
 }
 
@@ -214,6 +295,8 @@ try
     TestSelectionAndHistory();
     TestCommands();
     TestFileOperations();
+    TestTrash();
+    TestModelPackages();
     std::cout << "Content browser tests passed\n";
     return 0;
 }

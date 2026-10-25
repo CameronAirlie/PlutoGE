@@ -252,6 +252,7 @@ namespace PlutoGE::ui
         InlineRename m_rename;
         std::string m_renameWhenShown; // Starts a rename once the item appears (after creation).
         std::vector<std::filesystem::path> m_pendingDeletePaths;
+        ContentDeleteMode m_pendingDeleteMode = ContentDeleteMode::Trash;
         bool m_openDeletePopup = false;
 
         std::unique_ptr<AssetThumbnailCache> m_thumbnailCache;

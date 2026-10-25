@@ -15,18 +15,22 @@
   or folder-tree context menus, or Ctrl+Shift+N. A new folder opens for renaming.
 - **Rename** inline with F2 or the context menu. Files keep their extension so
   a rename cannot change an asset's type; Enter commits and Escape cancels.
-- **Cut / Copy / Paste / Duplicate / Delete** (Ctrl+X / C / V / D, Del) act on
-  the whole selection. Cut items are dimmed until pasted. Delete asks for
-  confirmation and lists what will be removed.
+- **Cut / Copy / Paste / Duplicate** (Ctrl+X / C / V / D) act on the whole
+  selection. Cut items are dimmed until pasted.
+- **Delete** (Del) moves the selection to the system trash (Recycle Bin, Finder
+  Trash, or the freedesktop.org trash on Linux) after confirming, so it can be
+  restored. Shift+Del, or the dialog's second button, deletes permanently.
 - **Drag and drop** items onto folder cards, list rows, tree nodes or
   breadcrumbs to move them; hold Ctrl to copy. Dragging a selected item moves
   the whole selection. Assets still drag into the scene and hierarchy as before.
 - **Import from the OS** by dropping files or folders from your file manager
-  onto the editor window. They land in the folder under the cursor or the
-  current folder, keep their names (numbered on collisions), and dropped
-  .gltf/.glb/.fbx models are imported. Drop a model's folder to bring its
-  textures and buffers; dropping a lone .gltf copies only that file. Drops onto
-  detached (floating) editor windows are not received yet.
+  onto any editor window, including detached (floating) ones. They land in the
+  folder under the cursor or the current folder and keep their names (numbered
+  on collisions). A dropped .gltf/.glb/.fbx brings exactly the files it
+  references (buffers, textures) in a folder named after it, keeping their
+  relative layout, and is then imported. **Add > Import > 3D Model...** copies
+  the same way into `SourceModels/<name>`, never the rest of the folder the
+  model was picked from.
 - **System integration**: Show in File Manager (Ctrl+Shift+R; selects the item
   in Nautilus, Dolphin, Explorer or Finder), Open with Default App, Copy Path
   (Ctrl+Alt+C) and Copy Asset Reference.
@@ -42,8 +46,11 @@ scene behind it. F5 still starts Play.
   asset IDs stay stable. Imported model objects and generated manifests
   cannot be moved independently (the service explains why).
 - Copies drop identity sidecars, so every copy receives a fresh ID.
-- Deletes remove an asset's sidecar and mesh material overrides with it, and
-  wait if an import holds the project lock. They are permanent.
+- Deletes take an asset's sidecar and mesh material overrides with it (into
+  the trash too, so restoring all of them brings the asset back with its ID),
+  and wait if an import holds the project lock. An item that cannot be
+  trashed (for example on a drive without a trash) is kept, and the console
+  suggests Delete Permanently.
 - Every edit is confined to the asset directory and refuses project
   infrastructure, the asset root and paths outside the project.
 
@@ -62,9 +69,11 @@ scene behind it. F5 still starts Play.
 | `ContentPaths` | Asset-relative folder helpers, name validation and unique names. |
 | `ContentFormatting` | Size and timestamp display. |
 
-`ui/SystemShell` opens and reveals paths with the operating system without
-going through a shell, and `platform::Window::GetDroppedPaths()` exposes OS
-file drops for the frame after they arrive.
+`ui/SystemShell` opens, reveals and trashes paths with the operating system
+without going through a shell. `platform::Window::GetDroppedPaths()` exposes OS
+file drops for the frame after they arrive; the editor compositor forwards
+drops from detached viewport windows to it. `assetimport::ModelSourcePackageCopy`
+collects a model's dependencies through the importer and copies only those.
 
 Items are keyed by asset reference, or `folder://<relative path>` for folders,
 so selection, clipboard and history survive renames: file operations report
@@ -91,10 +100,15 @@ sorting and every sort key, selection ranges/toggling/remapping, history,
 the command table, file URIs, and file operations against a temporary project
 (unique folder names, sidecar-preserving renames and moves, self-move and
 self-copy rejection, copies that drop identities but keep material overrides,
-sidecar-aware deletes, protected paths, and imports with collisions).
+sidecar-aware deletes and trashing, protected paths, and imports with
+collisions), the freedesktop trash (encoded info files, no replacement of
+same-named items), model package layout planning, and a real glTF drop that
+must bring its buffer and leave unrelated neighbours behind.
 
 Interactive checks: create and rename a folder; drag a multi-selection into a
 folder with and without Ctrl; cut and paste across folders; delete a folder;
 switch to list view and sort by each column; drop files from the OS onto a
-folder card; reveal an asset in the file manager; confirm Delete in the
-browser leaves the scene selection untouched.
+folder card and onto a detached browser window; drop a .gltf with external
+textures; trash an asset and restore it from the system trash; reveal an asset
+in the file manager; confirm Delete in the browser leaves the scene selection
+untouched.

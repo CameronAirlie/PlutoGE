@@ -5,3 +5,4 @@ build/
 **/.plutoge-cache/
 tests/managed/**/bin/
 tests/managed/**/obj/
+compile_commands.json

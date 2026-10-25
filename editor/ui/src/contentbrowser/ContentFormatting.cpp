@@ -28,7 +28,7 @@ namespace PlutoGE::ui
 
     std::int64_t ToUnixSeconds(std::filesystem::file_time_type time)
     {
-        const auto system = std::chrono::file_clock::to_sys(time);
+        const auto system = std::chrono::clock_cast<std::chrono::system_clock>(time);
         return std::chrono::duration_cast<std::chrono::seconds>(system.time_since_epoch()).count();
     }
 

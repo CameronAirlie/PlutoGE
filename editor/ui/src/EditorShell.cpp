@@ -2239,12 +2239,12 @@ namespace PlutoGE::ui
             if (auto *mesh = meshComponent->GetMesh())
             {
                 const glm::vec3 worldScale = selectedEntity->GetWorldScale();
-                const float maxScale = std::max(worldScale.x, std::max(worldScale.y, worldScale.z));
-                radius = std::max(mesh->GetBounds().radius * maxScale, 0.5f);
+                const float maxScale = (std::max)(worldScale.x, (std::max)(worldScale.y, worldScale.z));
+                radius = (std::max)(mesh->GetBounds().radius * maxScale, 0.5f);
             }
         }
 
-        camera.position = selectedEntity->GetWorldPosition() - forward * std::max(radius * 2.5f, 2.0f);
+        camera.position = selectedEntity->GetWorldPosition() - forward * (std::max)(radius * 2.5f, 2.0f);
     }
 
     scene::Entity *EditorShell::GetSelectedEntity()

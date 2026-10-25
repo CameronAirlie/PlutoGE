@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
+#include <cstdlib>
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 
@@ -820,6 +821,11 @@ namespace PlutoGE::scripting
                             if (tokens.size() >= 5)
                             {
                                 currentClass->assignableTypeNames = SplitEscaped(tokens[4], ';');
+                            }
+                            if (tokens.size() >= 6)
+                            {
+                                currentClass->callbacks = static_cast<std::uint8_t>(
+                                    std::clamp(std::atoi(tokens[5].c_str()), 0, static_cast<int>(AllScriptCallbacks)));
                             }
                         }
                         else if (tokens[0] == "FIELD" && tokens.size() >= 5 && currentClass)
@@ -3726,6 +3732,8 @@ namespace PlutoGE::scripting
 
     struct HostFxrScriptRuntime::Impl
     {
+        // Scene update sequence whose UI events managed OnUpdate last dispatched.
+        std::uint64_t frameEventSequence = UINT64_MAX;
 #if defined(_WIN32) || defined(__linux__)
 #ifdef _WIN32
         HMODULE hostfxrLibrary = nullptr;
@@ -4328,8 +4336,16 @@ namespace PlutoGE::scripting
             ManagedScriptInstance(std::shared_ptr<HostFxrScriptRuntime::Impl> impl,
                                   int64_t instanceHandle,
                                   ScriptClassDefinition scriptClass)
-                : m_impl(std::move(impl)), m_instanceHandle(instanceHandle), m_scriptClass(std::move(scriptClass))
+                : m_impl(std::move(impl)), m_instanceHandle(instanceHandle), m_scriptClass(std::move(scriptClass)),
+                  m_loadingScreen(std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
+                                            "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
             {
+            }
+
+            [[nodiscard]] bool Implements(ScriptCallback callback) const override
+            {
+                // Update stays reachable: a skipped OnUpdate may still owe the frame's UI events.
+                return callback == ScriptCallback::Update || m_scriptClass.Implements(callback);
             }
 
             [[nodiscard]] std::optional<ScriptFieldValue> GetFieldValue(std::string_view fieldName) const override
@@ -4401,15 +4417,25 @@ namespace PlutoGE::scripting
             {
                 if (m_impl && m_impl->invokeOnUpdate)
                 {
+                    // Managed OnUpdate dispatches UI events once per scene update, ahead of the
+                    // script body. Empty overrides are skipped once that has happened this frame.
+                    if (!m_loadingScreen)
+                    {
+                        const auto sequence = GetUIUpdateSequence();
+                        if (!m_scriptClass.Implements(ScriptCallback::Update) && m_impl->frameEventSequence == sequence)
+                            return;
+                        m_impl->frameEventSequence = sequence;
+                    }
                     const auto result = m_impl->invokeOnUpdate(m_instanceHandle, deltaTime);
-                    if (!result && std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
-                        "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
+                    if (!result && m_loadingScreen)
                         throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
                 }
             }
 
             void OnLateUpdate(float deltaTime) override
             {
+                if (!m_scriptClass.Implements(ScriptCallback::LateUpdate))
+                    return;
                 if (m_impl && m_impl->invokeOnLateUpdate)
                 {
                     m_impl->invokeOnLateUpdate(m_instanceHandle, deltaTime);
@@ -4418,6 +4444,8 @@ namespace PlutoGE::scripting
 
             void OnFixedUpdate(float fixedDeltaTime) override
             {
+                if (!m_scriptClass.Implements(ScriptCallback::FixedUpdate))
+                    return;
                 if (m_impl && m_impl->invokeOnFixedUpdate)
                 {
                     m_impl->invokeOnFixedUpdate(m_instanceHandle, fixedDeltaTime);
@@ -4498,6 +4526,7 @@ namespace PlutoGE::scripting
             std::shared_ptr<HostFxrScriptRuntime::Impl> m_impl;
             int64_t m_instanceHandle = 0;
             ScriptClassDefinition m_scriptClass;
+            bool m_loadingScreen = false;
         };
 #endif
     }

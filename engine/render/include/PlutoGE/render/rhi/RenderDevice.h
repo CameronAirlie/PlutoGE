@@ -35,6 +35,7 @@ namespace PlutoGE::render::rhi
         std::uint64_t dispatchCalls = 0;
         std::uint64_t uniformBytesUploaded = 0;
         std::uint64_t persistentUniformBytesUploaded = 0;
+        // Descriptor set preparation for draws with changed bindings; clean draws are untimed.
         float descriptorCpuMs = 0.0f;
         float uniformUploadCpuMs = 0.0f;
         float presentFenceWaitMs = 0.0f;

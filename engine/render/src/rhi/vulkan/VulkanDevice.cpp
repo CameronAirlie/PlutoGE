@@ -41,6 +41,7 @@
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <ranges>
 #include <stdexcept>
 #include <thread>
@@ -263,6 +264,113 @@ namespace PlutoGE::render::rhi::vulkan
             GraphicsPipelineDescriptor descriptor;
             std::vector<GraphicsPipelineDescriptor::ResourceBinding> resourceBindings;
             bool compute = false;
+        };
+
+        // A set keeps its prepared descriptors across a pipeline switch only when
+        // both pipelines map the same RHI slots onto it.
+        bool SameSetBindings(const PipelineResource &a, const PipelineResource &b, std::size_t set)
+        {
+            if (set >= a.bindingsBySet.size() || set >= b.bindingsBySet.size())
+                return false;
+            return std::ranges::equal(a.bindingsBySet[set], b.bindingsBySet[set], [](const auto &left, const auto &right)
+                                      { return left.slot == right.slot && left.binding == right.binding &&
+                                               left.type == right.type && left.stages == right.stages; });
+        }
+
+        // Pipelines with identical binding declarations share their Vulkan layouts.
+        // A shared VkPipelineLayout keeps bound descriptor sets valid across
+        // pipeline switches, and shared set layouts let descriptor sets cached for
+        // one pipeline serve every compatible pipeline.
+        class VulkanLayoutCache
+        {
+        public:
+            VkDescriptorSetLayout AcquireSetLayout(VkDevice device, const std::vector<VkDescriptorSetLayoutBinding> &bindings,
+                                                   const char *label)
+            {
+                std::vector<std::uint64_t> key;
+                key.reserve(bindings.size());
+                for (const auto &binding : bindings)
+                    key.push_back((static_cast<std::uint64_t>(binding.binding) << 32u) |
+                                  (static_cast<std::uint64_t>(binding.descriptorType) << 24u) |
+                                  (static_cast<std::uint64_t>(binding.descriptorCount) << 16u) |
+                                  static_cast<std::uint64_t>(binding.stageFlags & 0xffffu));
+                std::ranges::sort(key);
+                std::lock_guard lock(m_mutex);
+                auto [entry, inserted] = m_setLayouts.try_emplace(std::move(key));
+                if (inserted)
+                {
+                    VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+                    info.bindingCount = static_cast<std::uint32_t>(bindings.size());
+                    info.pBindings = bindings.data();
+                    if (const VkResult result = vkCreateDescriptorSetLayout(device, &info, nullptr, &entry->second.handle);
+                        result != VK_SUCCESS)
+                    {
+                        m_setLayouts.erase(entry);
+                        throw std::runtime_error(std::string(label) + " failed (VkResult " + std::to_string(result) + ")");
+                    }
+                    m_setLayoutKeys.emplace(entry->second.handle, entry);
+                }
+                ++entry->second.references;
+                return entry->second.handle;
+            }
+
+            VkPipelineLayout AcquirePipelineLayout(VkDevice device, const std::vector<VkDescriptorSetLayout> &setLayouts,
+                                                   const char *label)
+            {
+                std::lock_guard lock(m_mutex);
+                auto [entry, inserted] = m_pipelineLayouts.try_emplace(setLayouts);
+                if (inserted)
+                {
+                    VkPipelineLayoutCreateInfo info{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+                    info.setLayoutCount = static_cast<std::uint32_t>(setLayouts.size());
+                    info.pSetLayouts = setLayouts.data();
+                    if (const VkResult result = vkCreatePipelineLayout(device, &info, nullptr, &entry->second.handle);
+                        result != VK_SUCCESS)
+                    {
+                        m_pipelineLayouts.erase(entry);
+                        throw std::runtime_error(std::string(label) + " failed (VkResult " + std::to_string(result) + ")");
+                    }
+                }
+                ++entry->second.references;
+                return entry->second.handle;
+            }
+
+            // Releases one pipeline's references; layouts are destroyed with their last user.
+            void Release(VkDevice device, PipelineResource &resource)
+            {
+                std::lock_guard lock(m_mutex);
+                if (resource.layout)
+                    if (const auto entry = m_pipelineLayouts.find(resource.setLayouts);
+                        entry != m_pipelineLayouts.end() && entry->second.handle == resource.layout &&
+                        --entry->second.references == 0)
+                    {
+                        vkDestroyPipelineLayout(device, entry->second.handle, nullptr);
+                        m_pipelineLayouts.erase(entry);
+                    }
+                for (const auto layout : resource.setLayouts)
+                    if (const auto key = m_setLayoutKeys.find(layout);
+                        key != m_setLayoutKeys.end() && --key->second->second.references == 0)
+                    {
+                        vkDestroyDescriptorSetLayout(device, layout, nullptr);
+                        m_setLayouts.erase(key->second);
+                        m_setLayoutKeys.erase(key);
+                    }
+                resource.layout = VK_NULL_HANDLE;
+                resource.setLayouts.clear();
+            }
+
+        private:
+            template <typename VkHandle>
+            struct Entry
+            {
+                VkHandle handle = VK_NULL_HANDLE;
+                std::uint32_t references = 0;
+            };
+            using SetLayoutMap = std::map<std::vector<std::uint64_t>, Entry<VkDescriptorSetLayout>>;
+            std::mutex m_mutex;
+            SetLayoutMap m_setLayouts;
+            std::unordered_map<VkDescriptorSetLayout, SetLayoutMap::iterator> m_setLayoutKeys;
+            std::map<std::vector<VkDescriptorSetLayout>, Entry<VkPipelineLayout>> m_pipelineLayouts;
         };
 
 #if PLUTO_HAS_STREAMLINE
@@ -1072,6 +1180,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::vector<DeferredResource<TextureResource>> deferredTextures;
         std::vector<DeferredResource<SamplerResource>> deferredSamplers;
         std::vector<DeferredResource<PipelineResource>> deferredPipelines;
+        VulkanLayoutCache layoutCache;
         std::unique_ptr<VulkanCommandContext> context;
 #if PLUTO_HAS_STREAMLINE
         std::unique_ptr<StreamlineVulkan> streamline;
@@ -1220,9 +1329,7 @@ namespace PlutoGE::render::rhi::vulkan
             collect(deferredPipelines, [&](auto &resource)
                     {
                         if (resource.pipeline) vkDestroyPipeline(device, resource.pipeline, nullptr);
-                        if (resource.layout) vkDestroyPipelineLayout(device, resource.layout, nullptr);
-                        for (const auto layout : resource.setLayouts)
-                            vkDestroyDescriptorSetLayout(device, layout, nullptr);
+                        layoutCache.Release(device, resource);
                     });
             collect(deferredSamplers, [&](auto &resource)
                     { if (resource.sampler) vkDestroySampler(device, resource.sampler, nullptr); });
@@ -1548,15 +1655,26 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::invalid_argument("Invalid or stale Vulkan pipeline");
             if (m_pipeline != pipeline)
             {
-                if (!m_pipeline || m_pipeline->layout != pipeline->layout)
+                if (!m_pipeline || m_pipeline->layout != pipeline->layout || m_pipeline->compute != pipeline->compute)
                 {
                     m_boundDescriptorSets.fill(VK_NULL_HANDLE);
                     m_boundDynamicOffsetCounts.fill(0);
                     m_boundPipelineLayout = pipeline->layout;
+                    m_descriptorBindingsDirty = true;
+                    m_descriptorSetsDirty.fill(true);
+                }
+                else
+                {
+                    // Shared layout: sets bound for the previous pipeline stay valid
+                    // wherever both pipelines read the same RHI slots.
+                    for (std::size_t set = 0; set < m_descriptorSetsDirty.size(); ++set)
+                        if (!SameSetBindings(*m_pipeline, *pipeline, set))
+                        {
+                            m_descriptorSetsDirty[set] = true;
+                            m_descriptorBindingsDirty = true;
+                        }
                 }
                 m_pipeline = pipeline;
-                m_descriptorBindingsDirty = true;
-                m_descriptorSetsDirty.fill(true);
                 vkCmdBindPipeline(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE
                                                                        : VK_PIPELINE_BIND_POINT_GRAPHICS,
                                   m_pipeline->pipeline);
@@ -1874,7 +1992,12 @@ namespace PlutoGE::render::rhi::vulkan
             // Each of the 32 supported bindings may contribute a texture and sampler.
             std::array<std::uint64_t, 64> resources{};
             std::uint8_t resourceCount = 0;
-            bool operator==(const DescriptorSetKey &) const = default;
+            // Entries past resourceCount are unused and excluded, matching the hash.
+            bool operator==(const DescriptorSetKey &other) const noexcept
+            {
+                return layout == other.layout && resourceCount == other.resourceCount &&
+                       std::equal(resources.begin(), resources.begin() + resourceCount, other.resources.begin());
+            }
         };
         struct DescriptorSetKeyHash
         {
@@ -1912,20 +2035,19 @@ namespace PlutoGE::render::rhi::vulkan
 
         void PrepareDraw()
         {
-            const auto descriptorStart = std::chrono::steady_clock::now();
             if (!m_pipeline || (!m_pipeline->compute && !m_rendering))
                 throw std::logic_error("Vulkan draw requires active rendering and pipeline");
             const auto setCount = m_pipeline->setLayouts.size();
             if (setCount > MaxDescriptorSets || m_pipeline->resourceBindings.size() > MaxDescriptorBindings)
                 throw std::logic_error("Vulkan pipeline exceeds fixed descriptor scratch capacity");
+            // Clean draws only rebind changed dynamic offsets; timing them would
+            // cost more clock reads than the work itself, so only set preparation is timed.
             if (!m_descriptorBindingsDirty)
             {
                 BindPreparedDescriptorSets();
-                m_stats.descriptorCpuMs += std::chrono::duration<float, std::milli>(
-                                                          std::chrono::steady_clock::now() - descriptorStart)
-                                                          .count();
                 return;
             }
+            const auto descriptorStart = std::chrono::steady_clock::now();
             std::array<VkDescriptorSet, MaxDescriptorSets> sets{};
             std::array<bool, MaxDescriptorSets> newlyAllocated{};
             std::array<DescriptorSetKey, MaxDescriptorSets> keys{};
@@ -3570,7 +3692,7 @@ namespace PlutoGE::render::rhi::vulkan
                 vkDestroyCommandPool(m_impl->device, slot.commandPool, nullptr);
         }
         m_impl->pipelines.ForEach([&](auto &r)
-                                  { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); vkDestroyPipelineLayout(m_impl->device, r.layout, nullptr); for (auto l : r.setLayouts) vkDestroyDescriptorSetLayout(m_impl->device, l, nullptr); });
+                                  { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); m_impl->layoutCache.Release(m_impl->device, r); });
         m_impl->samplers.ForEach([&](auto &r)
                                  { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
         m_impl->textures.ForEach([&](auto &r)
@@ -4050,16 +4172,11 @@ namespace PlutoGE::render::rhi::vulkan
                 if (binding.type == ResourceBindingType::UniformBuffer)
                     resource.dynamicUniformSlotsBySet[set].push_back(binding.slot);
             resource.populatedSets[set] = !bindingsBySet[set].empty();
-            VkDescriptorSetLayoutCreateInfo setInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            setInfo.bindingCount = static_cast<std::uint32_t>(bindingsBySet[set].size());
-            setInfo.pBindings = bindingsBySet[set].data();
-            Check(vkCreateDescriptorSetLayout(m_impl->device, &setInfo, nullptr, &resource.setLayouts[set]),
-                  "vkCreateDescriptorSetLayout");
+            resource.setLayouts[set] = m_impl->layoutCache.AcquireSetLayout(m_impl->device, bindingsBySet[set],
+                                                                            "vkCreateDescriptorSetLayout");
         }
-        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layout.setLayoutCount = static_cast<std::uint32_t>(resource.setLayouts.size());
-        layout.pSetLayouts = resource.setLayouts.data();
-        Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout), "vkCreatePipelineLayout");
+        resource.layout = m_impl->layoutCache.AcquirePipelineLayout(m_impl->device, resource.setLayouts,
+                                                                    "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
         std::vector<VkPipelineShaderStageCreateInfo> stages{
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}};
@@ -4146,6 +4263,7 @@ namespace PlutoGE::render::rhi::vulkan
             vkDestroyShaderModule(m_impl->device, geometry, nullptr);
         if (result != VK_SUCCESS)
         {
+            m_impl->layoutCache.Release(m_impl->device, resource);
             throw std::runtime_error(
                 "vkCreateGraphicsPipelines failed for '" + descriptor.debugName +
                 "' (VkResult " + std::to_string(result) + ")");
@@ -4189,17 +4307,11 @@ namespace PlutoGE::render::rhi::vulkan
                 if (binding.type == ResourceBindingType::UniformBuffer)
                     resource.dynamicUniformSlotsBySet[set].push_back(binding.slot);
             resource.populatedSets[set] = !nativeBindings[set].empty();
-            VkDescriptorSetLayoutCreateInfo info{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-            info.bindingCount = static_cast<std::uint32_t>(nativeBindings[set].size());
-            info.pBindings = nativeBindings[set].data();
-            Check(vkCreateDescriptorSetLayout(m_impl->device, &info, nullptr, &resource.setLayouts[set]),
-                  "vkCreateDescriptorSetLayout(compute)");
+            resource.setLayouts[set] = m_impl->layoutCache.AcquireSetLayout(m_impl->device, nativeBindings[set],
+                                                                            "vkCreateDescriptorSetLayout(compute)");
         }
-        VkPipelineLayoutCreateInfo layout{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-        layout.setLayoutCount = static_cast<std::uint32_t>(resource.setLayouts.size());
-        layout.pSetLayouts = resource.setLayouts.data();
-        Check(vkCreatePipelineLayout(m_impl->device, &layout, nullptr, &resource.layout),
-              "vkCreatePipelineLayout(compute)");
+        resource.layout = m_impl->layoutCache.AcquirePipelineLayout(m_impl->device, resource.setLayouts,
+                                                                    "vkCreatePipelineLayout(compute)");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
         moduleInfo.codeSize = descriptor.computeShader.spirv.size() * sizeof(std::uint32_t);
         moduleInfo.pCode = descriptor.computeShader.spirv.data();

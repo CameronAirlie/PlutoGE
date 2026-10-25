@@ -1245,8 +1245,10 @@ namespace PlutoGE::render
             effectiveLighting.diffuseProbeHitPointRow = effectiveLighting.diffuseProbeSummaryRow = 0;
             effectiveLighting.diffuseProbeVolumesPrepared = false;
         }
-        if (scene && effectiveLighting.localIblEnabled && scene->HasBakedProbeVolume()) {
-            auto volumes=scene->GetBakedProbeVolumes();
+        // One scene walk: HasBakedProbeVolume() would collect the same volumes again.
+        auto volumes = scene && effectiveLighting.localIblEnabled
+            ? scene->GetBakedProbeVolumes() : decltype(scene->GetBakedProbeVolumes()){};
+        if (!volumes.empty()) {
             if (volumes.size()>PLUTO_AMBIENT_PROBE_VOLUMES) volumes.resize(PLUTO_AMBIENT_PROBE_VOLUMES);
             std::size_t count=volumes.size();
             for (auto *volume:volumes) count+=volume->irradiance.size();

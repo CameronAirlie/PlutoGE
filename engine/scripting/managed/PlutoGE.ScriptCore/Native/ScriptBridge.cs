@@ -191,7 +191,17 @@ internal static unsafe partial class ScriptBridge
 
     private sealed record ScriptFieldMetadata(string Name, int Type, string ReferenceTypeName, object? DefaultValue, MemberInfo Member);
 
-    private sealed record ScriptClassMetadata(string AssemblyName, string NamespaceName, string ClassName, Type Type, bool IsScriptableObject, IReadOnlyList<string> AssignableTypeNames, IReadOnlyList<ScriptFieldMetadata> Fields)
+    // Mirrors PlutoGE::scripting::ScriptCallback: native skips transitions for unset bits.
+    [Flags]
+    private enum ScriptCallbacks
+    {
+        None = 0,
+        Update = 1,
+        FixedUpdate = 2,
+        LateUpdate = 4,
+    }
+
+    private sealed record ScriptClassMetadata(string AssemblyName, string NamespaceName, string ClassName, Type Type, bool IsScriptableObject, IReadOnlyList<string> AssignableTypeNames, IReadOnlyList<ScriptFieldMetadata> Fields, ScriptCallbacks Callbacks)
     {
         public string FullName => string.IsNullOrEmpty(NamespaceName) ? ClassName : $"{NamespaceName}.{ClassName}";
     }
@@ -3289,7 +3299,8 @@ internal static unsafe partial class ScriptBridge
                 type,
                 isScriptableObject,
                 GetAssignableTypeNames(type),
-                fields);
+                fields,
+                GetImplementedCallbacks(type, fields));
         }
     }
 
@@ -3433,6 +3444,45 @@ internal static unsafe partial class ScriptBridge
         return names;
     }
 
+    private static bool OverridesBehaviourMethod(Type type, string name)
+    {
+        try
+        {
+            var method = type.GetMethod(name, BindingFlags.Instance | BindingFlags.Public, [typeof(float)]);
+            return method is not null && method.DeclaringType != typeof(ScriptBehaviour) &&
+                   method.GetBaseDefinition().DeclaringType == typeof(ScriptBehaviour);
+        }
+        catch (AmbiguousMatchException)
+        {
+            // Unusual hierarchies keep the callback rather than risk skipping a real override.
+            return true;
+        }
+    }
+
+    private static ScriptCallbacks GetImplementedCallbacks(Type type, IReadOnlyList<ScriptFieldMetadata> fields)
+    {
+        if (!typeof(ScriptBehaviour).IsAssignableFrom(type))
+        {
+            return ScriptCallbacks.None;
+        }
+
+        var callbacks = ScriptCallbacks.None;
+        // InvokeOnUpdate also refreshes scriptable-object members, so those types keep the transition.
+        if (OverridesBehaviourMethod(type, nameof(ScriptBehaviour.OnUpdate)) || fields.Any(field => field.Type == 24))
+        {
+            callbacks |= ScriptCallbacks.Update;
+        }
+        if (OverridesBehaviourMethod(type, nameof(ScriptBehaviour.OnFixedUpdate)))
+        {
+            callbacks |= ScriptCallbacks.FixedUpdate;
+        }
+        if (OverridesBehaviourMethod(type, nameof(ScriptBehaviour.OnLateUpdate)))
+        {
+            callbacks |= ScriptCallbacks.LateUpdate;
+        }
+        return callbacks;
+    }
+
     private static string BuildMetadataPayload()
     {
         var builder = new StringBuilder();
@@ -3443,7 +3493,8 @@ internal static unsafe partial class ScriptBridge
                 .Append(Escape(scriptClass.AssemblyName)).Append('\t')
                 .Append(Escape(scriptClass.NamespaceName)).Append('\t')
                 .Append(Escape(scriptClass.ClassName)).Append('\t')
-                .Append(Escape(string.Join(';', scriptClass.AssignableTypeNames))).Append('\n');
+                .Append(Escape(string.Join(';', scriptClass.AssignableTypeNames))).Append('\t')
+                .Append(((int)scriptClass.Callbacks).ToString(CultureInfo.InvariantCulture)).Append('\n');
 
             foreach (var field in scriptClass.Fields)
             {

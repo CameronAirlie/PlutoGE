@@ -61,6 +61,15 @@ namespace PlutoGE::scripting
         bool defaultValueIsNull = false;
     };
 
+    // Per-frame callbacks a class implements. Mirrors ScriptBridge.ScriptCallbacks.
+    enum class ScriptCallback : std::uint8_t
+    {
+        Update = 1,
+        FixedUpdate = 2,
+        LateUpdate = 4,
+    };
+    inline constexpr std::uint8_t AllScriptCallbacks = 0x7;
+
     struct ScriptClassDefinition
     {
         std::string assemblyName;
@@ -69,6 +78,12 @@ namespace PlutoGE::scripting
         ScriptClassKind kind = ScriptClassKind::Behaviour;
         std::vector<std::string> assignableTypeNames;
         std::vector<ScriptFieldDefinition> fields;
+        // Metadata without the mask (older bridges) conservatively implements everything.
+        std::uint8_t callbacks = AllScriptCallbacks;
+        [[nodiscard]] bool Implements(ScriptCallback callback) const
+        {
+            return (callbacks & static_cast<std::uint8_t>(callback)) != 0;
+        }
         [[nodiscard]] bool IsEditorCommand() const
         {
             return std::find(assignableTypeNames.begin(), assignableTypeNames.end(),

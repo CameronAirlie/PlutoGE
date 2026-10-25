@@ -174,15 +174,18 @@ namespace PlutoGE::render
         for (std::size_t index = 0; index < m_compute.size(); ++index)
             m_compute[index] = GraphicsPipeline(device, device.CreateComputePipeline({shaders.compute[index], bindings, names[index]}));
         GraphicsPipelineDescriptor descriptor;
-        descriptor.colorFormat = Format::R32Float;
         descriptor.cullMode = CullMode::None;
         descriptor.vertexLayout = {sizeof(BasicVertex), {
             {0, Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
             {1, Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
         const auto meshLayout = descriptor.vertexLayout;
+        // Pipeline roles in RasterModules order: 0 receiver depth, 1 caster pages, 2 tile clears.
+        constexpr std::array<std::size_t, VirtualShadowShaders::RasterModules.size()> roles{0, 1, 2, 0, 1, 1, 0, 0};
         for (std::size_t index = 0; index < m_raster.size(); ++index)
         {
-            const auto role = index == 5 ? 1 : index < 3 ? index : index - 3;
+            const auto role = roles[index];
+            // Receivers only produce depth for page requests.
+            descriptor.colorFormat = role == 0 ? Format::Undefined : Format::R32Float;
             descriptor.vertexLayout = role == 2 ? decltype(meshLayout){} : meshLayout;
             descriptor.vertexShader = shaders.raster[index * 2];
             descriptor.fragmentShader = shaders.raster[index * 2 + 1];
@@ -272,8 +275,6 @@ namespace PlutoGE::render
         {
             m_receiverDepth = rhi::Texture(device, device.CreateTexture({width, height, rhi::Format::D32Float,
                 rhi::TextureUsage::DepthStencilAttachment, "VSM receiver depth", true}));
-            m_receiverColor = rhi::Texture(device, device.CreateTexture({width, height, rhi::Format::R32Float,
-                rhi::TextureUsage::ColorAttachment, "VSM receiver color", false}));
             m_width = width; m_height = height;
         }
         // Directional adaptation uses its own demand and the capacity remaining
@@ -645,7 +646,7 @@ namespace PlutoGE::render
     }
     std::uint32_t VirtualShadowMaps::RecordChunks(rhi::ICommandContext &commands, const SubmitMesh &submit,
                                                   const std::vector<Chunk> &chunks, std::size_t count,
-                                                  std::size_t instancedPipeline, std::size_t rigidPipeline)
+                                                  ChunkPipelines pipelines)
     {
         // Submission callbacks only bind mesh buffers and issue the draw.
         // Retain pass-local state rather than repeating backend handle lookups
@@ -657,8 +658,11 @@ namespace PlutoGE::render
         {
             const auto &chunk = chunks[index];
             // Batching covers every caster page chunk; receivers draw one chunk at a time.
-            const bool batch = m_batchPages && instancedPipeline == 1;
-            const auto pipeline = batch ? 5 : chunk.submission.instances == 1 ? rigidPipeline : instancedPipeline;
+            const bool batch = m_batchPages && pipelines.instanced == 1;
+            const bool opaque = chunk.submission.draw->alphaMode != 1;
+            const auto pipeline = batch ? 5
+                : chunk.submission.instances == 1 ? (opaque ? pipelines.opaqueRigid : pipelines.rigid)
+                : (opaque ? pipelines.opaqueInstanced : pipelines.instanced);
             if (pipeline != boundPipeline)
             {
                 commands.BindPipeline(m_raster[pipeline].Get());
@@ -698,12 +702,13 @@ namespace PlutoGE::render
         if (m_reuseFrame) return;
         commands.BeginGpuScope("RHI VSM Receiver Depth");
         rhi::RenderingInfo depth;
-        depth.colorAttachments = {m_receiverColor.Get()}; depth.depthAttachment = m_receiverDepth.Get();
+        depth.depthAttachment = m_receiverDepth.Get();
+        depth.clearColor = false;
         depth.width = m_width; depth.height = m_height; depth.clearDepthValue = 0;
         commands.BeginRendering(depth);
         commands.BindPipeline(m_raster[0].Get());
         commands.BindUniformBuffer(0, m_parameters.Get());
-        RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, 0, 3);
+        RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, {0, 3, 6, 7});
         commands.EndRendering(); commands.EndGpuScope();
         commands.BeginGpuScope("RHI VSM GPU Planning");
         commands.ShaderMemoryBarrier();
@@ -741,7 +746,7 @@ namespace PlutoGE::render
         commands.BindPipeline(m_raster[1].Get());
         commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
         commands.BindStorageBuffer(4, m_lists.Get());
-        m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, m_casterCount, 1, 4);
+        m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, m_casterCount, {1, 4, 1, 4});
         commands.EndRendering(); commands.EndGpuScope();
         commands.ShaderMemoryBarrier();
         BindCompute(commands, 6);

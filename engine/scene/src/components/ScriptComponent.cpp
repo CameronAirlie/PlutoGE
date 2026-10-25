@@ -289,15 +289,15 @@ namespace PlutoGE::scene
             return;
         }
 
-        core::CpuScope traceScope(core::CpuTrace::current ? GetScriptClass() + ".OnLateUpdate" : std::string{},
-                                  core::CpuCategory::Scripts,
-                                  core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
         Start();
-        if (!m_instance)
+        if (!m_instance || !m_instance->Implements(scripting::ScriptCallback::LateUpdate))
         {
             return;
         }
 
+        core::CpuScope traceScope(core::CpuTrace::current ? GetScriptClass() + ".OnLateUpdate" : std::string{},
+                                  core::CpuCategory::Scripts,
+                                  core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
         m_instance->OnLateUpdate(deltaTime);
     }
 
@@ -308,14 +308,16 @@ namespace PlutoGE::scene
             return;
         }
 
+        Start();
+        if (!m_instance || !m_instance->Implements(scripting::ScriptCallback::FixedUpdate))
+        {
+            return;
+        }
+
         core::CpuScope traceScope(core::CpuTrace::current ? GetScriptClass() + ".OnFixedUpdate" : std::string{},
                                   core::CpuCategory::Scripts,
                                   core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
-        Start();
-        if (m_instance)
-        {
-            m_instance->OnFixedUpdate(fixedDeltaTime);
-        }
+        m_instance->OnFixedUpdate(fixedDeltaTime);
     }
 
     void ScriptComponent::OnCollisionEnter(uint32_t otherEntityId)

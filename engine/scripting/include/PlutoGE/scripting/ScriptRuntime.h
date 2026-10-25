@@ -26,6 +26,8 @@ namespace PlutoGE::scripting
         virtual void OnFixedUpdate(float fixedDeltaTime) { (void)fixedDeltaTime; }
         virtual void OnLateUpdate(float deltaTime) {}
         virtual void OnDestroy() {}
+        // False when the callback is a no-op, letting callers skip it and its tracing.
+        [[nodiscard]] virtual bool Implements(ScriptCallback callback) const { (void)callback; return true; }
         virtual bool OnServerCommand(std::string_view command) { (void)command; return false; }
         virtual void OnCollisionEnter(uint32_t otherEntityId) { (void)otherEntityId; }
         virtual void OnCollisionExit(uint32_t otherEntityId) { (void)otherEntityId; }

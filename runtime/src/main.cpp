@@ -947,6 +947,7 @@ int RunRuntime(int argc, char **argv)
                 PlutoGE::WriteProjectBenchmarkGpuScopes(projectBenchmark->output, std::move(projectBenchmarkGpuScopes));
                 PlutoGE::WriteProjectBenchmarkGpuScopes(projectBenchmark->output, std::move(projectBenchmarkCpuScopes), ".cpu.csv");
             }
+            else std::cerr << "Benchmark ended before collecting the requested samples.\n";
             if (benchmarkSucceeded && !projectBenchmark->capture.empty())
             {
                 // Output size is recorded with every sample; the last frame is still resident.
@@ -964,7 +965,6 @@ int RunRuntime(int argc, char **argv)
                     benchmarkSucceeded = false;
                 }
             }
-            else std::cerr << "Benchmark ended before collecting the requested samples.\n";
         }
         catch (const std::exception &error) { std::cerr << error.what() << '\n'; benchmarkSucceeded = false; }
     }

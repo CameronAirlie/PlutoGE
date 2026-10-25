@@ -41,11 +41,16 @@ ReceiverOutput receiverVertex(VertexInput input, uint instance : SV_VulkanInstan
     output.uv = input.uv;
     return output;
 }
+// Receiver depth is depth-only. Opaque receivers use the empty fragment so the
+// pass keeps early depth testing; only alpha-tested receivers may discard.
 [shader("fragment")]
-float receiverFragment(ReceiverOutput input) : SV_Target
+void receiverFragment(ReceiverOutput input)
 {
     if (drawParameters.z == 1 && baseTexture.Sample(input.uv * alpha.xy).a * alpha.w < alpha.z) discard;
-    return input.position.z;
+}
+[shader("fragment")]
+void receiverOpaqueFragment(ReceiverOutput input)
+{
 }
 [shader("vertex")]
 PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)

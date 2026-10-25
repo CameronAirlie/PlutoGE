@@ -72,6 +72,9 @@ public override void OnCollisionExit(GameObject other) {}
   callbacks. Capture button edges in `OnUpdate` and consume queued physics actions
   once in `OnFixedUpdate`; see the [impulse example](guide/gameplay.md#example-apply-one-impulse-per-press).
 - There are no separate public trigger-enter or trigger-exit callbacks.
+- The engine skips `OnUpdate`, `OnFixedUpdate` and `OnLateUpdate` for classes
+  that do not override them, so leaving an empty callback out costs nothing per
+  frame. Override only the callbacks a script needs.
 - Scripts run only as instances attached through an entity's `ScriptComponent`.
 
 ## Multiplayer networking

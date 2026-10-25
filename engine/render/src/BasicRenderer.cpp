@@ -3006,6 +3006,9 @@ namespace PlutoGE::render
                 break;
             }
         m_materialPreparation->BeginFrame(m_width, m_height, glassFog);
+        // Camera and probe/IBL bindings survive within a pass; material bindings
+        // (geometryResourcesBound) are dropped by every opaque depth draw.
+        bool frameResourcesBound = false;
         bool geometryResourcesBound = false;
         bool skyTextureBound = false;
         std::array<rhi::TextureHandle, 4> previousMaterialTextures{};
@@ -3047,8 +3050,9 @@ namespace PlutoGE::render
                 commands.BindPipeline(pipeline);
                 boundDrawPipeline = pipeline;
             }
-            if (!geometryResourcesBound)
+            if (!frameResourcesBound)
             {
+                frameResourcesBound = true;
                 commands.BindUniformBuffer(0, drawCameraBuffer);
                 commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
                 for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
@@ -3311,6 +3315,7 @@ namespace PlutoGE::render
             // Compute/coverage passes invalidate all cached graphics bindings.
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
+            frameResourcesBound = false;
             geometryResourcesBound = false;
             skyTextureBound = false;
             boundMaterial = {};
@@ -3410,6 +3415,7 @@ namespace PlutoGE::render
                 const auto geometryTriangles = m_frameStats.geometryTriangles;
                 boundDrawPipeline = {};
                 boundDrawMesh = nullptr;
+                frameResourcesBound = false;
                 geometryResourcesBound = false;
                 skyTextureBound = false;
                 boundMaterial = {};
@@ -3743,6 +3749,7 @@ namespace PlutoGE::render
                     glm::vec2(temporalClipOffset), m_width, m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan, false);
             }
             m_frameStats.glassBoundsCpuMs += elapsedMs(boundsStart, std::chrono::steady_clock::now());
+            frameResourcesBound = false;
             geometryResourcesBound = false;
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
@@ -3771,6 +3778,7 @@ namespace PlutoGE::render
                     boundary.depthAttachment = m_depthTarget.Get();
                     commands.BeginRendering(boundary);
                     recordingParticleBoundary = true;
+                    frameResourcesBound = false;
                     geometryResourcesBound = false;
                     boundDrawPipeline = {};
                     boundDrawMesh = nullptr;
@@ -3787,6 +3795,7 @@ namespace PlutoGE::render
                     renderParticles(false, &glassRasterFootprints[paneIndex]);
                     particleLowerDepth = particleUpperDepth;
                     particleBoundaryIndex = 1 - particleBoundaryIndex;
+                    frameResourcesBound = false;
                     geometryResourcesBound = false;
                     boundDrawPipeline = {};
                     boundDrawMesh = nullptr;

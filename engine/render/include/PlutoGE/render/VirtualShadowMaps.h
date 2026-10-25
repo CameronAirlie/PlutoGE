@@ -6,7 +6,9 @@
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/rhi/Resource.h"
 #include <glm/glm.hpp>
+#include <array>
 #include <memory>
+#include <string_view>
 
 namespace PlutoGE::render
 {
@@ -14,9 +16,12 @@ namespace PlutoGE::render
     struct BasicLighting;
     struct VirtualShadowShaders
     {
+        // Shader modules of the raster vertex/fragment pairs, in `raster` order.
+        static constexpr std::array<std::string_view, 8> RasterModules{
+            "VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid", "VSMPageBatch",
+            "VSMReceiverOpaque", "VSMReceiverRigidOpaque"};
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 7> compute;
-        // Receiver, page, clear, rigid receiver/page, and batched rigid page pairs.
-        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 12> raster;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, RasterModules.size() * 2> raster;
         [[nodiscard]] bool Complete() const;
     };
     struct alignas(16) VirtualShadowParameters
@@ -119,14 +124,16 @@ namespace PlutoGE::render
         void ResizePool(rhi::IRenderDevice &device, std::uint32_t tiles);
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         // Records `count` chunks with pass-local binding state; returns the number of submissions issued.
+        // Opaque (non alpha-tested) chunks use the opaque pipeline pair.
+        struct ChunkPipelines { std::size_t instanced, rigid, opaqueInstanced, opaqueRigid; };
         std::uint32_t RecordChunks(rhi::ICommandContext &commands, const SubmitMesh &submit, const std::vector<Chunk> &chunks,
-                                   std::size_t count, std::size_t instancedPipeline, std::size_t rigidPipeline);
+                                   std::size_t count, ChunkPipelines pipelines);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
-        std::array<rhi::GraphicsPipeline, 6> m_raster;
+        std::array<rhi::GraphicsPipeline, VirtualShadowShaders::RasterModules.size()> m_raster;
         // Batched page draws' records and models (see RecordChunks).
         std::unique_ptr<GpuRecordTable> m_batchedDraws, m_batchedModels;
         bool m_batchPages = false;
-        rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_receiverColor, m_white;
+        rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_white;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;
         rhi::Sampler m_sampler, m_materialSampler;

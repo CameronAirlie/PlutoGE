@@ -76,6 +76,12 @@ namespace PlutoGE::scene
         Entity *GetParent() const { return m_parent; }
         Scene *GetScene() const { return m_scene; }
         void SetParent(Entity *parent);
+        // Position among the parent's children, or among the scene roots for a
+        // root entity. Order is authored: it is serialized and shown in editors.
+        std::size_t GetSiblingIndex() const;
+        // Moves within the current sibling list; indices past the end clamp to it.
+        void SetSiblingIndex(std::size_t index);
+        bool IsDescendantOf(const Entity *entity) const;
 
         EntityID GetID() const { return m_id; }
         std::string GetName() const { return m_name; }
@@ -227,7 +233,7 @@ namespace PlutoGE::scene
         void AttachComponent(Component *component);
         void EnsureComponentBucketSize(ComponentTypeID typeID);
         void DetachComponent(Component *component);
-        bool IsDescendantOf(const Entity *entity) const;
+        std::vector<Entity *> *GetSiblingList() const;
         void SetSceneRecursive(Scene *scene);
         void MarkShadowSceneDirty();
         void MarkTransformDirtyRecursive();

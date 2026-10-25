@@ -1,29 +1,20 @@
-#include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
-#include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/scene/components/CameraComponent.h"
-#include "PlutoGE/scene/components/ClothComponent.h"
-#include "PlutoGE/scene/components/IblCaptureComponent.h"
-#include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
-#include "PlutoGE/scene/components/OceanComponent.h"
-#include "PlutoGE/scene/components/ParticleSystemComponent.h"
-#include "PlutoGE/scene/components/PhysicalSkyComponent.h"
-#include "PlutoGE/scene/components/TerrainComponent.h"
-#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
-#include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/HierarchyTransforms.h"
+#include "PlutoGE/ui/hierarchy/HierarchyEntityIcons.h"
+#include "PlutoGE/ui/hierarchy/HierarchyEntityPresets.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include <imgui.h>
@@ -32,48 +23,47 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
-#include <filesystem>
 #include <limits>
-#include <set>
+#include <unordered_map>
 
 namespace PlutoGE::ui
 {
     namespace
     {
+        // Carries the dragged entity's ID; the entity is re-resolved on drop.
         constexpr const char *kHierarchyDragDropPayload = "PLUTOGE_SCENE_ENTITY";
 
-        // Tints a collapsed row whose subtree holds the selection and adds a
-        // trailing accent dot. Must be drawn beneath the row's label.
-        void DrawCollapsedSelectionMarker(ImDrawList &drawList, const ImVec2 &rowMin, const ImVec2 &rowMax)
+        // Icon slot width in font-size units, so names align whatever the glyph.
+        constexpr float kIconSlotEm = 1.35f;
+
+        // Tints a collapsed row whose subtree holds the selection and adds an
+        // accent dot after its name. Must be drawn beneath the row's label.
+        void DrawCollapsedSelectionMarker(ImDrawList &drawList, const ImVec2 &rowMin, const ImVec2 &rowMax, float dotX)
         {
             const ImGuiStyle &style = ImGui::GetStyle();
             drawList.AddRectFilled(rowMin, rowMax, GetEditorColorU32(EditorColor::Accent, 0.12f), style.FrameRounding);
             const float radius = std::max(2.0f, std::round(ImGui::GetFontSize() * 0.18f));
-            const ImVec2 centre(rowMax.x - style.FramePadding.x - radius, (rowMin.y + rowMax.y) * 0.5f);
-            drawList.AddCircleFilled(centre, radius, GetEditorColorU32(EditorColor::Accent));
+            drawList.AddCircleFilled(ImVec2(dotX + radius, (rowMin.y + rowMax.y) * 0.5f), radius,
+                                     GetEditorColorU32(EditorColor::Accent));
         }
 
-        bool SceneHasAnyCamera(scene::Entity *entity)
+        void DrawDropLine(ImDrawList &drawList, float x0, float x1, float y)
         {
-            if (!entity)
-            {
-                return false;
-            }
+            const ImU32 color = GetEditorColorU32(EditorColor::Accent);
+            constexpr float radius = 3.0f;
+            drawList.AddCircle(ImVec2(x0 + radius, y), radius, color, 0, 2.0f);
+            drawList.AddLine(ImVec2(x0 + radius * 2.0f, y), ImVec2(x1, y), color, 2.0f);
+        }
 
-            if (entity->HasComponent<scene::CameraComponent>())
-            {
-                return true;
-            }
-
-            for (auto *child : entity->GetChildren())
-            {
-                if (SceneHasAnyCamera(child))
-                {
-                    return true;
-                }
-            }
-
-            return false;
+        // Row-height selectable used for the pinned rows above the tree.
+        bool PinnedRow(const char *icon, const char *label, bool selected)
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
+            const std::string text = std::string(icon) + "  " + label;
+            const bool clicked = ImGui::Selectable(text.c_str(), selected, ImGuiSelectableFlags_None,
+                                                   ImVec2(0.0f, ImGui::GetFrameHeight()));
+            ImGui::PopStyleVar();
+            return clicked;
         }
 
         scene::MeshComponent *FindSkeletonMeshComponent(scene::Entity *entity)
@@ -98,24 +88,6 @@ namespace PlutoGE::ui
             }
 
             return nullptr;
-        }
-
-        bool SceneHasAnyCamera(scene::Scene *scene)
-        {
-            if (!scene)
-            {
-                return false;
-            }
-
-            for (auto *rootEntity : scene->GetRootEntities())
-            {
-                if (SceneHasAnyCamera(rootEntity))
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         std::string SanitizePrefabFileName(std::string text)
@@ -176,18 +148,69 @@ namespace PlutoGE::ui
             }
         }
 
+        void SaveEntityAsPrefab(scene::Entity &entity)
+        {
+            auto &shell = EditorShell::GetInstance();
+            auto *project = shell.GetProject();
+            if (!project)
+            {
+                return;
+            }
+            const auto prefabDirectory = project->GetAssetDirectoryPath() / "Prefabs";
+            const auto prefabName = SanitizePrefabFileName(entity.GetName().empty() ? "Prefab" : entity.GetName());
+            const auto prefabPath = prefabDirectory / (prefabName + ".plutoprefab");
+            const std::string prefabReference = project->MakeAssetReference(prefabPath);
+            std::string errorMessage;
+            if (scene::Prefab::SaveFromEntity(entity, prefabPath, &errorMessage))
+            {
+                LinkPrefabSubtree(&entity, prefabReference, true);
+                project->RefreshAssetRegistry();
+                shell.MarkSceneDirty();
+                shell.MarkProjectDirty();
+                shell.Log(EditorShell::ConsoleSeverity::Info, "Saved prefab: " + prefabReference);
+            }
+            else
+            {
+                shell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to save prefab." : errorMessage);
+            }
+        }
+
+        void InstantiateAsset(const std::string &reference, scene::Entity *parent)
+        {
+            if (!InstantiatePrefabIntoScene(reference, parent) && !InstantiateModelAssetIntoScene(reference, parent))
+            {
+                InstantiateMeshAssetIntoScene(reference, parent);
+            }
+        }
+
+        std::string ReadAssetPayload(const ImGuiPayload &payload)
+        {
+            return std::string(static_cast<const char *>(payload.Data), payload.DataSize > 0 ? payload.DataSize - 1 : 0);
+        }
     }
+
+    // ---------------------------------------------------------------------
+    // Rows
 
     void SceneHierarchyPanel::RenderEntityNode(scene::Entity *entity)
     {
-        if (!entity || (m_filterActive && !m_filteredEntityIds.contains(entity->GetID())))
+        if (!entity || !m_filter.IsVisible(entity->GetID()))
         {
             return;
         }
 
-        m_visibleEntityIds.push_back(entity->GetID());
-        const std::string entityName = entity->GetName().empty() ? "Entity" : entity->GetName();
-        const bool isRenaming = m_renamingEntityId == entity->GetID();
+        const EntityId id = entity->GetID();
+        const bool hasChildren = !entity->GetChildren().empty();
+        const bool filtering = m_filter.IsActive();
+        const bool isRenaming = m_renamingEntityId == id;
+        // Filtering shows every match, so its rows are open regardless of the
+        // stored expansion, which is left untouched for when it is cleared.
+        const bool expanded = hasChildren && (filtering || m_expansion.IsExpanded(id));
+        m_rows.push_back({.id = id,
+                          .parentId = entity->GetParent() ? entity->GetParent()->GetID() : 0,
+                          .hasChildren = hasChildren,
+                          .expanded = expanded});
+
         // Frame padding gives rows a regular widget height; spanning the full
         // width makes the whole row, indent included, a click target. The
         // rename field shares the row, so it keeps the narrow hit box.
@@ -195,33 +218,37 @@ namespace PlutoGE::ui
                                        ImGuiTreeNodeFlags_FramePadding;
         if (!isRenaming)
         {
-            nodeFlags |= ImGuiTreeNodeFlags_SpanFullWidth;
+            nodeFlags |= ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_AllowOverlap;
         }
-        if (entity->GetChildren().empty())
+        if (!hasChildren)
         {
             nodeFlags |= ImGuiTreeNodeFlags_Leaf;
         }
-
         if (IsEntitySelected(entity))
         {
             nodeFlags |= ImGuiTreeNodeFlags_Selected;
         }
 
-        if (m_filterActive) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
-        ImGui::PushID(static_cast<int>(entity->GetID()));
+        ImGui::PushID(static_cast<int>(id));
+        if (hasChildren)
+        {
+            ImGui::SetNextItemOpen(expanded, ImGuiCond_Always);
+        }
 
-        // Open state is only known after the node is submitted, so draw it on
+        // Open state is only final after the node is submitted, so draw it on
         // a foreground channel and add the marker beneath once it is known.
         ImDrawList *drawList = ImGui::GetWindowDrawList();
-        const bool containsSelection = m_selectionAncestorIds.contains(entity->GetID());
+        const bool containsSelection = m_selectionAncestorIds.contains(id);
         if (containsSelection)
         {
             drawList->ChannelsSplit(2);
             drawList->ChannelsSetCurrent(1);
         }
 
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const ImVec2 cursor = ImGui::GetCursorScreenPos();
         // Adjacent rows touch so there are no dead gaps between click targets.
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x, 0.0f));
         bool nodeOpen = false;
         if (isRenaming)
         {
@@ -249,213 +276,70 @@ namespace PlutoGE::ui
         }
         else
         {
-            nodeOpen = ImGui::TreeNodeEx("EntityNode", nodeFlags, "%s", entityName.c_str());
+            nodeOpen = ImGui::TreeNodeEx("##EntityNode", nodeFlags);
         }
         ImGui::PopStyleVar();
 
+        const RowLayout row{
+            .min = ImGui::GetItemRectMin(),
+            .max = ImGui::GetItemRectMax(),
+            .labelPos = ImVec2(cursor.x + ImGui::GetFontSize() + style.FramePadding.x * 2.0f, cursor.y + style.FramePadding.y),
+        };
+        const bool markCollapsedSelection = containsSelection && !nodeOpen;
+        if (!isRenaming)
+        {
+            RenderRowLabel(*entity, row, markCollapsedSelection);
+        }
         if (containsSelection)
         {
-            if (!nodeOpen)
-            {
-                drawList->ChannelsSetCurrent(0);
-                DrawCollapsedSelectionMarker(*drawList, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-                if (!isRenaming)
-                {
-                    ImGui::SetItemTooltip("Contains selected entity");
-                }
-            }
             drawList->ChannelsMerge();
         }
 
-        // If clicked, set this entity as the selected entity in the editor shell
-        if (ImGui::IsItemClicked() && ImGui::IsItemHovered())
+        if (id == m_scrollToEntityId)
         {
-            if (!isRenaming && !ImGui::IsItemToggledOpen())
+            const float viewTop = ImGui::GetWindowPos().y;
+            const float viewBottom = viewTop + ImGui::GetWindowHeight();
+            if (row.min.y < viewTop || row.max.y > viewBottom)
             {
-                if (ImGui::GetIO().KeyShift)
-                {
-                    m_rangeClickId = entity->GetID();
-                    m_rangeClickControl = ImGui::GetIO().KeyCtrl;
-                }
-                else SelectEntity(entity, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyCtrl);
+                ImGui::SetScrollHereY(0.5f);
             }
+            m_scrollToEntityId = 0;
         }
 
-        if (ImGui::BeginDragDropSource())
+        // Interaction must follow the node directly: these calls all target
+        // the last submitted item. The rename field replaces the row's own
+        // interaction while it is open.
+        if (!isRenaming)
         {
-            auto *draggedEntity = entity;
-            ImGui::SetDragDropPayload(kHierarchyDragDropPayload, &draggedEntity, sizeof(draggedEntity));
-            ImGui::TextUnformatted(entityName.c_str());
-            ImGui::EndDragDropSource();
-        }
-
-        if (ImGui::BeginDragDropTarget())
-        {
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload))
+            if (markCollapsedSelection)
             {
-                auto *draggedEntity = *static_cast<scene::Entity *const *>(payload->Data);
-                if (draggedEntity && draggedEntity != entity)
+                ImGui::SetItemTooltip("Contains selected entity");
+            }
+            if (hasChildren && !filtering && ImGui::IsItemToggledOpen())
+            {
+                // Alt-click opens or closes the whole subtree.
+                if (ImGui::GetIO().KeyAlt)
                 {
-                    EditorShell::GetInstance().ExecuteSceneEdit("Reparent Entity",
-                                                                [draggedEntity, entity]()
-                                                                {
-                                                                    draggedEntity->SetParent(entity);
-                                                                });
+                    m_expansion.SetSubtreeExpanded(*entity, nodeOpen);
+                }
+                else
+                {
+                    m_expansion.SetExpanded(id, nodeOpen);
                 }
             }
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            HandleRowInteraction(*entity);
+            HandleRowDragDrop(*entity, row, nodeOpen);
+            if (ImGui::BeginPopupContextItem())
             {
-                const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
-                if (!InstantiatePrefabIntoScene(reference, entity))
-                {
-                    if (!InstantiateModelAssetIntoScene(reference, entity))
-                    {
-                        InstantiateMeshAssetIntoScene(reference, entity);
-                    }
-                }
+                RenderEntityContextMenu(*entity);
+                ImGui::EndPopup();
             }
-            ImGui::EndDragDropTarget();
-        }
-
-        // Context menu for right-clicking on an entity
-        if (ImGui::BeginPopupContextItem())
-        {
-            if (!IsEntitySelected(entity))
-            {
-                SelectEntity(entity, false, false);
-            }
-            ImGui::BeginDisabled(m_selectedEntityIds.size() < 2);
-            if (ImGui::MenuItem("Group Selected", "Ctrl+G"))
-            {
-                m_groupSelectionRequested = true;
-            }
-            ImGui::EndDisabled();
-            if (ImGui::BeginMenu("Set Pivot"))
-            {
-                const bool multiple = m_selectedEntityIds.size() > 1;
-                if (ImGui::MenuItem(multiple ? "Individual Centres" : "Bounds Centre"))
-                {
-                    SetSelectedPivotsToMeshBounds(false, false);
-                }
-                if (ImGui::MenuItem(multiple ? "Individual Bottom Centres" : "Bounds Bottom Centre"))
-                {
-                    SetSelectedPivotsToMeshBounds(false, true);
-                }
-                if (multiple)
-                {
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Centre of Selection"))
-                        SetSelectedPivotsToMeshBounds(true, false);
-                    if (ImGui::MenuItem("Bottom Centre of Selection"))
-                        SetSelectedPivotsToMeshBounds(true, true);
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Rename"))
-            {
-                BeginRename(entity);
-            }
-            if (ImGui::MenuItem("Copy", "Ctrl+C"))
-            {
-                EditorShell::GetInstance().CopySelectedEntity();
-            }
-            if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
-            {
-                EditorShell::GetInstance().DuplicateSelectedEntity();
-            }
-            if (ImGui::BeginMenu("Create Child"))
-            {
-                RenderCreateMenu(entity);
-                ImGui::EndMenu();
-            }
-            if (entity->GetParent() && ImGui::MenuItem("Unparent"))
-            {
-                EditorShell::GetInstance().ExecuteSceneEdit("Unparent Entity",
-                                                            [entity]()
-                                                            {
-                                                                entity->SetParent(nullptr);
-                                                            });
-            }
-            if (FindSkeletonMeshComponent(entity))
-            {
-                if (ImGui::BeginMenu("Create Skeleton Attachment"))
-                {
-                    if (auto *meshComponent = FindSkeletonMeshComponent(entity))
-                    {
-                        const auto &joints = meshComponent->GetMesh()->GetSkeleton().joints;
-                        for (std::size_t jointIndex = 0; jointIndex < joints.size(); ++jointIndex)
-                        {
-                            const auto &joint = joints[jointIndex];
-                            const std::string label = joint.name.empty()
-                                                          ? "Joint " + std::to_string(jointIndex)
-                                                          : joint.name;
-                            if (ImGui::MenuItem(label.c_str()))
-                            {
-                                EditorShell::GetInstance().ExecuteSceneEdit(
-                                    "Create Skeleton Attachment",
-                                    [meshComponent, jointIndex]()
-                                    {
-                                        if (auto *created = meshComponent->CreateSkeletonAttachmentEntity(jointIndex))
-                                        {
-                                            EditorShell::GetInstance().SetSelectedEntity(created);
-                                        }
-                                    });
-                            }
-                        }
-                    }
-                    ImGui::EndMenu();
-                }
-                if (ImGui::MenuItem("Compact Legacy Skeleton Attachments"))
-                {
-                    EditorShell::GetInstance().ExecuteSceneEdit(
-                        "Compact Legacy Skeleton Attachments",
-                        [entity]()
-                        {
-                            if (auto *meshComponent = FindSkeletonMeshComponent(entity))
-                            {
-                                meshComponent->CompactSkeletonAttachmentEntities();
-                            }
-                        });
-                }
-            }
-            if (ImGui::MenuItem("Save As Prefab"))
-            {
-                if (auto *project = EditorShell::GetInstance().GetProject())
-                {
-                    const auto prefabDirectory = project->GetAssetDirectoryPath() / "Prefabs";
-                    const auto prefabName = SanitizePrefabFileName(entity->GetName().empty() ? "Prefab" : entity->GetName());
-                    const auto prefabPath = prefabDirectory / (prefabName + ".plutoprefab");
-                    const std::string prefabReference = project->MakeAssetReference(prefabPath);
-                    std::string errorMessage;
-                    if (scene::Prefab::SaveFromEntity(*entity, prefabPath, &errorMessage))
-                    {
-                        LinkPrefabSubtree(entity, prefabReference, true);
-                        project->RefreshAssetRegistry();
-                        EditorShell::GetInstance().MarkSceneDirty();
-                        EditorShell::GetInstance().MarkProjectDirty();
-                        EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Info, "Saved prefab: " + prefabReference);
-                    }
-                    else
-                    {
-                        EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error,
-                                                       errorMessage.empty() ? "Failed to save prefab." : errorMessage);
-                    }
-                }
-            }
-            if (ImGui::MenuItem("Delete Entity", "Del"))
-            {
-                // Removing an entity here invalidates both `entity` below and
-                // the parent/root vector currently being traversed. Defer the
-                // edit until every hierarchy node has finished rendering.
-                m_pendingDeleteEntityId = entity->GetID();
-            }
-            ImGui::EndPopup();
+            RenderRowToggles(*entity, row);
         }
 
         if (nodeOpen)
         {
-            for (auto child : entity->GetChildren())
+            for (auto *child : entity->GetChildren())
             {
                 RenderEntityNode(child);
             }
@@ -464,302 +348,469 @@ namespace PlutoGE::ui
         ImGui::PopID();
     }
 
-    void SceneHierarchyPanel::RenderCreateMenu(scene::Entity *parent)
+    void SceneHierarchyPanel::RenderRowLabel(const scene::Entity &entity, const RowLayout &row, bool containsCollapsedSelection)
     {
-        if (ImGui::MenuItem("Empty Entity"))
+        ImDrawList &drawList = *ImGui::GetWindowDrawList();
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float slot = std::round(ImGui::GetFontSize() * kIconSlotEm);
+
+        // Inactive entities (or children of inactive parents) are dimmed;
+        // while filtering, ancestors that only lead to a match are muted.
+        const bool dimmed = !entity.IsActive() || (m_filter.IsActive() && !m_filter.IsMatch(entity.GetID()));
+        const ImU32 textColor = GetEditorColorU32(dimmed ? EditorColor::TextMuted : EditorColor::Text);
+        const ImU32 iconColor = GetEditorColorU32(EditorColor::TextMuted, dimmed ? 0.6f : 1.0f);
+
+        const char *icon = GetHierarchyEntityIcon(entity);
+        const float iconWidth = ImGui::CalcTextSize(icon).x;
+        drawList.AddText(ImVec2(std::round(row.labelPos.x + (slot - iconWidth) * 0.5f), row.labelPos.y), iconColor, icon);
+
+        const std::string name = entity.GetName().empty() ? "Entity" : entity.GetName();
+        const ImVec2 namePos(row.labelPos.x + slot + std::round(style.ItemInnerSpacing.x * 0.5f), row.labelPos.y);
+        drawList.AddText(namePos, textColor, name.c_str());
+
+        if (containsCollapsedSelection)
         {
-            CreatePresetEntity(EntityPreset::Empty, parent);
-        }
-        if (ImGui::MenuItem("Cube"))
-        {
-            CreatePresetEntity(EntityPreset::Cube, parent);
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Car Hierarchy"))
-        {
-            CreatePresetEntity(EntityPreset::CarHierarchy, parent);
-        }
-        if (ImGui::MenuItem("Camera"))
-        {
-            CreatePresetEntity(EntityPreset::Camera, parent);
-        }
-        if (ImGui::MenuItem("Directional Light"))
-        {
-            CreatePresetEntity(EntityPreset::DirectionalLight, parent);
-        }
-        if (ImGui::MenuItem("Point Light"))
-        {
-            CreatePresetEntity(EntityPreset::PointLight, parent);
-        }
-        ImGui::Separator();
-        if (ImGui::MenuItem("Sky"))
-        {
-            CreatePresetEntity(EntityPreset::Sky, parent);
-        }
-        if (ImGui::MenuItem("Ocean"))
-        {
-            CreatePresetEntity(EntityPreset::Ocean, parent);
-        }
-        if (ImGui::MenuItem("Terrain"))
-        {
-            CreatePresetEntity(EntityPreset::Terrain, parent);
-        }
-        if (ImGui::MenuItem("Cloth"))
-        {
-            CreatePresetEntity(EntityPreset::Cloth, parent);
-        }
-        if (ImGui::MenuItem("Particle System"))
-        {
-            CreatePresetEntity(EntityPreset::ParticleSystem, parent);
-        }
-        if (ImGui::MenuItem("Ambient Light Volume")) CreatePresetEntity(EntityPreset::AmbientLightVolume,parent);
-        if (ImGui::MenuItem("IBL Capture"))
-        {
-            CreatePresetEntity(EntityPreset::IblCapture, parent);
+            drawList.ChannelsSetCurrent(0);
+            const float dotX = namePos.x + ImGui::CalcTextSize(name.c_str()).x + style.ItemInnerSpacing.x;
+            DrawCollapsedSelectionMarker(drawList, row.min, row.max, dotX);
+            drawList.ChannelsSetCurrent(1);
         }
     }
 
-    void SceneHierarchyPanel::CreatePresetEntity(EntityPreset preset, scene::Entity *parent)
+    void SceneHierarchyPanel::RenderRowToggles(scene::Entity &entity, const RowLayout &row)
     {
-        auto &engine = core::Engine::GetInstance();
-        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
-        if (!scene)
+        auto &shell = EditorShell::GetInstance();
+        const EntityId id = entity.GetID();
+        const bool active = entity.IsSelfActive();
+        const bool locked = shell.GetEntityLocks().IsLocked(id);
+        const bool rowHovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(row.min, row.max);
+        // Toggles appear on hover, and stay visible while they are not in
+        // their default state so inactive or locked entities are easy to spot.
+        const bool showActive = rowHovered || !active;
+        const bool showLock = rowHovered || locked;
+        if (!showActive && !showLock)
         {
             return;
         }
 
-        scene::Entity *createdEntity = nullptr;
-        const bool sceneAlreadyHasCamera = SceneHasAnyCamera(scene);
-        const char *editLabel = "Create Entity";
-        switch (preset)
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float size = row.max.y - row.min.y;
+        // Slots are counted from the right edge so each toggle keeps its place
+        // whether or not the other one is shown.
+        const auto toggle = [&](const char *buttonId, int slotFromRight, const char *icon, bool emphasised, const char *tooltip)
         {
-        case EntityPreset::Empty:
-            editLabel = "Create Empty Entity";
-            break;
-        case EntityPreset::Cube:
-            editLabel = "Create Cube";
-            break;
-        case EntityPreset::CarHierarchy:
-            editLabel = "Create Car Hierarchy";
-            break;
-        case EntityPreset::Camera:
-            editLabel = "Create Camera";
-            break;
-        case EntityPreset::DirectionalLight:
-            editLabel = "Create Directional Light";
-            break;
-        case EntityPreset::PointLight:
-            editLabel = "Create Point Light";
-            break;
-        case EntityPreset::Sky:
-            editLabel = "Create Sky";
-            break;
-        case EntityPreset::Ocean:
-            editLabel = "Create Ocean";
-            break;
-        case EntityPreset::Terrain:
-            editLabel = "Create Terrain";
-            break;
-        case EntityPreset::Cloth:
-            editLabel = "Create Cloth";
-            break;
-        case EntityPreset::ParticleSystem:
-            editLabel = "Create Particle System";
-            break;
-        case EntityPreset::AmbientLightVolume:
-            editLabel="Create Ambient Light Volume";
-            break;
-        case EntityPreset::IblCapture:
-            editLabel = "Create IBL Capture";
-            break;
+            ImGui::SameLine(0.0f, 0.0f);
+            ImGui::SetCursorScreenPos(ImVec2(row.max.x - size * static_cast<float>(slotFromRight + 1) - style.FramePadding.x, row.min.y));
+            const bool clicked = ImGui::InvisibleButton(buttonId, ImVec2(size, size));
+            const bool strong = ImGui::IsItemHovered() || emphasised;
+            const ImVec2 iconSize = ImGui::CalcTextSize(icon);
+            const ImVec2 min = ImGui::GetItemRectMin();
+            ImGui::GetWindowDrawList()->AddText(ImVec2(std::round(min.x + (size - iconSize.x) * 0.5f),
+                                                       std::round(min.y + (size - iconSize.y) * 0.5f)),
+                                                GetEditorColorU32(strong ? EditorColor::Text : EditorColor::TextMuted, strong ? 1.0f : 0.7f),
+                                                icon);
+            ImGui::SetItemTooltip("%s", tooltip);
+            return clicked;
+        };
+
+        // The toggles end the row's line, so they must not add row spacing either.
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x, 0.0f));
+        if (showActive && toggle("##Active", 1, active ? icons::View : icons::Hidden, !active,
+                                 active ? "Deactivate entity" : "Activate entity"))
+        {
+            shell.ExecuteSceneEdit(active ? "Deactivate Entity" : "Activate Entity", [&entity, active]()
+                                   { entity.SetActive(!active); });
+        }
+        if (showLock && toggle("##Lock", 0, locked ? icons::Lock : icons::Unlock, locked,
+                               locked ? "Unlock (allow viewport picking)" : "Lock (prevent viewport picking)"))
+        {
+            shell.GetEntityLocks().SetLocked(id, !locked);
+        }
+        ImGui::PopStyleVar();
+    }
+
+    void SceneHierarchyPanel::HandleRowInteraction(scene::Entity &entity)
+    {
+        if (ImGui::IsItemToggledOpen())
+        {
+            return;
+        }
+        const ImGuiIO &io = ImGui::GetIO();
+        const EntityId id = entity.GetID();
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+        {
+            if (io.KeyShift)
+            {
+                m_rangeClickId = id;
+                m_rangeClickControl = io.KeyCtrl;
+            }
+            else if (!io.KeyCtrl && IsEntitySelected(&entity) && m_selectedEntityIds.size() > 1)
+            {
+                m_releaseSelectId = id;
+            }
+            else
+            {
+                SelectEntity(&entity, io.KeyCtrl, io.KeyCtrl);
+            }
+        }
+        if (m_releaseSelectId == id && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+        {
+            if (ImGui::IsItemHovered())
+            {
+                SelectEntity(&entity, false, false);
+            }
+            m_releaseSelectId = 0;
+        }
+    }
+
+    void SceneHierarchyPanel::HandleRowDragDrop(scene::Entity &entity, const RowLayout &row, bool expanded)
+    {
+        const EntityId id = entity.GetID();
+        if (ImGui::BeginDragDropSource())
+        {
+            // Dragging no longer means "select this row alone" on release.
+            m_releaseSelectId = 0;
+            ImGui::SetDragDropPayload(kHierarchyDragDropPayload, &id, sizeof(id));
+            ImGui::Text("%s  %s", GetHierarchyEntityIcon(entity), entity.GetName().c_str());
+            if (IsEntitySelected(&entity) && m_selectedEntityIds.size() > 1)
+            {
+                ImGui::TextDisabled("+%zu more", m_selectedEntityIds.size() - 1);
+            }
+            ImGui::EndDragDropSource();
         }
 
-        EditorShell::GetInstance().ExecuteSceneEdit(editLabel,
-                                                    [&engine, scene, parent, preset, sceneAlreadyHasCamera, &createdEntity]()
-                                                    {
-                                                        auto addEntity = [scene, parent, &createdEntity](std::string name)
-                                                        {
-                                                            auto newEntity = std::make_unique<scene::Entity>(scene::EntityConfig{.name = std::move(name)});
-                                                            createdEntity = scene->AddEntity(std::move(newEntity), parent);
-                                                            return createdEntity;
-                                                        };
+        if (!ImGui::BeginDragDropTarget())
+        {
+            return;
+        }
+        const auto zone = ClassifyHierarchyDrop(row.min.y, row.max.y, ImGui::GetMousePos().y);
+        const ImGuiDragDropFlags flags = ImGuiDragDropFlags_AcceptBeforeDelivery |
+                                         (zone == HierarchyDropZone::Inside ? 0 : ImGuiDragDropFlags_AcceptNoDrawDefaultRect);
+        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload, flags))
+        {
+            const EntityId draggedId = *static_cast<const EntityId *>(payload->Data);
+            if (zone != HierarchyDropZone::Inside)
+            {
+                // Dropping below an expanded parent inserts as its first child.
+                const bool intoChildren = zone == HierarchyDropZone::After && expanded;
+                const float indent = intoChildren ? ImGui::GetStyle().IndentSpacing : 0.0f;
+                DrawDropLine(*ImGui::GetWindowDrawList(), row.labelPos.x + indent, row.max.x,
+                             zone == HierarchyDropZone::Before ? row.min.y : row.max.y);
+            }
+            if (payload->IsDelivery() && draggedId != id)
+            {
+                QueueMove(draggedId, id, zone, expanded);
+            }
+        }
+        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+        {
+            QueueAssetDrop(ReadAssetPayload(*payload), id);
+        }
+        ImGui::EndDragDropTarget();
+    }
 
-                                                        switch (preset)
-                                                        {
-                                                        case EntityPreset::Empty:
-                                                            addEntity("New Entity");
-                                                            break;
-                                                        case EntityPreset::Cube:
-                                                        {
-                                                            auto *entity = addEntity("Cube");
-                                                            if (!entity)
-                                                            {
-                                                                break;
-                                                            }
-                                                            auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
-                                                                .mesh = engine.GetAssetManager().LoadMeshAsset(std::string(assets::Project::kBuiltinCubeMeshReference)),
-                                                                .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
-                                                            });
-                                                            if (meshComponent)
-                                                            {
-                                                                meshComponent->SetSourceMeshPath(std::string(assets::Project::kBuiltinCubeMeshReference));
-                                                                meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::CarHierarchy:
-                                                        {
-                                                            auto *car = addEntity("Car");
-                                                            if (!car)
-                                                            {
-                                                                break;
-                                                            }
-                                                            auto addChild = [scene](scene::Entity *owner, const char *name, const glm::vec3 &position)
-                                                            {
-                                                                auto child = std::make_unique<scene::Entity>(scene::EntityConfig{.name = name});
-                                                                child->SetPosition(position);
-                                                                return scene->AddEntity(std::move(child), owner);
-                                                            };
-                                                            addChild(car, "Chassis", glm::vec3(0.0f, 0.6f, 0.0f));
-                                                            // Match car_scene: forward is -Z and left is +X.
-                                                            const char *anchorNames[] = {"W_FL", "W_FR", "W_RL", "W_RR"};
-                                                            const char *visualNames[] = {"WV_FL", "WV_FR", "WV_RL", "WV_RR"};
-                                                            const glm::vec3 positions[] = {
-                                                                {1.5f, 0.0f, -2.7f}, {-1.5f, 0.0f, -2.7f},
-                                                                {1.5f, 0.0f, 2.5f}, {-1.5f, 0.0f, 2.5f}};
-                                                            for (int i = 0; i < 4; ++i)
-                                                            {
-                                                                if (auto *anchor = addChild(car, anchorNames[i], positions[i]))
-                                                                {
-                                                                    addChild(anchor, visualNames[i], glm::vec3(0.0f));
-                                                                }
-                                                            }
-                                                            addChild(car, "CentreOfMass", glm::vec3(0.0f, -0.35f, -1.25f));
-                                                            addChild(car, "CameraTarget", glm::vec3(0.0f));
-                                                            break;
-                                                        }
-                                                        case EntityPreset::Camera:
-                                                        {
-                                                            auto *entity = addEntity("Camera");
-                                                            if (!entity)
-                                                            {
-                                                                break;
-                                                            }
-                                                            entity->SetPosition(glm::vec3(0.0f, 2.0f, 5.0f));
-                                                            entity->SetRotation(glm::vec3(-15.0f, 0.0f, 0.0f));
-                                                            auto *cameraComponent = entity->CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
-                                                                .fovY = 60.0f,
-                                                                .nearPlane = 0.1f,
-                                                                .farPlane = 100.0f,
-                                                            }));
-                                                            if (cameraComponent)
-                                                            {
-                                                                cameraComponent->SetMainCamera(!sceneAlreadyHasCamera);
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::DirectionalLight:
-                                                        {
-                                                            auto *entity = addEntity("Directional Light");
-                                                            if (auto *lightComponent = entity ? entity->CreateComponent<scene::LightComponent>() : nullptr)
-                                                            {
-                                                                lightComponent->SetLightType(scene::LightType::Directional);
-                                                                lightComponent->SetIntensity(4.0f);
-                                                                lightComponent->SetDirection(glm::normalize(glm::vec3(-0.45f, -0.85f, -0.25f)));
-                                                                lightComponent->SetCastsShadows(true);
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::PointLight:
-                                                        {
-                                                            auto *entity = addEntity("Point Light");
-                                                            if (!entity)
-                                                            {
-                                                                break;
-                                                            }
-                                                            entity->SetPosition(glm::vec3(0.0f, 2.0f, 0.0f));
-                                                            if (auto *lightComponent = entity->CreateComponent<scene::LightComponent>())
-                                                            {
-                                                                lightComponent->SetLightType(scene::LightType::Point);
-                                                                lightComponent->SetIntensity(8.0f);
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::Sky:
-                                                        {
-                                                            auto *entity = addEntity("Sky");
-                                                            if (entity)
-                                                            {
-                                                                entity->CreateComponent<scene::PhysicalSkyComponent>();
-                                                                entity->CreateComponent<scene::VolumetricCloudComponent>();
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::Ocean:
-                                                        {
-                                                            auto *entity = addEntity("Ocean");
-                                                            if (entity)
-                                                            {
-                                                                entity->CreateComponent<scene::OceanComponent>();
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::Terrain:
-                                                        {
-                                                            auto *entity = addEntity("Terrain");
-                                                            if (entity)
-                                                            {
-                                                                auto *terrainComponent = entity->CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
-                                                                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
-                                                                });
-                                                                if (terrainComponent)
-                                                                {
-                                                                    terrainComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                                                                }
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::Cloth:
-                                                        {
-                                                            auto *entity = addEntity("Cloth");
-                                                            if (entity)
-                                                            {
-                                                                entity->CreateComponent<scene::ClothComponent>();
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::ParticleSystem:
-                                                        {
-                                                            auto *entity = addEntity("Particle System");
-                                                            if (entity)
-                                                            {
-                                                                entity->CreateComponent<scene::ParticleSystemComponent>();
-                                                            }
-                                                            break;
-                                                        }
-                                                        case EntityPreset::AmbientLightVolume:
-                                                        {
-                                                            if (auto *entity=addEntity("Ambient Light Volume")) entity->CreateComponent<scene::AmbientLightVolumeComponent>();
-                                                            break;
-                                                        }
-                                                        case EntityPreset::IblCapture:
-                                                        {
-                                                            auto *entity = addEntity("IBL Capture");
-                                                            if (entity)
-                                                            {
-                                                                entity->CreateComponent<scene::IblCaptureComponent>();
-                                                            }
-                                                            break;
-                                                        }
-                                                        }
-                                                    });
+    void SceneHierarchyPanel::RenderEntityContextMenu(scene::Entity &entity)
+    {
+        auto &shell = EditorShell::GetInstance();
+        const EntityId id = entity.GetID();
+        if (!IsEntitySelected(&entity))
+        {
+            SelectEntity(&entity, false, false);
+        }
+        ImGui::BeginDisabled(m_selectedEntityIds.size() < 2);
+        if (ImGui::MenuItem("Group Selected", "Ctrl+G"))
+        {
+            Defer([this]() { GroupSelectedEntities(); });
+        }
+        ImGui::EndDisabled();
+        if (ImGui::BeginMenu("Set Pivot"))
+        {
+            const bool multiple = m_selectedEntityIds.size() > 1;
+            if (ImGui::MenuItem(multiple ? "Individual Centres" : "Bounds Centre"))
+            {
+                SetSelectedPivotsToMeshBounds(false, false);
+            }
+            if (ImGui::MenuItem(multiple ? "Individual Bottom Centres" : "Bounds Bottom Centre"))
+            {
+                SetSelectedPivotsToMeshBounds(false, true);
+            }
+            if (multiple)
+            {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Centre of Selection"))
+                    SetSelectedPivotsToMeshBounds(true, false);
+                if (ImGui::MenuItem("Bottom Centre of Selection"))
+                    SetSelectedPivotsToMeshBounds(true, true);
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Rename", "F2"))
+        {
+            BeginRename(&entity);
+        }
+        if (ImGui::MenuItem("Frame Selected", "Enter"))
+        {
+            shell.FrameSelectedEntity();
+        }
+        if (ImGui::MenuItem("Copy", "Ctrl+C"))
+        {
+            shell.CopySelectedEntity();
+        }
+        if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+        {
+            Defer([]() { EditorShell::GetInstance().DuplicateSelectedEntity(); });
+        }
+        if (ImGui::BeginMenu("Create Child"))
+        {
+            RenderCreateMenu(&entity);
+            ImGui::EndMenu();
+        }
+        if (entity.GetParent() && ImGui::MenuItem("Unparent"))
+        {
+            QueueMove(id, 0, HierarchyDropZone::Inside, false);
+        }
+        if (!entity.GetChildren().empty())
+        {
+            ImGui::Separator();
+            if (ImGui::MenuItem("Expand All Children", "Alt+Click"))
+            {
+                m_expansion.SetSubtreeExpanded(entity, true);
+            }
+            if (ImGui::MenuItem("Collapse All Children"))
+            {
+                m_expansion.SetSubtreeExpanded(entity, false);
+            }
+        }
+        if (FindSkeletonMeshComponent(&entity))
+        {
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Create Skeleton Attachment"))
+            {
+                if (auto *meshComponent = FindSkeletonMeshComponent(&entity))
+                {
+                    const auto &joints = meshComponent->GetMesh()->GetSkeleton().joints;
+                    for (std::size_t jointIndex = 0; jointIndex < joints.size(); ++jointIndex)
+                    {
+                        const auto &joint = joints[jointIndex];
+                        const std::string label = joint.name.empty()
+                                                      ? "Joint " + std::to_string(jointIndex)
+                                                      : joint.name;
+                        if (ImGui::MenuItem(label.c_str()))
+                        {
+                            Defer([meshComponent, jointIndex]()
+                                  {
+                                      EditorShell::GetInstance().ExecuteSceneEdit(
+                                          "Create Skeleton Attachment",
+                                          [meshComponent, jointIndex]()
+                                          {
+                                              if (auto *created = meshComponent->CreateSkeletonAttachmentEntity(jointIndex))
+                                              {
+                                                  EditorShell::GetInstance().SetSelectedEntity(created);
+                                              }
+                                          });
+                                  });
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::MenuItem("Compact Legacy Skeleton Attachments"))
+            {
+                Defer([id]()
+                      {
+                          auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+                          auto *target = scene ? scene->FindEntityByID(id) : nullptr;
+                          EditorShell::GetInstance().ExecuteSceneEdit(
+                              "Compact Legacy Skeleton Attachments",
+                              [target]()
+                              {
+                                  if (auto *meshComponent = FindSkeletonMeshComponent(target))
+                                  {
+                                      meshComponent->CompactSkeletonAttachmentEntities();
+                                  }
+                              });
+                      });
+            }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem("Save As Prefab"))
+        {
+            SaveEntityAsPrefab(entity);
+        }
+        if (ImGui::MenuItem("Delete Entity", "Del"))
+        {
+            Defer([this, id]() { DeleteEntity(id); });
+        }
+    }
 
+    void SceneHierarchyPanel::RenderCreateMenu(scene::Entity *parent)
+    {
+        const EntityId parentId = parent ? parent->GetID() : 0;
+        for (const auto &preset : GetEntityPresets())
+        {
+            if (preset.separatorBefore)
+            {
+                ImGui::Separator();
+            }
+            if (ImGui::MenuItem(preset.menuLabel))
+            {
+                // Presets live in a static table, so the reference outlives the edit.
+                Defer([this, &preset, parentId]() { CreatePresetEntity(preset, parentId); });
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Deferred structural edits
+
+    void SceneHierarchyPanel::RunDeferredEdits()
+    {
+        if (m_deferredEdits.empty())
+        {
+            return;
+        }
+        // Edits that queue further edits run on the next frame.
+        auto edits = std::move(m_deferredEdits);
+        m_deferredEdits.clear();
+        for (auto &edit : edits)
+        {
+            edit();
+        }
+        m_filter.Invalidate();
+    }
+
+    void SceneHierarchyPanel::QueueMove(EntityId draggedId, EntityId targetId, HierarchyDropZone zone, bool targetExpanded)
+    {
+        // Dragging part of a multi-selection moves every selected root, in
+        // the order the rows are shown.
+        std::vector<EntityId> movedIds{draggedId};
+        if (std::find(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), draggedId) != m_selectedEntityIds.end())
+        {
+            movedIds.clear();
+            for (const auto *root : EditorShell::GetInstance().GetSelectedEntities(true))
+            {
+                movedIds.push_back(root->GetID());
+            }
+            std::unordered_map<EntityId, std::size_t> rowOrder;
+            for (std::size_t index = 0; index < m_rows.size(); ++index)
+            {
+                rowOrder.emplace(m_rows[index].id, index);
+            }
+            const auto orderOf = [&rowOrder](EntityId value)
+            {
+                const auto it = rowOrder.find(value);
+                return it != rowOrder.end() ? it->second : std::numeric_limits<std::size_t>::max();
+            };
+            std::stable_sort(movedIds.begin(), movedIds.end(), [&](EntityId a, EntityId b) { return orderOf(a) < orderOf(b); });
+        }
+
+        Defer([movedIds = std::move(movedIds), targetId, zone, targetExpanded]()
+              {
+                  auto &shell = EditorShell::GetInstance();
+                  auto *scene = shell.GetEngine().GetScene();
+                  if (!scene)
+                  {
+                      return;
+                  }
+                  std::vector<scene::Entity *> entities;
+                  for (const auto movedId : movedIds)
+                  {
+                      if (auto *entity = scene->FindEntityByID(movedId))
+                      {
+                          entities.push_back(entity);
+                      }
+                  }
+                  auto *target = targetId ? scene->FindEntityByID(targetId) : nullptr;
+                  if (entities.empty() || (targetId && !target))
+                  {
+                      return;
+                  }
+                  const char *label = !target                          ? "Move Entity To Root"
+                                      : zone == HierarchyDropZone::Inside ? "Reparent Entity"
+                                                                         : "Reorder Entity";
+                  shell.ExecuteSceneEdit(label, [&]()
+                                         {
+                                             if (target)
+                                             {
+                                                 MoveEntitiesRelativeTo(entities, *target, zone, targetExpanded);
+                                                 return;
+                                             }
+                                             for (auto *entity : entities)
+                                             {
+                                                 MoveEntityTo(*entity, {.parent = nullptr, .index = scene->GetRootEntities().size()});
+                                             }
+                                         });
+              });
+    }
+
+    void SceneHierarchyPanel::QueueAssetDrop(std::string reference, EntityId parentId)
+    {
+        Defer([reference = std::move(reference), parentId]()
+              {
+                  auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+                  auto *parent = scene && parentId ? scene->FindEntityByID(parentId) : nullptr;
+                  if (scene && (parent || parentId == 0))
+                  {
+                      InstantiateAsset(reference, parent);
+                  }
+              });
+    }
+
+    void SceneHierarchyPanel::CreatePresetEntity(const EntityPresetDefinition &preset, EntityId parentId)
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *scene = shell.GetEngine().GetScene();
+        if (!scene)
+        {
+            return;
+        }
+        auto *parent = parentId ? scene->FindEntityByID(parentId) : nullptr;
+        if (parentId && !parent)
+        {
+            return;
+        }
+
+        const EntityPresetContext context{
+            .scene = *scene,
+            .parent = parent,
+            .assets = core::Engine::GetInstance().GetAssetManager(),
+            .sceneHasCamera = SceneHasAnyCamera(*scene),
+        };
+        scene::Entity *createdEntity = nullptr;
+        shell.ExecuteSceneEdit(preset.editLabel, [&]() { createdEntity = preset.create(context); });
         if (createdEntity)
         {
-            EditorShell::GetInstance().SetSelectedEntity(createdEntity);
+            shell.SetSelectedEntity(createdEntity);
+            SyncSelectionFromShell();
             BeginRename(createdEntity);
         }
     }
+
+    void SceneHierarchyPanel::DeleteEntity(EntityId id)
+    {
+        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+        auto *entity = scene ? scene->FindEntityByID(id) : nullptr;
+        if (!entity)
+        {
+            return;
+        }
+        if (!IsEntitySelected(entity))
+        {
+            SelectEntity(entity, false, false);
+        }
+        if (EditorShell::GetInstance().DeleteSelectedEntity())
+        {
+            SyncSelectionFromShell();
+            if (m_renamingEntityId == id)
+            {
+                EndRename(false);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Rename, selection and navigation
 
     void SceneHierarchyPanel::BeginRename(scene::Entity *entity)
     {
@@ -770,6 +821,7 @@ namespace PlutoGE::ui
 
         m_renamingEntityId = entity->GetID();
         m_focusRenameInput = true;
+        m_scrollToEntityId = entity->GetID();
         std::memset(m_renameBuffer.data(), 0, m_renameBuffer.size());
         const std::string name = entity->GetName();
         const std::size_t copyLength = std::min(name.size(), m_renameBuffer.size() - 1);
@@ -781,21 +833,19 @@ namespace PlutoGE::ui
         if (applyChanges && m_renamingEntityId != 0)
         {
             auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
-            if (scene)
+            if (scene && scene->FindEntityByID(m_renamingEntityId))
             {
-                if (auto *entity = scene->FindEntityByID(m_renamingEntityId))
-                {
-                    const scene::EntityID entityId = m_renamingEntityId;
-                    std::string newName = m_renameBuffer.data();
-                    EditorShell::GetInstance().ExecuteSceneEdit("Rename Entity",
-                                                                [scene, entityId, newName = std::move(newName)]()
+                const scene::EntityID entityId = m_renamingEntityId;
+                std::string newName = m_renameBuffer.data();
+                EditorShell::GetInstance().ExecuteSceneEdit("Rename Entity",
+                                                            [scene, entityId, newName = std::move(newName)]()
+                                                            {
+                                                                if (auto *target = scene->FindEntityByID(entityId))
                                                                 {
-                                                                    if (auto *target = scene->FindEntityByID(entityId))
-                                                                    {
-                                                                        target->SetName(newName);
-                                                                    }
-                                                                });
-                }
+                                                                    target->SetName(newName);
+                                                                }
+                                                            });
+                m_filter.Invalidate();
             }
         }
 
@@ -804,39 +854,7 @@ namespace PlutoGE::ui
         std::memset(m_renameBuffer.data(), 0, m_renameBuffer.size());
     }
 
-    void SceneHierarchyPanel::RenderRootDropTarget()
-    {
-        ImGui::Selectable("Scene Root##HierarchyRootTarget", false, ImGuiSelectableFlags_AllowDoubleClick);
-        if (ImGui::BeginDragDropTarget())
-        {
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload))
-            {
-                auto *draggedEntity = *static_cast<scene::Entity *const *>(payload->Data);
-                if (draggedEntity)
-                {
-                    EditorShell::GetInstance().ExecuteSceneEdit("Move Entity To Root",
-                                                                [draggedEntity]()
-                                                                {
-                                                                    draggedEntity->SetParent(nullptr);
-                                                                });
-                }
-            }
-            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-            {
-                const std::string reference(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
-                if (!InstantiatePrefabIntoScene(reference, nullptr))
-                {
-                    if (!InstantiateModelAssetIntoScene(reference, nullptr))
-                    {
-                        InstantiateMeshAssetIntoScene(reference, nullptr);
-                    }
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
-    }
-
-    bool SceneHierarchyPanel::IsEntitySelected(scene::Entity *entity) const
+    bool SceneHierarchyPanel::IsEntitySelected(const scene::Entity *entity) const
     {
         return entity && std::find(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), entity->GetID()) != m_selectedEntityIds.end();
     }
@@ -846,6 +864,9 @@ namespace PlutoGE::ui
         auto &shell = EditorShell::GetInstance();
         shell.ClickEntity(entity, rangeToggle, additive && !rangeToggle);
         SyncSelectionFromShell();
+        // Selections made here act on visible rows; revealing them would only
+        // reopen parents the user deliberately collapsed.
+        m_observedSelectionRevision = shell.GetSelectionRevision();
     }
 
     void SceneHierarchyPanel::SyncSelectionFromShell()
@@ -865,6 +886,141 @@ namespace PlutoGE::ui
             }
         }
     }
+
+    void SceneHierarchyPanel::RevealSelectionChanges()
+    {
+        auto &shell = EditorShell::GetInstance();
+        if (shell.GetSceneRevision() != m_observedSceneRevision)
+        {
+            m_observedSceneRevision = shell.GetSceneRevision();
+            m_expansion.Clear();
+            m_filter.Invalidate();
+        }
+
+        // Selection changes from elsewhere (viewport picks, creation, undo)
+        // expand the path to the selection and scroll the primary into view.
+        const auto revision = shell.GetSelectionRevision();
+        if (revision == m_observedSelectionRevision)
+        {
+            return;
+        }
+        m_observedSelectionRevision = revision;
+        for (const auto *selected : shell.GetSelectedEntities())
+        {
+            m_expansion.ExpandAncestors(*selected);
+        }
+        if (const auto *primary = shell.GetSelectedEntity())
+        {
+            m_scrollToEntityId = primary->GetID();
+        }
+    }
+
+    std::vector<SceneHierarchyPanel::EntityId> SceneHierarchyPanel::VisibleEntityIds() const
+    {
+        std::vector<EntityId> ids;
+        ids.reserve(m_rows.size());
+        for (const auto &row : m_rows)
+        {
+            ids.push_back(row.id);
+        }
+        return ids;
+    }
+
+    void SceneHierarchyPanel::SetAllExpanded(bool expanded)
+    {
+        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+        if (!scene)
+        {
+            return;
+        }
+        for (const auto *root : scene->GetRootEntities())
+        {
+            if (root)
+            {
+                m_expansion.SetSubtreeExpanded(*root, expanded);
+            }
+        }
+    }
+
+    void SceneHierarchyPanel::HandleKeyboardNavigation()
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        if (!ImGui::IsWindowFocused() || io.WantTextInput || m_renamingEntityId != 0 ||
+            ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        {
+            return;
+        }
+
+        auto &shell = EditorShell::GetInstance();
+        auto *scene = shell.GetEngine().GetScene();
+        if (!scene)
+        {
+            return;
+        }
+        auto *current = shell.GetSelectedEntity();
+
+        if (current && ImGui::IsKeyPressed(ImGuiKey_F2, false))
+        {
+            BeginRename(current);
+            return;
+        }
+        if (current && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)))
+        {
+            shell.FrameSelectedEntity();
+            return;
+        }
+
+        constexpr std::array<std::pair<ImGuiKey, HierarchyNavKey>, 6> kKeys{{
+            {ImGuiKey_UpArrow, HierarchyNavKey::Up},
+            {ImGuiKey_DownArrow, HierarchyNavKey::Down},
+            {ImGuiKey_LeftArrow, HierarchyNavKey::Left},
+            {ImGuiKey_RightArrow, HierarchyNavKey::Right},
+            {ImGuiKey_Home, HierarchyNavKey::Home},
+            {ImGuiKey_End, HierarchyNavKey::End},
+        }};
+        for (const auto &[imguiKey, navKey] : kKeys)
+        {
+            if (!ImGui::IsKeyPressed(imguiKey))
+            {
+                continue;
+            }
+            auto action = NavigateHierarchy(m_rows, current ? current->GetID() : 0, navKey);
+            if (action.collapse && m_filter.IsActive())
+            {
+                // Filtered rows stay open; Left moves to the parent instead.
+                const auto row = std::find_if(m_rows.begin(), m_rows.end(), [&](const HierarchyRow &r)
+                                              { return r.id == action.collapse; });
+                action = {.select = row != m_rows.end() ? row->parentId : 0};
+            }
+            if (action.expand)
+            {
+                m_expansion.SetExpanded(action.expand, true);
+            }
+            if (action.collapse)
+            {
+                m_expansion.SetExpanded(action.collapse, false);
+            }
+            if (auto *target = action.select ? scene->FindEntityByID(action.select) : nullptr)
+            {
+                const bool vertical = navKey != HierarchyNavKey::Left && navKey != HierarchyNavKey::Right;
+                if (io.KeyShift && vertical)
+                {
+                    shell.ClickEntity(target, false, true, VisibleEntityIds());
+                    SyncSelectionFromShell();
+                    m_observedSelectionRevision = shell.GetSelectionRevision();
+                }
+                else
+                {
+                    SelectEntity(target, false, false);
+                }
+                m_scrollToEntityId = target->GetID();
+            }
+            return;
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Group and pivots
 
     void SceneHierarchyPanel::GroupSelectedEntities()
     {
@@ -957,138 +1113,126 @@ namespace PlutoGE::ui
         });
     }
 
+    // ---------------------------------------------------------------------
+    // Panel
+
     void SceneHierarchyPanel::Initialize()
     {
-        // Initialization code for the scene hierarchy panel (e.g., load icons, set up data structures)
     }
 
-    void SceneHierarchyPanel::Render()
+    void SceneHierarchyPanel::RenderPinnedRows()
     {
-        const bool isEditorCameraSelected = EditorShell::GetInstance().IsEditorCameraSelected();
-        if (ImGui::Selectable("Editor Camera", isEditorCameraSelected))
+        auto &shell = EditorShell::GetInstance();
+        if (PinnedRow(icons::EntityCamera, "Editor Camera", shell.IsEditorCameraSelected()))
         {
-            EditorShell::GetInstance().SelectEditorCamera();
+            shell.SelectEditorCamera();
         }
 
-        ImGui::Separator();
-        RenderRootDropTarget();
-        ImGui::Separator();
-
-        auto scene = ui::EditorShell::GetInstance().GetEngine().GetScene();
-        if (!scene)
+        PinnedRow(icons::SceneAsset, "Scene Root##HierarchyRootTarget", false);
+        ImGui::SetItemTooltip("Drop entities or assets here to place them at the scene root");
+        if (ImGui::BeginDragDropTarget())
         {
-            ImGui::Text("No scene loaded");
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload))
+            {
+                QueueMove(*static_cast<const EntityId *>(payload->Data), 0, HierarchyDropZone::Inside, false);
+            }
+            if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            {
+                QueueAssetDrop(ReadAssetPayload(*payload), 0);
+            }
+            ImGui::EndDragDropTarget();
+        }
+    }
+
+    void SceneHierarchyPanel::RenderFilterBar(scene::Scene &scene)
+    {
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float buttonWidth = ImGui::GetFrameHeight();
+        ImGui::SetNextItemWidth(std::max(1.0f, ImGui::GetContentRegionAvail().x - (buttonWidth + style.ItemInnerSpacing.x) * 2.0f));
+        if (ImGui::InputTextWithHint("##HierarchySearch", "Search entities...", m_searchBuffer.data(), m_searchBuffer.size()))
+        {
+            m_filter.SetQuery(m_searchBuffer.data());
+        }
+        ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+        if (ImGui::Button(icons::ExpandAll, ImVec2(buttonWidth, 0.0f)))
+        {
+            SetAllExpanded(true);
+        }
+        ImGui::SetItemTooltip("Expand all");
+        ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+        if (ImGui::Button(icons::CollapseAll, ImVec2(buttonWidth, 0.0f)))
+        {
+            SetAllExpanded(false);
+        }
+        ImGui::SetItemTooltip("Collapse all");
+
+        const std::string &componentType = m_filter.GetComponentType();
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##HierarchyComponent", componentType.empty() ? "All components" : componentType.c_str()))
+        {
+            // Walking every component is only worth doing while the list is open.
+            if (ImGui::Selectable("All components", componentType.empty()))
+            {
+                m_filter.SetComponentType({});
+            }
+            for (const auto &type : HierarchyFilter::CollectComponentTypes(scene))
+            {
+                if (ImGui::Selectable(type.c_str(), componentType == type))
+                {
+                    m_filter.SetComponentType(type);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (m_filter.IsActive() && ImGui::Button("Clear filters"))
+        {
+            m_searchBuffer.fill(0);
+            m_filter.ClearCriteria();
+        }
+        m_filter.Refresh(&scene, ImGui::GetTime());
+    }
+
+    void SceneHierarchyPanel::RenderTree(scene::Scene &scene)
+    {
+        // The tree scrolls on its own so the search and filter stay pinned,
+        // and handles arrow keys itself instead of ImGui's generic navigation.
+        if (!ImGui::BeginChild("##HierarchyTree", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None, ImGuiWindowFlags_NoNavInputs))
+        {
+            ImGui::EndChild();
             return;
         }
 
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::InputTextWithHint("##HierarchySearch", "Search entities...", m_searchBuffer.data(), m_searchBuffer.size());
-        ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("##HierarchyComponent", m_componentFilter.empty() ? "All components" : m_componentFilter.c_str()))
+        if (m_filter.IsActive() && !m_filter.HasMatches())
         {
-            // Walking every component of a large scene is only worth doing
-            // while the list is visible, not on every editor frame.
-            std::set<std::string> componentTypes;
-            const auto collectTypes = [&](auto &&self, const scene::Entity *entity) -> void
-            {
-                for (const auto &bucket : entity->GetComponentBuckets())
-                    for (const auto *component : bucket)
-                        if (component)
-                        {
-                            auto name = scene::SceneSerializer::GetComponentTypeName(*component);
-                            if (!name.empty()) componentTypes.insert(std::move(name));
-                        }
-                for (const auto *child : entity->GetChildren()) self(self, child);
-            };
-            for (const auto *root : scene->GetRootEntities()) collectTypes(collectTypes, root);
-            if (ImGui::Selectable("All components", m_componentFilter.empty())) m_componentFilter.clear();
-            for (const auto &type : componentTypes)
-                if (ImGui::Selectable(type.c_str(), m_componentFilter == type)) m_componentFilter = type;
-            ImGui::EndCombo();
-        }
-        m_filterActive = m_searchBuffer[0] != '\0' || !m_componentFilter.empty();
-        if (m_filterActive && ImGui::Button("Clear filters"))
-        {
-            m_searchBuffer.fill(0);
-            m_componentFilter.clear();
-            m_filterActive = false;
-        }
-        m_filteredEntityIds.clear();
-        const auto lowercase = [](std::string text)
-        {
-            for (auto &character : text) character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
-            return text;
-        };
-        const auto query = lowercase(m_searchBuffer.data());
-        const auto filterTree = [&](auto &&self, const scene::Entity *entity) -> bool
-        {
-            bool componentMatches = m_componentFilter.empty();
-            if (!componentMatches)
-                for (const auto &bucket : entity->GetComponentBuckets())
-                    for (const auto *component : bucket)
-                        if (component && scene::SceneSerializer::GetComponentTypeName(*component) == m_componentFilter)
-                            componentMatches = true;
-            bool visible = componentMatches && lowercase(entity->GetName()).find(query) != std::string::npos;
-            for (const auto *child : entity->GetChildren())
-                visible = self(self, child) || visible;
-            if (visible) m_filteredEntityIds.insert(entity->GetID());
-            return visible;
-        };
-        if (m_filterActive)
-            for (const auto *root : scene->GetRootEntities()) filterTree(filterTree, root);
-        ImGui::Separator();
-        if (m_filterActive && m_filteredEntityIds.empty()) ImGui::TextDisabled("No matching entities");
-
-        SyncSelectionFromShell();
-        m_visibleEntityIds.clear();
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput)
-        {
-            GroupSelectedEntities();
+            ImGui::TextDisabled("No matching entities");
         }
 
+        m_rows.clear();
         // Selected rows use the accent; collapsing headers elsewhere keep the neutral Header colour.
         ImGui::PushStyleColor(ImGuiCol_Header, GetEditorColorU32(EditorColor::Selection));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, GetEditorColorU32(EditorColor::Accent, 0.16f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, GetEditorColorU32(EditorColor::SelectionHovered));
-        for (auto entity : scene->GetRootEntities())
+        for (auto *entity : scene.GetRootEntities())
         {
             RenderEntityNode(entity);
         }
         ImGui::PopStyleColor(3);
+        m_scrollToEntityId = 0;
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        {
+            m_releaseSelectId = 0;
+        }
 
         if (m_rangeClickId)
         {
-            EditorShell::GetInstance().ClickEntity(scene->FindEntityByID(m_rangeClickId),
-                                                   m_rangeClickControl, true, m_visibleEntityIds);
+            auto &shell = EditorShell::GetInstance();
+            shell.ClickEntity(scene.FindEntityByID(m_rangeClickId), m_rangeClickControl, true, VisibleEntityIds());
             m_rangeClickId = 0;
             SyncSelectionFromShell();
+            m_observedSelectionRevision = shell.GetSelectionRevision();
         }
 
-        if (m_pendingDeleteEntityId != 0)
-        {
-            const auto deletedEntityId = m_pendingDeleteEntityId;
-            m_pendingDeleteEntityId = 0;
-            if (auto *entity = scene->FindEntityByID(deletedEntityId))
-            {
-                if (!IsEntitySelected(entity)) SelectEntity(entity, false, false);
-                if (EditorShell::GetInstance().DeleteSelectedEntity())
-                {
-                    m_selectedEntityIds.erase(
-                        std::remove(m_selectedEntityIds.begin(), m_selectedEntityIds.end(), deletedEntityId),
-                        m_selectedEntityIds.end());
-                    if (m_renamingEntityId == deletedEntityId)
-                    {
-                        EndRename(false);
-                    }
-                }
-            }
-        }
-
-        if (m_groupSelectionRequested)
-        {
-            m_groupSelectionRequested = false;
-            GroupSelectedEntities();
-        }
+        HandleKeyboardNavigation();
 
         if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup) &&
             ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
@@ -1098,11 +1242,37 @@ namespace PlutoGE::ui
         }
 
         ContextMenu();
+        ImGui::EndChild();
+    }
+
+    void SceneHierarchyPanel::Render()
+    {
+        RenderPinnedRows();
+        ImGui::Separator();
+
+        auto *scene = EditorShell::GetInstance().GetEngine().GetScene();
+        if (!scene)
+        {
+            ImGui::Text("No scene loaded");
+            return;
+        }
+
+        RenderFilterBar(*scene);
+        ImGui::Separator();
+
+        SyncSelectionFromShell();
+        RevealSelectionChanges();
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput)
+        {
+            Defer([this]() { GroupSelectedEntities(); });
+        }
+
+        RenderTree(*scene);
+        RunDeferredEdits();
     }
 
     void SceneHierarchyPanel::Shutdown()
     {
-        // Cleanup code for the scene hierarchy panel (e.g., release resources)
     }
 
     void SceneHierarchyPanel::ContextMenu()
@@ -1112,7 +1282,7 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled(!EditorShell::GetInstance().HasCopiedEntity());
             if (ImGui::MenuItem("Paste", "Ctrl+V"))
             {
-                EditorShell::GetInstance().PasteCopiedEntity();
+                Defer([]() { EditorShell::GetInstance().PasteCopiedEntity(); });
             }
             ImGui::EndDisabled();
             ImGui::Separator();
@@ -1120,6 +1290,15 @@ namespace PlutoGE::ui
             {
                 RenderCreateMenu(nullptr);
                 ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Expand All"))
+            {
+                SetAllExpanded(true);
+            }
+            if (ImGui::MenuItem("Collapse All"))
+            {
+                SetAllExpanded(false);
             }
             ImGui::EndPopup();
         }

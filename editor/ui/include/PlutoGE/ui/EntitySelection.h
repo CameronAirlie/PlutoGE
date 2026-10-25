@@ -12,8 +12,11 @@ namespace PlutoGE::ui
     public:
         using ID = std::uint32_t;
         const std::vector<ID> &Ids() const { return m_ids; }
+        // Advances on every mutation so views can react to selection changes
+        // made elsewhere (for example revealing a viewport pick).
+        std::uint64_t Revision() const { return m_revision; }
         bool Contains(ID id) const { return std::find(m_ids.begin(), m_ids.end(), id) != m_ids.end(); }
-        void Clear() { m_ids.clear(); m_anchor = 0; }
+        void Clear() { m_ids.clear(); m_anchor = 0; ++m_revision; }
         void Set(const std::vector<ID> &ids)
         {
             Clear();
@@ -24,6 +27,7 @@ namespace PlutoGE::ui
         void Click(ID id, bool control, bool shift, const std::vector<ID> &visible = {})
         {
             if (!id) { if (!control && !shift) Clear(); return; }
+            ++m_revision;
             auto first = std::find(visible.begin(), visible.end(), m_anchor);
             auto last = std::find(visible.begin(), visible.end(), id);
             if (shift && first != visible.end() && last != visible.end())
@@ -44,11 +48,14 @@ namespace PlutoGE::ui
         }
         template<class Exists> void Prune(Exists exists)
         {
-            m_ids.erase(std::remove_if(m_ids.begin(), m_ids.end(), [&](ID id) { return !exists(id); }), m_ids.end());
+            const auto removed = std::remove_if(m_ids.begin(), m_ids.end(), [&](ID id) { return !exists(id); });
+            if (removed != m_ids.end()) ++m_revision;
+            m_ids.erase(removed, m_ids.end());
             if (!exists(m_anchor)) m_anchor = m_ids.empty() ? 0 : m_ids.back();
         }
     private:
         std::vector<ID> m_ids;
         ID m_anchor = 0;
+        std::uint64_t m_revision = 0;
     };
 }

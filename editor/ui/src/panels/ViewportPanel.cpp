@@ -162,6 +162,7 @@ namespace PlutoGE::ui
             bool rayBuilt = false;
             std::size_t totalEntities = 0;
             std::size_t inactiveEntities = 0;
+            std::size_t lockedEntities = 0;
             std::size_t pickableMeshEntities = 0;
             std::size_t pickableTerrainEntities = 0;
             std::size_t emptyMeshEntities = 0;
@@ -1407,6 +1408,7 @@ namespace PlutoGE::ui
 
             scene::Entity *selectedEntity = nullptr;
             float selectedDistance = std::numeric_limits<float>::max();
+            const auto &locks = EditorShell::GetInstance().GetEntityLocks();
             for (auto *entity : entities)
             {
                 if (debugInfo)
@@ -1418,6 +1420,14 @@ namespace PlutoGE::ui
                     if (debugInfo)
                     {
                         ++debugInfo->inactiveEntities;
+                    }
+                    continue;
+                }
+                if (locks.IsLockedInHierarchy(entity))
+                {
+                    if (debugInfo)
+                    {
+                        ++debugInfo->lockedEntities;
                     }
                     continue;
                 }
@@ -1640,6 +1650,7 @@ namespace PlutoGE::ui
 
             message << " entities=" << debugInfo.totalEntities
                     << " inactive=" << debugInfo.inactiveEntities
+                    << " locked=" << debugInfo.lockedEntities
                     << " pickableMesh=" << debugInfo.pickableMeshEntities
                     << " pickableTerrain=" << debugInfo.pickableTerrainEntities
                     << " emptyMesh=" << debugInfo.emptyMeshEntities
@@ -1725,34 +1736,6 @@ namespace PlutoGE::ui
             frame[1] = glm::vec4(glm::normalize(glm::cross(tangent, -defaultRight)), 0.0f);
             frame[2] = glm::vec4(tangent, 0.0f);
             return frame;
-        }
-
-        void FrameSelectedEntity(EditorShell &editorShell)
-        {
-            auto *selectedEntity = editorShell.GetSelectedEntity();
-            if (!selectedEntity)
-            {
-                return;
-            }
-
-            auto &camera = editorShell.GetEditorCamera();
-            glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), camera.position);
-            cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
-            cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
-            const glm::vec3 forward = glm::normalize(-glm::vec3(cameraTransform[2]));
-
-            float radius = 2.5f;
-            if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
-            {
-                if (auto *mesh = meshComponent->GetMesh())
-                {
-                    const glm::vec3 worldScale = selectedEntity->GetWorldScale();
-                    const float maxScale = std::max(worldScale.x, std::max(worldScale.y, worldScale.z));
-                    radius = std::max(mesh->GetBounds().radius * maxScale, 0.5f);
-                }
-            }
-
-            camera.position = selectedEntity->GetWorldPosition() - forward * std::max(radius * 2.5f, 2.0f);
         }
 
         void FrameSceneOrthographic(EditorShell &editorShell, const ImVec2 &viewportSize)
@@ -2176,7 +2159,7 @@ namespace PlutoGE::ui
         }
         if (allowEditorViewportHotkeys && ImGui::IsKeyPressed(ImGuiKey_F))
         {
-            FrameSelectedEntity(EditorShell::GetInstance());
+            EditorShell::GetInstance().FrameSelectedEntity();
         }
 
         auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
@@ -2350,13 +2333,13 @@ namespace PlutoGE::ui
                 ImGui::Separator();
                 if (ImGui::MenuItem("Frame Selected", "F"))
                 {
-                    FrameSelectedEntity(EditorShell::GetInstance());
+                    EditorShell::GetInstance().FrameSelectedEntity();
                 }
                 ImGui::EndPopup();
             }
 
             if (toolButton("##Frame", icons::Frame, "Frame selected (F)", false))
-                FrameSelectedEntity(EditorShell::GetInstance());
+                EditorShell::GetInstance().FrameSelectedEntity();
             endControls();
         }
         beginControls("View", ImVec2(0, 0), ImVec2(8, 8));

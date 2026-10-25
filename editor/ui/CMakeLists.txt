@@ -67,6 +67,12 @@ add_library(PlutoGEEditorUI
     src/panels/ViewportPanel.cpp
     src/panels/CanvasEditorPanel.cpp
     src/panels/SceneHierarchyPanel.cpp
+    src/hierarchy/HierarchyDropPlacement.cpp
+    src/hierarchy/HierarchyEntityIcons.cpp
+    src/hierarchy/HierarchyEntityPresets.cpp
+    src/hierarchy/HierarchyExpansion.cpp
+    src/hierarchy/HierarchyFilter.cpp
+    src/hierarchy/HierarchyNavigation.cpp
     src/panels/InspectorPanel.cpp
     src/PanelManager.cpp
     src/EditorFonts.cpp

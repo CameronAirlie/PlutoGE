@@ -24,8 +24,9 @@
   vector axis edits preserve the other axes. Component-specific tools and shared
   asset editors remain available through single selection.
 - Duplicate and Delete operate on selected roots as one undoable action. Ctrl+G
-  groups selected entities. Copy/paste and hierarchy reparenting retain their
-  existing single-entity behavior.
+  groups selected entities. Dragging a selected row in the hierarchy moves every
+  selected root as one block (see [SCENE_HIERARCHY.md](SCENE_HIERARCHY.md)).
+  Copy/paste retains its existing single-entity behavior.
 - Inspector gestures and group gizmo drags use the scene history's gesture
   coalescing, so one drag is one undo step. Undo/redo preserves selected IDs that
   exist in the restored scene. Selection changes alone do not create history.

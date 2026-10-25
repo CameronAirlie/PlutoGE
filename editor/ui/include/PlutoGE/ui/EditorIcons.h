@@ -61,6 +61,27 @@ namespace PlutoGE::ui::icons
     inline constexpr const char *History = "\xef\x87\x9a"; // clock-rotate-left
     inline constexpr const char *Quit = "\xef\x8b\xb5"; // right-from-bracket
     inline constexpr const char *Warning = "\xef\x81\xb1"; // triangle-exclamation
+    inline constexpr const char *EntityEmpty = "\xef\x86\x92"; // circle-dot
+    inline constexpr const char *EntityCamera = "\xef\x80\xbd"; // video
+    inline constexpr const char *EntityPointLight = "\xef\x83\xab"; // lightbulb
+    inline constexpr const char *EntityDirectionalLight = "\xef\x86\x85"; // sun
+    inline constexpr const char *EntitySky = "\xef\x9b\x84"; // cloud-sun
+    inline constexpr const char *EntityOcean = "\xef\x9d\xb3"; // water
+    inline constexpr const char *EntityTerrain = "\xef\x9b\xbc"; // mountain
+    inline constexpr const char *EntityCloth = "\xef\x95\x93"; // shirt
+    inline constexpr const char *EntityVolume = "\xef\x91\xa6"; // box
+    inline constexpr const char *EntityListener = "\xef\x8a\xa2"; // ear-listen
+    inline constexpr const char *EntityDecal = "\xef\x96\xbf"; // stamp
+    inline constexpr const char *EntitySpline = "\xef\x95\x9b"; // bezier-curve
+    inline constexpr const char *EntityFoliage = "\xef\x86\xbb"; // tree
+    inline constexpr const char *EntityNavMesh = "\xef\x93\x97"; // route
+    inline constexpr const char *EntityNavAgent = "\xef\x95\x94"; // person-walking
+    inline constexpr const char *EntitySkinnedMesh = "\xef\x86\x83"; // person
+    inline constexpr const char *Hidden = "\xef\x81\xb0"; // eye-slash
+    inline constexpr const char *Lock = "\xef\x80\xa3"; // lock
+    inline constexpr const char *Unlock = "\xef\x8f\x81"; // lock-open
+    inline constexpr const char *ExpandAll = "\xef\x84\x83"; // angles-down
+    inline constexpr const char *CollapseAll = "\xef\x84\x82"; // angles-up
     inline constexpr ImWchar Ranges[] = {
         0xe163, 0xe163,
         0xe2ca, 0xe2ca,
@@ -69,31 +90,36 @@ namespace PlutoGE::ui::icons
         0xf008, 0xf008,
         0xf00c, 0xf00d,
         0xf013, 0xf013,
+        0xf023, 0xf023,
         0xf028, 0xf028,
         0xf031, 0xf031,
-        0xf03e, 0xf03e,
+        0xf03d, 0xf03e,
         0xf042, 0xf042,
         0xf047, 0xf047,
         0xf05b, 0xf05b,
         0xf065, 0xf065,
         0xf067, 0xf067,
         0xf06e, 0xf06e,
-        0xf071, 0xf071,
+        0xf070, 0xf071,
         0xf076, 0xf076,
         0xf078, 0xf078,
-        0xf07b, 0xf07b,
-        0xf07c, 0xf07c,
+        0xf07b, 0xf07c,
         0xf0ac, 0xf0ac,
         0xf0c5, 0xf0c5,
         0xf0c7, 0xf0c7,
         0xf0e8, 0xf0e8,
-        0xf0ea, 0xf0ea,
+        0xf0ea, 0xf0eb,
+        0xf102, 0xf103,
         0xf11b, 0xf11b,
         0xf12e, 0xf12e,
         0xf141, 0xf141,
         0xf15b, 0xf15b,
+        0xf183, 0xf183,
+        0xf185, 0xf185,
+        0xf192, 0xf192,
         0xf1b2, 0xf1b3,
         0xf1b9, 0xf1b9,
+        0xf1bb, 0xf1bb,
         0xf1c0, 0xf1c0,
         0xf1c9, 0xf1c9,
         0xf1da, 0xf1da,
@@ -101,19 +127,29 @@ namespace PlutoGE::ui::icons
         0xf1f8, 0xf1f8,
         0xf1fc, 0xf1fc,
         0xf252, 0xf252,
+        0xf2a2, 0xf2a2,
         0xf2d0, 0xf2d2,
         0xf2ea, 0xf2ea,
         0xf2f5, 0xf2f5,
         0xf2f9, 0xf2f9,
+        0xf3c1, 0xf3c1,
         0xf424, 0xf424,
+        0xf466, 0xf466,
+        0xf4d7, 0xf4d7,
         0xf53f, 0xf53f,
         0xf542, 0xf542,
         0xf54b, 0xf54b,
+        0xf553, 0xf554,
+        0xf55b, 0xf55b,
         0xf576, 0xf576,
         0xf58d, 0xf58d,
+        0xf5bf, 0xf5bf,
         0xf5c3, 0xf5c3,
         0xf61f, 0xf61f,
+        0xf6c4, 0xf6c4,
+        0xf6fc, 0xf6fc,
         0xf70c, 0xf70c,
+        0xf773, 0xf773,
         0xf84c, 0xf84c,
         0
     };

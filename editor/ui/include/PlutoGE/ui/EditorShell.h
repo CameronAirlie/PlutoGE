@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/TimelinePreview.h"
 #pragma once
 
+#include "PlutoGE/ui/EntityLocks.h"
 #include "PlutoGE/ui/EntitySelection.h"
 #include "PlutoGE/ui/AuthoringRegistry.h"
 #include "PlutoGE/ui/ScriptSourceWatch.h"
@@ -197,6 +198,11 @@ namespace PlutoGE::ui
         void ClickEntity(scene::Entity *entity, bool control, bool shift,
                          const std::vector<std::uint32_t> &visible = {});
         [[nodiscard]] std::vector<scene::Entity *> GetSelectedEntities(bool rootsOnly = false);
+        [[nodiscard]] std::uint64_t GetSelectionRevision() const { return m_entitySelection.Revision(); }
+        // Moves the editor camera so the primary selected entity fills the view.
+        void FrameSelectedEntity();
+        [[nodiscard]] EntityLocks &GetEntityLocks() { return m_entityLocks; }
+        [[nodiscard]] const EntityLocks &GetEntityLocks() const { return m_entityLocks; }
         void SelectEditorCamera()
         {
             SetSelectedEntity(nullptr);
@@ -435,6 +441,7 @@ namespace PlutoGE::ui
         EditorProfiler m_profiler;
 
         EntitySelection m_entitySelection;
+        EntityLocks m_entityLocks;
         scene::Entity *m_selectedEntity = nullptr;
         bool m_isEditorCameraSelected = false;
         EditorViewportCamera m_editorCamera;

@@ -321,6 +321,59 @@ namespace PlutoGE::scene
         MarkShadowSceneDirty();
     }
 
+    std::vector<Entity *> *Entity::GetSiblingList() const
+    {
+        if (m_parent)
+        {
+            return &m_parent->m_children;
+        }
+        return m_scene ? &m_scene->m_rootEntities : nullptr;
+    }
+
+    std::size_t Entity::GetSiblingIndex() const
+    {
+        const auto *siblings = GetSiblingList();
+        if (!siblings)
+        {
+            return 0;
+        }
+        const auto it = std::find(siblings->begin(), siblings->end(), this);
+        return static_cast<std::size_t>(it - siblings->begin());
+    }
+
+    void Entity::SetSiblingIndex(std::size_t index)
+    {
+        auto *siblings = GetSiblingList();
+        if (!siblings)
+        {
+            return;
+        }
+        const auto current = std::find(siblings->begin(), siblings->end(), this);
+        if (current == siblings->end())
+        {
+            return;
+        }
+        const auto from = static_cast<std::size_t>(current - siblings->begin());
+        const auto to = std::min(index, siblings->size() - 1);
+        if (from == to)
+        {
+            return;
+        }
+        // Rotating the span between the two positions keeps every other sibling's order.
+        if (from < to)
+        {
+            std::rotate(current, current + 1, siblings->begin() + static_cast<std::ptrdiff_t>(to) + 1);
+        }
+        else
+        {
+            std::rotate(siblings->begin() + static_cast<std::ptrdiff_t>(to), current, current + 1);
+        }
+        if (m_scene)
+        {
+            m_scene->InvalidateRuntimeHierarchy();
+        }
+    }
+
     EntityID Entity::GenerateUniqueID()
     {
         auto &currentID = CurrentEntityIDCounter();

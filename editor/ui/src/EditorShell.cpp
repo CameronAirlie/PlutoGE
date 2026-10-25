@@ -2276,6 +2276,34 @@ namespace PlutoGE::ui
         (void)GetSelectedEntity();
     }
 
+    void EditorShell::FrameSelectedEntity()
+    {
+        auto *selectedEntity = GetSelectedEntity();
+        if (!selectedEntity)
+        {
+            return;
+        }
+
+        auto &camera = m_editorCamera;
+        glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), camera.position);
+        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 forward = glm::normalize(-glm::vec3(cameraTransform[2]));
+
+        float radius = 2.5f;
+        if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
+        {
+            if (auto *mesh = meshComponent->GetMesh())
+            {
+                const glm::vec3 worldScale = selectedEntity->GetWorldScale();
+                const float maxScale = std::max(worldScale.x, std::max(worldScale.y, worldScale.z));
+                radius = std::max(mesh->GetBounds().radius * maxScale, 0.5f);
+            }
+        }
+
+        camera.position = selectedEntity->GetWorldPosition() - forward * std::max(radius * 2.5f, 2.0f);
+    }
+
     scene::Entity *EditorShell::GetSelectedEntity()
     {
         m_entitySelection.Prune([&](std::uint32_t id) { return m_scene && m_scene->FindEntityByID(id); });
@@ -2319,6 +2347,7 @@ namespace PlutoGE::ui
         // runtime and switched the non-owning scene pointer.
         auto previousScene = std::move(m_scene);
         ++m_sceneRevision;
+        m_entityLocks.Clear();
         m_requestedModelInstanceUnpack = 0;
         m_modelInstanceUnpackErrorRoot = 0;
         m_modelInstanceUnpackError.clear();
@@ -5623,6 +5652,7 @@ namespace PlutoGE::ui
         m_engine.GetWindow().EnsureOpenGLContextCurrent(true);
         m_scene.reset();
         ++m_sceneRevision;
+        m_entityLocks.Clear();
         m_project.reset();
         m_editorCamera.postProcessEffects.clear();
         m_engine.GetAssetManager().ClearProjectContext();

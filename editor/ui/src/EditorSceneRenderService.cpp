@@ -334,6 +334,10 @@ namespace PlutoGE::ui
             render::BasicRenderer::BeforeTemporalResolve compose;
             if (const auto *source = m_renderTextures.TakeSkinningSource())
                 m_sceneRenderer->ReuseSkinningForFrame(*source);
+            // Debug views show raw buffers; the outline belongs to the shaded view.
+            m_sceneRenderer->SetSelectionOutline(debugView == render::PostProcessDebugView::None
+                ? std::span<const std::uint32_t>(m_selectedEntities) : std::span<const std::uint32_t>{}, m_selectionOutline);
+            m_selectedEntities.clear();
             if (!overlays.empty())
                 compose = [&](render::BasicRenderer &base, glm::vec2 jitter)
                 {

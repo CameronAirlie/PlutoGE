@@ -173,6 +173,13 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicFrameParameters) == 6016 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
 
+        struct alignas(16) SelectionOutlineParameters
+        {
+            glm::vec4 color{1.0f};
+            glm::vec4 settings{0.0f}; // radius in output pixels, hidden opacity
+            glm::vec4 outputSize{0.0f};
+        };
+
         struct alignas(16) BasicObjectParameters
         {
             glm::mat4 model{1.0f};
@@ -887,6 +894,29 @@ namespace PlutoGE::render
                 displayDescriptor.debugName = "Display output";
                 m_displayPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(displayDescriptor));
             }
+            if ((!shaders.selectionOutline.vertex.glsl.empty() || !shaders.selectionOutline.vertex.spirv.empty()) &&
+                (!shaders.selectionOutline.fragment.glsl.empty() || !shaders.selectionOutline.fragment.spirv.empty()))
+            {
+                rhi::GraphicsPipelineDescriptor outlineDescriptor;
+                outlineDescriptor.vertexShader = shaders.selectionOutline.vertex;
+                outlineDescriptor.fragmentShader = shaders.selectionOutline.fragment;
+                outlineDescriptor.depthFormat = rhi::Format::Undefined;
+                outlineDescriptor.colorFormat = rhi::Format::R8G8B8A8Unorm;
+                outlineDescriptor.resourceBindings = {
+                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                outlineDescriptor.cullMode = rhi::CullMode::None;
+                outlineDescriptor.depthTest = false;
+                outlineDescriptor.depthWrite = false;
+                outlineDescriptor.blend = {.enabled = true, .preserveDestinationAlpha = true};
+                outlineDescriptor.debugName = "Selection outline";
+                m_selectionOutlinePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
+                m_selectionOutlineBuffer = rhi::Buffer(device, device.CreateBuffer(
+                    {sizeof(SelectionOutlineParameters), rhi::BufferUsage::Uniform, "Selection outline parameters"}));
+                m_selectionCameraBuffer = rhi::Buffer(device, device.CreateBuffer(
+                    {sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "Selection outline frame"}));
+            }
             const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
                                                        const char *debugName, BasicPostProcessEffectType type,
                                                        rhi::Format outputFormat = rhi::Format::R16G16B16A16Float)
@@ -1492,6 +1522,11 @@ namespace PlutoGE::render
         m_shadowMaterialBuffers.clear();
         m_shadowSignatureCache.clear();
         m_displayPipeline.Reset();
+        m_selectionOutlinePipeline.Reset();
+        m_selectionOutlineBuffer.Reset();
+        m_selectionCameraBuffer.Reset();
+        m_selectionDepthTarget.Reset();
+        m_selectionDraws = {};
         m_transparentPipeline.Reset();
         m_transparentTwoSidedPipeline.Reset();
         m_glassSceneCopyPipeline.Reset();
@@ -1728,6 +1763,7 @@ namespace PlutoGE::render
                                              {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
                                               "BasicRenderer depth", true}));
         m_glassDepthCopy.Reset();
+        m_selectionDepthTarget.Reset();
         for (auto &texture : m_particleTransparencyDepth) texture.Reset();
         m_colorTarget = std::move(newColor);
         m_outputCoverage = {};
@@ -2221,6 +2257,21 @@ namespace PlutoGE::render
                 frameParameters.pointSettings[index].y = static_cast<float>(PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++);
         }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
+        // Selected geometry is rasterized once more into its own depth mask,
+        // without temporal jitter, and outlined over the final display output.
+        const bool selectionOutlineActive = !m_selectionDraws.empty() && m_selectionOutlinePipeline &&
+            m_displayPipeline && m_displayTarget && !linearOutput;
+        if (selectionOutlineActive)
+        {
+            auto selectionParameters = frameParameters;
+            selectionParameters.temporalClipOffset.x = 0.0f;
+            selectionParameters.temporalClipOffset.y = 0.0f;
+            m_device->UpdateBuffer(m_selectionCameraBuffer.Get(), 0, Bytes(selectionParameters));
+            if (!m_selectionDepthTarget)
+                m_selectionDepthTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
+                     "Selection outline depth", true}));
+        }
         if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky)
         {
             // Generate before any receiver reads. RHI transitions the render target
@@ -2834,6 +2885,7 @@ namespace PlutoGE::render
         rhi::TextureHandle previousEmissionTexture;
         rhi::PipelineHandle boundDrawPipeline;
         const BasicMesh *boundDrawMesh = nullptr;
+        rhi::BufferHandle drawCameraBuffer = m_cameraBuffer.Get();
         // Single objects read their constants from the frame's object stream through the instanced vertex input
         // (ObjectStream): one block bind per 64 draws instead of a descriptor rebind per draw.
         const bool objectStreaming = m_objectStreaming && commands.SupportsFirstInstance();
@@ -2868,7 +2920,7 @@ namespace PlutoGE::render
             }
             if (!geometryResourcesBound)
             {
-                commands.BindUniformBuffer(0, m_cameraBuffer.Get());
+                commands.BindUniformBuffer(0, drawCameraBuffer);
                 commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
                 for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
                     commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
@@ -3221,6 +3273,39 @@ namespace PlutoGE::render
             for (const auto index : transparentOrder) sortedTransparency.push_back(std::move(transparentDraws[index]));
             transparentDraws.swap(sortedTransparency);
             commands.EndRendering();
+            if (selectionOutlineActive)
+            {
+                commands.BeginGpuScope("RHI Geometry / Selection mask");
+                const auto geometryDraws = m_frameStats.geometryDraws;
+                const auto geometryInstances = m_frameStats.geometryInstances;
+                const auto geometryTriangles = m_frameStats.geometryTriangles;
+                boundDrawPipeline = {};
+                boundDrawMesh = nullptr;
+                geometryResourcesBound = false;
+                skyTextureBound = false;
+                boundMaterial = {};
+                boundObjectBlock = {};
+                drawCameraBuffer = m_selectionCameraBuffer.Get();
+                rhi::RenderingInfo selection;
+                selection.depthAttachment = m_selectionDepthTarget.Get();
+                selection.width = m_width;
+                selection.height = m_height;
+                selection.clearColor = false;
+                commands.BeginRendering(selection);
+                // Every surface type is drawn as coverage: glass and blended
+                // materials are outlined by their shape, not their opacity.
+                recordingDepth = true;
+                for (const auto &draw : m_selectionDraws)
+                    recordDraw(commands, draw, false, m_previousModels.size());
+                recordingDepth = false;
+                commands.EndRendering();
+                drawCameraBuffer = m_cameraBuffer.Get();
+                // The mask is editor presentation, not scene geometry.
+                m_frameStats.geometryDraws = geometryDraws;
+                m_frameStats.geometryInstances = geometryInstances;
+                m_frameStats.geometryTriangles = geometryTriangles;
+                commands.EndGpuScope();
+            }
             commands.EndGpuScope();
         });
         // Created up front: shadows draw into it while geometry samples it.
@@ -4001,7 +4086,31 @@ namespace PlutoGE::render
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = m_displayTarget.Get();
+            if (selectionOutlineActive)
+            {
+                const ScopedGpuTiming outlineTiming(commands, "RHI Selection outline");
+                const SelectionOutlineParameters outlineParameters{
+                    m_selectionOutline.color,
+                    glm::vec4(m_selectionOutline.radius, std::clamp(m_selectionOutline.hiddenOpacity, 0.0f, 1.0f), 0.0f, 0.0f),
+                    glm::vec4(static_cast<float>(m_outputWidth), static_cast<float>(m_outputHeight), 0.0f, 0.0f)};
+                m_device->UpdateBuffer(m_selectionOutlineBuffer.Get(), 0, Bytes(outlineParameters));
+                rhi::RenderingInfo outlineInfo;
+                outlineInfo.colorAttachments = {m_displayTarget.Get()};
+                outlineInfo.width = m_outputWidth;
+                outlineInfo.height = m_outputHeight;
+                outlineInfo.clearColor = false;
+                outlineInfo.clearDepth = false;
+                commands.BeginRendering(outlineInfo);
+                commands.BindPipeline(m_selectionOutlinePipeline.Get());
+                commands.BindUniformBuffer(0, m_selectionOutlineBuffer.Get());
+                commands.BindTexture(1, m_selectionDepthTarget.Get(), m_shadowSampler.Get());
+                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+            }
         }
+        // The selection span is borrowed for this frame only.
+        m_selectionDraws = {};
         commands.EndGpuScope();
         postScope.End();
         const auto postProcessRecordingEnd = std::chrono::steady_clock::now();

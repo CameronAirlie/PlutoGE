@@ -127,6 +127,10 @@ namespace
         Require(Has(ScanAssetReferences(root / "Walk.plutoanim"), "project://Clips/Walk cycle.plutoclip"), "Animation references failed");
         Write(root / "Data.plutoscriptable", "ScriptableObjectVersion\t1\nFIELD\tTexture\t6\t" + reference + "\n");
         Require(Has(ScanAssetReferences(root / "Data.plutoscriptable"), reference), "Scriptable fields failed");
+        Write(root / "List.plutoscriptable", "SCRIPTABLE\tGame.Loadout\nFIELD\tItems\t5\tproject://A b.ogg|project://C.plutoscriptable*24|project://D.plutoscriptable*1-3\n");
+        const auto list = ScanAssetReferences(root / "List.plutoscriptable");
+        Require(list.occurrences.size() == 3 && Has(list, "project://A b.ogg") && Has(list, "project://C.plutoscriptable") &&
+            Has(list, "project://D.plutoscriptable"), "Scriptable reference lists failed");
         Write(root / "Particles.plutoparticles", "ParticleSystemVersion=2\nTexture=" + reference + "\n");
         Require(Has(ScanAssetReferences(root / "Particles.plutoparticles"), reference), "Particle references failed");
         Write(root / "Post.plutopostprocess", "PostProcessPresetVersion 1 1\nEffect \"Custom\" 1 1\nParameter 2 \"Texture\" \"" + reference + "\" 0\n");

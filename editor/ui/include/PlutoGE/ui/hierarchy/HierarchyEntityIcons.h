@@ -12,4 +12,9 @@ namespace PlutoGE::ui
     // specific components (cameras, lights, environment) precede generic ones
     // (prefab roots, meshes). Never null; plain entities get a neutral glyph.
     [[nodiscard]] const char *GetHierarchyEntityIcon(const scene::Entity &entity);
+
+    // Whether the editor viewport marks the entity with its icon: cameras,
+    // lights, volumes, audio and the like have no geometry of their own to see
+    // or click. A visible mesh, terrain or ocean on the entity already does.
+    [[nodiscard]] bool HasViewportEntityIcon(const scene::Entity &entity);
 }

@@ -205,7 +205,7 @@ namespace PlutoGE::render
         }
         void InvalidateMesh(const Mesh *mesh)
         {
-            for (auto *list : {&visible, &shadows, &gi})
+            for (auto *list : {&visible, &shadows, &gi, &selection})
                 for (auto &entry : list->entries)
                     if (entry.input.mesh == mesh) entry.valid = false;
             std::erase_if(retained, [&](const auto &item) { return item.second.packet.input.mesh == mesh; });
@@ -217,6 +217,7 @@ namespace PlutoGE::render
             visible = {};
             shadows = {};
             gi = {};
+            selection = {};
             batched.clear();
             opaqueBatches = {};
             // Never recycle tokens while the downstream renderer is alive.
@@ -224,7 +225,8 @@ namespace PlutoGE::render
 
         std::unordered_map<const Material *, MaterialEntry> materials;
         std::unordered_map<RetainedKey, RetainedEntry, RetainedHash> retained;
-        List visible, shadows, gi;
+        // Selection holds the editor-outlined subset of the visible commands.
+        List visible, shadows, gi, selection;
         std::vector<BasicDraw> batched;
         RetainedOpaqueBatches opaqueBatches;
 

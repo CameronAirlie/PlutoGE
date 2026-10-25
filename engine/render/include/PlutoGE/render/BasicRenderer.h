@@ -228,6 +228,15 @@ namespace PlutoGE::render
         }
     };
 
+    struct BasicSelectionOutline
+    {
+        glm::vec4 color{1.0f, 0.4f, 0.0f, 1.0f};
+        // Outline width in output pixels.
+        float radius = 2.0f;
+        // Opacity multiplier for outline segments whose geometry is hidden.
+        float hiddenOpacity = 0.3f;
+    };
+
     struct BasicRendererShaderPackage
     {
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex;
@@ -260,6 +269,8 @@ namespace PlutoGE::render
         VirtualShadowShaders virtualShadows;
         OcclusionShaders occlusion;
         BasicPostProcessShaderPackage displayOutput;
+        // Optional editor selection outline composited over the display output.
+        BasicPostProcessShaderPackage selectionOutline;
         std::array<BasicPostProcessShaderPackage,
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)>
             postProcess;
@@ -754,6 +765,10 @@ namespace PlutoGE::render
         // Diagnostic reference: same scheduling and lighting, full-volume publication.
         void SetIncrementalVctPublicationEnabled(bool enabled) noexcept { m_incrementalVctPublication = enabled; }
         void SetTransparentBackground(bool enabled) noexcept { m_transparentBackground = enabled; }
+        // Editor selection: these draws are outlined on the display output of
+        // the next Render. The span is borrowed and must stay valid until then.
+        void SetSelectionOutline(std::span<const BasicDraw> draws, const BasicSelectionOutline &style) noexcept
+        { m_selectionDraws = draws; m_selectionOutline = style; }
         void SetVirtualShadowMembershipCachingEnabled(bool enabled) noexcept
         { if (m_virtualShadows) m_virtualShadows->SetMembershipCachingEnabled(enabled); }
         [[nodiscard]] const BasicRendererTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
@@ -855,6 +870,13 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_maskedShadowPipeline, m_maskedShadowInstancedPipeline;
         std::vector<rhi::Buffer> m_shadowMaterialBuffers;
         rhi::GraphicsPipeline m_displayPipeline;
+        rhi::GraphicsPipeline m_selectionOutlinePipeline;
+        rhi::Buffer m_selectionOutlineBuffer;
+        // Frame constants without temporal jitter, so the outline does not shimmer.
+        rhi::Buffer m_selectionCameraBuffer;
+        rhi::Texture m_selectionDepthTarget;
+        std::span<const BasicDraw> m_selectionDraws;
+        BasicSelectionOutline m_selectionOutline;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_volumetricTracePipelines;
         rhi::GraphicsPipeline m_volumetricCompositePipeline;

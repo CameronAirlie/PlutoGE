@@ -282,6 +282,33 @@ namespace PlutoGE::assets
             }
         }
 
+        // Scriptable string fields hold lists as '|'-separated entries, each optionally
+        // suffixed with a quantity ("*24") or range ("*1-3"). Neither character can occur
+        // in a Windows asset path, so they delimit references rather than belong to one.
+        void ScriptableValues(AssetReferenceScan &scan, std::string_view line, std::size_t number)
+        {
+            while (true)
+            {
+                const auto end = line.find('\t');
+                const auto field = Unescape(line.substr(0, end));
+                std::string_view entries = field;
+                while (true)
+                {
+                    const auto next = entries.find('|');
+                    auto entry = entries.substr(0, next);
+                    const auto star = entry.rfind('*');
+                    if (star != std::string_view::npos && star + 1 < entry.size() &&
+                        entry.find_first_not_of("0123456789-", star + 1) == std::string_view::npos)
+                        entry = entry.substr(0, star);
+                    Add(scan, entry, number);
+                    if (next == std::string_view::npos) break;
+                    entries.remove_prefix(next + 1);
+                }
+                if (end == std::string_view::npos) break;
+                line.remove_prefix(end + 1);
+            }
+        }
+
         bool DecodeRelativeUri(std::string_view uri, std::string &decoded)
         {
             auto hex = [](unsigned char c) -> int
@@ -401,7 +428,8 @@ namespace PlutoGE::assets
                     return;
                 }
                 const auto firstOccurrence = scan.occurrences.size();
-                SplitValues(scan, line, '\t', number, extension != ".plutomodel");
+                if (extension == ".plutoscriptable") ScriptableValues(scan, line, number);
+                else SplitValues(scan, line, '\t', number, extension != ".plutomodel");
                 if (models && models->component && record == "PROPERTY")
                     for (std::size_t index = firstOccurrence; index < scan.occurrences.size(); ++index)
                         if (OwnedBy(scan.occurrences[index].reference, *models->component))

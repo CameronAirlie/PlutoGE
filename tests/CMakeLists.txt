@@ -363,6 +363,10 @@ add_executable(PlutoGEViewportPickingTests ViewportPickingTests.cpp)
 target_include_directories(PlutoGEViewportPickingTests PRIVATE ../editor/ui/include)
 target_link_libraries(PlutoGEViewportPickingTests PRIVATE glm::glm)
 add_test(NAME PlutoGEViewportPickingTests COMMAND PlutoGEViewportPickingTests)
+add_executable(PlutoGEViewportEntityIconsTests ViewportEntityIconsTests.cpp)
+target_include_directories(PlutoGEViewportEntityIconsTests PRIVATE ../editor/ui/include)
+target_link_libraries(PlutoGEViewportEntityIconsTests PRIVATE glm::glm)
+add_test(NAME PlutoGEViewportEntityIconsTests COMMAND PlutoGEViewportEntityIconsTests)
 
 add_executable(PlutoGEPlayModeChangesTests
     PlayModeChangesTests.cpp

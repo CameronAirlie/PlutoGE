@@ -7,6 +7,7 @@
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorViewportOverlay.h"
+#include "PlutoGE/ui/ViewportEntityIcons.h"
 
 
 #include <ImGuizmo.h>
@@ -15,6 +16,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -118,8 +120,12 @@ namespace PlutoGE::ui
         bool m_vulkanAvailable = false;
         std::string m_vulkanStatus = "Vulkan not probed";
         bool m_showDebugShapes = true;
+        bool m_showSelectionOutline = true;
+        std::vector<std::uint32_t> m_selectionOutlineIds;
         bool m_showNavigation = false;
         bool m_showAgentPaths = true;
+        bool m_showEntityIcons = true;
+        std::vector<ViewportEntityIconHit> m_entityIconHits;
         std::vector<std::uint32_t> m_multiGizmoSelection;
         glm::mat4 m_multiGizmoTransform{1.0f};
         bool m_multiGizmoUsing = false;

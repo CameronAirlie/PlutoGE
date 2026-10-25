@@ -1164,6 +1164,18 @@ namespace PlutoGE::render
         }
         auto &draws = preparation.batched;
         batchingScope.End();
+        // Selected commands keep their own unbatched packets: batching would
+        // merge them with unselected instances of the same mesh and material.
+        std::span<const BasicDraw> selectionDraws;
+        if (!m_selectedEntities.empty())
+        {
+            m_selectionCommands.clear();
+            for (const auto &command : commands)
+                if (command.ownerEntity && std::ranges::binary_search(m_selectedEntities, command.ownerEntity))
+                    m_selectionCommands.push_back(&command);
+            appendDraws(RenderCommandView(m_selectionCommands), preparation.selection, false);
+            selectionDraws = preparation.selection.draws;
+        }
         const auto shadowStart = std::chrono::steady_clock::now();
         m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
         core::CpuScope shadowPacketScope("Shadow packet preparation", core::CpuCategory::Rendering);
@@ -1883,6 +1895,8 @@ namespace PlutoGE::render
         frame.draws = draws;
         frame.shadowDraws = shadowDraws;
         frame.giDraws = giDraws;
+        frame.selectionDraws = selectionDraws;
+        frame.selectionOutline = m_selectionOutline;
         frame.particles = std::span<const BasicParticleDraw>(m_orderedParticleDraws.data(), orderedParticleDrawCount);
         frame.effects = std::move(basicEffects);
         frame.decals = std::move(decals);
@@ -1914,6 +1928,7 @@ namespace PlutoGE::render
         core::CpuScope recordingScope("Render recording", core::CpuCategory::Rendering);
         const ScopedShaderGraphClock clock(frame.clock);
         const auto recordStart = std::chrono::steady_clock::now();
+        m_renderer->SetSelectionOutline(frame.selectionDraws, frame.selectionOutline);
         m_renderer->Render(frame.viewProjection, frame.lighting, frame.draws, frame.effects, frame.shadowDraws, frame.debugView,
                            frame.upscalerFrame ? &*frame.upscalerFrame : nullptr,
                            frame.useTemporalUpscaler ? &frame.unjitteredViewProjection : nullptr, frame.submit, frame.giDraws,

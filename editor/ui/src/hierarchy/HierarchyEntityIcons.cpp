@@ -22,8 +22,10 @@
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/ui/EditorIcons.h"
 
+#include <algorithm>
 #include <array>
 
 namespace PlutoGE::ui
@@ -65,6 +67,7 @@ namespace PlutoGE::ui
             IconRule{&IsDirectionalLight, icons::EntityDirectionalLight},
             IconRule{&Has<scene::LightComponent>, icons::EntityPointLight},
             IconRule{&Has<scene::PhysicalSkyComponent>, icons::EntitySky},
+            IconRule{&Has<scene::VolumetricCloudComponent>, icons::EntitySky},
             IconRule{&Has<scene::OceanComponent>, icons::EntityOcean},
             IconRule{&Has<scene::TerrainComponent>, icons::EntityTerrain},
             IconRule{&Has<scene::FoliageComponent>, icons::EntityFoliage},
@@ -85,6 +88,30 @@ namespace PlutoGE::ui
             IconRule{&Has<scene::MeshComponent>, icons::MeshAsset},
             IconRule{&Has<scene::ScriptComponent>, icons::ScriptAsset},
         };
+
+        // Components with nothing of their own to see or click in the viewport.
+        constexpr std::array kViewportIconComponents{
+            &Has<scene::CameraComponent>, &Has<scene::LightComponent>, &Has<scene::PhysicalSkyComponent>,
+            &Has<scene::VolumetricCloudComponent>, &Has<scene::IblCaptureComponent>,
+            &Has<scene::AmbientLightVolumeComponent>, &Has<scene::AudioEnvironmentVolumeComponent>,
+            &Has<scene::SoundEmitterComponent>, &Has<scene::SoundListenerComponent>,
+            &Has<scene::ParticleSystemComponent>, &Has<scene::DecalComponent>, &Has<scene::SplineComponent>,
+            &Has<scene::NavigationMeshComponent>,
+        };
+
+        bool HasVisibleGeometry(const scene::Entity &entity)
+        {
+            const auto *mesh = entity.GetComponent<scene::MeshComponent>();
+            return (mesh && mesh->IsEnabled() && mesh->IsVisible() && mesh->GetMesh()) ||
+                   Has<scene::TerrainComponent>(entity) || Has<scene::OceanComponent>(entity);
+        }
+    }
+
+    bool HasViewportEntityIcon(const scene::Entity &entity)
+    {
+        return !HasVisibleGeometry(entity) &&
+               std::any_of(kViewportIconComponents.begin(), kViewportIconComponents.end(),
+                           [&](auto has) { return has(entity); });
     }
 
     const char *GetHierarchyEntityIcon(const scene::Entity &entity)

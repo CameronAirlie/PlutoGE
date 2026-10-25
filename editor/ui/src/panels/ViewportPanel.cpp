@@ -5,6 +5,7 @@
 #include "PlutoGE/ui/BrushStrokeSampler.h"
 #include "PlutoGE/ui/SurfacePlacement.h"
 #include "PlutoGE/ui/ViewportPicking.h"
+#include "PlutoGE/ui/hierarchy/HierarchyEntityIcons.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/ViewportOverlayLayout.h"
 #include "PlutoGE/ui/panels/ViewportPanel.h"
@@ -54,6 +55,7 @@
 #include <iostream>
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <sstream>
 #include <string_view>
@@ -452,6 +454,86 @@ namespace PlutoGE::ui
                     viewportMin.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewportSize.y),
                 .visible = true,
             };
+        }
+
+        // Marks entities with nothing else to see or click (cameras, lights,
+        // volumes, audio) with their hierarchy glyph. Drawn far to near so the
+        // nearest sits on top; `hits` keeps what was drawn for click selection.
+        void DrawViewportEntityIcons(scene::Scene &scene, std::span<scene::Entity *const> selection,
+                                     const render::CameraData &cameraData, const ImVec2 &viewportMin,
+                                     const ImVec2 &viewportSize, std::vector<ViewportEntityIconHit> &hits)
+        {
+            constexpr float kFadeStart = 60.0f;
+            constexpr float kFadeEnd = 150.0f;
+            struct Icon
+            {
+                ViewportEntityIconHit hit;
+                const char *glyph;
+                ImU32 tint;
+                float alpha;
+                bool selected;
+            };
+            const float unit = ImGui::GetFontSize() / 13.0f;
+            const float radius = 11.0f * unit;
+            std::vector<Icon> icons;
+            const auto visit = [&](scene::Entity *entity, const auto &self) -> void
+            {
+                if (!entity->IsActiveInHierarchy())
+                    return;
+                if (HasViewportEntityIcon(*entity))
+                {
+                    const glm::vec3 position = entity->GetWorldPosition();
+                    const float depth = -(cameraData.view * glm::vec4(position, 1.0f)).z;
+                    const bool selected = std::find(selection.begin(), selection.end(), entity) != selection.end();
+                    // Selected entities stay marked however far away they are.
+                    const float alpha = selected ? 1.0f : ViewportEntityIconAlpha(depth, kFadeStart, kFadeEnd);
+                    const auto projected = ProjectWorldPoint(position, cameraData, viewportMin, viewportSize);
+                    if (projected.visible && alpha > 0.0f)
+                    {
+                        ImU32 tint = IM_COL32(225, 230, 238, 255);
+                        if (const auto *light = entity->GetComponent<scene::LightComponent>())
+                        {
+                            const glm::vec3 color = light->GetLight().color;
+                            const float peak = std::max({color.r, color.g, color.b});
+                            if (peak > 0.0f)
+                                tint = ImGui::ColorConvertFloat4ToU32(ImVec4(color.r / peak, color.g / peak, color.b / peak, 1.0f));
+                        }
+                        icons.push_back({{entity->GetID(), {projected.screen.x, projected.screen.y}, radius, depth},
+                                         GetHierarchyEntityIcon(*entity), tint, alpha, selected});
+                    }
+                }
+                for (auto *child : entity->GetChildren())
+                    self(child, self);
+            };
+            for (auto *root : scene.GetRootEntities())
+                visit(root, visit);
+            std::sort(icons.begin(), icons.end(), [](const Icon &a, const Icon &b) { return a.hit.depth > b.hit.depth; });
+
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+            auto *font = ImGui::GetFont();
+            const float glyphSize = 14.0f * unit;
+            const auto withAlpha = [](ImU32 color, float alpha)
+            {
+                const auto a = static_cast<ImU32>(((color >> IM_COL32_A_SHIFT) & 0xFF) * alpha);
+                return (color & ~IM_COL32_A_MASK) | (a << IM_COL32_A_SHIFT);
+            };
+            for (const auto &icon : icons)
+            {
+                const ImVec2 center(icon.hit.center.x, icon.hit.center.y);
+                drawList->AddCircleFilled(center, radius,
+                    withAlpha(icon.selected ? IM_COL32(59, 96, 133, 235) : IM_COL32(24, 26, 30, 190), icon.alpha));
+                drawList->AddCircle(center, radius,
+                    withAlpha(icon.selected ? IM_COL32(120, 180, 255, 255) : IM_COL32(0, 0, 0, 120), icon.alpha),
+                    0, icon.selected ? 2.0f * unit : 1.0f);
+                const ImVec2 glyph = font->CalcTextSizeA(glyphSize, FLT_MAX, 0.0f, icon.glyph);
+                drawList->AddText(font, glyphSize, ImVec2(center.x - glyph.x * 0.5f, center.y - glyph.y * 0.5f),
+                                  withAlpha(icon.tint, icon.alpha), icon.glyph);
+                // Faint icons are visual hints only; clicks go to what is behind them.
+                if (icon.alpha > 0.35f)
+                    hits.push_back(icon.hit);
+            }
+            drawList->PopClipRect();
         }
 
         bool ClipScreenLineToRect(ImVec2 &a, ImVec2 &b, const ImVec2 &min, const ImVec2 &max)
@@ -2383,6 +2465,8 @@ namespace PlutoGE::ui
                 ImGui::Separator();
                 ImGui::MenuItem("Grid", nullptr, &m_showGrid);
                 ImGui::MenuItem("Debug Shapes", nullptr, &m_showDebugShapes);
+                ImGui::MenuItem("Entity Icons", nullptr, &m_showEntityIcons);
+                ImGui::MenuItem("Selection Outline", nullptr, &m_showSelectionOutline);
                 ImGui::MenuItem("Navigation Mesh", nullptr, &m_showNavigation);
                 ImGui::MenuItem("Selected Agent Path", nullptr, &m_showAgentPaths);
                 ImGui::Separator();
@@ -2915,6 +2999,7 @@ namespace PlutoGE::ui
         if (!mouseDown || targetChanged || !m_isViewportHovered || controlsHovered || ImGui::GetIO().KeyAlt)
             m_foliageStroke->sampler.Reset();
         m_isTransformGizmoUsing = false;
+        m_entityIconHits.clear();
         const bool rhiTargetReady = m_rhiRenderService && m_rhiRenderService->IsInitialized() &&
                                     (m_useRhiPreview || m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan);
         if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !rhiTargetReady) ||
@@ -3088,6 +3173,17 @@ namespace PlutoGE::ui
                 }
             }
             drawList->PopClipRect();
+        }
+
+        if (activeScene && m_showEntityIcons)
+        {
+            const auto selected = editorShell.GetSelectedEntities();
+            DrawViewportEntityIcons(*activeScene, selected, cameraData, viewportMin, viewportSize, m_entityIconHits);
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            if (m_isViewportHovered && !controlsHovered && !ImGuizmo::IsUsing())
+                if (const auto id = PickViewportEntityIcon(m_entityIconHits, {mouse.x, mouse.y}))
+                    if (auto *entity = activeScene->FindEntityByID(*id))
+                        ImGui::SetTooltip("%s", entity->GetName().c_str());
         }
 
         const auto selection = editorShell.GetSelectedEntities();
@@ -4281,6 +4377,16 @@ namespace PlutoGE::ui
             }
 
             m_selectedSplinePointIndex = -1;
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            if (const auto id = PickViewportEntityIcon(m_entityIconHits, {mouse.x, mouse.y}))
+            {
+                if (auto *entity = activeScene ? activeScene->FindEntityByID(*id) : nullptr)
+                {
+                    editorShell.ClickEntity(entity, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] icon entity=" + std::to_string(*id));
+                    return;
+                }
+            }
             PickDebugInfo pickDebugInfo;
             auto *pickedEntity = PickEntity(editorShell.GetEngine().GetScene(), cameraData, viewportMin, viewportSize, &pickDebugInfo);
             if (!pickDebugInfo.rayBuilt && m_hasEditorCameraData)
@@ -4390,6 +4496,29 @@ namespace PlutoGE::ui
             commands = render::RenderCommandView(combined);
         }
 
+        if (m_config.editorViewport && m_showSelectionOutline)
+        {
+            // Selecting a parent outlines everything it renders, as in Unity.
+            m_selectionOutlineIds.clear();
+            const auto collect = [&](const auto &self, const scene::Entity &entity) -> void
+            {
+                if (!entity.IsActive())
+                    return;
+                m_selectionOutlineIds.push_back(entity.GetID());
+                for (const auto *child : entity.GetChildren())
+                    if (child)
+                        self(self, *child);
+            };
+            for (const auto *entity : shell.GetSelectedEntities(true))
+                if (entity)
+                    collect(collect, *entity);
+            if (!m_selectionOutlineIds.empty())
+            {
+                render::BasicSelectionOutline style;
+                style.radius = 2.0f * std::max(1.0f, ImGui::GetIO().DisplayFramebufferScale.x);
+                m_rhiRenderService->SetSelectionOutline(m_selectionOutlineIds, style);
+            }
+        }
         if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
                                         static_cast<std::uint32_t>(target->GetHeight()),
                                         cameraData, commands, shadowCommands, postProcessEffects,

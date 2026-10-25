@@ -11,6 +11,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -55,6 +56,13 @@ namespace PlutoGE::ui
         void SetAmbientProbeDebugEnabled(bool enabled) { m_ambientProbeDebugEnabled = enabled; }
         void SetOcclusionMode(render::OcclusionMode mode) noexcept { m_occlusionMode = mode; }
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
+        // Outlines these entities in the next Render only; viewports sharing
+        // this service set their own selection before each frame.
+        void SetSelectionOutline(std::span<const std::uint32_t> entities, const render::BasicSelectionOutline &style = {})
+        {
+            m_selectedEntities.assign(entities.begin(), entities.end());
+            m_selectionOutline = style;
+        }
         // Renders cameras into their render textures; call once per frame
         // before the viewports so materials sample this frame's images.
         bool RenderTextures(std::span<const render::RenderTextureView> views, const scene::Scene *scene);
@@ -95,6 +103,8 @@ namespace PlutoGE::ui
         std::optional<render::GraphicsQuality> m_runtimeGraphicsQuality;
         render::OcclusionMode m_occlusionMode = render::OcclusionMode::Off;
         render::GeometryDiagnosticMode m_geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
+        std::vector<std::uint32_t> m_selectedEntities;
+        render::BasicSelectionOutline m_selectionOutline;
         std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;
         render::rhi::IRenderDevice *m_device = nullptr;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;

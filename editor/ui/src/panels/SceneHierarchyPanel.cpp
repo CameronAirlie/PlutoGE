@@ -383,7 +383,10 @@ namespace PlutoGE::ui
         const EntityId id = entity.GetID();
         const bool active = entity.IsSelfActive();
         const bool locked = shell.GetEntityLocks().IsLocked(id);
-        const bool rowHovered = ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(row.min, row.max);
+        // Pressing a toggle makes it the active item, which a plain window hover
+        // test treats as blocking; the toggle must stay submitted until release.
+        const bool rowHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                                ImGui::IsMouseHoveringRect(row.min, row.max);
         // Toggles appear on hover, and stay visible while they are not in
         // their default state so inactive or locked entities are easy to spot.
         const bool showActive = rowHovered || !active;

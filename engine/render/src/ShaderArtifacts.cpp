@@ -76,6 +76,7 @@ namespace PlutoGE::render
             .maskedShadowFragment = Load("DirectionalShadowMasked", "fragment"),
             .displayOutput = {.vertex = Load("DisplayOutput", "vertex"),
                               .fragment = Load("DisplayOutput", "fragment")}};
+        result.selectionOutline = {Load("SelectionOutline", "vertex"), Load("SelectionOutline", "fragment")};
         result.particles.vertexShader = Load("Particles", "vertex");
         result.skinning = Load("GpuSkinning", "compute");
         result.particles.fragmentShader = Load("Particles", "fragment");

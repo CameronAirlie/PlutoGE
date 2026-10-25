@@ -9,7 +9,7 @@ add_executable(PlutoGEScriptBuildProcessTests ScriptBuildProcessTests.cpp
 target_include_directories(PlutoGEScriptBuildProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/scripting/include)
 target_compile_features(PlutoGEScriptBuildProcessTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEScriptBuildProcessTests COMMAND PlutoGEScriptBuildProcessTests)
-# Links the whole engine. MinGW needs the mutually dependent static libraries
+# Links the whole engine. GNU linkers need the mutually dependent static libraries
 # rescanned; other toolchains resolve them through the transitive link graph.
 function(pluto_link_engine target)
     if (CMAKE_LINK_GROUP_USING_RESCAN_SUPPORTED)
@@ -638,7 +638,7 @@ target_compile_features(PlutoGESnapshotDamageTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGESnapshotDamageTests COMMAND PlutoGESnapshotDamageTests)
 
 add_executable(PlutoGERetainedRenderSceneTests RetainedRenderSceneTests.cpp)
-target_link_libraries(PlutoGERetainedRenderSceneTests PRIVATE PlutoGE::Scene)
+pluto_link_engine(PlutoGERetainedRenderSceneTests)
 target_include_directories(PlutoGERetainedRenderSceneTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGERetainedRenderSceneTests COMMAND PlutoGERetainedRenderSceneTests)
 

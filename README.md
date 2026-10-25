@@ -163,6 +163,25 @@ cmake --install out/build/linux-debug
 cpack --config out/build/linux-debug/CPackConfig.cmake
 ```
 
+For a per-user installation with an application-menu entry and icon, run the
+Linux build/install helper after installing the dependencies above:
+
+```bash
+./tools/Build-Install-Linux.sh --desktop
+```
+
+This builds `linux-release`, installs to `~/.local/opt/PlutoGE`, and registers
+**PlutoGE Editor** in your application menu. Omit `--desktop` to skip the extra
+desktop shortcut; that option requires `xdg-user-dirs` and a configured desktop
+directory. Your desktop may require **Allow Launching** on the shortcut.
+The helper builds the editor and its runtime/SDK dependencies, skipping test
+executables. It chooses parallel jobs from available RAM and CPU count; use
+`--jobs 2` to override this. Keep `out/build/linux-release` so subsequent runs
+reuse compiled files. Run without `sudo`; repeat the same
+command to update the installation. The helper respects `XDG_DATA_HOME` for the
+menu entry and stages shaders and the bundled OpenAL library for installed use.
+This is a manual installation, not a pacman-managed package.
+
 ### Windows
 
 Clone and configure the MSVC build for your Visual Studio version (`msvc17` for 2022, `msvc18` for 2026):

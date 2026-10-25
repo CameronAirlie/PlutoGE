@@ -28,7 +28,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <limits>
@@ -39,6 +41,17 @@ namespace PlutoGE::ui
     namespace
     {
         constexpr const char *kHierarchyDragDropPayload = "PLUTOGE_SCENE_ENTITY";
+
+        // Tints a collapsed row whose subtree holds the selection and adds a
+        // trailing accent dot. Must be drawn beneath the row's label.
+        void DrawCollapsedSelectionMarker(ImDrawList &drawList, const ImVec2 &rowMin, const ImVec2 &rowMax)
+        {
+            const ImGuiStyle &style = ImGui::GetStyle();
+            drawList.AddRectFilled(rowMin, rowMax, GetEditorColorU32(EditorColor::Accent, 0.12f), style.FrameRounding);
+            const float radius = std::max(2.0f, std::round(ImGui::GetFontSize() * 0.18f));
+            const ImVec2 centre(rowMax.x - style.FramePadding.x - radius, (rowMin.y + rowMax.y) * 0.5f);
+            drawList.AddCircleFilled(centre, radius, GetEditorColorU32(EditorColor::Accent));
+        }
 
         bool SceneHasAnyCamera(scene::Entity *entity)
         {
@@ -175,7 +188,15 @@ namespace PlutoGE::ui
         m_visibleEntityIds.push_back(entity->GetID());
         const std::string entityName = entity->GetName().empty() ? "Entity" : entity->GetName();
         const bool isRenaming = m_renamingEntityId == entity->GetID();
-        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+        // Frame padding gives rows a regular widget height; spanning the full
+        // width makes the whole row, indent included, a click target. The
+        // rename field shares the row, so it keeps the narrow hit box.
+        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                                       ImGuiTreeNodeFlags_FramePadding;
+        if (!isRenaming)
+        {
+            nodeFlags |= ImGuiTreeNodeFlags_SpanFullWidth;
+        }
         if (entity->GetChildren().empty())
         {
             nodeFlags |= ImGuiTreeNodeFlags_Leaf;
@@ -188,6 +209,19 @@ namespace PlutoGE::ui
 
         if (m_filterActive) ImGui::SetNextItemOpen(true, ImGuiCond_Always);
         ImGui::PushID(static_cast<int>(entity->GetID()));
+
+        // Open state is only known after the node is submitted, so draw it on
+        // a foreground channel and add the marker beneath once it is known.
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        const bool containsSelection = m_selectionAncestorIds.contains(entity->GetID());
+        if (containsSelection)
+        {
+            drawList->ChannelsSplit(2);
+            drawList->ChannelsSetCurrent(1);
+        }
+
+        // Adjacent rows touch so there are no dead gaps between click targets.
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0.0f));
         bool nodeOpen = false;
         if (isRenaming)
         {
@@ -216,6 +250,21 @@ namespace PlutoGE::ui
         else
         {
             nodeOpen = ImGui::TreeNodeEx("EntityNode", nodeFlags, "%s", entityName.c_str());
+        }
+        ImGui::PopStyleVar();
+
+        if (containsSelection)
+        {
+            if (!nodeOpen)
+            {
+                drawList->ChannelsSetCurrent(0);
+                DrawCollapsedSelectionMarker(*drawList, ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+                if (!isRenaming)
+                {
+                    ImGui::SetItemTooltip("Contains selected entity");
+                }
+            }
+            drawList->ChannelsMerge();
         }
 
         // If clicked, set this entity as the selected entity in the editor shell
@@ -796,8 +845,25 @@ namespace PlutoGE::ui
     {
         auto &shell = EditorShell::GetInstance();
         shell.ClickEntity(entity, rangeToggle, additive && !rangeToggle);
+        SyncSelectionFromShell();
+    }
+
+    void SceneHierarchyPanel::SyncSelectionFromShell()
+    {
         m_selectedEntityIds.clear();
-        for (auto *selected : shell.GetSelectedEntities()) m_selectedEntityIds.push_back(selected->GetID());
+        m_selectionAncestorIds.clear();
+        for (auto *selected : EditorShell::GetInstance().GetSelectedEntities())
+        {
+            m_selectedEntityIds.push_back(selected->GetID());
+            // Stop at the first ancestor already recorded: its chain is too.
+            for (auto *ancestor = selected->GetParent(); ancestor; ancestor = ancestor->GetParent())
+            {
+                if (!m_selectionAncestorIds.insert(ancestor->GetID()).second)
+                {
+                    break;
+                }
+            }
+        }
     }
 
     void SceneHierarchyPanel::GroupSelectedEntities()
@@ -869,8 +935,8 @@ namespace PlutoGE::ui
                                                     });
         if (group)
         {
-            m_selectedEntityIds = {group->GetID()};
             EditorShell::GetInstance().SetSelectedEntity(group);
+            SyncSelectionFromShell();
             BeginRename(group);
         }
     }
@@ -973,9 +1039,7 @@ namespace PlutoGE::ui
         ImGui::Separator();
         if (m_filterActive && m_filteredEntityIds.empty()) ImGui::TextDisabled("No matching entities");
 
-        m_selectedEntityIds.clear();
-        for (auto *selected : EditorShell::GetInstance().GetSelectedEntities())
-            m_selectedEntityIds.push_back(selected->GetID());
+        SyncSelectionFromShell();
         m_visibleEntityIds.clear();
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput)
         {
@@ -997,9 +1061,7 @@ namespace PlutoGE::ui
             EditorShell::GetInstance().ClickEntity(scene->FindEntityByID(m_rangeClickId),
                                                    m_rangeClickControl, true, m_visibleEntityIds);
             m_rangeClickId = 0;
-            m_selectedEntityIds.clear();
-            for (auto *selected : EditorShell::GetInstance().GetSelectedEntities())
-                m_selectedEntityIds.push_back(selected->GetID());
+            SyncSelectionFromShell();
         }
 
         if (m_pendingDeleteEntityId != 0)

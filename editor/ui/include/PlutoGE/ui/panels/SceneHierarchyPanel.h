@@ -55,12 +55,17 @@ namespace PlutoGE::ui
         void EndRename(bool applyChanges);
         bool IsEntitySelected(scene::Entity *entity) const;
         void SelectEntity(scene::Entity *entity, bool additive, bool rangeToggle);
+        // Mirrors the shell's selection and the ancestors that contain it.
+        void SyncSelectionFromShell();
         void GroupSelectedEntities();
         void SetSelectedPivotsToMeshBounds(bool combined, bool bottomCenter);
 
         std::uint32_t m_renamingEntityId = 0;
         std::uint32_t m_pendingDeleteEntityId = 0;
         std::vector<std::uint32_t> m_selectedEntityIds;
+        // Entities with a selected descendant; collapsed ones are marked so
+        // the selection is never hidden inside a closed subtree.
+        std::unordered_set<std::uint32_t> m_selectionAncestorIds;
         std::vector<std::uint32_t> m_visibleEntityIds;
         std::uint32_t m_rangeClickId = 0;
         bool m_rangeClickControl = false;

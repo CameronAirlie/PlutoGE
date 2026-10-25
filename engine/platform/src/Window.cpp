@@ -187,6 +187,13 @@ namespace PlutoGE::platform
         {
             glfwSetWindowAttrib(m_window, GLFW_RESIZABLE, GLFW_FALSE);
         }
+        if (m_config.minWidth > 0 || m_config.minHeight > 0)
+        {
+            glfwSetWindowSizeLimits(m_window,
+                                    m_config.minWidth > 0 ? m_config.minWidth : GLFW_DONT_CARE,
+                                    m_config.minHeight > 0 ? m_config.minHeight : GLFW_DONT_CARE,
+                                    GLFW_DONT_CARE, GLFW_DONT_CARE);
+        }
         if (!m_config.visible)
         {
             glfwHideWindow(m_window);

@@ -893,12 +893,20 @@ namespace PlutoGE::ui
             const auto &light = lightComponent.GetLight();
             const glm::vec3 center = entity.GetWorldPosition();
             const ImU32 color = IM_COL32(255, 216, 92, 230);
+            // Local lights have no range setting: the bright shape is the lit
+            // area (down to 1 lux), the faint one the renderer's cutoff (0.01 lux),
+            // past which the light is culled.
+            const ImU32 cutoffColor = IM_COL32(255, 216, 92, 70);
+            const float visible = std::max(render::LocalLightRadiusAtIlluminance(light.intensity, light.color, 1.0f), 0.05f);
+            const float cutoff = std::max(light.GetRange(), 0.1f);
             if (light.type == scene::LightType::Point)
             {
-                const float radius = std::max(light.GetRange(), 0.1f);
-                DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, radius, 0.0f), cameraData, viewportMin, viewportSize, color);
-                DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, color);
-                DrawWorldCircle(drawList, center, glm::vec3(0.0f, radius, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, color);
+                for (const auto &[radius, ringColor] : {std::pair{visible, color}, std::pair{cutoff, cutoffColor}})
+                {
+                    DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, radius, 0.0f), cameraData, viewportMin, viewportSize, ringColor);
+                    DrawWorldCircle(drawList, center, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, ringColor);
+                    DrawWorldCircle(drawList, center, glm::vec3(0.0f, radius, 0.0f), glm::vec3(0.0f, 0.0f, radius), cameraData, viewportMin, viewportSize, ringColor);
+                }
                 return;
             }
 
@@ -912,14 +920,25 @@ namespace PlutoGE::ui
             const glm::vec3 referenceUp = std::abs(direction.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
             const glm::vec3 tangent = glm::normalize(glm::cross(referenceUp, direction));
             const glm::vec3 bitangent = glm::normalize(glm::cross(direction, tangent));
-            const float range = std::max(light.GetRange(), 0.1f);
-            const float radius = range * 0.28f;
-            const glm::vec3 coneCenter = center + direction * range;
-            DrawWorldCircle(drawList, coneCenter, tangent * radius, bitangent * radius, cameraData, viewportMin, viewportSize, color);
-            DrawWorldLine(drawList, center, coneCenter + tangent * radius, cameraData, viewportMin, viewportSize, color);
-            DrawWorldLine(drawList, center, coneCenter - tangent * radius, cameraData, viewportMin, viewportSize, color);
-            DrawWorldLine(drawList, center, coneCenter + bitangent * radius, cameraData, viewportMin, viewportSize, color);
-            DrawWorldLine(drawList, center, coneCenter - bitangent * radius, cameraData, viewportMin, viewportSize, color);
+            auto cone = light.spotCone;
+            cone.Sanitize();
+            // Falloff is spherical, so each cone edge is `length` long: its rim
+            // sits at length * cos(half angle) along the axis.
+            const auto drawCone = [&](float length, float fullAngle, ImU32 coneColor, bool edges)
+            {
+                const float half = glm::radians(fullAngle * 0.5f);
+                const glm::vec3 rimCenter = center + direction * (length * std::cos(half));
+                const float radius = length * std::sin(half);
+                DrawWorldCircle(drawList, rimCenter, tangent * radius, bitangent * radius, cameraData, viewportMin, viewportSize, coneColor);
+                if (!edges)
+                    return;
+                for (const glm::vec3 &side : {tangent, -tangent, bitangent, -bitangent})
+                    DrawWorldLine(drawList, center, rimCenter + side * radius, cameraData, viewportMin, viewportSize, coneColor);
+            };
+            drawCone(cutoff, cone.outerAngle, cutoffColor, true);
+            drawCone(visible, cone.outerAngle, color, true);
+            if (cone.innerAngle > 0.0f && cone.innerAngle < cone.outerAngle)
+                drawCone(visible, cone.innerAngle, IM_COL32(255, 216, 92, 140), false);
         }
 
         glm::vec3 SafeNormalizedAxis(const glm::vec3 &axis, const glm::vec3 &fallback)

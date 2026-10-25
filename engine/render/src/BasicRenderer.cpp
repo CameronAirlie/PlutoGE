@@ -7,6 +7,7 @@
 #include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
 #include "CascadedShadowLayers.h"
+#include "PointShadowLayers.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/VctVolumePlacement.h"
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
@@ -1451,6 +1452,9 @@ namespace PlutoGE::render
         m_pointShadowResources.clear();
         for (auto &face : m_pointShadowFaces) face.Reset();
         for (auto &draws : m_pointShadowFaceDraws) draws.clear();
+        m_pointShadowLayers.reset();
+        m_pointShadowStaticColor.Reset();
+        m_pointShadowStaticDepth.Reset();
         m_colorTarget.Reset();
         m_normalTarget.Reset();
         m_materialTarget.Reset();
@@ -2614,6 +2618,10 @@ namespace PlutoGE::render
                     pointCasterSignatures[index] = PointShadowCasterSignature(draw, m_shadowDrawSignatures[index], lighting.cameraPosition, graphTime);
                     pointSignature += MixShadowMember(pointCasterSignatures[index]);
                 }
+                // Every frame, so casters that stop moving become stationary.
+                if (!m_pointShadowLayers)
+                    m_pointShadowLayers = std::make_unique<PointShadowLayers>();
+                m_pointShadowLayers->Observe(pointCasterSignatures);
                 for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
                     HashVctValue(pointSignature, frameParameters.pointShadowMatrices[face]);
                 if (!m_pointShadowCacheValid || m_pointShadowSignature != pointSignature)
@@ -2658,40 +2666,22 @@ namespace PlutoGE::render
                 commands.BeginGpuScope("RHI Point Shadows");
                 ++m_frameStats.pointShadowAtlasUpdates;
                 EnsurePointShadowAtlas();
-                rhi::RenderingInfo info;
-                info.colorAttachments = {m_pointShadowColor.Get()};
-                info.depthAttachment = m_pointShadowDepth.Get();
-                info.width = 3072;
-                info.height = 2048;
-                info.clearColorValue[0] = 1;
-                info.clearDepthValue = 1;
-                info.clearColor = info.clearDepth = !regionalPointClear;
-                if (!regionalPointClear)
-                    for (std::size_t face = pointShadowCount * 6; face < m_pointShadowFaces.size(); ++face)
-                        m_pointShadowFaces[face].Reset();
-                commands.BeginRendering(info);
                 m_pointShadowResources.resize(shadowDraws.size());
                 std::vector<bool> prepared(shadowDraws.size(), false);
-                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                const auto faceRegion = [](std::size_t face)
                 {
-                    if (!pointFaceUpdates[face]) continue;
-                    if (regionalPointClear)
-                    {
-                        const rhi::Scissor region{static_cast<std::int32_t>((face % 6) * 512),
-                            static_cast<std::int32_t>((face / 6) * 512), 512, 512};
-                        commands.ClearDepthRegion(region, 1.0f);
-                        commands.ClearColorRegion(region, 0, {1, 1, 1, 1});
-                    }
-                    if (!m_pointShadowCameras[face])
-                        m_pointShadowCameras[face] = rhi::Buffer(
-                            *m_device,
-                            m_device->CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow camera"}));
-                    m_device->UpdateBuffer(m_pointShadowCameras[face].Get(), 0,
-                                           Bytes(frameParameters.pointShadowMatrices[face]));
+                    return rhi::Scissor{static_cast<std::int32_t>((face % 6) * 512),
+                                        static_cast<std::int32_t>((face / 6) * 512), 512, 512};
+                };
+                const auto setFaceViewport = [&](std::size_t face)
+                {
                     commands.SetViewport(
                         {static_cast<float>((face % 6) * 512), static_cast<float>((face / 6) * 512), 512, 512});
-                    commands.SetScissor({static_cast<std::int32_t>((face % 6) * 512),
-                                         static_cast<std::int32_t>((face / 6) * 512), 512, 512});
+                    commands.SetScissor(faceRegion(face));
+                };
+                const auto recordPointCasters = [&](std::size_t face, std::span<const std::size_t> drawIndices)
+                {
+                    setFaceViewport(face);
                     rhi::PipelineHandle boundPointPipeline;
                     const BasicMesh *boundPointMesh = nullptr;
                     std::array<rhi::TextureHandle, 8> boundPointTextures{};
@@ -2705,7 +2695,7 @@ namespace PlutoGE::render
                             boundPointTextures[index] = texture; boundPointSamplers[index] = sampler;
                         }
                     };
-                    for (const auto drawIndex : m_pointShadowFaceDraws[face])
+                    for (const auto drawIndex : drawIndices)
                     {
                         const auto &draw = shadowDraws[drawIndex];
                         const auto available =
@@ -2713,8 +2703,15 @@ namespace PlutoGE::render
                         const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
                         if (!count)
                             continue;
+                        const auto models = draw.instanceModels && !draw.instanceModels->empty()
+                            ? std::span<const glm::mat4>(*draw.instanceModels) : std::span<const glm::mat4>(&draw.model, 1);
                         const bool masked = draw.alphaMode == 1 && m_maskedShadowPipeline;
-                        const auto pipeline = masked ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get();
+                        // Several instances: one instanced draw per 64, not one draw each.
+                        const bool instanced = models.size() > 1 &&
+                            (masked ? static_cast<bool>(m_maskedShadowInstancedPipeline) : static_cast<bool>(m_shadowInstancedPipeline));
+                        const auto pipeline = masked
+                            ? (instanced ? m_maskedShadowInstancedPipeline.Get() : m_maskedShadowPipeline.Get())
+                            : (instanced ? m_shadowInstancedPipeline.Get() : m_shadowPipeline.Get());
                         if (pipeline != boundPointPipeline)
                         {
                             commands.BindPipeline(pipeline);
@@ -2729,8 +2726,6 @@ namespace PlutoGE::render
                             boundPointMesh = draw.mesh;
                         }
                         auto &resources = m_pointShadowResources[drawIndex];
-                        const auto models = draw.instanceModels && !draw.instanceModels->empty()
-                            ? std::span<const glm::mat4>(*draw.instanceModels) : std::span<const glm::mat4>(&draw.model, 1);
                         if (!prepared[drawIndex])
                         {
                             prepared[drawIndex] = true;
@@ -2749,19 +2744,48 @@ namespace PlutoGE::render
                                 ++m_frameStats.pointShadowMaterialUploads;
                             }
                             const auto previousCount = resources.models.size();
-                            resources.objects.resize(models.size());
-                            resources.models.resize(models.size());
-                            for (std::size_t model = 0; model < models.size(); ++model)
+                            if (instanced)
                             {
-                                const bool newObject = !resources.objects[model];
-                                if (newObject)
-                                    resources.objects[model] = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                        {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
-                                if (newObject || model >= previousCount || resources.models[model] != models[model])
+                                resources.objects.clear();
+                                const auto chunks = (models.size() + kMaxInstancesPerDraw - 1) / kMaxInstancesPerDraw;
+                                const bool resized = resources.instanceChunks.size() != chunks || previousCount != models.size();
+                                resources.instanceChunks.resize(chunks);
+                                for (std::size_t chunk = 0; chunk < chunks; ++chunk)
                                 {
-                                    m_device->UpdateBuffer(resources.objects[model].Get(), 0, Bytes(models[model]));
-                                    resources.models[model] = models[model];
-                                    ++m_frameStats.pointShadowObjectUploads;
+                                    const auto first = chunk * kMaxInstancesPerDraw;
+                                    const auto chunkCount = std::min(kMaxInstancesPerDraw, models.size() - first);
+                                    const bool newChunk = !resources.instanceChunks[chunk];
+                                    if (newChunk)
+                                        resources.instanceChunks[chunk] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                            {sizeof(BasicShadowInstanceParameters), rhi::BufferUsage::Uniform, "Point shadow instances"}));
+                                    if (newChunk || resized ||
+                                        !std::equal(models.begin() + first, models.begin() + first + chunkCount, resources.models.begin() + first))
+                                    {
+                                        BasicShadowInstanceParameters parameters;
+                                        std::copy_n(models.begin() + first, chunkCount, parameters.models.begin());
+                                        m_device->UpdateBuffer(resources.instanceChunks[chunk].Get(), 0, Bytes(parameters));
+                                        ++m_frameStats.pointShadowObjectUploads;
+                                    }
+                                }
+                                resources.models.assign(models.begin(), models.end());
+                            }
+                            else
+                            {
+                                resources.instanceChunks.clear();
+                                resources.objects.resize(models.size());
+                                resources.models.resize(models.size());
+                                for (std::size_t model = 0; model < models.size(); ++model)
+                                {
+                                    const bool newObject = !resources.objects[model];
+                                    if (newObject)
+                                        resources.objects[model] = rhi::Buffer(*m_device, m_device->CreateBuffer(
+                                            {sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow object"}));
+                                    if (newObject || model >= previousCount || resources.models[model] != models[model])
+                                    {
+                                        m_device->UpdateBuffer(resources.objects[model].Get(), 0, Bytes(models[model]));
+                                        resources.models[model] = models[model];
+                                        ++m_frameStats.pointShadowObjectUploads;
+                                    }
                                 }
                             }
                         }
@@ -2772,6 +2796,13 @@ namespace PlutoGE::render
                         bindPointTexture(3, 12, draw.roughnessTexture ? draw.roughnessTexture : m_fallbackDataTexture.Get(), m_fallbackSampler.Get());
                         for (unsigned i = 0; i < 4; ++i)
                             bindPointTexture(4 + i, 22 + i, draw.graphTextures[i] ? draw.graphTextures[i] : m_fallbackDataTexture.Get(), m_graphSamplers[draw.graphSamplers[i] & 3].Get());
+                        for (std::size_t chunk = 0; chunk < resources.instanceChunks.size(); ++chunk)
+                        {
+                            const auto chunkCount = std::min(kMaxInstancesPerDraw, models.size() - chunk * kMaxInstancesPerDraw);
+                            commands.BindUniformBuffer(17, resources.instanceChunks[chunk].Get());
+                            commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(chunkCount), draw.firstIndex);
+                            ++m_frameStats.pointShadowDraws;
+                        }
                         for (const auto &object : resources.objects)
                         {
                             commands.BindUniformBuffer(16, object.Get());
@@ -2779,6 +2810,104 @@ namespace PlutoGE::render
                             ++m_frameStats.pointShadowDraws;
                         }
                     }
+                };
+
+                // A face whose stationary casters dominate keeps them in the static
+                // atlas, redrawn only when they change, and redraws just its moving
+                // casters over an exact copy. Needs per-face clears of both atlases.
+                const bool canSplit = regionalPointClear && m_shadowDepthSeedPipeline && m_pointShadowLayers;
+                std::array<bool, 24> splitFaces{}, staticRebuilds{};
+                std::array<ShadowFaceKey, 24> staticKeys{};
+                static thread_local std::array<std::vector<std::size_t>, 24> stationaryCasters, movingCasters;
+                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                {
+                    if (!pointFaceUpdates[face]) continue;
+                    if (!m_pointShadowCameras[face])
+                        m_pointShadowCameras[face] = rhi::Buffer(
+                            *m_device,
+                            m_device->CreateBuffer({sizeof(glm::mat4), rhi::BufferUsage::Uniform, "Point shadow camera"}));
+                    m_device->UpdateBuffer(m_pointShadowCameras[face].Get(), 0,
+                                           Bytes(frameParameters.pointShadowMatrices[face]));
+                    if (!canSplit ||
+                        !m_pointShadowLayers->Partition(m_pointShadowFaceDraws[face], stationaryCasters[face], movingCasters[face]))
+                        continue;
+                    splitFaces[face] = true;
+                    auto &key = staticKeys[face];
+                    key = {pointFaceKeys[face].projection, 14695981039346656037ull, 14695981039346656037ull};
+                    for (const auto index : stationaryCasters[face])
+                    {
+                        std::uint64_t member = 14695981039346656037ull;
+                        HashVctValue(member, shadowDraws[index].mesh);
+                        HashVctValue(member, shadowDraws[index].firstIndex);
+                        HashVctValue(member, shadowDraws[index].indexCount);
+                        key.casters += MixShadowMember(member);
+                        key.content += MixShadowMember(pointCasterSignatures[index]);
+                    }
+                    HashVctValue(key.casters, stationaryCasters[face].size());
+                    staticRebuilds[face] = m_pointShadowLayers->faces[face].Invalidation(key) != 0;
+                }
+                if (std::any_of(staticRebuilds.begin(), staticRebuilds.end(), [](bool rebuild) { return rebuild; }))
+                {
+                    if (!m_pointShadowStaticColor || !m_pointShadowStaticDepth)
+                    {
+                        m_pointShadowStaticColor = rhi::Texture(*m_device, m_device->CreateTexture(
+                            {3072, 2048, rhi::Format::R32Float, rhi::TextureUsage::ColorAttachment, "Point shadow static atlas", true}));
+                        m_pointShadowStaticDepth = rhi::Texture(*m_device, m_device->CreateTexture(
+                            {3072, 2048, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment, "Point shadow static depth", true}));
+                        m_pointShadowLayers->Invalidate();
+                    }
+                    commands.BeginGpuScope("RHI Point Shadows / Static layer");
+                    rhi::RenderingInfo staticInfo;
+                    staticInfo.colorAttachments = {m_pointShadowStaticColor.Get()};
+                    staticInfo.depthAttachment = m_pointShadowStaticDepth.Get();
+                    staticInfo.width = 3072;
+                    staticInfo.height = 2048;
+                    staticInfo.clearColor = staticInfo.clearDepth = false;
+                    commands.BeginRendering(staticInfo);
+                    for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                    {
+                        if (!staticRebuilds[face]) continue;
+                        commands.ClearDepthRegion(faceRegion(face), 1.0f);
+                        commands.ClearColorRegion(faceRegion(face), 0, {1, 1, 1, 1});
+                        recordPointCasters(face, stationaryCasters[face]);
+                        m_pointShadowLayers->faces[face].Publish(staticKeys[face]);
+                        ++m_frameStats.pointShadowStaticFaceUpdates;
+                    }
+                    commands.EndRendering();
+                    commands.EndGpuScope();
+                }
+
+                rhi::RenderingInfo info;
+                info.colorAttachments = {m_pointShadowColor.Get()};
+                info.depthAttachment = m_pointShadowDepth.Get();
+                info.width = 3072;
+                info.height = 2048;
+                info.clearColorValue[0] = 1;
+                info.clearDepthValue = 1;
+                info.clearColor = info.clearDepth = !regionalPointClear;
+                if (!regionalPointClear)
+                    for (std::size_t face = pointShadowCount * 6; face < m_pointShadowFaces.size(); ++face)
+                        m_pointShadowFaces[face].Reset();
+                commands.BeginRendering(info);
+                for (std::size_t face = 0; face < pointShadowCount * 6; ++face)
+                {
+                    if (!pointFaceUpdates[face]) continue;
+                    if (regionalPointClear)
+                    {
+                        commands.ClearDepthRegion(faceRegion(face), 1.0f);
+                        commands.ClearColorRegion(faceRegion(face), 0, {1, 1, 1, 1});
+                    }
+                    if (splitFaces[face])
+                    {
+                        // Exact texel copy of the stationary casters (same atlas layout).
+                        setFaceViewport(face);
+                        commands.BindPipeline(m_shadowDepthSeedPipeline.Get());
+                        commands.BindTexture(1, m_pointShadowStaticDepth.Get(), m_shadowSampler.Get());
+                        commands.Draw(3);
+                        recordPointCasters(face, movingCasters[face]);
+                    }
+                    else
+                        recordPointCasters(face, m_pointShadowFaceDraws[face]);
                     m_pointShadowFaces[face].Publish(pointFaceKeys[face]);
                 }
                 commands.EndRendering();

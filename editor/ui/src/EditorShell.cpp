@@ -3293,6 +3293,8 @@ namespace PlutoGE::ui
                 .title = "PlutoGE Editor",
                 .width = 1280,
                 .height = 720,
+                .minWidth = 1024,
+                .minHeight = 600,
                 .resizable = true,
                 .visible = visible,
                 .fullscreen = false,

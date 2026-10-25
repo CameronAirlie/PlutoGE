@@ -206,12 +206,9 @@ namespace PlutoGE::scene
                     // a render-facing position/direction cache that is refreshed
                     // during Scene::Update, but an editor bake can be started
                     // before that update after a gizmo/inspector transform edit.
-                    const glm::vec3 rotationRadians = glm::radians(entity->GetWorldRotation());
-                    glm::vec3 direction{
-                        -std::sin(rotationRadians.y) * std::cos(rotationRadians.x),
-                        std::sin(rotationRadians.x),
-                        -std::cos(rotationRadians.y) * std::cos(rotationRadians.x),
-                    };
+                    // Use the transform's forward axis, as LightComponent does. A yaw/pitch
+                    // formula disagrees with the X*Y*Z rotation order once roll is present.
+                    const glm::vec3 direction = -glm::vec3(entity->GetWorldTransform()[2]);
                     const float directionLengthSq = glm::dot(direction, direction);
                     lights.push_back(BakeLight{
                         .type = light.type,

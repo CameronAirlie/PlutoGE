@@ -85,6 +85,7 @@ namespace PlutoGE::render
         std::array<std::size_t, 5> glassBoundsReasons{}, glassGroupBoundaries{};
         std::size_t pointShadowAtlasUpdates = 0, pointShadowAtlasCacheHits = 0, pointShadowDraws = 0;
         std::size_t pointShadowFaceUpdates = 0, pointShadowFaceHits = 0, pointShadowObjectUploads = 0, pointShadowMaterialUploads = 0;
+        std::size_t pointShadowStaticFaceUpdates = 0; // Static layer faces redrawn (PointShadowLayers).
         std::array<std::size_t, 4> pointShadowInvalidations{};
         std::size_t materialPreparations = 0, materialPreparationHits = 0;
         std::size_t graphSpecializedDraws = 0, graphInterpretedDraws = 0;

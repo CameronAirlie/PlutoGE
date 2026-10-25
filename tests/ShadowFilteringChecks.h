@@ -481,6 +481,62 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     faceFrame(oppositeProjection);
     if (renderer.GetFrameStats().pointShadowFaceUpdates != 1 || renderer.GetFrameStats().pointShadowDraws != 0)
         throw std::runtime_error("Removing a caster did not clear only its previously occupied face");
+    // Stationary casters settle into the static point atlas; a face holding a
+    // moving caster is then a seed of that copy plus the moving caster alone.
+    // Its image must match a full redraw of the same pose exactly.
+    receiver = BasicDraw{}; receiver.mesh = &mesh;
+    receiver.twoSided = true;
+    receiver.model[3].z = .2f;
+    lighting.cameraPosition = {0, 0, 4};
+    std::vector<BasicDraw> layeredCasters;
+    for (int i = 0; i < 20; ++i)
+    {
+        BasicDraw draw{}; draw.mesh = &mesh;
+        draw.model = glm::translate(glm::mat4(1), glm::vec3(-.8f + (i % 5) * .4f, -.6f + (i / 5) * .4f, 1.5f)) *
+                     glm::scale(glm::mat4(1), glm::vec3(.08f));
+        draw.shadowBoundsCenter = glm::vec3(draw.model[3]);
+        draw.shadowBoundsRadius = .2f;
+        layeredCasters.push_back(draw);
+    }
+    layeredCasters.push_back(layeredCasters.front());
+    auto &mover = layeredCasters.back();
+    const auto placeMover = [&](float x)
+    {
+        mover.model = glm::translate(glm::mat4(1), glm::vec3(x, .1f, 2.2f)) * glm::scale(glm::mat4(1), glm::vec3(.2f));
+        mover.shadowBoundsCenter = glm::vec3(mover.model[3]);
+    };
+    const auto layeredFrame = [&](float x)
+    {
+        placeMover(x);
+        renderer.Render(glm::mat4(1), lighting, std::span(&receiver, 1), {}, layeredCasters);
+        return readPixels(renderer.GetColorTexture());
+    };
+    layeredFrame(.3f);
+    const auto fullRedraw = layeredFrame(-.3f); // No history yet: every caster drawn.
+    const auto fullDraws = renderer.GetFrameStats().pointShadowDraws;
+    std::size_t staticFaces = 0;
+    for (int frame = 0; frame < 40; ++frame)
+    {
+        layeredFrame(frame % 2 ? .3f : -.3f); // Ends at .3, so the next frame moves it.
+        staticFaces += renderer.GetFrameStats().pointShadowStaticFaceUpdates;
+    }
+    const auto layered = layeredFrame(-.3f);
+    const auto &layeredStats = renderer.GetFrameStats();
+    if (staticFaces == 0 || layeredStats.pointShadowStaticFaceUpdates != 0 || layeredStats.pointShadowFaceUpdates == 0 ||
+        layeredStats.pointShadowDraws != 1 || fullDraws < layeredCasters.size())
+    {
+        std::cout << "Static point layer: static faces=" << staticFaces << ", last frame faces="
+                  << layeredStats.pointShadowFaceUpdates << ", draws=" << layeredStats.pointShadowDraws
+                  << " (full redraw " << fullDraws << ")" << std::endl;
+        throw std::runtime_error("Stationary point casters were not served from the static layer");
+    }
+    if (layered != fullRedraw)
+        throw std::runtime_error("Static point layer image differs from a full redraw");
+    lighting.pointLights[0].castsShadows = false;
+    const auto layeredUnshadowed = layeredFrame(-.3f);
+    lighting.pointLights[0].castsShadows = true;
+    if (layeredUnshadowed == fullRedraw)
+        throw std::runtime_error("Static point layer fixture casts no visible shadow");
     // Place a magnified receiver inside the outer tenth of the finest
     // clipmap. Both probes still select level zero: the level diagnostic must
     // advance only because resident neighbouring levels are blended. This

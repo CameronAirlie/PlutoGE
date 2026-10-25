@@ -23,13 +23,19 @@ namespace PlutoGE::render
         }
     };
 
-    // Local intensity is candela, assuming one world unit is one metre.
-    // The brightest channel falls below 0.01 lux at the culling radius.
-    inline float LocalLightRange(float intensity, const glm::vec3 &color)
+    // Local intensity is candela, assuming one world unit is one metre: the
+    // distance at which the brightest channel falls to `lux` (inverse square).
+    inline float LocalLightRadiusAtIlluminance(float intensity, const glm::vec3 &color, float lux)
     {
         const float peak = std::max({color.r, color.g, color.b, 0.0f});
-        if (!std::isfinite(intensity) || !std::isfinite(peak) || intensity <= 0.0f) return 0.0f;
-        return static_cast<float>(std::sqrt(double(intensity) * double(peak) / 0.01));
+        if (!std::isfinite(intensity) || !std::isfinite(peak) || intensity <= 0.0f || !(lux > 0.0f)) return 0.0f;
+        return static_cast<float>(std::sqrt(double(intensity) * double(peak) / double(lux)));
+    }
+
+    // The culling radius: the brightest channel falls below 0.01 lux.
+    inline float LocalLightRange(float intensity, const glm::vec3 &color)
+    {
+        return LocalLightRadiusAtIlluminance(intensity, color, 0.01f);
     }
 
     // Inverse-square except within 1 cm of the ideal point singularity.

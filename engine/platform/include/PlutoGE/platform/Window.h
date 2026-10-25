@@ -22,6 +22,9 @@ namespace PlutoGE::platform
         std::string title = "PlutoGE Window";
         int width = 800;
         int height = 600;
+        // Minimum client size in screen coordinates; 0 leaves that axis unconstrained.
+        int minWidth = 0;
+        int minHeight = 0;
         bool resizable = true;
         bool visible = true;
         bool fullscreen = false;

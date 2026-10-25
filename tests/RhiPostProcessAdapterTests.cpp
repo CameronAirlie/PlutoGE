@@ -62,6 +62,11 @@ int main()
     if (!Near(radius, 10) || !Near(LocalLightAttenuation(1, radius), 1) ||
         !Near(LocalLightAttenuation(2, radius), .25f) ||
         LocalLightAttenuation(radius, radius) != 0 || !std::isfinite(LocalLightAttenuation(0, radius))) return 101;
+    // 1 cd gives 1 lux at 1 m; a quarter of the illuminance doubles the radius.
+    if (!Near(LocalLightRadiusAtIlluminance(1, glm::vec3(1), 1), 1) ||
+        !Near(LocalLightRadiusAtIlluminance(4, glm::vec3(1), 1), 2) ||
+        !Near(LocalLightRadiusAtIlluminance(1, glm::vec3(1), .01f), radius) ||
+        LocalLightRadiusAtIlluminance(1, glm::vec3(1), 0) != 0) return 124;
     physicalLight.ClearDirty();
     physicalLight.SetIntensity(4);
     if (!physicalLight.IsDirty() || !Near(physicalLight.GetLight().GetRange(), radius * 2)) return 102;

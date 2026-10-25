@@ -113,10 +113,23 @@ namespace PlutoGE::ui
             if (!capture.Initialize(*m_device, render::ShaderArtifactLibrary{}.LoadBasicRendererPackage())) return {};
             capture.SetImmediateTextureUploads(true);
             capture.SetSceneEffectsEnabled(false);
+            // Scene commands carry the LODs the editor camera last selected. A probe
+            // can sit far from that camera, so draw each mesh at its finest permitted LOD.
+            std::vector<render::RenderCommand> captureCommands(commands.begin(), commands.end());
+            for (auto &command : captureCommands)
+            {
+                command.lodIndex = command.GetMinLodIndex();
+                command.SetLodTransition(0, 0.0f);
+            }
+            // Supersample each face: shadow and geometry detail scale with the view
+            // resolution, which is very coarse at typical probe sizes.
+            const int supersample = std::clamp(2048 / resolution, 1, 2);
+            const int renderResolution = resolution * supersample;
             constexpr glm::vec3 directions[] = {{1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}};
             constexpr glm::vec3 ups[] = {{0,-1,0},{0,-1,0},{0,0,1},{0,0,-1},{0,-1,0},{0,-1,0}};
             std::vector<float> pixels;
             const std::size_t faceSize = static_cast<std::size_t>(resolution) * resolution * 4;
+            const std::size_t renderFaceSize = static_cast<std::size_t>(renderResolution) * renderResolution * 4;
             pixels.reserve(faceSize * 6);
             for (int face = 0; face < 6; ++face)
             {
@@ -124,18 +137,36 @@ namespace PlutoGE::ui
                 camera.view = glm::lookAt(position, position + directions[face], ups[face]);
                 camera.nearPlane = 0.1f;
                 camera.farPlane = std::max(farPlane, 1.0f);
-                // RhiSceneRenderer translates GL clip depth to the active backend.
-                camera.projection = glm::perspective(glm::radians(90.0f), 1.0f, camera.nearPlane, camera.farPlane);
+                // RhiSceneRenderer translates GL clip depth to the active backend. Scene
+                // rendering uses reversed Z (near -> 1), matching Camera::GetCameraData.
+                camera.projection = glm::perspective(glm::radians(90.0f), 1.0f, camera.farPlane, camera.nearPlane);
                 camera.renderRuntimeUI = false;
                 auto lighting = render::BuildSceneLighting(camera, &scene);
                 lighting.localIblEnabled = false; // Never bake a probe's previous result into itself.
+                // Virtual shadow pages are budgeted and filled over several frames; a
+                // capture renders each face once, so use cascades, which are complete
+                // every frame, and cover everything the probe can see.
+                lighting.shadowMethod = render::ShadowMethod::Cascaded;
+                lighting.shadowDistance = std::max(lighting.shadowDistance, camera.farPlane);
+                lighting.shadowCasterDistance = std::max(lighting.shadowCasterDistance, camera.farPlane);
+                lighting.shadowResolution = std::max(lighting.shadowResolution, 4096u);
                 const auto atmosphere = render::BuildSceneAtmosphere(&scene, lighting);
                 capture.ResetTemporalHistory();
-                if (!capture.Render(resolution, resolution, camera, lighting, commands, commands, {}, atmosphere,
+                const render::RenderCommandView view(captureCommands);
+                if (!capture.Render(renderResolution, renderResolution, camera, lighting, view, view, {}, atmosphere,
                                     ReadTexturePixels, render::PostProcessDebugView::None, true, &scene,
                                     std::nullopt, {}, true)) return {};
-                auto facePixels = m_device->ReadTextureRgbaFloat(capture.GetColorTexture());
-                if (facePixels.size() != faceSize) return {};
+                auto rendered = m_device->ReadTextureRgbaFloat(capture.GetColorTexture());
+                if (rendered.size() != renderFaceSize) return {};
+                std::vector<float> facePixels(faceSize);
+                const float weight = 1.0f / static_cast<float>(supersample * supersample);
+                for (int y = 0; y < resolution; ++y)
+                    for (int x = 0; x < resolution; ++x)
+                        for (int sy = 0; sy < supersample; ++sy)
+                            for (int sx = 0; sx < supersample; ++sx)
+                                for (int c = 0; c < 4; ++c)
+                                    facePixels[(static_cast<std::size_t>(y) * resolution + x) * 4 + c] += weight *
+                                        rendered[(static_cast<std::size_t>(y * supersample + sy) * renderResolution + x * supersample + sx) * 4 + c];
                 // Vulkan framebuffer rows start at the top; retained cubemap faces use GL row order.
                 if (m_isVulkan)
                     for (int y = 0; y < resolution / 2; ++y)

@@ -49,6 +49,7 @@ namespace PlutoGE::render
     class OpaqueShadowBatches;
     class GeometryArena;
     class CascadedShadowLayers;
+    class PointShadowLayers;
 
     enum class BasicPostProcessEffectType : std::uint8_t
     {
@@ -622,6 +623,7 @@ namespace PlutoGE::render
         std::size_t shadowCascadeCacheHits = 0;
         std::size_t pointShadowAtlasUpdates = 0, pointShadowAtlasCacheHits = 0, pointShadowDraws = 0;
         std::size_t pointShadowFaceUpdates = 0, pointShadowFaceHits = 0, pointShadowObjectUploads = 0, pointShadowMaterialUploads = 0;
+        std::size_t pointShadowStaticFaceUpdates = 0; // Static layer faces redrawn (PointShadowLayers).
         std::array<std::size_t, 4> pointShadowInvalidations{}; // initial, projection, caster set/range, content
         std::size_t shadowCascadeTargets = 0;
         std::array<std::size_t, 4> shadowDrawsByCascade{};
@@ -1082,11 +1084,18 @@ namespace PlutoGE::render
         std::array<rhi::Buffer, 24> m_pointShadowCameras;
         std::array<ShadowFaceCache, 24> m_pointShadowFaces;
         std::array<std::vector<std::size_t>, 24> m_pointShadowFaceDraws;
+        // Stationary casters of each face, kept in a static copy of the atlas
+        // and seeded in when a moving caster changes the face (PointShadowLayers).
+        std::unique_ptr<PointShadowLayers> m_pointShadowLayers;
+        rhi::Texture m_pointShadowStaticColor;
+        rhi::Texture m_pointShadowStaticDepth;
         struct PointShadowResources
         {
             rhi::Buffer material;
             std::vector<std::byte> materialBytes;
             std::vector<rhi::Buffer> objects;
+            // Instanced draws: one block of up to 64 models per DrawIndexedInstanced.
+            std::vector<rhi::Buffer> instanceChunks;
             std::vector<glm::mat4> models;
         };
         std::vector<PointShadowResources> m_pointShadowResources;

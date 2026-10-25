@@ -1990,6 +1990,7 @@ namespace PlutoGE::render
         m_timingStats.glassBoundsReasons = frameStats.glassBoundsReasons;
         m_timingStats.glassGroupBoundaries = frameStats.glassGroupBoundaries;
         m_timingStats.pointShadowFaceUpdates = frameStats.pointShadowFaceUpdates;
+        m_timingStats.pointShadowStaticFaceUpdates = frameStats.pointShadowStaticFaceUpdates;
         m_timingStats.pointShadowFaceHits = frameStats.pointShadowFaceHits;
         m_timingStats.pointShadowObjectUploads = frameStats.pointShadowObjectUploads;
         m_timingStats.pointShadowMaterialUploads = frameStats.pointShadowMaterialUploads;

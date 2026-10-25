@@ -829,7 +829,11 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.geometryTriangles[0]), static_cast<double>(render.recordedGeometryInstanceCount),
                         render.parallelRecording ? 1.0 : 0.0, rhiDevice.descriptorCpuMs, static_cast<double>(rhiDevice.descriptorBindCalls),
                         static_cast<double>(rhiDevice.uniformBytesUploaded), static_cast<double>(rhiDevice.persistentUniformBytesUploaded),
-                        static_cast<double>(render.virtualShadows.pageDrawBatches), 0};
+                        static_cast<double>(render.virtualShadows.pageDrawBatches),
+                        static_cast<double>(render.pointShadowFaceUpdates), static_cast<double>(render.pointShadowDraws),
+                        static_cast<double>(render.pointShadowObjectUploads),
+                        static_cast<double>(render.pointShadowInvalidations[1]), static_cast<double>(render.pointShadowInvalidations[2]),
+                        static_cast<double>(render.pointShadowInvalidations[3]), static_cast<double>(render.pointShadowStaticFaceUpdates), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)

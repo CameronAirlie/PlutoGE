@@ -292,6 +292,7 @@ namespace PlutoGE::scene
             .environmentMapTexture = m_captureTexture.get(),
             .intensity = m_intensity,
             .blendDistance = m_blendDistance,
+            .priority = m_priority,
         };
     }
 
@@ -350,6 +351,7 @@ namespace PlutoGE::scene
             {"Size", PropertyType::Vec3, SerializeVec3(m_size)},
             {"Intensity", PropertyType::Float, std::to_string(m_intensity)},
             {"Blend Distance", PropertyType::Float, std::to_string(m_blendDistance)},
+            {"Priority", PropertyType::Int, std::to_string(m_priority)},
             {"Resolution", PropertyType::Int, std::to_string(m_resolution)},
             {"Far Plane", PropertyType::Float, std::to_string(m_farPlane)},
             {"Dirty", PropertyType::Bool, m_dirty ? "true" : "false"},
@@ -383,6 +385,10 @@ namespace PlutoGE::scene
             else if (property.name == "Blend Distance")
             {
                 SetBlendDistance(std::stof(property.value));
+            }
+            else if (property.name == "Priority")
+            {
+                SetPriority(std::stoi(property.value));
             }
             else if (property.name == "Resolution")
             {

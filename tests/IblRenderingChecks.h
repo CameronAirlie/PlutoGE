@@ -89,11 +89,18 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     const auto blue = frame();
     require(blue.b > 1.5f && blue.r < .01f, "IBL upload ignores content revision");
     std::unique_ptr<Texture> redTexture(Texture::CpuColorCubemap(resolution, faces({2,0,0})));
+    // A nested capture fully covering the receiver replaces the enclosing one.
     auto second = volume; second.environmentMapTexture = redTexture.get();
+    second.origin = {-1,-1,-1}; second.size = {2,2,2};
     scene.AddIblCaptureVolume(second);
+    const auto nested = frame();
+    require(nested.r > 1.5f && nested.b < .03f, "A smaller nested IBL capture does not take precedence");
+    // Priority outranks size.
+    scene.ClearIblCaptureVolumes();
+    auto prioritized = volume; prioritized.priority = 1;
+    scene.AddIblCaptureVolume(second); scene.AddIblCaptureVolume(prioritized);
     const auto overlap = frame();
-    require(std::abs(overlap.r - overlap.b) < .03f && overlap.r > .7f && overlap.r < 1.2f,
-        "Overlapping IBL captures are not normalized");
+    require(overlap.b > 1.5f && overlap.r < .03f, "IBL capture priority does not outrank volume size");
     scene.ClearIblCaptureVolumes();
     volume.origin = {4,4,4}; scene.AddIblCaptureVolume(volume);
     require(glm::length(frame()) < .01f, "IBL leaks beyond volume bounds");
@@ -304,11 +311,23 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
         detailGrid.positions[i]=glm::vec4(-.5f+(i%2),-.5f+(i/2%2),-.5f+(i/4),1);
         detailGrid.sphericalHarmonics[i][0]=glm::vec3(3,0,0)/.282095f;
     }
-    detail->SetSize(detailGrid.size); detail->SetBakedVolume(detailGrid);
+    detail->SetSize(detailGrid.size); detail->SetBakedVolume(detailGrid); detail->SetBlendDistance(0);
     auto *detailOwner=scene.AddEntity(std::move(detailEntity));
     const auto detailLight=frame();
-    require(detailLight.r>.8f && detailLight.g<.01f,"Overlapping ambient volumes ignore the denser component");
-    command.probeDebug={1,8};
+    require(detailLight.r>.8f && detailLight.g<.01f,"Overlapping ambient volumes ignore the smaller component");
+    componentVolume->SetPriority(1);
+    const auto coarseLight=frame();
+    require(coarseLight.g>.3f && coarseLight.r<.01f,"Ambient volume priority does not outrank volume size");
+    componentVolume->SetPriority(0);
+    // The receiver is 0.5m inside the detail volume's nearest face: a 1m blend gives each volume half.
+    detail->SetBlendDistance(1);
+    const auto blended=frame();
+    if (!(std::abs(blended.r-detailLight.r*.5f)<.03f && std::abs(blended.g-coarseLight.g*.5f)<.03f))
+        throw std::runtime_error("Nested ambient volumes do not fade over their blend distance: " +
+            std::to_string(blended.r) + "," + std::to_string(blended.g));
+    detail->SetBlendDistance(0);
+    // The smaller volume is packed first, so its probes start the atlas.
+    command.probeDebug={1,0};
     const auto detailPreview=frame();
     require(std::abs(detailPreview.r-3.0f/3.14159265f)<.02f && detailPreview.g<.01f,
         "Debug spheres use the wrong volume's atlas indices");

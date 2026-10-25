@@ -2616,10 +2616,22 @@ namespace PlutoGE::scene
     }
     std::vector<const BakedProbeVolume *> Scene::GetBakedProbeVolumes() const
     {
-        std::vector<const BakedProbeVolume *> volumes;
+        // Shaders composite volumes front to back and keep only the first few, so
+        // order them most specific first: priority, then smallest volume.
+        std::vector<const AmbientLightVolumeComponent *> components;
         for (auto *component : GetAmbientLightVolumes())
             if (component->HasUsableBake())
-                volumes.push_back(&component->GetBakedVolume());
+                components.push_back(component);
+        const auto volume = [](const AmbientLightVolumeComponent *component) {
+            const auto &size = component->GetBakedVolume().size;
+            return size.x * size.y * size.z;
+        };
+        std::stable_sort(components.begin(), components.end(), [&](const auto *a, const auto *b) {
+            return a->GetPriority() != b->GetPriority() ? a->GetPriority() > b->GetPriority() : volume(a) < volume(b);
+        });
+        std::vector<const BakedProbeVolume *> volumes;
+        for (const auto *component : components)
+            volumes.push_back(&component->GetBakedVolume());
         return volumes;
     }
     const BakedProbeVolume &Scene::GetBakedProbeVolume() const
@@ -2762,13 +2774,25 @@ namespace PlutoGE::scene
 
     int Scene::AddIblCaptureVolume(IblCaptureVolume captureVolume)
     {
+        // Shaders composite captures front to back, so keep the most specific
+        // first: priority, then smallest volume. Equal keys keep insertion order.
+        const auto volume = [](const IblCaptureVolume &capture) { return capture.size.x * capture.size.y * capture.size.z; };
+        captureVolume = SanitizeIblCaptureVolume(std::move(captureVolume));
+        const auto position = std::upper_bound(m_iblCaptureVolumes.begin(), m_iblCaptureVolumes.end(), captureVolume,
+            [&](const IblCaptureVolume &added, const IblCaptureVolume &existing) {
+                return added.priority != existing.priority ? added.priority > existing.priority : volume(added) < volume(existing);
+            });
+        // When full, a more specific capture displaces the least specific one.
         if (m_iblCaptureVolumes.size() >= static_cast<std::size_t>(kMaxIblCaptureVolumes))
         {
-            return -1;
+            if (position == m_iblCaptureVolumes.end())
+                return -1;
+            const auto index = position - m_iblCaptureVolumes.begin();
+            m_iblCaptureVolumes.pop_back();
+            m_iblCaptureVolumes.insert(m_iblCaptureVolumes.begin() + index, std::move(captureVolume));
+            return static_cast<int>(index);
         }
-
-        m_iblCaptureVolumes.push_back(SanitizeIblCaptureVolume(std::move(captureVolume)));
-        return static_cast<int>(m_iblCaptureVolumes.size() - 1);
+        return static_cast<int>(m_iblCaptureVolumes.insert(position, std::move(captureVolume)) - m_iblCaptureVolumes.begin());
     }
 
     void Scene::ClearIblCaptureVolumes()

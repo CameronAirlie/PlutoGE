@@ -120,11 +120,12 @@ float3 iblDiffuse(int index, float3 n)
 
 float3 blendIblReflection(float3 fallback, float3 position, float3 direction, float roughness)
 {
+    // Captures arrive most specific first; each claims only the coverage left.
     float3 radiance = float3(0);
     float weightSum = 0;
     for (int i = 0; i < 4; ++i)
     {
-        const float weight = iblWeight(i, position);
+        const float weight = iblWeight(i, position) * (1.0 - weightSum);
         if (weight > 0) radiance += iblRadiance(i, position, direction, roughness) * weight;
         weightSum += weight;
     }
@@ -1217,9 +1218,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const float3 diffuseResponse = sampledColor.rgb * (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
     float captureWeights[4];
     float captureWeightSum = 0;
+    // Captures arrive most specific first (priority, then smallest volume);
+    // each claims only the coverage the earlier ones left.
     for (int i = 0; i < 4; ++i)
     {
-        captureWeights[i] = transparentPass || pointParameters.w != 11.0 ? iblWeight(i, input.worldPosition) : 0.0;
+        captureWeights[i] = transparentPass || pointParameters.w != 11.0 ? iblWeight(i, input.worldPosition) * (1.0 - captureWeightSum) : 0.0;
         captureWeightSum += captureWeights[i];
     }
     const float captureCoverage = saturate(captureWeightSum);
@@ -1236,7 +1239,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const bool gridCovered = gridVolume >= 0;
     const bool gridDeferred = gridCovered && !transparentPass && probeAtlasParameters.w > 0.5;
     const float4 gridIrradiance = gridCovered && !gridDeferred
-        ? sampleDiffuseVolumeAt(gridVolume, input.worldPosition, normal, ambientReceiverNormal) : float4(0);
+        ? sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal) : float4(0);
     const float3 gridDiffuse = gridIrradiance.rgb * diffuseResponse;
     float3 ambient = 0.0;
     float3 environmentSpecular = 0.0;

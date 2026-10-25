@@ -25,6 +25,12 @@ namespace PlutoGE::scene
         int GetProbeBudget() const { return m_budget; }
         int GetDirectionCount() const { return m_directions; }
         void Configure(float spacing, float clearance, int budget, int directions);
+        // Overlapping volumes are sampled most specific first: higher priority,
+        // then smaller volume. Each fades into the next over its blend distance.
+        int GetPriority() const { return m_priority; }
+        void SetPriority(int priority);
+        float GetBlendDistance() const { return m_blendDistance; }
+        void SetBlendDistance(float distance);
         bool HasUsableBake() const;
         const BakedProbeVolume &GetBakedVolume() const { return m_baked; }
         void SetBakedVolume(BakedProbeVolume volume);
@@ -36,6 +42,8 @@ namespace PlutoGE::scene
         float m_clearance = .02f;
         int m_budget = 4096;
         int m_directions = 128;
+        int m_priority = 0;
+        float m_blendDistance = 1.0f;
         std::uint64_t m_revision = 0;
         BakedProbeVolume m_baked;
     };

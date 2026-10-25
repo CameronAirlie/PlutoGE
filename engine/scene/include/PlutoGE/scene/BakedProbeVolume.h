@@ -21,6 +21,9 @@ namespace PlutoGE::scene
         std::vector<std::array<glm::vec3, 9>> sphericalHarmonics;
         std::vector<std::array<float, 64>> visibility; // 8x8 octahedral ray distances
         std::vector<std::array<glm::vec3, 64>> visibilityNormals; // Geometric hit normals; zero for misses
+        // Authoring setting mirrored from the owning component, not bake output:
+        // world distance over which this volume fades into the next one.
+        float blendDistance = 1.0f;
         bool HasDirectionalData() const {
             return IsValid() && positions.size() == irradiance.size() &&
                 sphericalHarmonics.size() == irradiance.size() && visibility.size() == irradiance.size();

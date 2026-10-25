@@ -56,6 +56,8 @@ namespace PlutoGE::scene
         render::Texture *environmentMapTexture = nullptr;
         float intensity = 1.0f;
         float blendDistance = 1.0f;
+        // Higher priority claims overlapping space first; ties go to the smaller volume.
+        int priority = 0;
 
         [[nodiscard]] bool IsValid() const
         {

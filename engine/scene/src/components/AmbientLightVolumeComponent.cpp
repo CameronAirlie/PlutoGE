@@ -54,14 +54,25 @@ namespace PlutoGE::scene
         return true;
     }
     void AmbientLightVolumeComponent::SetBakedVolume(BakedProbeVolume volume) {
-        m_baked=std::move(volume); m_revision=revision.fetch_add(1);
+        m_baked=std::move(volume); m_baked.blendDistance=m_blendDistance; m_revision=revision.fetch_add(1);
+    }
+    // Both change the packed volume order or parameters, so they bump the revision.
+    void AmbientLightVolumeComponent::SetPriority(int priority) {
+        if (priority==m_priority) return;
+        m_priority=priority; m_revision=revision.fetch_add(1);
+    }
+    void AmbientLightVolumeComponent::SetBlendDistance(float distance) {
+        distance=std::max(distance,0.0f);
+        if (distance==m_blendDistance) return;
+        m_blendDistance=m_baked.blendDistance=distance; m_revision=revision.fetch_add(1);
     }
     void AmbientLightVolumeComponent::ClearBake() { SetBakedVolume({}); }
     std::vector<Property> AmbientLightVolumeComponent::SerializeEditableProperties() const {
         std::ostringstream size; size << m_size.x << ',' << m_size.y << ',' << m_size.z;
         return {{"Size",PropertyType::Vec3,size.str()}, {"Probe Spacing",PropertyType::Float,std::to_string(m_spacing)},
             {"Surface Clearance",PropertyType::Float,std::to_string(m_clearance)}, {"Probe Budget",PropertyType::Int,std::to_string(m_budget)},
-            {"Direction Count",PropertyType::Int,std::to_string(m_directions)}};
+            {"Direction Count",PropertyType::Int,std::to_string(m_directions)},
+            {"Priority",PropertyType::Int,std::to_string(m_priority)}, {"Blend Distance",PropertyType::Float,std::to_string(m_blendDistance)}};
     }
     std::vector<Property> AmbientLightVolumeComponent::Serialize() const {
         auto properties=SerializeEditableProperties();
@@ -90,6 +101,8 @@ namespace PlutoGE::scene
                 else if (p.name=="Surface Clearance") m_clearance=std::stof(p.value);
                 else if (p.name=="Probe Budget") m_budget=std::stoi(p.value);
                 else if (p.name=="Direction Count") m_directions=std::stoi(p.value);
+                else if (p.name=="Priority") SetPriority(std::stoi(p.value));
+                else if (p.name=="Blend Distance") SetBlendDistance(std::stof(p.value));
                 else if (p.name=="Baked Data") {
                     std::istringstream in(p.value); BakedProbeVolume v; int version=0; bool directional=false,normals=false;
                     in >> version; Read(in,v.origin); Read(in,v.size);

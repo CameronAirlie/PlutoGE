@@ -1268,7 +1268,7 @@ namespace PlutoGE::render
                 std::size_t base=volumes.size();
                 for (std::size_t v=0;v<volumes.size();++v) {
                     const auto &volume=*volumes[v];
-                    at(v,0)=glm::vec4(volume.origin,0); at(v,1)=glm::vec4(volume.size,0);
+                    at(v,0)=glm::vec4(volume.origin,volume.blendDistance); at(v,1)=glm::vec4(volume.size,0);
                     at(v,2)=glm::vec4(glm::vec3(volume.resolution),static_cast<float>(base));
                     const auto inverseBasis=glm::inverse(volume.gridBasis);
                     for (int axis=0;axis<3;++axis) at(v,3+axis)=glm::vec4(inverseBasis[0][axis],inverseBasis[1][axis],inverseBasis[2][axis],0);
@@ -1333,7 +1333,7 @@ namespace PlutoGE::render
             {
                 const auto &volume = *volumes[v];
                 auto &parameters = effectiveLighting.diffuseProbeVolumes[v];
-                parameters.origin = glm::vec4(volume.origin, 0);
+                parameters.origin = glm::vec4(volume.origin, volume.blendDistance);
                 parameters.size = glm::vec4(volume.size,
                     volume.HasDirectionalData() && volume.visibilityNormals.size() == volume.irradiance.size() ? 1.0f : 0.0f);
                 parameters.resolutionBase = glm::vec4(glm::vec3(volume.resolution), static_cast<float>(base));

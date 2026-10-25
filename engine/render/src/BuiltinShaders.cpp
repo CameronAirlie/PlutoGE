@@ -543,7 +543,8 @@ vec3 capturedColor = vec3(0.0);
 float totalWeight = 0.0;
 for (int captureIndex = 0; captureIndex < MAX_IBL_CAPTURE_VOLUMES; ++captureIndex)
 {
-    float weight = ComputeIblCaptureWeight(fragPos, captureIndex);
+    // Captures arrive most specific first; each claims only the coverage left.
+    float weight = ComputeIblCaptureWeight(fragPos, captureIndex) * (1.0 - totalWeight);
     if (weight <= 0.0)
     {
         continue;
@@ -2043,7 +2044,8 @@ FragColor = vec4(lighting, 1.0);
             float captureWeight = 0.0;
             for (int captureIndex = 0; captureIndex < 4; ++captureIndex)
             {
-                float weight = ComputeIblCaptureWeight(fragPos, captureIndex);
+                // Captures arrive most specific first; each claims only the coverage left.
+                float weight = ComputeIblCaptureWeight(fragPos, captureIndex) * (1.0 - captureWeight);
                 if (weight <= 0.0)
                 {
                     continue;

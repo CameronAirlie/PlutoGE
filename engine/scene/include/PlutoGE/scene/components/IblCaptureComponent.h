@@ -48,6 +48,8 @@ namespace PlutoGE::scene
         const glm::vec3 &GetSize() const { return m_size; }
         float GetIntensity() const { return m_intensity; }
         float GetBlendDistance() const { return m_blendDistance; }
+        int GetPriority() const { return m_priority; }
+        void SetPriority(int priority) { m_priority = priority; }
         int GetResolution() const { return m_resolution; }
         float GetFarPlane() const { return m_farPlane; }
         bool IsDirty() const { return m_dirty; }
@@ -63,6 +65,7 @@ namespace PlutoGE::scene
         glm::vec3 m_size{10.0f};
         float m_intensity = 1.0f;
         float m_blendDistance = 1.0f;
+        int m_priority = 0;
         int m_resolution = 256;
         float m_farPlane = 100.0f;
         bool m_dirty = true;

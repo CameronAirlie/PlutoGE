@@ -216,20 +216,24 @@ float3 diffuseVolumeCoordinates(int index, float3 position)
     return local / volumeSize(index).xyz;
 }
 
-// The finest baked volume containing position, or -1. Cheap: bounds only.
+// Volumes arrive most specific first (priority, then smallest volume). Returns
+// the first containing position, or -1. Cheap: bounds only.
 int selectDiffuseVolume(float3 position)
 {
-    int selected = -1;
-    float finest = 1e30;
     for (int i=0; i<int(probeOrigin.w); ++i) {
-        const float3 size = volumeSize(i).xyz;
         const float3 uvw = diffuseVolumeCoordinates(i,position);
-        if (any(uvw<0) || any(uvw>1)) continue;
-        const float3 cellSize = size / volumeResolution(i).xyz;
-        const float spacing = max(cellSize.x,max(cellSize.y,cellSize.z));
-        if (spacing<finest) { finest=spacing; selected=i; }
+        if (all(uvw>=0) && all(uvw<=1)) return i;
     }
-    return selected;
+    return -1;
+}
+
+// 1 deep inside a volume, falling to 0 at its faces over the blend distance.
+float diffuseVolumeEdgeWeight(int index, float3 uvw)
+{
+    const float3 edge = min(uvw, 1-uvw) * volumeSize(index).xyz;
+    const float distance = min(edge.x, min(edge.y, edge.z));
+    const float blend = volumeOrigin(index).w;
+    return blend > 0 ? saturate(distance / blend) : 1;
 }
 
 float4 sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
@@ -240,7 +244,19 @@ float4 sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 
         volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5, positionError);
 }
 
+// Composites overlapping volumes front to back: each claims only the coverage
+// earlier ones left. The result is normalized, so the outermost face of the
+// combined volumes stays a hard boundary, as with a single volume.
 float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
 {
-    return sampleDiffuseVolumeAt(selectDiffuseVolume(position), position, normal, receiverNormal, positionError);
+    float3 irradiance = float3(0);
+    float coverage = 0;
+    for (int i=0; i<int(probeOrigin.w) && coverage<0.999; ++i) {
+        const float3 uvw = diffuseVolumeCoordinates(i,position);
+        if (any(uvw<0) || any(uvw>1)) continue;
+        const float weight = max(diffuseVolumeEdgeWeight(i,uvw), 0.0001) * (1-coverage);
+        irradiance += sampleDiffuseVolumeAt(i,position,normal,receiverNormal,positionError).rgb * weight;
+        coverage += weight;
+    }
+    return coverage > 0 ? float4(irradiance / coverage, 1) : float4(0);
 }

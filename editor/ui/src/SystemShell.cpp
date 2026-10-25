@@ -18,6 +18,9 @@
 #else
 #include <spawn.h>
 #include <sys/wait.h>
+#include <unistd.h>
+
+#include <cerrno>
 
 #include <thread>
 extern char **environ;
@@ -73,6 +76,101 @@ namespace PlutoGE::ui
             const auto text = path.u8string();
             return {reinterpret_cast<const char *>(text.data()), text.size()};
         }
+    }
+
+    ProcessResult RunProcess(const std::vector<std::string> &arguments)
+    {
+        ProcessResult result;
+        if (arguments.empty())
+        {
+            return result;
+        }
+#ifdef _WIN32
+        std::wstring commandLine;
+        for (const auto &argument : arguments)
+        {
+            // CommandLineToArgvW quoting: wrap in quotes, escape quotes and the backslashes before them.
+            const auto wide = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(argument.data()), argument.size())).wstring();
+            commandLine += commandLine.empty() ? L"\"" : L" \"";
+            std::size_t backslashes = 0;
+            for (const wchar_t character : wide)
+            {
+                if (character == L'\\') { ++backslashes; continue; }
+                if (character == L'"') commandLine.append(backslashes * 2 + 1, L'\\');
+                else commandLine.append(backslashes, L'\\');
+                backslashes = 0;
+                commandLine += character;
+            }
+            commandLine.append(backslashes * 2, L'\\');
+            commandLine += L'"';
+        }
+        SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+        HANDLE readPipe = nullptr;
+        HANDLE writePipe = nullptr;
+        if (!CreatePipe(&readPipe, &writePipe, &security, 0)) return result;
+        SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0);
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdOutput = writePipe;
+        startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        PROCESS_INFORMATION process{};
+        result.started = CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+        CloseHandle(writePipe);
+        if (result.started)
+        {
+            char buffer[4096];
+            DWORD read = 0;
+            while (ReadFile(readPipe, buffer, sizeof(buffer), &read, nullptr) && read > 0) result.output.append(buffer, read);
+            WaitForSingleObject(process.hProcess, INFINITE);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(process.hProcess, &exitCode);
+            result.exitStatus = static_cast<int>(exitCode);
+            CloseHandle(process.hThread);
+            CloseHandle(process.hProcess);
+        }
+        CloseHandle(readPipe);
+        return result;
+#else
+        int pipeEnds[2];
+        if (pipe(pipeEnds) != 0)
+        {
+            return result;
+        }
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_adddup2(&actions, pipeEnds[1], STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, pipeEnds[0]);
+        posix_spawn_file_actions_addclose(&actions, pipeEnds[1]);
+        std::vector<char *> argv;
+        for (const auto &argument : arguments) argv.push_back(const_cast<char *>(argument.c_str()));
+        argv.push_back(nullptr);
+        pid_t pid = 0;
+        result.started = posix_spawnp(&pid, argv[0], &actions, nullptr, argv.data(), environ) == 0;
+        posix_spawn_file_actions_destroy(&actions);
+        close(pipeEnds[1]);
+        if (result.started)
+        {
+            char buffer[4096];
+            for (ssize_t read; (read = ::read(pipeEnds[0], buffer, sizeof(buffer))) != 0;)
+            {
+                if (read < 0)
+                {
+                    if (errno == EINTR) continue;
+                    break;
+                }
+                result.output.append(buffer, static_cast<std::size_t>(read));
+            }
+            int status = 0;
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+            // posix_spawnp reports a missing program as exit status 127.
+            if (WIFEXITED(status)) result.exitStatus = WEXITSTATUS(status);
+            if (result.exitStatus == 127) result.started = false;
+        }
+        close(pipeEnds[0]);
+        return result;
+#endif
     }
 
     std::string PercentEncodePath(std::string_view utf8Path)

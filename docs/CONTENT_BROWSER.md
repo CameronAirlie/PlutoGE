@@ -30,7 +30,12 @@
   references (buffers, textures) in a folder named after it, keeping their
   relative layout, and is then imported. **Add > Import > 3D Model...** copies
   the same way into `SourceModels/<name>`, never the rest of the folder the
-  model was picked from.
+  model was picked from. **Add > Import > Files...** picks any number of files
+  with the system dialog and imports them into the current folder the same
+  way as a drop.
+- File dialogs (here and for scenes, projects and builds) use the native dialog
+  on Windows and zenity or kdialog on Linux; when neither is installed the
+  console says so instead of the menu silently doing nothing.
 - **System integration**: Show in File Manager (Ctrl+Shift+R; selects the item
   in Nautilus, Dolphin, Explorer or Finder), Open with Default App, Copy Path
   (Ctrl+Alt+C) and Copy Asset Reference.
@@ -69,7 +74,8 @@ scene behind it. F5 still starts Play.
 | `ContentPaths` | Asset-relative folder helpers, name validation and unique names. |
 | `ContentFormatting` | Size and timestamp display. |
 
-`ui/SystemShell` opens, reveals and trashes paths with the operating system
+`ui/FileDialogs` provides open, multi-open and save dialogs with typed
+filters. `ui/SystemShell` opens, reveals and trashes paths with the operating system
 without going through a shell. `platform::Window::GetDroppedPaths()` exposes OS
 file drops for the frame after they arrive; the editor compositor forwards
 drops from detached viewport windows to it. `assetimport::ModelSourcePackageCopy`
@@ -102,7 +108,8 @@ the command table, file URIs, and file operations against a temporary project
 self-copy rejection, copies that drop identities but keep material overrides,
 sidecar-aware deletes and trashing, protected paths, and imports with
 collisions), the freedesktop trash (encoded info files, no replacement of
-same-named items), model package layout planning, and a real glTF drop that
+same-named items), file dialog arguments for zenity and kdialog, process output capture,
+model package layout planning, and a real glTF drop that
 must bring its buffer and leave unrelated neighbours behind.
 
 Interactive checks: create and rename a folder; drag a multi-selection into a

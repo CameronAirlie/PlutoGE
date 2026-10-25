@@ -6,6 +6,7 @@
 #include "PlutoGE/ui/ModelImportDependenciesInspector.h"
 #include "PlutoGE/ui/ModelHierarchyInspector.h"
 #include "PlutoGE/ui/StaticModelHierarchyDialog.h"
+#include "PlutoGE/ui/FileDialogs.h"
 #include "PlutoGE/ui/SystemShell.h"
 #include "PlutoGE/ui/contentbrowser/ContentFormatting.h"
 #include "PlutoGE/ui/contentbrowser/ContentPaths.h"
@@ -65,10 +66,6 @@
 #include <imgui_internal.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#endif
 
 #ifdef max
 #undef max
@@ -946,23 +943,12 @@ namespace PlutoGE::ui
 
         std::string BrowseSourceModelPath()
         {
-#ifdef _WIN32
-            OPENFILENAMEA openFileName{};
-            char fileName[MAX_PATH] = "";
-            openFileName.lStructSize = sizeof(openFileName);
-            openFileName.hwndOwner = nullptr;
-            openFileName.lpstrFilter = "Model Files\0*.gltf;*.glb;*.fbx\0glTF Files\0*.gltf;*.glb\0FBX Files\0*.fbx\0All Files\0*.*\0";
-            openFileName.lpstrFile = fileName;
-            openFileName.nMaxFile = MAX_PATH;
-            openFileName.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-            if (!GetOpenFileNameA(&openFileName))
-            {
-                return {};
-            }
-            return std::filesystem::path(fileName).lexically_normal().string();
-#else
-            return {};
-#endif
+            constexpr std::array kModelFilters{FileDialogFilter{"3D Models", "*.gltf;*.glb;*.fbx"},
+                                               FileDialogFilter{"glTF", "*.gltf;*.glb"}, FileDialogFilter{"FBX", "*.fbx"}};
+            std::string error;
+            const auto path = ShowOpenFileDialog(kModelFilters, &error);
+            if (!error.empty()) EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, error);
+            return path.empty() ? std::string{} : path.lexically_normal().string();
         }
 
         bool CopySourceModelPackageToAssets(const assets::Project &project,
@@ -1539,6 +1525,15 @@ namespace PlutoGE::ui
             {
                 editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
             }
+            break;
+        }
+        case PendingMenuAction::ImportFiles:
+        {
+            constexpr std::array kAnyFile{FileDialogFilter{"All Files", "*"}};
+            std::string error;
+            const auto paths = ShowOpenFilesDialog(kAnyFile, &error);
+            if (!error.empty()) editorShell.Log(EditorShell::ConsoleSeverity::Error, error);
+            if (!paths.empty()) ImportExternalItems(*project, paths, m_selectedFolder);
             break;
         }
         case PendingMenuAction::CreateMaterial:
@@ -3438,10 +3433,16 @@ namespace PlutoGE::ui
         }
         if (ImGui::BeginMenu("Import"))
         {
+            if (ImGui::MenuItem("Files..."))
+            {
+                m_pendingMenuAction = PendingMenuAction::ImportFiles;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy files into the current folder; models bring the files they reference");
             if (ImGui::MenuItem("3D Model..."))
             {
                 m_pendingMenuAction = PendingMenuAction::ImportModel;
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Copy a model into SourceModels and import it");
             ImGui::TextDisabled("Or drop files onto the editor window.");
             ImGui::EndMenu();
         }
@@ -4242,7 +4243,12 @@ namespace PlutoGE::ui
         // in the folder under the cursor, or in the current folder.
         const auto paths = window.GetDroppedPaths();
         window.ClearDroppedPaths();
-        const auto folder = m_hoveringFolderItem ? m_hoveredFolder : m_selectedFolder;
+        ImportExternalItems(project, paths, m_hoveringFolderItem ? m_hoveredFolder : m_selectedFolder);
+    }
+
+    void ContentBrowserPanel::ImportExternalItems(assets::Project &project, const std::vector<std::filesystem::path> &paths,
+                                                  const std::string &folder)
+    {
         const auto report = ContentFileOperations(project).Import(paths, PathForKey(FolderKey(folder)));
         ApplyReport(report, "Imported " + std::to_string(report.results.size()) + " item(s) into " +
                                 (folder.empty() ? std::string("Assets") : folder) + ".");

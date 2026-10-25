@@ -4,6 +4,7 @@
 #include <atomic>
 #include "PlutoGE/assets/ProjectAssetLock.h"
 #include "PlutoGE/asset_import/ImportFileTransaction.h"
+#include "PlutoGE/ui/FileDialogs.h"
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiRenderService.h"
@@ -79,6 +80,7 @@
 #include <utility>
 #include <memory>
 #include <array>
+#include <span>
 #ifndef _WIN32
 #include <cstdio>
 #include <sys/types.h>
@@ -90,7 +92,6 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#include <commdlg.h>
 #include <shellapi.h>
 #include <psapi.h>
 #endif
@@ -251,12 +252,12 @@ namespace PlutoGE::ui
         constexpr float kEditorCameraMaxSpeedAdjustment = 10.0f;
         constexpr float kEditorCameraMouseSensitivity = 0.12f;
         constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
-        constexpr const char *kSceneFileFilter = "PlutoGE Scene\0*.plutoscene\0All Files\0*.*\0";
-        constexpr const char *kProjectFileFilter = "PlutoGE Project\0*.plutoproject\0All Files\0*.*\0";
+        constexpr std::array kSceneFileFilter{FileDialogFilter{"PlutoGE Scene", "*.plutoscene"}, FileDialogFilter{"All Files", "*"}};
+        constexpr std::array kProjectFileFilter{FileDialogFilter{"PlutoGE Project", "*.plutoproject"}, FileDialogFilter{"All Files", "*"}};
 #ifdef _WIN32
-        constexpr const char *kExecutableFileFilter = "Executable\0*.exe\0All Files\0*.*\0";
+        constexpr std::array kExecutableFileFilter{FileDialogFilter{"Executable", "*.exe"}, FileDialogFilter{"All Files", "*.*"}};
 #else
-        constexpr const char *kExecutableFileFilter = "Executable\0*\0All Files\0*\0";
+        constexpr std::array kExecutableFileFilter{FileDialogFilter{"All Files", "*"}};
 #endif
         constexpr const char *kRuntimeExecutableName =
 #ifdef _WIN32
@@ -888,87 +889,23 @@ namespace PlutoGE::ui
             return std::make_unique<scene::Scene>();
         }
 
-#ifdef _WIN32
-        std::string ShowOpenFileDialog(const char *filter)
+        // Native dialogs report an empty path on cancel; a reason is logged when
+        // no dialog is available so the menu action does not silently do nothing.
+        std::string BrowseOpenPath(std::span<const FileDialogFilter> filters)
         {
-            OPENFILENAMEA openFileName{};
-            char fileName[MAX_PATH] = "";
-            openFileName.lStructSize = sizeof(openFileName);
-            openFileName.hwndOwner = nullptr;
-            openFileName.lpstrFilter = filter;
-            openFileName.lpstrFile = fileName;
-            openFileName.nMaxFile = MAX_PATH;
-            openFileName.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-            if (!GetOpenFileNameA(&openFileName))
-            {
-                return {};
-            }
-
-            return std::filesystem::path(fileName).lexically_normal().string();
+            std::string error;
+            const auto path = ShowOpenFileDialog(filters, &error);
+            if (!error.empty()) EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, error);
+            return path.string();
         }
 
-        std::string ShowSaveFileDialog(const char *filter, const std::string &initialPath, const char *defaultExtension)
+        std::string BrowseSavePath(std::span<const FileDialogFilter> filters, const std::string &initialPath, std::string_view defaultExtension)
         {
-            OPENFILENAMEA openFileName{};
-            char fileName[MAX_PATH] = "";
-            if (!initialPath.empty())
-            {
-                strncpy_s(fileName, sizeof(fileName), initialPath.c_str(), _TRUNCATE);
-            }
-            openFileName.lStructSize = sizeof(openFileName);
-            openFileName.hwndOwner = nullptr;
-            openFileName.lpstrFilter = filter;
-            openFileName.lpstrFile = fileName;
-            openFileName.nMaxFile = MAX_PATH;
-            openFileName.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-            openFileName.lpstrDefExt = defaultExtension;
-            if (!GetSaveFileNameA(&openFileName))
-            {
-                return {};
-            }
-
-            return std::filesystem::path(fileName).lexically_normal().string();
+            std::string error;
+            const auto path = ShowSaveFileDialog(filters, initialPath, defaultExtension, &error);
+            if (!error.empty()) EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, error);
+            return path.string();
         }
-#else
-        std::string RunZenityFileDialog(const std::string &arguments)
-        {
-            std::array<char, 4096> output{};
-            std::string result;
-            FILE *pipe = popen(("zenity --file-selection " + arguments + " 2>/dev/null").c_str(), "r");
-            if (!pipe)
-            {
-                return {};
-            }
-            while (fgets(output.data(), static_cast<int>(output.size()), pipe))
-            {
-                result += output.data();
-            }
-            if (pclose(pipe) != 0)
-            {
-                return {};
-            }
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-            {
-                result.pop_back();
-            }
-            return result;
-        }
-
-        std::string ShowOpenFileDialog(const char *)
-        {
-            return RunZenityFileDialog("");
-        }
-
-        std::string ShowSaveFileDialog(const char *, const std::string &initialPath, const char *)
-        {
-            std::string arguments = "--save --confirm-overwrite";
-            if (!initialPath.empty() && initialPath.find('\'') == std::string::npos)
-            {
-                arguments += " --filename='" + initialPath + "'";
-            }
-            return RunZenityFileDialog(arguments);
-        }
-#endif
     }
 
     EditorShell::EditorShell() { RegisterBuiltinAuthoring(m_authoring); }
@@ -2461,7 +2398,7 @@ namespace PlutoGE::ui
         auto projectScenePath = GetDefaultProjectScenePath();
         if (m_recoveredSceneNeedsSaveAs)
         {
-            const auto chosen = ShowSaveFileDialog(kSceneFileFilter,
+            const auto chosen = BrowseSavePath(kSceneFileFilter,
                 (m_project->GetAssetDirectoryPath() / "Recovered.plutoscene").string(), "plutoscene");
             if (chosen.empty()) return false;
             projectScenePath = chosen;
@@ -3470,9 +3407,9 @@ namespace PlutoGE::ui
             // project changes can replace the native window/backend.
             std::filesystem::path openPath = actions.open;
             std::filesystem::path createPath;
-            if (actions.browse) openPath = ShowOpenFileDialog(kProjectFileFilter);
+            if (actions.browse) openPath = BrowseOpenPath(kProjectFileFilter);
             if (!actions.createTemplateId.empty())
-                createPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+                createPath = BrowseSavePath(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
 
             if (!openPath.empty())
             {
@@ -4273,7 +4210,7 @@ namespace PlutoGE::ui
                 {
                     if (ConfirmContinueWithUnsavedChanges())
                     {
-                        const std::string projectPath = ShowSaveFileDialog(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
+                        const std::string projectPath = BrowseSavePath(kProjectFileFilter, kDefaultProjectFileName, "plutoproject");
                         if (!projectPath.empty())
                         {
                             CreateProjectAtPath(projectPath, templateId);
@@ -4284,7 +4221,7 @@ namespace PlutoGE::ui
                 {
                     if (ConfirmContinueWithUnsavedChanges())
                     {
-                        const std::string projectPath = ShowOpenFileDialog(kProjectFileFilter);
+                        const std::string projectPath = BrowseOpenPath(kProjectFileFilter);
                         if (!projectPath.empty())
                         {
                             LoadProjectFromPath(projectPath);
@@ -4300,7 +4237,7 @@ namespace PlutoGE::ui
                     const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
                                                           ? std::string(kRuntimeExecutableName)
                                                           : GetDefaultExportExecutablePath().string();
-                    const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
+                    const std::string exportPath = BrowseSavePath(kExecutableFileFilter, suggestedPath,
 #ifdef _WIN32
                                                                       "exe"
 #else
@@ -4317,7 +4254,7 @@ namespace PlutoGE::ui
                     const std::string suggestedPath = GetDefaultExportExecutablePath().empty()
                                                           ? std::string(kRuntimeExecutableName)
                                                           : GetDefaultExportExecutablePath().string();
-                    const std::string exportPath = ShowSaveFileDialog(kExecutableFileFilter, suggestedPath,
+                    const std::string exportPath = BrowseSavePath(kExecutableFileFilter, suggestedPath,
 #ifdef _WIN32
                                                                       "exe"
 #else
@@ -4343,7 +4280,7 @@ namespace PlutoGE::ui
                 };
                 const auto openScene = [&]()
                 {
-                    const std::string filePath = ShowOpenFileDialog(kSceneFileFilter);
+                    const std::string filePath = BrowseOpenPath(kSceneFileFilter);
                     if (!filePath.empty())
                     {
                         OpenSceneFromPath(filePath);
@@ -4356,7 +4293,7 @@ namespace PlutoGE::ui
                         std::string savePath = m_scene->GetFilePath();
                         if (savePath.empty())
                         {
-                            savePath = ShowSaveFileDialog(kSceneFileFilter,
+                            savePath = BrowseSavePath(kSceneFileFilter,
                                                           m_project ? GetDefaultProjectScenePath().string() : std::string("scene.plutoscene"),
                                                           "plutoscene");
                         }
@@ -4372,7 +4309,7 @@ namespace PlutoGE::ui
                     if (m_scene)
                     {
                         const std::string suggestedPath = m_scene->GetFilePath().empty() ? "scene.plutoscene" : m_scene->GetFilePath();
-                        const std::string savePath = ShowSaveFileDialog(kSceneFileFilter, suggestedPath, "plutoscene");
+                        const std::string savePath = BrowseSavePath(kSceneFileFilter, suggestedPath, "plutoscene");
                         if (!savePath.empty())
                         {
                             SaveSceneToPath(savePath);
@@ -5085,20 +5022,12 @@ namespace PlutoGE::ui
                             ImGui::SameLine();
                             if (widgets::IconButton("##BrowseScriptAssembly", icons::Folder, "Browse for a managed assembly"))
                             {
-#ifdef _WIN32
-                                OPENFILENAMEA ofn = {};
-                                char fileName[MAX_PATH] = "";
-                                ofn.lStructSize = sizeof(ofn);
-                                ofn.hwndOwner = nullptr;
-                                ofn.lpstrFilter = "Managed Assemblies\0*.dll\0All Files\0*.*\0";
-                                ofn.lpstrFile = fileName;
-                                ofn.nMaxFile = MAX_PATH;
-                                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                                if (GetOpenFileNameA(&ofn))
+                                constexpr std::array kAssemblyFilter{FileDialogFilter{"Managed Assemblies", "*.dll"}, FileDialogFilter{"All Files", "*"}};
+                                if (const auto chosen = BrowseOpenPath(kAssemblyFilter); !chosen.empty())
                                 {
-                                    strncpy_s(projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size(), fileName, _TRUNCATE);
+                                    projectScriptAssemblyBuffer.fill('\0');
+                                    chosen.copy(projectScriptAssemblyBuffer.data(), projectScriptAssemblyBuffer.size() - 1);
                                 }
-#endif
                             }
                             widgets::EndSettingsTable();
                         }

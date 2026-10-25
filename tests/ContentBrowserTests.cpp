@@ -8,9 +8,11 @@
 #include "PlutoGE/ui/contentbrowser/ContentPaths.h"
 #include "PlutoGE/ui/contentbrowser/ContentSelection.h"
 #include "PlutoGE/ui/contentbrowser/ContentSorting.h"
+#include "PlutoGE/ui/FileDialogs.h"
 #include "PlutoGE/ui/SystemShell.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -242,6 +244,25 @@ namespace
         Require(!ui::MoveToFreedesktopTrash(item, trash, &error), "Trashing a missing item must fail");
     }
 
+    void TestFileDialogArguments()
+    {
+        const std::array filters{ui::FileDialogFilter{"3D Models", "*.gltf;*.glb"}, ui::FileDialogFilter{"All Files", "*"}};
+        const auto zenity = ui::BuildZenityArguments(ui::FileDialogMode::OpenMultiple, filters, {});
+        Require(zenity == std::vector<std::string>{"zenity", "--file-selection", "--multiple", "--separator=\n",
+                                                   "--file-filter=3D Models | *.gltf *.glb", "--file-filter=All Files | *"},
+                "zenity must receive one filter per entry and newline-separated multi-selection");
+        const auto save = ui::BuildZenityArguments(ui::FileDialogMode::Save, filters, "/tmp/it's here.plutoscene");
+        Require(std::find(save.begin(), save.end(), "--save") != save.end() &&
+                    std::find(save.begin(), save.end(), "--filename=/tmp/it's here.plutoscene") != save.end(),
+                "Save paths are passed as one argument, so quotes need no escaping");
+        const auto kdialog = ui::BuildKDialogArguments(ui::FileDialogMode::Open, filters, {});
+        Require(kdialog == std::vector<std::string>{"kdialog", "--getopenfilename", ".", "*.gltf *.glb|3D Models\n*|All Files"},
+                "kdialog must receive newline-separated 'patterns|name' filters");
+        const auto printed = ui::RunProcess({"printf", "a\nb"});
+        Require(printed.started && printed.exitStatus == 0 && printed.output == "a\nb", "RunProcess must capture stdout");
+        Require(!ui::RunProcess({"plutoge-no-such-program"}).started, "Missing programs must report that they did not start");
+    }
+
     void TestModelPackages()
     {
         using assetimport::PlanModelPackageCopy;
@@ -296,6 +317,7 @@ try
     TestCommands();
     TestFileOperations();
     TestTrash();
+    TestFileDialogArguments();
     TestModelPackages();
     std::cout << "Content browser tests passed\n";
     return 0;

@@ -125,6 +125,9 @@ namespace PlutoGE::ui
         void HandleShortcuts(assets::Project &project);
         void HandleArrowNavigation();
         void ProcessDroppedFiles(assets::Project &project);
+        // Copies files from outside the project into `folder` and imports any
+        // source models among them (shared by OS drops and Import > Files).
+        void ImportExternalItems(assets::Project &project, const std::vector<std::filesystem::path> &paths, const std::string &folder);
         void RenderDeleteConfirmation(assets::Project &project);
         // File edits rebuild m_items, so anything triggered while items are
         // being drawn is queued and runs once the item views have finished.
@@ -167,6 +170,7 @@ namespace PlutoGE::ui
         enum class PendingMenuAction
         {
             None,
+            ImportFiles,
             ImportModel,
             CreateMaterial,
             CreateSurfaceResponse,

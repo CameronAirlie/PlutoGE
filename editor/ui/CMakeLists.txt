@@ -49,6 +49,7 @@ add_library(PlutoGEEditorUI
     src/contentbrowser/ContentPaths.cpp
     src/contentbrowser/ContentSorting.cpp
     src/SystemShell.cpp
+    src/FileDialogs.cpp
     src/panels/AnimationGraphEditorPanel.cpp
     src/animgraph/AnimationGraphDocument.cpp
     src/animgraph/AnimationGraphInspector.cpp

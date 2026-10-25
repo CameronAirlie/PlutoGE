@@ -3,11 +3,23 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace PlutoGE::ui
 {
     // Hands files to the operating system. Arguments are passed directly to the
     // launched process (never through a shell), so paths need no escaping.
+
+    struct ProcessResult
+    {
+        bool started = false; // False when the program could not be launched (for example not installed).
+        int exitStatus = -1;  // Exit code once it ran to completion.
+        std::string output;   // Everything the process wrote to stdout.
+    };
+
+    // Runs `arguments[0]` (searched on PATH) to completion, capturing stdout.
+    // Blocks the calling thread; intended for short helpers such as dialogs.
+    [[nodiscard]] ProcessResult RunProcess(const std::vector<std::string> &arguments);
 
     // Opens a file with its default application, or a folder in the file manager.
     bool OpenWithSystem(const std::filesystem::path &path, std::string *errorMessage = nullptr);

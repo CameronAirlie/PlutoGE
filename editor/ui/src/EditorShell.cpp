@@ -2141,6 +2141,12 @@ namespace PlutoGE::ui
                 m_pendingRuntimeStart = true;
             return;
         }
+        // The content browser owns copy, paste, duplicate, delete and undo for
+        // files while focused; scene shortcuts must not act behind it.
+        if (m_contentBrowser && m_contentBrowser->HasKeyboardFocus())
+        {
+            return;
+        }
         const bool command = io.KeyCtrl || io.KeySuper;
         if (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
         {
@@ -3557,6 +3563,7 @@ namespace PlutoGE::ui
         auto contentBrowserPanel = new ContentBrowserPanel(PanelConfig{"Content Browser"});
         contentBrowserPanel->Initialize();
         m_panelManager.AddPanel(contentBrowserPanel);
+        m_contentBrowser = contentBrowserPanel;
 
         auto consolePanel = new ConsolePanel(PanelConfig{"Console"});
         consolePanel->Initialize();

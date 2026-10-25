@@ -25,6 +25,8 @@ namespace PlutoGE::ui
         const std::string &GetName() const { return m_config.name; }
         void SetOpen(bool open) { m_isOpen = open; }
         bool WasVisibleLastFrame() const { return m_wasVisibleLastFrame; }
+        // True while keyboard focus is in this panel's window or its children.
+        bool HasKeyboardFocus() const;
         void SetInteractionEnabled(bool enabled) { m_isInteractionEnabled = enabled; }
         void SetVisualAlpha(float alpha) { m_visualAlpha = alpha; }
 

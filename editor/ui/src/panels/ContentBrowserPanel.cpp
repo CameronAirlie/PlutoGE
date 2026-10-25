@@ -5,6 +5,11 @@
 #include "PlutoGE/ui/ModelImportDependenciesInspector.h"
 #include "PlutoGE/ui/ModelHierarchyInspector.h"
 #include "PlutoGE/ui/StaticModelHierarchyDialog.h"
+#include "PlutoGE/ui/SystemShell.h"
+#include "PlutoGE/ui/contentbrowser/ContentFormatting.h"
+#include "PlutoGE/ui/contentbrowser/ContentPaths.h"
+#include "PlutoGE/ui/EditorTheme.h"
+#include "PlutoGE/assets/AssetPathPolicy.h"
 
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetMetadata.h"
@@ -378,33 +383,32 @@ namespace PlutoGE::ui
         m_surfaceEditorReference.clear();
         m_surfaceDraft = {};
         m_surfaceError.clear();
+        m_pendingMenuAction = PendingMenuAction::None;
+
         m_assetCacheDirty = true;
         m_cachedProject = nullptr;
-        m_cachedFilter.clear();
-        m_cachedFolder.clear();
+        m_cachedCatalog.reset();
         m_cachedAssetReferences.clear();
         m_cachedAssetFolders.clear();
         m_cachedAssetFileNames.clear();
         m_cachedAssetRelativePaths.clear();
         m_cachedFolders.clear();
-        m_cachedFolderParents.clear();
-        m_cachedChildFolders.clear();
-        m_cachedChildFolderLabels.clear();
-        m_cachedChildFolderDisplayNames.clear();
         m_cachedFolderLabels.clear();
-        m_cachedFolderHasChildren.clear();
         m_cachedFolderChildIndices.clear();
         m_cachedRootFolderIndices.clear();
-        m_filteredAssetIndices.clear();
-        m_filteredAssetDisplayNames.clear();
-        m_pendingMenuAction = PendingMenuAction::None;
-        m_pendingFileAction = PendingFileAction::None;
-        m_fileActionSource.clear();
-        m_fileActionDestination.clear();
-        m_clipboardPath.clear();
-        m_renameSource.clear();
-        m_renameBuffer.fill(0);
-        m_openRenamePopup = false;
+
+        m_itemsDirty = true;
+        m_items.clear();
+        m_selection.Clear();
+        m_history.Reset();
+        m_scrollToKey.clear();
+        m_releaseSelectKey.clear();
+        m_deferredEdits.clear();
+        m_clipboardKeys.clear();
+        m_clipboardCut = false;
+        m_rename = {};
+        m_renameWhenShown.clear();
+        m_pendingDeletePaths.clear();
         m_openDeletePopup = false;
     }
 
@@ -567,118 +571,21 @@ namespace PlutoGE::ui
             return reference;
         }
 
-        namespace
-        {
-            std::string PathToGenericUtf8String(const std::filesystem::path &path)
-            {
-#if defined(__cpp_char8_t)
-                // C++20: generic_u8string() returns std::u8string
-                std::u8string u8 = path.generic_u8string();
-                return std::string(reinterpret_cast<const char *>(u8.data()), u8.size());
-#else
-                // C++17: generic_u8string() returns std::string
-                return path.generic_u8string();
-#endif
-            }
-        }
-
-        std::string NormalizeAssetRelativePath(const std::filesystem::path &path)
-        {
-            std::filesystem::path normalizedPath;
-
-            try
-            {
-                normalizedPath = path.lexically_normal();
-            }
-            catch (const std::exception &)
-            {
-                normalizedPath = path;
-            }
-
-            std::string normalized = PathToGenericUtf8String(normalizedPath);
-
-            // generic_u8string already uses '/', but this is harmless.
-            std::replace(normalized.begin(), normalized.end(), '\\', '/');
-
-            if (normalized == ".")
-            {
-                return {};
-            }
-
-            while (!normalized.empty() && normalized.front() == '/')
-            {
-                normalized.erase(normalized.begin());
-            }
-
-            while (!normalized.empty() && normalized.back() == '/')
-            {
-                normalized.pop_back();
-            }
-
-            return normalized;
-        }
-
-        std::string GetAssetFolderParent(std::string_view folder)
-        {
-            std::string normalized(folder);
-            std::replace(normalized.begin(), normalized.end(), '\\', '/');
-            while (!normalized.empty() && normalized.front() == '/')
-            {
-                normalized.erase(normalized.begin());
-            }
-            while (!normalized.empty() && normalized.back() == '/')
-            {
-                normalized.pop_back();
-            }
-
-            const auto separator = normalized.find_last_of('/');
-            if (separator == std::string::npos)
-            {
-                return {};
-            }
-            return normalized.substr(0, separator);
-        }
-
         std::string GetReferenceRelativePath(const assets::Project &project, const assets::ProjectAssetEntry &asset)
         {
             if (assets::Project::IsProjectAssetReference(asset.reference))
             {
-                return NormalizeAssetRelativePath(DisplayAssetReference(asset.reference));
+                return NormalizeContentFolder(DisplayAssetReference(asset.reference));
             }
 
             const auto resolvedPath = project.ResolveAssetReference(asset.reference);
             if (!resolvedPath.empty() && project.IsInAssetDirectory(resolvedPath))
             {
                 std::error_code errorCode;
-                return NormalizeAssetRelativePath(std::filesystem::relative(resolvedPath, project.GetAssetDirectoryPath(), errorCode));
+                return NormalizeContentFolder(std::filesystem::relative(resolvedPath, project.GetAssetDirectoryPath(), errorCode));
             }
 
-            return NormalizeAssetRelativePath(DisplayAssetReference(asset.reference));
-        }
-
-        std::string GetAssetFolderName(std::string_view folder)
-        {
-            const auto separator = folder.find_last_of('/');
-            if (separator == std::string::npos)
-            {
-                return std::string(folder);
-            }
-            return std::string(folder.substr(separator + 1));
-        }
-
-        bool IsFolderAncestorOrSelf(std::string_view ancestor, std::string_view folder)
-        {
-            if (ancestor.empty())
-            {
-                return true;
-            }
-            if (folder == ancestor)
-            {
-                return true;
-            }
-            return folder.size() > ancestor.size() &&
-                   folder.compare(0, ancestor.size(), ancestor) == 0 &&
-                   folder[ancestor.size()] == '/';
+            return NormalizeContentFolder(DisplayAssetReference(asset.reference));
         }
 
         std::filesystem::path GetCreateDirectory(const assets::Project &project, std::string_view selectedFolder, std::string_view fallbackFolder)
@@ -712,60 +619,6 @@ namespace PlutoGE::ui
                 candidate = directory / (fileName + "_" + std::to_string(suffix) + extension.string());
             }
             return candidate;
-        }
-
-        std::filesystem::path MakeUniqueCopyPath(const std::filesystem::path &directory,
-                                                 const std::filesystem::path &sourcePath)
-        {
-            const bool directorySource = std::filesystem::is_directory(sourcePath);
-            const std::string baseName = directorySource ? sourcePath.filename().string() : sourcePath.stem().string();
-            const std::string extension = directorySource ? std::string{} : sourcePath.extension().string();
-            auto candidate = directory / (baseName + " Copy" + extension);
-            for (unsigned int suffix = 2; std::filesystem::exists(candidate); ++suffix)
-                candidate = directory / (baseName + " Copy " + std::to_string(suffix) + extension);
-            return candidate;
-        }
-
-        bool CopyContentBrowserItem(const std::filesystem::path &source,
-                                    const std::filesystem::path &destination,
-                                    std::string *errorMessage)
-        {
-            std::error_code error;
-            if (std::filesystem::is_directory(source, error))
-            {
-                std::filesystem::copy(source, destination, std::filesystem::copy_options::recursive, error);
-            }
-            else
-            {
-                std::filesystem::create_directories(destination.parent_path(), error);
-                if (!error) std::filesystem::copy_file(source, destination, std::filesystem::copy_options::none, error);
-            }
-            if (error)
-            {
-                if (errorMessage) *errorMessage = "Failed to copy '" + source.string() + "': " + error.message();
-                return false;
-            }
-            // A copied asset must receive a fresh database ID on the next scan.
-            if (std::filesystem::is_directory(destination))
-            {
-                std::error_code iteratorError;
-                for (std::filesystem::recursive_directory_iterator iterator(destination, iteratorError), end;
-                     iterator != end && !iteratorError; iterator.increment(iteratorError))
-                {
-                    if (iterator->is_regular_file(iteratorError) && iterator->path().extension() == ".plutometa")
-                    {
-                        std::error_code metadataError;
-                        std::filesystem::remove(iterator->path(), metadataError);
-                    }
-                    iteratorError.clear();
-                }
-            }
-            else
-            {
-                std::error_code metadataError;
-                std::filesystem::remove(assets::AssetDatabase::GetMetadataPath(destination), metadataError);
-            }
-            return true;
         }
 
         bool ExportPrefabMesh(const assets::Project &project,
@@ -852,7 +705,7 @@ namespace PlutoGE::ui
         {
             std::error_code errorCode;
             auto relativePath = std::filesystem::relative(path / std::filesystem::path(std::string(fileName)), project.GetAssetDirectoryPath(), errorCode);
-            return NormalizeAssetRelativePath(errorCode ? path.filename() / std::filesystem::path(std::string(fileName)) : relativePath);
+            return NormalizeContentFolder(errorCode ? path.filename() / std::filesystem::path(std::string(fileName)) : relativePath);
         }
 
         void OpenAsset(EditorShell &editorShell, const assets::Project &project, const assets::ProjectAssetEntry &asset)
@@ -1687,14 +1540,14 @@ namespace PlutoGE::ui
         }
         EditorShell::GetInstance().RefreshProjectAssets();
         m_filterBuffer.fill(0);
-        m_openModelReference.clear();
-        m_selectedFolder = project->ResolveAssetReference(reference).parent_path()
-            .lexically_relative(project->GetAssetDirectoryPath()).generic_string();
-        if (m_selectedFolder == ".") m_selectedFolder.clear();
+        m_assetCacheDirty = true;
+        NavigateTo(NormalizeContentFolder(project->ResolveAssetReference(reference).parent_path()
+                                              .lexically_relative(project->GetAssetDirectoryPath())));
+        m_selection.Select(reference);
+        m_scrollToKey = reference;
         const auto &entries = project->GetManifest().assetEntries;
         const auto found = std::find_if(entries.begin(), entries.end(), [&](const auto &entry) { return entry.reference == reference; });
         m_selectedAssetIndex = found == entries.end() ? -1 : static_cast<int>(found - entries.begin());
-        m_assetCacheDirty = true;
         SetOpen(true);
         return reference;
     }
@@ -1719,178 +1572,7 @@ namespace PlutoGE::ui
             });
         }
 
-        const auto renderAddMenu = [&]()
-        {
-            if (ImGui::BeginMenu("Rendering"))
-            {
-                if (ImGui::MenuItem("Material"))
-                {
-                    m_newMaterialNameBuffer.fill('\0');
-                    m_pendingMenuAction = PendingMenuAction::CreateMaterial;
-                }
-                if (ImGui::MenuItem("Surface Response"))
-                {
-                    m_newSurfaceNameBuffer.fill(0);
-                    m_pendingMenuAction = PendingMenuAction::CreateSurfaceResponse;
-                }
-                if (ImGui::MenuItem("Particle System"))
-                {
-                    m_newParticleSystemNameBuffer.fill('\0');
-                    m_pendingMenuAction = PendingMenuAction::CreateParticleSystem;
-                }
-                if (ImGui::MenuItem("Post Process Preset"))
-                {
-                    m_newPostProcessPresetNameBuffer.fill('\0');
-                    m_pendingMenuAction = PendingMenuAction::CreatePostProcessPreset;
-                }
-                if (ImGui::MenuItem("Render Texture"))
-                {
-                    m_newRenderTextureNameBuffer.fill('\0');
-                    m_pendingMenuAction = PendingMenuAction::CreateRenderTexture;
-                }
-                if (ImGui::MenuItem("Shader Graph"))
-                {
-                    m_newShaderGraphNameBuffer.fill('\0');
-                    m_pendingMenuAction = PendingMenuAction::CreateShaderGraph;
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Animation"))
-            {
-                if (ImGui::MenuItem("Animation Graph"))
-                {
-                    m_newAnimationGraphNameBuffer.fill('\0');
-                    m_pendingMenuAction = PendingMenuAction::CreateAnimationGraph;
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::MenuItem("Scriptable Object"))
-            {
-                m_newScriptableObjectNameBuffer.fill('\0');
-                m_newScriptableObjectClassIndex = 0;
-                m_pendingMenuAction = PendingMenuAction::CreateScriptableObject;
-            }
-            if (ImGui::MenuItem("Loading Screen")) editorShell.OpenLoadingScreenAsset({});
-            if (ImGui::MenuItem("RmlUi Document"))
-            {
-                m_newRmlDocumentNameBuffer.fill('\0');
-                m_rmlDocumentCreateError.clear();
-                m_pendingMenuAction = PendingMenuAction::CreateRmlDocument;
-            }
-            if (ImGui::MenuItem("Input Mapping"))
-            {
-                m_newInputMappingNameBuffer.fill('\0');
-                m_pendingMenuAction = PendingMenuAction::CreateInputMapping;
-            }
-            if (ImGui::BeginMenu("Import"))
-            {
-                if (ImGui::MenuItem("3D Model..."))
-                {
-                    m_pendingMenuAction = PendingMenuAction::ImportModel;
-                }
-                ImGui::EndMenu();
-            }
-        };
-
-        const auto openFolder = [&](const std::string &folder)
-        {
-            m_selectedFolder = folder;
-            m_openModelReference.clear();
-            m_openModelObjects.clear();
-            m_selectedAssetIndex = -1;
-        };
-
-        // Single toolbar row: actions, breadcrumb path, then search and grid scale aligned right.
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 3.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, ImGui::GetStyle().ItemSpacing.y));
-        if (ImGui::Button((std::string(icons::Plus) + " Add").c_str()))
-        {
-            ImGui::OpenPopup("ContentBrowserAddMenu");
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create or import an asset");
-        ImGui::SameLine();
-        if (ImGui::Button(icons::Rotate))
-        {
-            if (editorShell.RefreshProjectAssets())
-            {
-                m_assetCacheDirty = true;
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Refreshed project assets.");
-            }
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Refresh assets");
-        ImGui::SameLine(0.0f, 10.0f);
-
-        const float toolbarSpacing = ImGui::GetStyle().ItemSpacing.x;
-        const float scaleWidth = 64.0f;
-        const float searchWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.35f, 120.0f, 280.0f);
-        const float rightGroupX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - searchWidth - scaleWidth - toolbarSpacing;
-        {
-            const ImVec2 breadcrumbMin = ImGui::GetCursorScreenPos();
-            const ImVec2 breadcrumbMax(breadcrumbMin.x + std::max(0.0f, rightGroupX - ImGui::GetCursorPosX() - 10.0f),
-                                       breadcrumbMin.y + ImGui::GetFrameHeight());
-            ImGui::PushClipRect(breadcrumbMin, breadcrumbMax, true);
-            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
-            const auto crumb = [&](const char *label, bool current) -> bool
-            {
-                if (current)
-                {
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted(label);
-                    return false;
-                }
-                return ImGui::Button(label);
-            };
-            const auto crumbSeparator = [&]()
-            {
-                ImGui::SameLine(0.0f, 2.0f);
-                ImGui::AlignTextToFramePadding();
-                ImGui::TextDisabled("/");
-                ImGui::SameLine(0.0f, 2.0f);
-            };
-            const bool atRoot = m_selectedFolder.empty() && m_openModelReference.empty();
-            if (crumb("Assets", atRoot)) openFolder({});
-            std::string breadcrumb;
-            std::size_t partStart = 0;
-            while (partStart < m_selectedFolder.size())
-            {
-                const auto partEnd = m_selectedFolder.find('/', partStart);
-                const std::string label = m_selectedFolder.substr(partStart, partEnd == std::string::npos ? std::string::npos : partEnd - partStart);
-                breadcrumb = breadcrumb.empty() ? label : breadcrumb + "/" + label;
-                crumbSeparator();
-                ImGui::PushID(breadcrumb.c_str());
-                const bool current = partEnd == std::string::npos && m_openModelReference.empty();
-                if (crumb(label.c_str(), current)) openFolder(breadcrumb);
-                ImGui::PopID();
-                if (partEnd == std::string::npos) break;
-                partStart = partEnd + 1;
-            }
-            if (!m_openModelReference.empty())
-            {
-                crumbSeparator();
-                crumb(m_openModelName.c_str(), true);
-            }
-            ImGui::PopStyleColor();
-            ImGui::PopClipRect();
-        }
-
-        ImGui::SameLine(rightGroupX);
-        ImGui::SetNextItemWidth(searchWidth);
-        ImGui::InputTextWithHint("##ContentFilter", (std::string(icons::Search) + "  Search assets...").c_str(),
-                                 m_filterBuffer.data(), m_filterBuffer.size());
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Assets: %zu\nFolder: %s", project->GetManifest().assetEntries.size(),
-                              m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(scaleWidth);
-        ImGui::SliderFloat("##AssetGridScale", &m_assetGridScale, 0.5f, 1.5f, "%.2fx");
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Asset grid scale (thumbnails, labels, padding and spacing)");
-        ImGui::PopStyleVar(2);
-        if (ImGui::BeginPopup("ContentBrowserAddMenu"))
-        {
-            renderAddMenu();
-            ImGui::EndPopup();
-        }
+        RenderToolbar(*project);
 
         const auto pendingMenuAction = m_pendingMenuAction;
         m_pendingMenuAction = PendingMenuAction::None;
@@ -2406,245 +2088,8 @@ namespace PlutoGE::ui
         }
 
         const auto &assets = project->GetManifest().assetEntries;
-        const auto catalog = core::Engine::GetInstance().GetAssetManager().GetAssetCatalog();
-        const std::string_view filter(m_filterBuffer.data());
-        const bool registryChanged = m_assetCacheDirty ||
-                                     m_cachedProject != project || m_cachedCatalog != catalog ||
-                                     m_cachedAssetReferences.size() != assets.size();
-
-        if (registryChanged)
-        {
-            if (m_thumbnailCache) m_thumbnailCache->Clear();
-            m_assetCacheDirty = false;
-            if (m_cachedProject != project) m_surfaceEditorReference.clear();
-            m_cachedProject = project;
-            m_cachedCatalog = catalog;
-            m_cachedAssetReferences.clear();
-            m_cachedAssetFolders.clear();
-            m_cachedAssetFileNames.clear();
-            m_cachedAssetRelativePaths.clear();
-            m_cachedFolders.clear();
-            m_cachedAssetReferences.reserve(assets.size());
-            m_cachedAssetFolders.reserve(assets.size());
-            m_cachedAssetFileNames.reserve(assets.size());
-            m_cachedAssetRelativePaths.reserve(assets.size());
-
-            std::set<std::string> importedNativeLocations;
-            if (catalog)
-                for (const auto &object : catalog->GetObjects())
-                    if (object.ownership == assets::AssetOwnership::Imported && object.type != assets::ProjectAssetType::Texture)
-                    {
-                        importedNativeLocations.insert(object.location);
-                        if (object.type == assets::ProjectAssetType::Mesh) importedNativeLocations.insert(object.location + ".materials");
-                    }
-            // Texture descriptors currently also include source image inputs.
-            // Keep those visible until the manifest records output provenance.
-            std::set<std::string> folderSet;
-            folderSet.insert("");
-
-            for (int index = 0; index < static_cast<int>(assets.size()); ++index)
-            {
-                const auto &asset = assets[static_cast<std::size_t>(index)];
-                m_cachedAssetReferences.push_back(asset.reference);
-
-                const std::string relativePath = GetReferenceRelativePath(*project, asset);
-                const bool internalArtifact = importedNativeLocations.contains(asset.reference) ||
-                                              relativePath == "Imported" || relativePath.rfind("Imported/", 0) == 0;
-                const std::string folder = internalArtifact ? "__internal__" : GetAssetFolderParent(relativePath);
-                const auto separator = relativePath.find_last_of('/');
-                const std::string fileName = separator == std::string::npos ? relativePath : relativePath.substr(separator + 1);
-                m_cachedAssetRelativePaths.push_back(relativePath);
-                m_cachedAssetFolders.push_back(folder);
-                m_cachedAssetFileNames.push_back(fileName.empty() ? DisplayAssetReference(asset.reference) : fileName);
-
-                std::string folderPath = internalArtifact ? std::string{} : folder;
-                while (!folderPath.empty())
-                {
-                    folderSet.insert(folderPath);
-                    const std::string parentPath = GetAssetFolderParent(folderPath);
-                    if (parentPath.empty() || parentPath == folderPath)
-                    {
-                        break;
-                    }
-                    folderPath = parentPath;
-                }
-            }
-
-            std::error_code directoryError;
-            const auto assetDirectory = project->GetAssetDirectoryPath();
-            if (std::filesystem::exists(assetDirectory, directoryError))
-            {
-                for (std::filesystem::recursive_directory_iterator iterator(assetDirectory, directoryError), end; iterator != end && !directoryError; iterator.increment(directoryError))
-                {
-                    if (!iterator->is_directory(directoryError) || directoryError)
-                    {
-                        directoryError.clear();
-                        continue;
-                    }
-
-                    std::error_code relativeError;
-                    const auto relativePath = std::filesystem::relative(iterator->path(), assetDirectory, relativeError);
-                    if (!relativeError)
-                    {
-                        const auto normalized = NormalizeAssetRelativePath(relativePath);
-                        if (normalized != "Imported" && normalized.rfind("Imported/", 0) != 0)
-                        {
-                            folderSet.insert(normalized);
-                        }
-                    }
-                }
-            }
-
-            m_cachedFolders.assign(folderSet.begin(), folderSet.end());
-            m_cachedFolderParents.assign(m_cachedFolders.size(), {});
-            m_cachedFolderLabels.assign(m_cachedFolders.size(), {});
-            m_cachedFolderHasChildren.assign(m_cachedFolders.size(), false);
-            m_cachedFolderChildIndices.assign(m_cachedFolders.size(), {});
-            m_cachedRootFolderIndices.clear();
-
-            std::unordered_map<std::string, int> folderIndexByPath;
-            folderIndexByPath.reserve(m_cachedFolders.size());
-            for (std::size_t folderIndex = 0; folderIndex < m_cachedFolders.size(); ++folderIndex)
-            {
-                folderIndexByPath.emplace(m_cachedFolders[folderIndex], static_cast<int>(folderIndex));
-                m_cachedFolderParents[folderIndex] = GetAssetFolderParent(m_cachedFolders[folderIndex]);
-                m_cachedFolderLabels[folderIndex] = GetAssetFolderName(m_cachedFolders[folderIndex]);
-            }
-
-            for (std::size_t folderIndex = 0; folderIndex < m_cachedFolders.size(); ++folderIndex)
-            {
-                const auto &folder = m_cachedFolders[folderIndex];
-                if (folder.empty())
-                {
-                    continue;
-                }
-
-                const auto &parent = m_cachedFolderParents[folderIndex];
-                if (parent.empty())
-                {
-                    m_cachedRootFolderIndices.push_back(static_cast<int>(folderIndex));
-                    continue;
-                }
-
-                const auto parentEntry = folderIndexByPath.find(parent);
-                if (parentEntry != folderIndexByPath.end())
-                {
-                    m_cachedFolderChildIndices[static_cast<std::size_t>(parentEntry->second)].push_back(static_cast<int>(folderIndex));
-                    m_cachedFolderHasChildren[static_cast<std::size_t>(parentEntry->second)] = true;
-                }
-            }
-            m_cachedFilter.clear();
-            m_cachedFolder = "__registry_refresh__";
-            m_selectedAssetIndex = (m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size())) ? m_selectedAssetIndex : -1;
-        }
-
-        if (registryChanged || m_cachedFilter != filter || m_cachedFolder != m_selectedFolder)
-        {
-            m_cachedFilter = filter;
-            m_cachedFolder = m_selectedFolder;
-            m_filteredAssetIndices.clear();
-            m_filteredAssetDisplayNames.clear();
-            m_cachedChildFolders.clear();
-            m_cachedChildFolderLabels.clear();
-            m_cachedChildFolderDisplayNames.clear();
-            m_filteredAssetIndices.reserve(assets.size());
-            m_filteredAssetDisplayNames.reserve(assets.size());
-
-            for (int index = 0; index < static_cast<int>(assets.size()); ++index)
-            {
-                const auto &asset = assets[static_cast<std::size_t>(index)];
-                const std::size_t cacheIndex = static_cast<std::size_t>(index);
-                if (m_cachedAssetFolders[cacheIndex] == "__internal__")
-                {
-                    continue;
-                }
-                const bool inVisibleScope = filter.empty()
-                                                ? m_cachedAssetFolders[cacheIndex] == m_selectedFolder
-                                                : IsFolderAncestorOrSelf(m_selectedFolder, m_cachedAssetFolders[cacheIndex]);
-                std::string displayName = std::string("[") + std::string(assets::Project::GetAssetTypeName(asset.type)) + "] " +
-                                          (filter.empty() ? m_cachedAssetFileNames[cacheIndex] : m_cachedAssetRelativePaths[cacheIndex]);
-                if (inVisibleScope && ContainsInsensitive(displayName, filter))
-                {
-                    m_filteredAssetIndices.push_back(index);
-                    m_filteredAssetDisplayNames.push_back(std::move(displayName));
-                }
-            }
-
-            const std::vector<int> *childFolderIndices = &m_cachedRootFolderIndices;
-            if (!m_selectedFolder.empty())
-            {
-                for (std::size_t folderIndex = 0; folderIndex < m_cachedFolders.size(); ++folderIndex)
-                {
-                    if (m_cachedFolders[folderIndex] == m_selectedFolder)
-                    {
-                        childFolderIndices = &m_cachedFolderChildIndices[folderIndex];
-                        break;
-                    }
-                }
-            }
-
-            m_cachedChildFolders.reserve(childFolderIndices->size());
-            m_cachedChildFolderLabels.reserve(childFolderIndices->size());
-            m_cachedChildFolderDisplayNames.reserve(childFolderIndices->size());
-            for (const int folderIndex : *childFolderIndices)
-            {
-                if (folderIndex >= 0 && static_cast<std::size_t>(folderIndex) < m_cachedFolders.size())
-                {
-                    m_cachedChildFolders.push_back(m_cachedFolders[static_cast<std::size_t>(folderIndex)]);
-                    m_cachedChildFolderLabels.push_back(m_cachedFolderLabels[static_cast<std::size_t>(folderIndex)]);
-                    m_cachedChildFolderDisplayNames.push_back("[Folder] " + m_cachedFolderLabels[static_cast<std::size_t>(folderIndex)]);
-                }
-            }
-        }
-
-        const auto renderFolderTree = [&](const auto &self, const std::vector<int> &folderIndices) -> void
-        {
-            for (const int rawFolderIndex : folderIndices)
-            {
-                if (rawFolderIndex < 0)
-                {
-                    continue;
-                }
-                const std::size_t folderIndex = static_cast<std::size_t>(rawFolderIndex);
-                if (folderIndex >= m_cachedFolders.size())
-                {
-                    continue;
-                }
-
-                const auto &folder = m_cachedFolders[folderIndex];
-                if (folder.empty())
-                {
-                    continue;
-                }
-
-                const bool selected = folder == m_selectedFolder;
-                const bool hasChildren = m_cachedFolderHasChildren[folderIndex];
-                const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow |
-                                                 ImGuiTreeNodeFlags_SpanAvailWidth |
-                                                 (selected ? ImGuiTreeNodeFlags_Selected : 0) |
-                                                 (hasChildren ? 0 : ImGuiTreeNodeFlags_Leaf);
-                ImGui::PushID(folder.c_str());
-                const bool open = ImGui::TreeNodeEx("Folder", flags, "%s", m_cachedFolderLabels[folderIndex].c_str());
-                if (ImGui::IsItemClicked())
-                {
-                    m_selectedFolder = folder;
-                    m_openModelReference.clear();
-                    m_openModelObjects.clear();
-                    m_selectedAssetIndex = -1;
-                }
-                if (open)
-                {
-                    if (hasChildren)
-                    {
-                        self(self, m_cachedFolderChildIndices[folderIndex]);
-                    }
-                    ImGui::TreePop();
-                }
-                ImGui::PopID();
-            }
-        };
-
-        const bool hasSearch = !m_cachedFilter.empty();
+        RefreshRegistryCache(*project);
+        RebuildItems(*project);
 
         const bool showDetails = m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size());
         if (!ImGui::BeginTable("ContentBrowserLayout", 2,
@@ -2661,29 +2106,7 @@ namespace PlutoGE::ui
         ImGui::BeginChild("ContentBrowserBody", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
         const float splitterWidth = 6.0f;
         m_folderTreeWidth = std::clamp(m_folderTreeWidth, 120.0f, std::max(120.0f, ImGui::GetContentRegionAvail().x * 0.5f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetColorU32(ImGuiCol_FrameBg, 0.45f));
-        ImGui::BeginChild("FolderTree", ImVec2(m_folderTreeWidth, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding);
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar();
-        const ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen |
-                                             ImGuiTreeNodeFlags_OpenOnArrow |
-                                             ImGuiTreeNodeFlags_SpanAvailWidth |
-                                             (m_selectedFolder.empty() ? ImGuiTreeNodeFlags_Selected : 0);
-        const bool rootOpen = ImGui::TreeNodeEx("AssetsRoot", rootFlags, "Assets");
-        if (ImGui::IsItemClicked())
-        {
-            m_selectedFolder.clear();
-            m_openModelReference.clear();
-            m_openModelObjects.clear();
-            m_selectedAssetIndex = -1;
-        }
-        if (rootOpen)
-        {
-            renderFolderTree(renderFolderTree, m_cachedRootFolderIndices);
-            ImGui::TreePop();
-        }
-        ImGui::EndChild();
+        RenderFolderTree(*project);
 
         ImGui::SameLine(0.0f, 0.0f);
         ImGui::InvisibleButton("FolderTreeSplitter", ImVec2(splitterWidth, std::max(1.0f, ImGui::GetContentRegionAvail().y)));
@@ -2696,473 +2119,36 @@ namespace PlutoGE::ui
                                                 ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_SeparatorActive : ImGuiCol_SeparatorHovered), 2.0f);
         }
         ImGui::SameLine(0.0f, 0.0f);
-        ImGui::BeginChild("AssetPane", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
-
+        ImGui::BeginChild("AssetColumn", ImVec2(0.0f, 0.0f), ImGuiChildFlags_None);
+        const float statusHeight = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+        // Arrow keys move the item selection rather than ImGui's navigation cursor.
+        ImGui::BeginChild("AssetPane", ImVec2(0.0f, -statusHeight), ImGuiChildFlags_None, ImGuiWindowFlags_NoNavInputs);
         if (!m_thumbnailCache) m_thumbnailCache = std::make_unique<AssetThumbnailCache>();
         m_thumbnailCache->BeginFrame();
-        const float gridScale = m_assetGridScale;
-        const auto &gridStyle = ImGui::GetStyle();
-        ImGui::PushFont(nullptr, gridStyle.FontSizeBase * gridScale);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
-                            ImVec2(gridStyle.ItemSpacing.x * gridScale, gridStyle.ItemSpacing.y * gridScale));
-        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(3.0f * gridScale, 3.0f * gridScale));
-        const float cardGap = 6.0f * gridScale;
-        const float cardInset = 4.0f * gridScale;
-        const float labelGap = 3.0f * gridScale;
-        const float nominalCardWidth = 104.0f * gridScale;
-        const float gridWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x - 1.0f);
-        const int columnCount = std::max(1, static_cast<int>((gridWidth + cardGap) / (nominalCardWidth + cardGap)));
-        // Spread the leftover width across the columns so the grid fills the pane edge to edge.
-        const float cardWidth = std::floor(std::min((gridWidth - cardGap * static_cast<float>(columnCount - 1)) / static_cast<float>(columnCount),
-                                                    nominalCardWidth * 1.4f));
-        const float previewSize = cardWidth - cardInset * 2.0f;
-        const float labelTop = cardInset + previewSize + labelGap;
-        const float labelLineStep = ImGui::GetTextLineHeight();
-        const float cardHeight = labelTop + labelLineStep * 2.0f + cardInset;
-        const float textInset = cardInset;
-        const float textWidth = cardWidth - cardInset * 2.0f;
-
-        const auto drawCardBackground = [&](bool selected, bool hovered)
+        m_hoveredFolder.clear();
+        m_hoveringFolderItem = false;
+        if (!m_openModelReference.empty())
         {
-            const ImVec2 minimum = ImGui::GetItemRectMin();
-            const ImVec2 maximum = ImGui::GetItemRectMax();
-            const ImU32 fill = ImGui::GetColorU32(selected ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg);
-            ImGui::GetWindowDrawList()->AddRectFilled(minimum, maximum, fill, 4.0f * gridScale);
-            if (selected)
-                ImGui::GetWindowDrawList()->AddRect(minimum, maximum, ImGui::GetColorU32(ImGuiCol_NavHighlight), 4.0f * gridScale, 0, 1.5f);
-        };
-
-        const auto renderFolderCard = [&](std::size_t folderIndex)
-        {
-            const auto &folder = m_cachedChildFolders[folderIndex];
-            const auto &label = m_cachedChildFolderLabels[folderIndex];
-            ImGui::PushID(folder.c_str());
-            ImGui::InvisibleButton("FolderCard", ImVec2(cardWidth, cardHeight));
-            const bool hovered = ImGui::IsItemHovered();
-            drawCardBackground(false, hovered);
-            const ImVec2 minimum = ImGui::GetItemRectMin();
-            auto *drawList = ImGui::GetWindowDrawList();
-            // Folders have no preview frame, so the icon and name are centred together as one group.
-            const FittedIcon folderIcon = FitIcon(icons::Folder, ImVec2(previewSize * 0.86f, previewSize * 0.86f));
-            const float groupHeight = folderIcon.size.y + labelGap + ImGui::GetTextLineHeight();
-            const float iconTop = minimum.y + std::floor((cardHeight - groupHeight) * 0.5f);
-            DrawFittedIcon(drawList, icons::Folder, folderIcon,
-                           ImVec2(minimum.x + (cardWidth - folderIcon.size.x) * 0.5f, iconTop), IM_COL32(216, 167, 64, 255));
-            DrawCenteredCardText(drawList, label, minimum.x + textInset, textWidth,
-                                 iconTop + folderIcon.size.y + labelGap, ImGui::GetColorU32(ImGuiCol_Text));
-            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-            {
-                m_selectedFolder = folder;
-                m_openModelReference.clear();
-                m_openModelObjects.clear();
-                m_selectedAssetIndex = -1;
-            }
-            if (ImGui::BeginPopupContextItem("FolderContext"))
-            {
-                const auto folderPath = project->GetAssetDirectoryPath() / std::filesystem::path(folder);
-                if (ImGui::MenuItem("Rename"))
-                {
-                    m_renameSource = folderPath.string();
-                    m_renameBuffer.fill('\0');
-                    const auto name = folderPath.filename().string();
-                    std::memcpy(m_renameBuffer.data(), name.data(), std::min(name.size(), m_renameBuffer.size() - 1));
-                    m_openRenamePopup = true;
-                }
-                if (ImGui::MenuItem("Copy", "Ctrl+C")) m_clipboardPath = folderPath.string();
-                if (ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboardPath.empty()))
-                {
-                    m_fileActionSource = m_clipboardPath;
-                    m_fileActionDestination = folderPath.string();
-                    m_pendingFileAction = PendingFileAction::Paste;
-                }
-                if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
-                {
-                    m_fileActionSource = folderPath.string();
-                    m_pendingFileAction = PendingFileAction::Duplicate;
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Delete"))
-                {
-                    m_fileActionSource = folderPath.string();
-                    m_openDeletePopup = true;
-                }
-                ImGui::EndPopup();
-            }
-            ImGui::PopID();
-        };
-
-        const auto renderAssetCard = [&](std::size_t filteredIndex)
-        {
-            const int index = m_filteredAssetIndices[filteredIndex];
-            const auto &asset = assets[static_cast<std::size_t>(index)];
-            const std::string &fileName = m_cachedAssetFileNames[static_cast<std::size_t>(index)];
-            const bool selected = m_selectedAssetIndex == index;
-            ImGui::PushID(index);
-            ImGui::InvisibleButton("AssetCard", ImVec2(cardWidth, cardHeight));
-            const bool hovered = ImGui::IsItemHovered();
-            drawCardBackground(selected, hovered);
-            const ImVec2 minimum = ImGui::GetItemRectMin();
-            const ImVec2 previewMin(minimum.x + cardInset, minimum.y + cardInset);
-            const ImVec2 previewMax(previewMin.x + previewSize, previewMin.y + previewSize);
-            auto *drawList = ImGui::GetWindowDrawList();
-            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 3.0f * gridScale);
-            const std::uint64_t thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
-            if (thumbnail != 0)
-            {
-                drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax,
-                                   ImVec2(0, 1), ImVec2(1, 0));
-            }
-            else
-            {
-                DrawAssetTypeIcon(drawList, asset.type, previewMin, previewMax);
-            }
-            DrawAssetTypeAccent(drawList, asset.type, previewMin, previewMax, 3.0f * gridScale);
-            DrawCenteredCardText(drawList, fileName, minimum.x + textInset, textWidth,
-                                 minimum.y + labelTop, ImGui::GetColorU32(ImGuiCol_Text));
-            DrawCenteredCardText(drawList, std::string(assets::Project::GetAssetTypeName(asset.type)), minimum.x + textInset, textWidth,
-                                 minimum.y + labelTop + labelLineStep,
-                                 ImGui::GetColorU32(ImGuiCol_TextDisabled));
-
-            if (ImGui::IsItemClicked()) m_selectedAssetIndex = index;
-            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-            {
-                if (asset.type == assets::ProjectAssetType::Model)
-                {
-                    assets::ModelAsset model;
-                    std::string modelError;
-                    if (assets::LoadModelSourcePackage(*project, asset.reference, model, &modelError))
-                    {
-                        m_openModelReference = asset.reference;
-                        m_openModelName = std::filesystem::path(fileName).stem().string();
-                        m_openModelObjects = std::move(model.objects);
-                        m_selectedAssetIndex = -1;
-                    }
-                    else
-                    {
-                        editorShell.Log(EditorShell::ConsoleSeverity::Error,
-                                        modelError.empty() ? "Import the model before opening it." : modelError);
-                    }
-                }
-                else OpenAsset(editorShell, *project, asset);
-            }
-            if (ImGui::BeginDragDropSource())
-            {
-                ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, asset.reference.c_str(), asset.reference.size() + 1);
-                ImGui::TextUnformatted(fileName.c_str());
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::BeginPopupContextItem("AssetContext"))
-            {
-                if ((asset.type == assets::ProjectAssetType::Model || asset.type == assets::ProjectAssetType::Mesh) &&
-                    ImGui::MenuItem("Add to Scene", nullptr, false,
-                        editorShell.GetScene() && !editorShell.GetEngine().IsRuntimeRunning()))
-                    AddAssetInFrontOfCamera(asset.reference);
-                if (project->ResolveAssetReference(asset.reference).extension() == ".rml" && ImGui::MenuItem("Open in UI Editor"))
-                    editorShell.OpenRmlDocument(asset.reference);
-                if (ImGui::MenuItem("Find References..."))
-                {
-                    if (!m_referenceSearch) m_referenceSearch = std::make_unique<AssetReferenceSearchPanel>();
-                    m_referenceSearch->Open(project->GetAssetDirectoryPath(), asset.reference);
-                }
-                ImGui::Separator();
-                const bool editable = assets::Project::IsProjectAssetReference(asset.reference);
-                const auto assetPath = project->ResolveAssetReference(asset.reference);
-                if (ImGui::MenuItem("Rename", nullptr, false, editable))
-                {
-                    m_renameSource = assetPath.string();
-                    m_renameBuffer.fill('\0');
-                    const auto name = assetPath.filename().string();
-                    std::memcpy(m_renameBuffer.data(), name.data(), std::min(name.size(), m_renameBuffer.size() - 1));
-                    m_openRenamePopup = true;
-                }
-                if (ImGui::MenuItem("Copy", "Ctrl+C", false, editable)) m_clipboardPath = assetPath.string();
-                if (ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboardPath.empty()))
-                {
-                    m_fileActionSource = m_clipboardPath;
-                    m_fileActionDestination = (project->GetAssetDirectoryPath() / std::filesystem::path(m_selectedFolder)).string();
-                    m_pendingFileAction = PendingFileAction::Paste;
-                }
-                if (ImGui::MenuItem("Duplicate", "Ctrl+D", false, editable))
-                {
-                    m_fileActionSource = assetPath.string();
-                    m_pendingFileAction = PendingFileAction::Duplicate;
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Delete", nullptr, false, editable))
-                {
-                    m_fileActionSource = assetPath.string();
-                    m_openDeletePopup = true;
-                }
-                ImGui::Separator();
-                if (asset.type == assets::ProjectAssetType::Prefab && ImGui::MenuItem("Export as Static Mesh"))
-                {
-                    std::string outputReference, exportError;
-                    if (ExportPrefabMesh(*project, asset, m_selectedFolder, &outputReference, &exportError))
-                    {
-                        EditorShell::GetInstance().RefreshProjectAssets();
-                        m_assetCacheDirty = true;
-                        editorShell.MarkProjectDirty();
-                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Exported prefab mesh: " + outputReference);
-                    }
-                    else editorShell.Log(EditorShell::ConsoleSeverity::Error, exportError);
-                }
-                ImGui::EndPopup();
-            }
-            if (hovered) ImGui::SetTooltip("%s\n%s", fileName.c_str(), asset.reference.c_str());
-            ImGui::PopID();
-        };
-
-        const auto renderModelObjectCard = [&](std::size_t objectIndex)
-        {
-            const auto &object = m_openModelObjects[objectIndex];
-            const assets::ProjectAssetEntry asset{.reference = object.reference, .type = object.type};
-            ImGui::PushID(static_cast<int>(objectIndex));
-            ImGui::InvisibleButton("ModelObjectCard", ImVec2(cardWidth, cardHeight));
-            const bool hovered = ImGui::IsItemHovered();
-            drawCardBackground(false, hovered);
-            const ImVec2 minimum = ImGui::GetItemRectMin();
-            const ImVec2 previewMin(minimum.x + cardInset, minimum.y + cardInset);
-            const ImVec2 previewMax(previewMin.x + previewSize, previewMin.y + previewSize);
-            auto *drawList = ImGui::GetWindowDrawList();
-            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, 255), 3.0f * gridScale);
-            const std::uint64_t thumbnail = m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
-            const std::string typeName(assets::Project::GetAssetTypeName(object.type));
-            if (thumbnail != 0)
-                drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax, ImVec2(0, 1), ImVec2(1, 0));
-            else
-                DrawAssetTypeIcon(drawList, object.type, previewMin, previewMax);
-            DrawAssetTypeAccent(drawList, object.type, previewMin, previewMax, 3.0f * gridScale);
-            DrawCenteredCardText(drawList, object.name, minimum.x + textInset, textWidth,
-                                 minimum.y + labelTop, ImGui::GetColorU32(ImGuiCol_Text));
-            DrawCenteredCardText(drawList, typeName, minimum.x + textInset, textWidth,
-                                 minimum.y + labelTop + labelLineStep,
-                                 ImGui::GetColorU32(ImGuiCol_TextDisabled));
-            if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, *project, asset);
-            if (ImGui::BeginDragDropSource())
-            {
-                ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, object.reference.c_str(), object.reference.size() + 1);
-                ImGui::TextUnformatted(object.name.c_str());
-                ImGui::EndDragDropSource();
-            }
-            if (ImGui::BeginPopupContextItem("ModelObjectContext"))
-            {
-                if (object.type == assets::ProjectAssetType::Mesh &&
-                    ImGui::MenuItem("Add to Scene", nullptr, false,
-                        editorShell.GetScene() && !editorShell.GetEngine().IsRuntimeRunning()))
-                    AddAssetInFrontOfCamera(object.reference);
-                const char *extractLabel = object.type == assets::ProjectAssetType::Material ? "Extract and Use" : "Extract";
-                if (ImGui::MenuItem(extractLabel))
-                {
-                    std::string extractedReference, extractionError;
-                    if (ExtractModelSubAsset(*project, object, m_selectedFolder, &extractedReference, &extractionError))
-                    {
-                        EditorShell::GetInstance().RefreshProjectAssets();
-                        m_assetCacheDirty = true;
-                        editorShell.MarkProjectDirty();
-                        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Extracted model sub-asset: " + extractedReference);
-                    }
-                    else editorShell.Log(EditorShell::ConsoleSeverity::Error, extractionError);
-                }
-                ImGui::EndPopup();
-            }
-            if (hovered) ImGui::SetTooltip("%s\n%s\nRight-click to extract", object.name.c_str(), object.reference.c_str());
-            ImGui::PopID();
-        };
-
-        const bool showFolders = m_openModelReference.empty() && !hasSearch;
-        const std::size_t folderItemCount = showFolders ? m_cachedChildFolders.size() : 0;
-        const std::size_t contentItemCount = m_openModelReference.empty()
-                                                 ? m_filteredAssetIndices.size()
-                                                 : m_openModelObjects.size();
-        const std::size_t totalItemCount = folderItemCount + contentItemCount;
-        const int rowCount = static_cast<int>((totalItemCount + static_cast<std::size_t>(columnCount) - 1) /
-                                              static_cast<std::size_t>(columnCount));
-
-        if (hasSearch)
-        {
-            ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+            RenderModelObjectGrid(*project);
         }
-
-        if (ImGui::BeginTable("AssetIconGrid", columnCount, ImGuiTableFlags_SizingFixedFit))
+        else if (m_viewMode == ViewMode::List)
         {
-            for (int columnIndex = 0; columnIndex < columnCount; ++columnIndex)
-                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, cardWidth);
-            ImGuiListClipper clipper;
-            clipper.Begin(rowCount);
-            while (clipper.Step())
-            {
-                for (int rowIndex = clipper.DisplayStart; rowIndex < clipper.DisplayEnd; ++rowIndex)
-                {
-                    ImGui::TableNextRow(ImGuiTableRowFlags_None, cardHeight);
-                    for (int columnIndex = 0; columnIndex < columnCount; ++columnIndex)
-                    {
-                        const std::size_t itemIndex =
-                            static_cast<std::size_t>(rowIndex) * static_cast<std::size_t>(columnCount) +
-                            static_cast<std::size_t>(columnIndex);
-                        if (itemIndex >= totalItemCount)
-                        {
-                            break;
-                        }
-
-                        ImGui::TableSetColumnIndex(columnIndex);
-                        if (itemIndex < folderItemCount)
-                        {
-                            renderFolderCard(itemIndex);
-                            continue;
-                        }
-
-                        const std::size_t contentIndex = itemIndex - folderItemCount;
-                        if (m_openModelReference.empty())
-                        {
-                            renderAssetCard(contentIndex);
-                        }
-                        else
-                        {
-                            renderModelObjectCard(contentIndex);
-                        }
-                    }
-                }
-            }
-            ImGui::EndTable();
+            RenderItemList(*project);
         }
-
-        ImGui::PopStyleVar(2);
-        ImGui::PopFont();
-
-        if (ImGui::BeginPopupContextWindow("ContentBrowserContextMenu", ImGuiPopupFlags_NoOpenOverItems))
+        else
         {
-            if (ImGui::MenuItem("Paste", "Ctrl+V", false, !m_clipboardPath.empty()))
-            {
-                m_fileActionSource = m_clipboardPath;
-                m_fileActionDestination = (project->GetAssetDirectoryPath() / std::filesystem::path(m_selectedFolder)).string();
-                m_pendingFileAction = PendingFileAction::Paste;
-            }
-            ImGui::Separator();
-            renderAddMenu();
-            ImGui::EndPopup();
+            RenderItemGrid(*project);
+            RenderBackgroundContextMenu();
         }
-
+        ImGui::EndChild();
+        RenderStatusBar();
         ImGui::EndChild();
         ImGui::EndChild();
 
-        const auto finishFileAction = [&](const std::string &message)
-        {
-            EditorShell::GetInstance().RefreshProjectAssets();
-            m_assetCacheDirty = true;
-            m_selectedAssetIndex = -1;
-            editorShell.MarkProjectDirty();
-            editorShell.Log(EditorShell::ConsoleSeverity::Info, message);
-        };
-
-        if (m_pendingFileAction == PendingFileAction::Paste ||
-            m_pendingFileAction == PendingFileAction::Duplicate)
-        {
-            const std::filesystem::path source(m_fileActionSource);
-            const std::filesystem::path destinationDirectory =
-                m_pendingFileAction == PendingFileAction::Paste
-                    ? std::filesystem::path(m_fileActionDestination)
-                    : source.parent_path();
-            std::error_code existsError;
-            if (!std::filesystem::exists(source, existsError))
-            {
-                editorShell.Log(EditorShell::ConsoleSeverity::Error, "The copied item no longer exists: " + source.string());
-                m_clipboardPath.clear();
-            }
-            else
-            {
-                const auto destination = MakeUniqueCopyPath(destinationDirectory, source);
-                std::string copyError;
-                if (CopyContentBrowserItem(source, destination, &copyError))
-                    finishFileAction("Copied asset content to: " + destination.string());
-                else
-                    editorShell.Log(EditorShell::ConsoleSeverity::Error, copyError);
-            }
-            m_pendingFileAction = PendingFileAction::None;
-        }
-
-        if (m_openRenamePopup)
-        {
-            ImGui::OpenPopup("Rename Content");
-            m_openRenamePopup = false;
-        }
-        if (ImGui::BeginPopupModal("Rename Content", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            ImGui::TextUnformatted("New name:");
-            ImGui::SetNextItemWidth(360.0f);
-            const bool submitted = ImGui::InputText("##ContentRename", m_renameBuffer.data(), m_renameBuffer.size(),
-                                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-            const std::string newName(m_renameBuffer.data());
-            const bool validName = !newName.empty() && newName != "." && newName != ".." &&
-                                   newName.find_first_of("/\\<>:\"|?*") == std::string::npos;
-            if (!validName) ImGui::TextDisabled("Enter a valid file or folder name.");
-            if ((ImGui::Button("Rename") || submitted) && validName)
-            {
-                const std::filesystem::path source(m_renameSource);
-                const auto destination = source.parent_path() / newName;
-                std::error_code error;
-                if (std::filesystem::exists(destination, error))
-                {
-                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "An item with that name already exists.");
-                }
-                else
-                {
-                    std::string moveError;
-                    const auto sourceReference = std::string(assets::Project::kProjectAssetScheme) +
-                        source.lexically_relative(project->GetAssetDirectoryPath()).generic_string();
-                    const auto destinationReference = std::string(assets::Project::kProjectAssetScheme) +
-                        destination.lexically_relative(project->GetAssetDirectoryPath()).generic_string();
-                    if (!assetimport::MoveProjectAsset(*project, sourceReference, destinationReference, &moveError))
-                        editorShell.Log(EditorShell::ConsoleSeverity::Error, moveError);
-                    else
-                    {
-                        const auto oldRelative = NormalizeAssetRelativePath(std::filesystem::relative(source, project->GetAssetDirectoryPath()));
-                        const auto newRelative = NormalizeAssetRelativePath(std::filesystem::relative(destination, project->GetAssetDirectoryPath()));
-                        if (IsFolderAncestorOrSelf(oldRelative, m_selectedFolder))
-                            m_selectedFolder = newRelative + m_selectedFolder.substr(oldRelative.size());
-                        finishFileAction("Renamed asset content to: " + destination.string());
-                        ImGui::CloseCurrentPopup();
-                    }
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
-
-        if (m_openDeletePopup)
-        {
-            ImGui::OpenPopup("Delete Content");
-            m_openDeletePopup = false;
-        }
-        if (ImGui::BeginPopupModal("Delete Content", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
-        {
-            const std::filesystem::path source(m_fileActionSource);
-            ImGui::TextWrapped("Permanently delete '%s'?", source.filename().string().c_str());
-            if (std::filesystem::is_directory(source)) ImGui::TextDisabled("The folder and all of its contents will be deleted.");
-            if (ImGui::Button("Delete"))
-            {
-                std::error_code error;
-                std::filesystem::remove_all(source, error);
-                if (!error && !std::filesystem::is_directory(source))
-                {
-                    std::error_code metadataError;
-                    std::filesystem::remove(assets::AssetDatabase::GetMetadataPath(source), metadataError);
-                }
-                if (error)
-                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to delete item: " + error.message());
-                else
-                {
-                    const auto relative = NormalizeAssetRelativePath(std::filesystem::relative(source, project->GetAssetDirectoryPath()));
-                    if (IsFolderAncestorOrSelf(relative, m_selectedFolder)) m_selectedFolder = GetAssetFolderParent(relative);
-                    if (m_clipboardPath == source.string()) m_clipboardPath.clear();
-                    finishFileAction("Deleted asset content: " + source.string());
-                    ImGui::CloseCurrentPopup();
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
+        HandleShortcuts(*project);
+        RunDeferredEdits();
+        ProcessDroppedFiles(*project);
+        RenderDeleteConfirmation(*project);
 
         if (showDetails && m_selectedAssetIndex >= 0 && m_selectedAssetIndex < static_cast<int>(assets.size()))
         {
@@ -3571,5 +2557,1820 @@ namespace PlutoGE::ui
             ImGui::EndChild();
         }
         ImGui::EndTable();
+    }
+
+    // =====================================================================
+    // Explorer: items, folders, commands and file operations.
+
+    namespace
+    {
+        constexpr std::string_view kFolderKeyPrefix = "folder://";
+        constexpr const char *kInternalFolder = "__internal__";
+        constexpr ImU32 kFolderColor = IM_COL32(216, 167, 64, 255);
+        constexpr float kCutAlpha = 0.45f;
+
+        // Layout shared by every card grid (items and model objects).
+        struct CardMetrics
+        {
+            float scale = 1.0f;
+            float gap = 0.0f;
+            float inset = 0.0f;
+            float labelGap = 0.0f;
+            float width = 0.0f;
+            float height = 0.0f;
+            float previewSize = 0.0f;
+            float labelTop = 0.0f;
+            float lineStep = 0.0f;
+            float textWidth = 0.0f;
+            int columns = 1;
+        };
+
+        // Pushes the scaled font and spacing used by card grids; pair with EndCardGrid.
+        CardMetrics BeginCardGrid(float scale)
+        {
+            const auto &style = ImGui::GetStyle();
+            ImGui::PushFont(nullptr, style.FontSizeBase * scale);
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style.ItemSpacing.x * scale, style.ItemSpacing.y * scale));
+            ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(3.0f * scale, 3.0f * scale));
+
+            CardMetrics metrics;
+            metrics.scale = scale;
+            metrics.gap = 6.0f * scale;
+            metrics.inset = 4.0f * scale;
+            metrics.labelGap = 3.0f * scale;
+            const float nominalWidth = 104.0f * scale;
+            const float gridWidth = std::max(1.0f, ImGui::GetContentRegionAvail().x - 1.0f);
+            metrics.columns = std::max(1, static_cast<int>((gridWidth + metrics.gap) / (nominalWidth + metrics.gap)));
+            // Spread the leftover width across the columns so the grid fills the pane edge to edge.
+            metrics.width = std::floor(std::min((gridWidth - metrics.gap * static_cast<float>(metrics.columns - 1)) /
+                                                    static_cast<float>(metrics.columns),
+                                                nominalWidth * 1.4f));
+            metrics.previewSize = metrics.width - metrics.inset * 2.0f;
+            metrics.labelTop = metrics.inset + metrics.previewSize + metrics.labelGap;
+            metrics.lineStep = ImGui::GetTextLineHeight();
+            metrics.height = metrics.labelTop + metrics.lineStep * 2.0f + metrics.inset;
+            metrics.textWidth = metrics.width - metrics.inset * 2.0f;
+            return metrics;
+        }
+
+        void EndCardGrid()
+        {
+            ImGui::PopStyleVar(2);
+            ImGui::PopFont();
+        }
+
+        void DrawCardBackground(const CardMetrics &metrics, bool selected, bool hovered)
+        {
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 maximum = ImGui::GetItemRectMax();
+            const ImU32 fill = ImGui::GetColorU32(selected ? ImGuiCol_HeaderActive : hovered ? ImGuiCol_HeaderHovered : ImGuiCol_FrameBg);
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(minimum, maximum, fill, 4.0f * metrics.scale);
+            if (selected)
+                drawList->AddRect(minimum, maximum, ImGui::GetColorU32(ImGuiCol_NavCursor), 4.0f * metrics.scale, 0, 1.5f);
+        }
+
+        // Preview square with the thumbnail (or type icon) and its type accent.
+        void DrawAssetPreview(const CardMetrics &metrics, std::uint64_t thumbnail, assets::ProjectAssetType type, float alpha)
+        {
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            const ImVec2 previewMin(minimum.x + metrics.inset, minimum.y + metrics.inset);
+            const ImVec2 previewMax(previewMin.x + metrics.previewSize, previewMin.y + metrics.previewSize);
+            auto *drawList = ImGui::GetWindowDrawList();
+            drawList->AddRectFilled(previewMin, previewMax, IM_COL32(27, 30, 35, static_cast<int>(255 * alpha)), 3.0f * metrics.scale);
+            if (thumbnail != 0)
+                drawList->AddImage(static_cast<ImTextureID>(thumbnail), previewMin, previewMax, ImVec2(0, 1), ImVec2(1, 0),
+                                   IM_COL32(255, 255, 255, static_cast<int>(255 * alpha)));
+            else
+                DrawAssetTypeIcon(drawList, type, previewMin, previewMax);
+            DrawAssetTypeAccent(drawList, type, previewMin, previewMax, 3.0f * metrics.scale);
+        }
+
+        void DrawCardLabels(const CardMetrics &metrics, const std::string &name, const std::string &detail, float alpha, bool drawName = true)
+        {
+            const ImVec2 minimum = ImGui::GetItemRectMin();
+            auto *drawList = ImGui::GetWindowDrawList();
+            if (drawName)
+                DrawCenteredCardText(drawList, name, minimum.x + metrics.inset, metrics.textWidth, minimum.y + metrics.labelTop,
+                                     ImGui::GetColorU32(ImGuiCol_Text, alpha));
+            DrawCenteredCardText(drawList, detail, minimum.x + metrics.inset, metrics.textWidth,
+                                 minimum.y + metrics.labelTop + metrics.lineStep, ImGui::GetColorU32(ImGuiCol_TextDisabled, alpha));
+        }
+
+        bool IsSupportedModelFile(const std::filesystem::path &path)
+        {
+            return IsSupportedImportedModelReference(path.string());
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Keys
+
+    std::string ContentBrowserPanel::FolderKey(const std::string &folder)
+    {
+        return std::string(kFolderKeyPrefix) + folder;
+    }
+
+    bool ContentBrowserPanel::IsFolderKey(const std::string &key)
+    {
+        return key.rfind(kFolderKeyPrefix, 0) == 0;
+    }
+
+    std::string ContentBrowserPanel::FolderFromKey(const std::string &key)
+    {
+        return IsFolderKey(key) ? key.substr(kFolderKeyPrefix.size()) : std::string{};
+    }
+
+    std::filesystem::path ContentBrowserPanel::PathForKey(const std::string &key) const
+    {
+        const auto *project = EditorShell::GetInstance().GetProject();
+        if (!project)
+        {
+            return {};
+        }
+        if (IsFolderKey(key))
+        {
+            const auto folder = FolderFromKey(key);
+            return folder.empty() ? project->GetAssetDirectoryPath()
+                                  : project->GetAssetDirectoryPath() / PathFromUtf8(folder);
+        }
+        return project->ResolveAssetReference(key);
+    }
+
+    std::string ContentBrowserPanel::KeyForPath(const std::filesystem::path &path) const
+    {
+        const auto *project = EditorShell::GetInstance().GetProject();
+        if (!project)
+        {
+            return {};
+        }
+        std::error_code error;
+        if (std::filesystem::is_directory(path, error))
+        {
+            return FolderKey(NormalizeContentFolder(path.lexically_normal().lexically_relative(project->GetAssetDirectoryPath().lexically_normal())));
+        }
+        return project->MakeAssetReference(path);
+    }
+
+    std::vector<std::filesystem::path> ContentBrowserPanel::PathsForKeys(const std::vector<std::string> &keys) const
+    {
+        std::vector<std::filesystem::path> paths;
+        paths.reserve(keys.size());
+        for (const auto &key : keys)
+        {
+            if (IsKeyEditable(key))
+            {
+                paths.push_back(PathForKey(key));
+            }
+        }
+        return paths;
+    }
+
+    bool ContentBrowserPanel::IsKeyEditable(const std::string &key) const
+    {
+        const auto *project = EditorShell::GetInstance().GetProject();
+        if (!project || (!IsFolderKey(key) && !assets::Project::IsProjectAssetReference(key)))
+        {
+            return false;
+        }
+        if (IsFolderKey(key) && FolderFromKey(key).empty())
+        {
+            return false; // The asset root itself.
+        }
+        return ContentFileOperations(*project).IsEditable(PathForKey(key));
+    }
+
+    // ---------------------------------------------------------------------
+    // Caches
+
+    void ContentBrowserPanel::RefreshRegistryCache(const assets::Project &project)
+    {
+        const auto &assets = project.GetManifest().assetEntries;
+        const auto catalog = core::Engine::GetInstance().GetAssetManager().GetAssetCatalog();
+        const bool registryChanged = m_assetCacheDirty || m_cachedProject != &project || m_cachedCatalog != catalog ||
+                                     m_cachedAssetReferences.size() != assets.size();
+        if (!registryChanged)
+        {
+            return;
+        }
+
+        if (m_thumbnailCache) m_thumbnailCache->Clear();
+        m_assetCacheDirty = false;
+        m_itemsDirty = true;
+        if (m_cachedProject != &project) m_surfaceEditorReference.clear();
+        m_cachedProject = &project;
+        m_cachedCatalog = catalog;
+        m_cachedAssetReferences.clear();
+        m_cachedAssetFolders.clear();
+        m_cachedAssetFileNames.clear();
+        m_cachedAssetRelativePaths.clear();
+        m_cachedAssetReferences.reserve(assets.size());
+        m_cachedAssetFolders.reserve(assets.size());
+        m_cachedAssetFileNames.reserve(assets.size());
+        m_cachedAssetRelativePaths.reserve(assets.size());
+
+        std::set<std::string> importedNativeLocations;
+        if (catalog)
+            for (const auto &object : catalog->GetObjects())
+                if (object.ownership == assets::AssetOwnership::Imported && object.type != assets::ProjectAssetType::Texture)
+                {
+                    importedNativeLocations.insert(object.location);
+                    if (object.type == assets::ProjectAssetType::Mesh) importedNativeLocations.insert(object.location + ".materials");
+                }
+        // Texture descriptors currently also include source image inputs.
+        // Keep those visible until the manifest records output provenance.
+        std::set<std::string> folderSet{""};
+        for (const auto &asset : assets)
+        {
+            m_cachedAssetReferences.push_back(asset.reference);
+            const std::string relativePath = GetReferenceRelativePath(project, asset);
+            const bool internalArtifact = importedNativeLocations.contains(asset.reference) ||
+                                          relativePath == "Imported" || relativePath.rfind("Imported/", 0) == 0;
+            const std::string folder = internalArtifact ? kInternalFolder : GetContentFolderParent(relativePath);
+            const std::string fileName = GetContentFolderName(relativePath);
+            m_cachedAssetRelativePaths.push_back(relativePath);
+            m_cachedAssetFolders.push_back(folder);
+            m_cachedAssetFileNames.push_back(fileName.empty() ? DisplayAssetReference(asset.reference) : fileName);
+            for (std::string ancestor = internalArtifact ? std::string{} : folder; !ancestor.empty(); ancestor = GetContentFolderParent(ancestor))
+            {
+                folderSet.insert(ancestor);
+            }
+        }
+
+        // Empty folders exist only on disk, so scan for them too.
+        std::error_code directoryError;
+        const auto assetDirectory = project.GetAssetDirectoryPath();
+        if (std::filesystem::exists(assetDirectory, directoryError))
+        {
+            for (std::filesystem::recursive_directory_iterator iterator(assetDirectory, directoryError), end;
+                 iterator != end && !directoryError; iterator.increment(directoryError))
+            {
+                if (!iterator->is_directory(directoryError) || directoryError)
+                {
+                    directoryError.clear();
+                    continue;
+                }
+                const auto normalized = NormalizeContentFolder(iterator->path().lexically_relative(assetDirectory));
+                if (normalized == "Imported" || normalized.rfind("Imported/", 0) == 0 ||
+                    assets::IsAssetInfrastructurePath(project.GetRootDirectory(), iterator->path()))
+                {
+                    if (normalized == "Imported" || normalized.rfind("Imported/", 0) == 0) iterator.disable_recursion_pending();
+                    continue;
+                }
+                folderSet.insert(normalized);
+            }
+        }
+
+        m_cachedFolders.assign(folderSet.begin(), folderSet.end());
+        m_cachedFolderLabels.assign(m_cachedFolders.size(), {});
+        m_cachedFolderChildIndices.assign(m_cachedFolders.size(), {});
+        m_cachedRootFolderIndices.clear();
+        std::unordered_map<std::string, int> folderIndexByPath;
+        folderIndexByPath.reserve(m_cachedFolders.size());
+        for (std::size_t index = 0; index < m_cachedFolders.size(); ++index)
+        {
+            folderIndexByPath.emplace(m_cachedFolders[index], static_cast<int>(index));
+            m_cachedFolderLabels[index] = GetContentFolderName(m_cachedFolders[index]);
+        }
+        for (std::size_t index = 0; index < m_cachedFolders.size(); ++index)
+        {
+            const auto &folder = m_cachedFolders[index];
+            if (folder.empty())
+            {
+                continue;
+            }
+            const auto parent = GetContentFolderParent(folder);
+            if (parent.empty())
+            {
+                m_cachedRootFolderIndices.push_back(static_cast<int>(index));
+            }
+            else if (const auto entry = folderIndexByPath.find(parent); entry != folderIndexByPath.end())
+            {
+                m_cachedFolderChildIndices[static_cast<std::size_t>(entry->second)].push_back(static_cast<int>(index));
+            }
+        }
+        // Folders sort naturally in the tree ("Level 2" before "Level 10").
+        const auto byLabel = [this](int a, int b)
+        { return CompareNatural(m_cachedFolderLabels[static_cast<std::size_t>(a)], m_cachedFolderLabels[static_cast<std::size_t>(b)]) < 0; };
+        std::sort(m_cachedRootFolderIndices.begin(), m_cachedRootFolderIndices.end(), byLabel);
+        for (auto &children : m_cachedFolderChildIndices) std::sort(children.begin(), children.end(), byLabel);
+
+        // The current folder may have been removed outside the editor.
+        while (!m_selectedFolder.empty() && !folderIndexByPath.contains(m_selectedFolder))
+        {
+            m_selectedFolder = GetContentFolderParent(m_selectedFolder);
+        }
+        const std::unordered_set<std::string> references(m_cachedAssetReferences.begin(), m_cachedAssetReferences.end());
+        const auto exists = [&](const std::string &key)
+        { return IsFolderKey(key) ? folderIndexByPath.contains(FolderFromKey(key)) : references.contains(key); };
+        m_selection.Prune(exists);
+        std::erase_if(m_clipboardKeys, [&](const std::string &key) { return !exists(key); });
+    }
+
+    void ContentBrowserPanel::RebuildItems(const assets::Project &project)
+    {
+        const std::string filter(m_filterBuffer.data());
+        if (!m_itemsDirty && filter == m_itemsFilter && m_itemsFolder == m_selectedFolder)
+        {
+            return;
+        }
+        m_itemsDirty = false;
+        m_itemsFilter = filter;
+        m_itemsFolder = m_selectedFolder;
+        m_items.clear();
+
+        const bool searching = !filter.empty();
+        const auto &assets = project.GetManifest().assetEntries;
+        const ContentFileOperations operations(project);
+        const auto assetRoot = project.GetAssetDirectoryPath();
+        const auto modifiedOf = [](const std::filesystem::path &path)
+        {
+            std::error_code error;
+            const auto time = std::filesystem::last_write_time(path, error);
+            return error ? std::int64_t{0} : ToUnixSeconds(time);
+        };
+
+        for (std::size_t index = 0; index < m_cachedFolders.size(); ++index)
+        {
+            const auto &folder = m_cachedFolders[index];
+            if (folder.empty())
+            {
+                continue;
+            }
+            const bool inScope = searching
+                                     ? folder != m_selectedFolder && IsContentFolderAncestorOrSelf(m_selectedFolder, folder) &&
+                                           ContainsInsensitive(m_cachedFolderLabels[index], filter)
+                                     : GetContentFolderParent(folder) == m_selectedFolder;
+            if (!inScope)
+            {
+                continue;
+            }
+            const auto path = assetRoot / PathFromUtf8(folder);
+            m_items.push_back({.folder = true,
+                               .key = FolderKey(folder),
+                               .folderPath = folder,
+                               .name = m_cachedFolderLabels[index],
+                               .typeName = "Folder",
+                               .modified = modifiedOf(path),
+                               .editable = operations.IsEditable(path)});
+        }
+
+        for (std::size_t index = 0; index < assets.size() && index < m_cachedAssetFolders.size(); ++index)
+        {
+            const auto &folder = m_cachedAssetFolders[index];
+            if (folder == kInternalFolder)
+            {
+                continue;
+            }
+            const bool inScope = searching ? IsContentFolderAncestorOrSelf(m_selectedFolder, folder) : folder == m_selectedFolder;
+            const auto &asset = assets[index];
+            const std::string typeName(assets::Project::GetAssetTypeName(asset.type));
+            const auto &name = m_cachedAssetFileNames[index];
+            if (!inScope || (searching && !ContainsInsensitive(typeName + " " + m_cachedAssetRelativePaths[index], filter)))
+            {
+                continue;
+            }
+            const auto path = project.ResolveAssetReference(asset.reference);
+            std::error_code error;
+            const auto size = asset.size != 0 ? asset.size : std::filesystem::file_size(path, error);
+            const bool projectAsset = assets::Project::IsProjectAssetReference(asset.reference);
+            m_items.push_back({.folder = false,
+                               .key = asset.reference,
+                               .folderPath = folder,
+                               .name = name,
+                               .typeName = typeName,
+                               .assetIndex = static_cast<int>(index),
+                               .type = asset.type,
+                               .size = error ? 0 : static_cast<std::uint64_t>(size),
+                               .modified = projectAsset ? modifiedOf(path) : 0,
+                               .editable = projectAsset && operations.IsEditable(path)});
+        }
+
+        const auto fields = [](const ContentItem &item)
+        {
+            return ContentSortFields{.folder = item.folder, .name = item.name, .typeName = item.typeName,
+                                     .modified = item.modified, .size = item.size};
+        };
+        std::stable_sort(m_items.begin(), m_items.end(), [&](const ContentItem &a, const ContentItem &b)
+                         { return ContentSortsBefore(fields(a), fields(b), m_sortOrder); });
+
+        if (!m_renameWhenShown.empty() && FindItem(m_renameWhenShown))
+        {
+            BeginRename(m_renameWhenShown);
+            m_renameWhenShown.clear();
+        }
+        SyncDetailsSelection();
+    }
+
+    const ContentBrowserPanel::ContentItem *ContentBrowserPanel::FindItem(const std::string &key) const
+    {
+        const auto it = std::find_if(m_items.begin(), m_items.end(), [&](const ContentItem &item) { return item.key == key; });
+        return it == m_items.end() ? nullptr : &*it;
+    }
+
+    std::vector<std::string> ContentBrowserPanel::ShownKeys() const
+    {
+        std::vector<std::string> keys;
+        keys.reserve(m_items.size());
+        for (const auto &item : m_items) keys.push_back(item.key);
+        return keys;
+    }
+
+    // ---------------------------------------------------------------------
+    // Navigation and selection
+
+    void ContentBrowserPanel::NavigateTo(const std::string &folder, bool recordHistory)
+    {
+        if (recordHistory) m_history.Visit(folder);
+        if (!m_rename.key.empty()) m_rename = {};
+        m_selectedFolder = folder;
+        m_openModelReference.clear();
+        m_openModelObjects.clear();
+        m_selection.Clear();
+        m_selectedAssetIndex = -1;
+        m_revealFolderInTree = true;
+        m_itemsDirty = true;
+    }
+
+    void ContentBrowserPanel::SelectKeys(const std::vector<std::string> &keys)
+    {
+        m_selection.Set(keys);
+        if (!keys.empty()) m_scrollToKey = keys.back();
+        SyncDetailsSelection();
+    }
+
+    void ContentBrowserPanel::SyncDetailsSelection()
+    {
+        const auto *primary = m_selection.Primary();
+        m_selectedAssetIndex = -1;
+        if (!primary || IsFolderKey(*primary))
+        {
+            return;
+        }
+        const auto it = std::find(m_cachedAssetReferences.begin(), m_cachedAssetReferences.end(), *primary);
+        if (it != m_cachedAssetReferences.end())
+        {
+            m_selectedAssetIndex = static_cast<int>(it - m_cachedAssetReferences.begin());
+        }
+    }
+
+    void ContentBrowserPanel::OpenModelPackage(assets::Project &project, const ContentItem &item)
+    {
+        assets::ModelAsset model;
+        std::string modelError;
+        if (assets::LoadModelSourcePackage(project, item.key, model, &modelError))
+        {
+            m_openModelReference = item.key;
+            m_openModelName = std::filesystem::path(item.name).stem().string();
+            m_openModelObjects = std::move(model.objects);
+            m_selection.Clear();
+            m_selectedAssetIndex = -1;
+        }
+        else
+        {
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error,
+                                           modelError.empty() ? "Import the model before opening it." : modelError);
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Commands
+
+    ContentBrowserPanel::CommandScope ContentBrowserPanel::SelectionScope() const
+    {
+        return {.keys = m_selection.Keys(), .folder = m_selectedFolder};
+    }
+
+    bool ContentBrowserPanel::CanExecute(ContentCommand command, const CommandScope &scope) const
+    {
+        const auto anyEditable = [&]()
+        { return std::any_of(scope.keys.begin(), scope.keys.end(), [&](const std::string &key) { return IsKeyEditable(key); }); };
+        const auto target = scope.keys.size() == 1 ? PathForKey(scope.keys.front())
+                                                   : scope.keys.empty() ? PathForKey(FolderKey(scope.folder)) : std::filesystem::path{};
+        std::error_code error;
+        const bool folderOnDisk = std::filesystem::is_directory(PathForKey(FolderKey(scope.folder)), error);
+        switch (command)
+        {
+        case ContentCommand::Open: return !scope.keys.empty();
+        case ContentCommand::NewFolder: return folderOnDisk;
+        case ContentCommand::Rename: return scope.keys.size() == 1 && IsKeyEditable(scope.keys.front());
+        case ContentCommand::Cut:
+        case ContentCommand::Copy:
+        case ContentCommand::Duplicate:
+        case ContentCommand::Delete: return anyEditable();
+        case ContentCommand::Paste: return !m_clipboardKeys.empty() && folderOnDisk;
+        case ContentCommand::SelectAll: return !m_items.empty() && m_openModelReference.empty();
+        case ContentCommand::RevealInFileManager:
+        case ContentCommand::OpenWithSystem: return !target.empty() && std::filesystem::exists(target, error);
+        case ContentCommand::CopyPath: return !scope.keys.empty() || folderOnDisk;
+        case ContentCommand::CopyReference:
+            return !scope.keys.empty() && std::none_of(scope.keys.begin(), scope.keys.end(), [](const std::string &key) { return IsFolderKey(key); });
+        case ContentCommand::GoBack: return m_history.CanGoBack();
+        case ContentCommand::GoForward: return m_history.CanGoForward();
+        case ContentCommand::GoUp: return !m_selectedFolder.empty() || !m_openModelReference.empty();
+        case ContentCommand::Refresh: return true;
+        }
+        return false;
+    }
+
+    void ContentBrowserPanel::Execute(ContentCommand command, const CommandScope &scope)
+    {
+        if (CanExecute(command, scope))
+        {
+            Defer([this, command, scope]() { ExecuteNow(command, scope); });
+        }
+    }
+
+    bool ContentBrowserPanel::CommandMenuItem(ContentCommand command, const CommandScope &scope, const char *icon)
+    {
+        const auto &info = GetContentCommandInfo(command);
+        const std::string label = icon ? std::string(icon) + "  " + info.label : std::string(info.label);
+        if (ImGui::MenuItem(label.c_str(), info.shortcutText, false, CanExecute(command, scope)))
+        {
+            Execute(command, scope);
+            return true;
+        }
+        return false;
+    }
+
+    void ContentBrowserPanel::ExecuteNow(ContentCommand command, const CommandScope &scope)
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *project = shell.GetProject();
+        if (!project || !CanExecute(command, scope))
+        {
+            return;
+        }
+        const ContentFileOperations operations(*project);
+        const auto folderPath = PathForKey(FolderKey(scope.folder));
+        const auto targetPath = scope.keys.size() == 1 ? PathForKey(scope.keys.front()) : folderPath;
+        const auto report = [&](const ContentOperationReport &result, const std::string &summary) { ApplyReport(result, summary); };
+
+        switch (command)
+        {
+        case ContentCommand::Open:
+        {
+            if (scope.keys.size() == 1 && IsFolderKey(scope.keys.front()))
+            {
+                NavigateTo(FolderFromKey(scope.keys.front()));
+                break;
+            }
+            for (const auto &key : scope.keys)
+            {
+                const auto *item = FindItem(key);
+                const auto &entries = project->GetManifest().assetEntries;
+                if (!item || item->folder || item->assetIndex < 0 || static_cast<std::size_t>(item->assetIndex) >= entries.size() ||
+                    entries[static_cast<std::size_t>(item->assetIndex)].reference != key)
+                    continue;
+                if (item->type == assets::ProjectAssetType::Model && scope.keys.size() == 1)
+                    OpenModelPackage(*project, *item);
+                else
+                    OpenAsset(shell, *project, entries[static_cast<std::size_t>(item->assetIndex)]);
+            }
+            break;
+        }
+        case ContentCommand::NewFolder:
+        {
+            const auto result = operations.CreateFolder(folderPath);
+            if (result.Succeeded() && !result.results.empty())
+            {
+                if (scope.folder != m_selectedFolder) NavigateTo(scope.folder);
+                m_renameWhenShown = KeyForPath(result.results.front());
+            }
+            report(result, {});
+            break;
+        }
+        case ContentCommand::Rename:
+            BeginRename(scope.keys.front());
+            break;
+        case ContentCommand::Cut:
+        case ContentCommand::Copy:
+            m_clipboardKeys.clear();
+            for (const auto &key : scope.keys)
+                if (IsKeyEditable(key)) m_clipboardKeys.push_back(key);
+            m_clipboardCut = command == ContentCommand::Cut;
+            break;
+        case ContentCommand::Paste:
+        {
+            const auto paths = PathsForKeys(m_clipboardKeys);
+            if (m_clipboardCut)
+            {
+                const auto result = operations.Move(paths, folderPath);
+                if (result.Succeeded())
+                {
+                    m_clipboardKeys.clear();
+                    m_clipboardCut = false;
+                }
+                report(result, "Moved " + std::to_string(result.moved.size()) + " item(s).");
+            }
+            else
+            {
+                const auto result = operations.Copy(paths, folderPath);
+                report(result, "Pasted " + std::to_string(result.results.size()) + " item(s).");
+            }
+            break;
+        }
+        case ContentCommand::Duplicate:
+        {
+            ContentOperationReport combined;
+            for (const auto &path : ContentFileOperations::RemoveNested(PathsForKeys(scope.keys)))
+            {
+                auto result = operations.Copy(std::span(&path, 1), path.parent_path());
+                combined.results.insert(combined.results.end(), result.results.begin(), result.results.end());
+                combined.errors.insert(combined.errors.end(), result.errors.begin(), result.errors.end());
+            }
+            report(combined, "Duplicated " + std::to_string(combined.results.size()) + " item(s).");
+            break;
+        }
+        case ContentCommand::Delete:
+            m_pendingDeletePaths = ContentFileOperations::RemoveNested(PathsForKeys(scope.keys));
+            m_openDeletePopup = !m_pendingDeletePaths.empty();
+            break;
+        case ContentCommand::SelectAll:
+            m_selection.Set(ShownKeys());
+            SyncDetailsSelection();
+            break;
+        case ContentCommand::RevealInFileManager:
+        case ContentCommand::OpenWithSystem:
+        {
+            std::string error;
+            const bool ok = command == ContentCommand::RevealInFileManager ? RevealInFileManager(targetPath, &error)
+                                                                          : OpenWithSystem(targetPath, &error);
+            if (!ok) shell.Log(EditorShell::ConsoleSeverity::Error, error);
+            break;
+        }
+        case ContentCommand::CopyPath:
+        {
+            std::string text;
+            for (const auto &key : scope.keys.empty() ? std::vector<std::string>{FolderKey(scope.folder)} : scope.keys)
+                text += (text.empty() ? "" : "\n") + PathToUtf8(PathForKey(key).lexically_normal());
+            ImGui::SetClipboardText(text.c_str());
+            break;
+        }
+        case ContentCommand::CopyReference:
+        {
+            std::string text;
+            for (const auto &key : scope.keys) text += (text.empty() ? "" : "\n") + key;
+            ImGui::SetClipboardText(text.c_str());
+            break;
+        }
+        case ContentCommand::GoBack:
+            NavigateTo(m_history.Back(), false);
+            break;
+        case ContentCommand::GoForward:
+            NavigateTo(m_history.Forward(), false);
+            break;
+        case ContentCommand::GoUp:
+            NavigateTo(m_openModelReference.empty() ? GetContentFolderParent(m_selectedFolder) : m_selectedFolder);
+            break;
+        case ContentCommand::Refresh:
+            if (shell.RefreshProjectAssets())
+            {
+                m_assetCacheDirty = true;
+                shell.Log(EditorShell::ConsoleSeverity::Info, "Refreshed project assets.");
+            }
+            break;
+        }
+    }
+
+    void ContentBrowserPanel::RunDeferredEdits()
+    {
+        // Edits that queue further edits run on the next frame.
+        auto edits = std::move(m_deferredEdits);
+        m_deferredEdits.clear();
+        for (auto &edit : edits) edit();
+    }
+
+    void ContentBrowserPanel::ApplyReport(const ContentOperationReport &report, const std::string &summary)
+    {
+        auto &shell = EditorShell::GetInstance();
+        const auto *project = shell.GetProject();
+        for (const auto &error : report.errors)
+        {
+            shell.Log(EditorShell::ConsoleSeverity::Error, error);
+        }
+        if (!project || !report.Changed())
+        {
+            return;
+        }
+
+        const auto assetRoot = project->GetAssetDirectoryPath().lexically_normal();
+        const auto relativeOf = [&](const std::filesystem::path &path) { return NormalizeContentFolder(path.lexically_normal().lexically_relative(assetRoot)); };
+        const auto projectScheme = std::string(assets::Project::kProjectAssetScheme);
+        for (const auto &[source, destination] : report.moved)
+        {
+            const auto from = relativeOf(source);
+            if (destination.empty())
+            {
+                // Deleted: forget everything inside it and step out of it.
+                const auto inside = [&](const std::string &key)
+                {
+                    const auto rel = IsFolderKey(key) ? FolderFromKey(key)
+                                     : key.rfind(projectScheme, 0) == 0 ? key.substr(projectScheme.size()) : std::string{};
+                    return !rel.empty() && IsContentFolderAncestorOrSelf(from, rel);
+                };
+                m_selection.Prune([&](const std::string &key) { return !inside(key); });
+                std::erase_if(m_clipboardKeys, inside);
+                const auto stepOut = [&](const std::string &folder)
+                { return IsContentFolderAncestorOrSelf(from, folder) ? GetContentFolderParent(from) : folder; };
+                m_selectedFolder = stepOut(m_selectedFolder);
+                m_history.Remap(stepOut);
+                continue;
+            }
+            const auto to = relativeOf(destination);
+            const auto remapKey = [&](const std::string &key)
+            {
+                if (IsFolderKey(key)) return FolderKey(RemapContentFolder(FolderFromKey(key), from, to));
+                if (key.rfind(projectScheme, 0) == 0) return projectScheme + RemapContentFolder(key.substr(projectScheme.size()), from, to);
+                return key;
+            };
+            m_selection.Remap(remapKey);
+            for (auto &key : m_clipboardKeys) key = remapKey(key);
+            m_selectedFolder = RemapContentFolder(m_selectedFolder, from, to);
+            m_history.Remap([&](const std::string &folder) { return RemapContentFolder(folder, from, to); });
+        }
+
+        shell.RefreshProjectAssets();
+        shell.MarkProjectDirty();
+        m_assetCacheDirty = true;
+        m_itemsDirty = true;
+        // The manifest was replaced; the details pane re-syncs once items rebuild.
+        m_selectedAssetIndex = -1;
+        if (!report.results.empty())
+        {
+            std::vector<std::string> keys;
+            for (const auto &path : report.results) keys.push_back(KeyForPath(path));
+            // Not SelectKeys: the registry cache is stale until the next rebuild,
+            // which re-syncs the details pane from this selection.
+            m_selection.Set(keys);
+            m_scrollToKey = keys.back();
+        }
+        if (report.Succeeded() && !summary.empty())
+        {
+            shell.Log(EditorShell::ConsoleSeverity::Info, summary);
+        }
+    }
+
+    void ContentBrowserPanel::MoveOrCopyInto(const std::vector<std::string> &keys, const std::string &folder, bool copy)
+    {
+        Defer([this, keys, folder, copy]()
+              {
+                  const auto *project = EditorShell::GetInstance().GetProject();
+                  if (!project) return;
+                  const ContentFileOperations operations(*project);
+                  const auto paths = PathsForKeys(keys);
+                  if (paths.empty())
+                  {
+                      EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning, "Only project assets and folders can be moved.");
+                      return;
+                  }
+                  const auto destination = PathForKey(FolderKey(folder));
+                  const auto result = copy ? operations.Copy(paths, destination) : operations.Move(paths, destination);
+                  const auto count = copy ? result.results.size() : result.moved.size();
+                  ApplyReport(result, std::string(copy ? "Copied " : "Moved ") + std::to_string(count) + " item(s) to " +
+                                          (folder.empty() ? std::string("Assets") : folder) + ".");
+              });
+    }
+
+    // ---------------------------------------------------------------------
+    // Rename
+
+    void ContentBrowserPanel::BeginRename(const std::string &key)
+    {
+        if (!IsKeyEditable(key))
+        {
+            return;
+        }
+        m_rename = {};
+        m_rename.key = key;
+        m_rename.focus = true;
+        const auto path = PathForKey(key);
+        std::string name;
+        if (IsFolderKey(key))
+        {
+            name = PathToUtf8(path.filename());
+        }
+        else
+        {
+            name = PathToUtf8(path.stem());
+            m_rename.extension = PathToUtf8(path.extension());
+        }
+        std::memcpy(m_rename.buffer.data(), name.data(), std::min(name.size(), m_rename.buffer.size() - 1));
+        m_scrollToKey = key;
+    }
+
+    bool ContentBrowserPanel::RenderInlineRename(float width)
+    {
+        ImGui::SetNextItemWidth(std::max(1.0f, width));
+        if (m_rename.focus)
+        {
+            ImGui::SetKeyboardFocusHere();
+            m_rename.focus = false;
+        }
+        const bool submitted = ImGui::InputText("##InlineRename", m_rename.buffer.data(), m_rename.buffer.size(),
+                                                ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        const auto problem = ValidateContentItemName(std::string(m_rename.buffer.data()) + m_rename.extension);
+        if (!problem.empty())
+        {
+            ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                                                GetEditorColorU32(EditorColor::Error), ImGui::GetStyle().FrameRounding, 0, 1.5f);
+            ImGui::SetItemTooltip("%s", problem.c_str());
+        }
+        else if (!m_rename.extension.empty())
+        {
+            ImGui::SetItemTooltip("Extension %s is kept", m_rename.extension.c_str());
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            m_rename = {};
+            return true;
+        }
+        if (submitted || ImGui::IsItemDeactivated())
+        {
+            Defer([this]() { CommitRename(); });
+            return true;
+        }
+        return false;
+    }
+
+    void ContentBrowserPanel::CommitRename()
+    {
+        if (m_rename.key.empty())
+        {
+            return;
+        }
+        const auto key = m_rename.key;
+        std::string name = m_rename.buffer.data();
+        const auto extension = m_rename.extension;
+        m_rename = {};
+        // Typing the extension again must not double it.
+        const auto endsWithExtension = name.size() >= extension.size() &&
+            std::equal(extension.rbegin(), extension.rend(), name.rbegin(), [](char a, char b)
+                       { return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b)); });
+        if (!extension.empty() && !endsWithExtension) name += extension;
+
+        const auto *project = EditorShell::GetInstance().GetProject();
+        const auto path = PathForKey(key);
+        if (!project || name == PathToUtf8(path.filename()))
+        {
+            return;
+        }
+        ApplyReport(ContentFileOperations(*project).Rename(path, name), "Renamed to " + name + ".");
+    }
+
+    // ---------------------------------------------------------------------
+    // Toolbar, tree and status
+
+    void ContentBrowserPanel::RenderAddMenu()
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        CommandMenuItem(ContentCommand::NewFolder, SelectionScope(), icons::FolderPlus);
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Rendering"))
+        {
+            if (ImGui::MenuItem("Material"))
+            {
+                m_newMaterialNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreateMaterial;
+            }
+            if (ImGui::MenuItem("Surface Response"))
+            {
+                m_newSurfaceNameBuffer.fill(0);
+                m_pendingMenuAction = PendingMenuAction::CreateSurfaceResponse;
+            }
+            if (ImGui::MenuItem("Particle System"))
+            {
+                m_newParticleSystemNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreateParticleSystem;
+            }
+            if (ImGui::MenuItem("Post Process Preset"))
+            {
+                m_newPostProcessPresetNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreatePostProcessPreset;
+            }
+            if (ImGui::MenuItem("Render Texture"))
+            {
+                m_newRenderTextureNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreateRenderTexture;
+            }
+            if (ImGui::MenuItem("Shader Graph"))
+            {
+                m_newShaderGraphNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreateShaderGraph;
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Animation"))
+        {
+            if (ImGui::MenuItem("Animation Graph"))
+            {
+                m_newAnimationGraphNameBuffer.fill('\0');
+                m_pendingMenuAction = PendingMenuAction::CreateAnimationGraph;
+            }
+            ImGui::EndMenu();
+        }
+        if (ImGui::MenuItem("Scriptable Object"))
+        {
+            m_newScriptableObjectNameBuffer.fill('\0');
+            m_newScriptableObjectClassIndex = 0;
+            m_pendingMenuAction = PendingMenuAction::CreateScriptableObject;
+        }
+        if (ImGui::MenuItem("Loading Screen")) editorShell.OpenLoadingScreenAsset({});
+        if (ImGui::MenuItem("RmlUi Document"))
+        {
+            m_newRmlDocumentNameBuffer.fill('\0');
+            m_rmlDocumentCreateError.clear();
+            m_pendingMenuAction = PendingMenuAction::CreateRmlDocument;
+        }
+        if (ImGui::MenuItem("Input Mapping"))
+        {
+            m_newInputMappingNameBuffer.fill('\0');
+            m_pendingMenuAction = PendingMenuAction::CreateInputMapping;
+        }
+        if (ImGui::BeginMenu("Import"))
+        {
+            if (ImGui::MenuItem("3D Model..."))
+            {
+                m_pendingMenuAction = PendingMenuAction::ImportModel;
+            }
+            ImGui::TextDisabled("Or drop files onto the editor window.");
+            ImGui::EndMenu();
+        }
+    }
+
+    void ContentBrowserPanel::RenderToolbar(assets::Project &project)
+    {
+        const auto scope = SelectionScope();
+        // Single toolbar row: navigation and actions, breadcrumb path, then search and view options aligned right.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 3.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, ImGui::GetStyle().ItemSpacing.y));
+        const auto toolButton = [&](const char *id, const char *icon, ContentCommand command)
+        {
+            const auto &info = GetContentCommandInfo(command);
+            ImGui::BeginDisabled(!CanExecute(command, scope));
+            ImGui::PushID(id);
+            if (ImGui::Button(icon)) Execute(command, scope);
+            ImGui::PopID();
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip(info.shortcutText ? "%s (%s)" : "%s", info.label, info.shortcutText);
+            ImGui::SameLine();
+        };
+        toolButton("Back", icons::ArrowLeft, ContentCommand::GoBack);
+        toolButton("Forward", icons::ArrowRight, ContentCommand::GoForward);
+        toolButton("Up", icons::ArrowUp, ContentCommand::GoUp);
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::Button((std::string(icons::Plus) + " Add").c_str()))
+        {
+            ImGui::OpenPopup("ContentBrowserAddMenu");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create a folder or asset, or import files");
+        ImGui::SameLine();
+        toolButton("NewFolder", icons::FolderPlus, ContentCommand::NewFolder);
+        toolButton("Refresh", icons::Rotate, ContentCommand::Refresh);
+        ImGui::SameLine(0.0f, 10.0f);
+
+        const float toolbarSpacing = ImGui::GetStyle().ItemSpacing.x;
+        const float scaleWidth = 64.0f;
+        const float iconButtonWidth = ImGui::GetFrameHeight() + 6.0f;
+        const float searchWidth = std::clamp(ImGui::GetContentRegionAvail().x * 0.3f, 120.0f, 280.0f);
+        const float rightGroupX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - searchWidth - scaleWidth -
+                                  iconButtonWidth * 2.0f - toolbarSpacing * 3.0f;
+        {
+            const ImVec2 breadcrumbMin = ImGui::GetCursorScreenPos();
+            const ImVec2 breadcrumbMax(breadcrumbMin.x + std::max(0.0f, rightGroupX - ImGui::GetCursorPosX() - 10.0f),
+                                       breadcrumbMin.y + ImGui::GetFrameHeight());
+            ImGui::PushClipRect(breadcrumbMin, breadcrumbMax, true);
+            ImGui::PushStyleColor(ImGuiCol_Button, IM_COL32(0, 0, 0, 0));
+            const auto crumb = [&](const char *label, const std::string &folder, bool current)
+            {
+                if (current)
+                {
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextUnformatted(label);
+                    return;
+                }
+                if (ImGui::Button(label)) Execute(ContentCommand::Open, {.keys = {FolderKey(folder)}, .folder = folder});
+                AcceptDropsInto(folder);
+            };
+            const auto crumbSeparator = []()
+            {
+                ImGui::SameLine(0.0f, 2.0f);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextDisabled("/");
+                ImGui::SameLine(0.0f, 2.0f);
+            };
+            crumb("Assets", {}, m_selectedFolder.empty() && m_openModelReference.empty());
+            std::string breadcrumb;
+            std::size_t partStart = 0;
+            while (partStart < m_selectedFolder.size())
+            {
+                const auto partEnd = m_selectedFolder.find('/', partStart);
+                const std::string label = m_selectedFolder.substr(partStart, partEnd == std::string::npos ? std::string::npos : partEnd - partStart);
+                breadcrumb = JoinContentFolder(breadcrumb, label);
+                crumbSeparator();
+                ImGui::PushID(breadcrumb.c_str());
+                crumb(label.c_str(), breadcrumb, partEnd == std::string::npos && m_openModelReference.empty());
+                ImGui::PopID();
+                if (partEnd == std::string::npos) break;
+                partStart = partEnd + 1;
+            }
+            if (!m_openModelReference.empty())
+            {
+                crumbSeparator();
+                crumb(m_openModelName.c_str(), {}, true);
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopClipRect();
+        }
+
+        ImGui::SameLine(rightGroupX);
+        ImGui::SetNextItemWidth(searchWidth);
+        ImGui::InputTextWithHint("##ContentFilter", (std::string(icons::Search) + "  Search assets...").c_str(),
+                                 m_filterBuffer.data(), m_filterBuffer.size());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Searches names and types in this folder and its subfolders.\nAssets: %zu",
+                              project.GetManifest().assetEntries.size());
+
+        ImGui::SameLine();
+        if (ImGui::Button(m_sortOrder.ascending ? icons::SortAscending : icons::SortDescending, ImVec2(iconButtonWidth, 0.0f)))
+            ImGui::OpenPopup("ContentBrowserSortMenu");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Sort by %s (%s)", GetContentSortKeyName(m_sortOrder.key).data(),
+                              m_sortOrder.ascending ? "ascending" : "descending");
+        if (ImGui::BeginPopup("ContentBrowserSortMenu"))
+        {
+            for (const auto key : {ContentSortKey::Name, ContentSortKey::Type, ContentSortKey::Modified, ContentSortKey::Size})
+            {
+                if (ImGui::MenuItem(GetContentSortKeyName(key).data(), nullptr, m_sortOrder.key == key))
+                {
+                    m_sortOrder.key = key;
+                    m_itemsDirty = true;
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Ascending", nullptr, m_sortOrder.ascending)) { m_sortOrder.ascending = true; m_itemsDirty = true; }
+            if (ImGui::MenuItem("Descending", nullptr, !m_sortOrder.ascending)) { m_sortOrder.ascending = false; m_itemsDirty = true; }
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+        const bool grid = m_viewMode == ViewMode::Grid;
+        if (ImGui::Button(grid ? icons::ListView : icons::GridView, ImVec2(iconButtonWidth, 0.0f)))
+            m_viewMode = grid ? ViewMode::List : ViewMode::Grid;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip(grid ? "Switch to list view" : "Switch to grid view");
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!grid);
+        ImGui::SetNextItemWidth(scaleWidth);
+        ImGui::SliderFloat("##AssetGridScale", &m_assetGridScale, 0.5f, 1.5f, "%.2fx");
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Asset grid scale (thumbnails, labels, padding and spacing)");
+        ImGui::PopStyleVar(2);
+        if (ImGui::BeginPopup("ContentBrowserAddMenu"))
+        {
+            RenderAddMenu();
+            ImGui::EndPopup();
+        }
+    }
+
+    void ContentBrowserPanel::RenderFolderTree(const assets::Project &project)
+    {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImGui::GetColorU32(ImGuiCol_FrameBg, 0.45f));
+        ImGui::BeginChild("FolderTree", ImVec2(m_folderTreeWidth, 0.0f), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoNavInputs);
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        const ImGuiTreeNodeFlags rootFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow |
+                                             ImGuiTreeNodeFlags_SpanAvailWidth |
+                                             (m_selectedFolder.empty() ? ImGuiTreeNodeFlags_Selected : 0);
+        const bool rootOpen = ImGui::TreeNodeEx("AssetsRoot", rootFlags, "%s  Assets", icons::FolderOpen);
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) NavigateTo({});
+        AcceptDropsInto({});
+        if (ImGui::BeginPopupContextItem("FolderTreeRootContext"))
+        {
+            RenderFolderContextMenu({});
+            ImGui::EndPopup();
+        }
+        if (rootOpen)
+        {
+            for (const int index : m_cachedRootFolderIndices)
+            {
+                if (index >= 0 && static_cast<std::size_t>(index) < m_cachedFolders.size())
+                    RenderFolderTreeNode(project, static_cast<std::size_t>(index));
+            }
+            ImGui::TreePop();
+        }
+        m_revealFolderInTree = false;
+        ImGui::EndChild();
+    }
+
+    void ContentBrowserPanel::RenderFolderTreeNode(const assets::Project &project, std::size_t folderIndex)
+    {
+        const auto &folder = m_cachedFolders[folderIndex];
+        const auto &children = m_cachedFolderChildIndices[folderIndex];
+        const auto key = FolderKey(folder);
+        const bool selected = folder == m_selectedFolder;
+        const bool renaming = m_rename.key == key;
+        // Opening the path to the current folder keeps it visible after navigation.
+        if (m_revealFolderInTree && folder != m_selectedFolder && IsContentFolderAncestorOrSelf(folder, m_selectedFolder))
+        {
+            ImGui::SetNextItemOpen(true);
+        }
+        const ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
+                                         (renaming ? 0 : ImGuiTreeNodeFlags_SpanAvailWidth) |
+                                         (selected ? ImGuiTreeNodeFlags_Selected : 0) |
+                                         (children.empty() ? ImGuiTreeNodeFlags_Leaf : 0);
+        const bool cut = m_clipboardCut && std::find(m_clipboardKeys.begin(), m_clipboardKeys.end(), key) != m_clipboardKeys.end();
+        ImGui::PushID(folder.c_str());
+        if (cut) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * kCutAlpha);
+        bool open = false;
+        if (renaming)
+        {
+            open = ImGui::TreeNodeEx("##Folder", flags, "%s", selected ? icons::FolderOpen : icons::Folder);
+            ImGui::SameLine();
+            RenderInlineRename(ImGui::GetContentRegionAvail().x);
+        }
+        else
+        {
+            open = ImGui::TreeNodeEx("##Folder", flags, "%s  %s", selected ? icons::FolderOpen : icons::Folder,
+                                     m_cachedFolderLabels[folderIndex].c_str());
+            if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) NavigateTo(folder);
+            const ContentItem item{.folder = true, .key = key, .folderPath = folder, .name = m_cachedFolderLabels[folderIndex],
+                                   .typeName = "Folder", .editable = IsKeyEditable(key)};
+            HandleItemDragSource(item);
+            AcceptDropsInto(folder);
+            if (ImGui::BeginPopupContextItem("FolderTreeContext"))
+            {
+                RenderFolderContextMenu(folder);
+                ImGui::EndPopup();
+            }
+        }
+        if (cut) ImGui::PopStyleVar();
+        if (open)
+        {
+            for (const int child : children)
+            {
+                if (child >= 0 && static_cast<std::size_t>(child) < m_cachedFolders.size())
+                    RenderFolderTreeNode(project, static_cast<std::size_t>(child));
+            }
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
+
+    void ContentBrowserPanel::RenderStatusBar()
+    {
+        ImGui::Separator();
+        std::string status;
+        if (!m_openModelReference.empty())
+        {
+            status = std::to_string(m_openModelObjects.size()) + " objects in " + m_openModelName;
+        }
+        else
+        {
+            status = std::to_string(m_items.size()) + (m_items.size() == 1 ? " item" : " items");
+            if (!m_selection.Empty()) status += "   " + std::to_string(m_selection.Size()) + " selected";
+            if (!m_itemsFilter.empty()) status += "   matching \"" + m_itemsFilter + "\"";
+        }
+        if (!m_clipboardKeys.empty())
+            status += "   " + std::to_string(m_clipboardKeys.size()) + (m_clipboardCut ? " cut" : " copied");
+        ImGui::TextDisabled("%s", status.c_str());
+    }
+
+    // ---------------------------------------------------------------------
+    // Item views
+
+    void ContentBrowserPanel::HandleItemInteraction(assets::Project &project, const ContentItem &item)
+    {
+        (void)project;
+        const ImGuiIO &io = ImGui::GetIO();
+        const bool selected = m_selection.Contains(item.key);
+        const bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+        {
+            if (io.KeyShift || io.KeyCtrl)
+                m_selection.Click(item.key, io.KeyCtrl, io.KeyShift, ShownKeys());
+            else if (selected && m_selection.Size() > 1)
+                m_releaseSelectKey = item.key;
+            else
+                m_selection.Select(item.key);
+            SyncDetailsSelection();
+        }
+        if (m_releaseSelectKey == item.key && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+        {
+            if (hovered)
+            {
+                m_selection.Select(item.key);
+                SyncDetailsSelection();
+            }
+            m_releaseSelectKey.clear();
+        }
+        // Context actions apply to the item under the cursor.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && !selected)
+        {
+            m_selection.Select(item.key);
+            SyncDetailsSelection();
+        }
+        if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        {
+            Execute(ContentCommand::Open, {.keys = {item.key}, .folder = m_selectedFolder});
+        }
+        HandleItemDragSource(item);
+        if (item.folder)
+        {
+            AcceptDropsInto(item.folderPath);
+            if (hovered)
+            {
+                m_hoveredFolder = item.folderPath;
+                m_hoveringFolderItem = true;
+            }
+        }
+        if (ImGui::BeginPopupContextItem("ItemContext"))
+        {
+            RenderItemContextMenu(project, item);
+            ImGui::EndPopup();
+        }
+        if (hovered && !ImGui::GetDragDropPayload())
+        {
+            if (item.folder)
+                ImGui::SetTooltip("%s\nFolder: %s", item.name.c_str(), item.folderPath.c_str());
+            else
+                ImGui::SetTooltip("%s\n%s\n%s   %s", item.name.c_str(), item.key.c_str(), FormatContentSize(item.size).c_str(),
+                                  FormatContentTimestamp(item.modified).c_str());
+        }
+    }
+
+    void ContentBrowserPanel::HandleItemDragSource(const ContentItem &item)
+    {
+        if (!ImGui::BeginDragDropSource())
+        {
+            return;
+        }
+        m_releaseSelectKey.clear();
+        if (item.folder)
+            ImGui::SetDragDropPayload(kContentBrowserFolderDragDropPayload, item.folderPath.c_str(), item.folderPath.size() + 1);
+        else
+            ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, item.key.c_str(), item.key.size() + 1);
+        const std::size_t count = m_selection.Contains(item.key) ? m_selection.Size() : 1;
+        ImGui::Text("%s  %s", item.folder ? icons::Folder : GetAssetTypeIcon(item.type).glyph, item.name.c_str());
+        if (count > 1) ImGui::TextDisabled("+%zu more", count - 1);
+        ImGui::TextDisabled(ImGui::GetIO().KeyCtrl ? "Drop on a folder to copy" : "Drop on a folder to move (Ctrl to copy)");
+        ImGui::EndDragDropSource();
+    }
+
+    void ContentBrowserPanel::AcceptDropsInto(const std::string &folder)
+    {
+        if (!ImGui::BeginDragDropTarget())
+        {
+            return;
+        }
+        std::string draggedKey;
+        if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
+            draggedKey.assign(static_cast<const char *>(payload->Data), payload->DataSize > 0 ? payload->DataSize - 1 : 0);
+        else if (const ImGuiPayload *folderPayload = ImGui::AcceptDragDropPayload(kContentBrowserFolderDragDropPayload))
+            draggedKey = FolderKey(std::string(static_cast<const char *>(folderPayload->Data),
+                                               folderPayload->DataSize > 0 ? folderPayload->DataSize - 1 : 0));
+        if (!draggedKey.empty() && draggedKey != FolderKey(folder))
+        {
+            // Dragging part of the selection moves the whole selection.
+            const auto keys = m_selection.Contains(draggedKey) ? m_selection.Keys() : std::vector<std::string>{draggedKey};
+            MoveOrCopyInto(keys, folder, ImGui::GetIO().KeyCtrl);
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    void ContentBrowserPanel::RenderItemContextMenu(assets::Project &project, const ContentItem &item)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        const auto scope = SelectionScope();
+        const bool single = scope.keys.size() <= 1;
+        CommandMenuItem(ContentCommand::Open, scope);
+        if (!item.folder && single)
+        {
+            const auto &asset = project.GetManifest().assetEntries[static_cast<std::size_t>(item.assetIndex)];
+            if ((asset.type == assets::ProjectAssetType::Model || asset.type == assets::ProjectAssetType::Mesh) &&
+                ImGui::MenuItem("Add to Scene", nullptr, false, editorShell.GetScene() && !editorShell.GetEngine().IsRuntimeRunning()))
+                AddAssetInFrontOfCamera(asset.reference);
+            if (project.ResolveAssetReference(asset.reference).extension() == ".rml" && ImGui::MenuItem("Open in UI Editor"))
+                editorShell.OpenRmlDocument(asset.reference);
+            if (ImGui::MenuItem("Find References..."))
+            {
+                if (!m_referenceSearch) m_referenceSearch = std::make_unique<AssetReferenceSearchPanel>();
+                m_referenceSearch->Open(project.GetAssetDirectoryPath(), asset.reference);
+            }
+            if (asset.type == assets::ProjectAssetType::Prefab && ImGui::MenuItem("Export as Static Mesh"))
+            {
+                const auto prefab = asset;
+                Defer([this, prefab]()
+                      {
+                          auto &shell = EditorShell::GetInstance();
+                          auto *currentProject = shell.GetProject();
+                          std::string outputReference, exportError;
+                          if (currentProject && ExportPrefabMesh(*currentProject, prefab, m_selectedFolder, &outputReference, &exportError))
+                          {
+                              shell.RefreshProjectAssets();
+                              m_assetCacheDirty = true;
+                              shell.MarkProjectDirty();
+                              shell.Log(EditorShell::ConsoleSeverity::Info, "Exported prefab mesh: " + outputReference);
+                          }
+                          else if (!exportError.empty()) shell.Log(EditorShell::ConsoleSeverity::Error, exportError);
+                      });
+            }
+        }
+        ImGui::Separator();
+        CommandMenuItem(ContentCommand::Cut, scope, icons::Cut);
+        CommandMenuItem(ContentCommand::Copy, scope, icons::Copy);
+        CommandMenuItem(ContentCommand::Paste, {.keys = {}, .folder = item.folder ? item.folderPath : m_selectedFolder}, icons::Paste);
+        CommandMenuItem(ContentCommand::Duplicate, scope);
+        CommandMenuItem(ContentCommand::Rename, scope, icons::Rename);
+        CommandMenuItem(ContentCommand::Delete, scope, icons::Trash);
+        ImGui::Separator();
+        CommandMenuItem(ContentCommand::RevealInFileManager, scope, icons::FolderOpen);
+        if (!item.folder) CommandMenuItem(ContentCommand::OpenWithSystem, scope, icons::OpenExternal);
+        CommandMenuItem(ContentCommand::CopyPath, scope, icons::Link);
+        if (!item.folder) CommandMenuItem(ContentCommand::CopyReference, scope);
+        if (!item.editable && !item.folder)
+        {
+            ImGui::Separator();
+            ImGui::TextDisabled(assets::Project::IsEngineAssetReference(item.key) ? "Engine assets are read-only."
+                                                                                   : "Generated assets are managed by their importer.");
+        }
+    }
+
+    void ContentBrowserPanel::RenderFolderContextMenu(const std::string &folder)
+    {
+        const CommandScope scope{.keys = folder.empty() ? std::vector<std::string>{} : std::vector<std::string>{FolderKey(folder)},
+                                 .folder = folder};
+        const CommandScope inside{.keys = {}, .folder = folder};
+        if (!folder.empty()) CommandMenuItem(ContentCommand::Open, scope);
+        CommandMenuItem(ContentCommand::NewFolder, inside, icons::FolderPlus);
+        CommandMenuItem(ContentCommand::Paste, inside, icons::Paste);
+        if (!folder.empty())
+        {
+            ImGui::Separator();
+            CommandMenuItem(ContentCommand::Cut, scope, icons::Cut);
+            CommandMenuItem(ContentCommand::Copy, scope, icons::Copy);
+            CommandMenuItem(ContentCommand::Duplicate, scope);
+            CommandMenuItem(ContentCommand::Rename, scope, icons::Rename);
+            CommandMenuItem(ContentCommand::Delete, scope, icons::Trash);
+        }
+        ImGui::Separator();
+        CommandMenuItem(ContentCommand::RevealInFileManager, scope, icons::FolderOpen);
+        CommandMenuItem(ContentCommand::CopyPath, scope, icons::Link);
+    }
+
+    void ContentBrowserPanel::RenderBackgroundContextMenu()
+    {
+        if (!ImGui::BeginPopupContextWindow("ContentBrowserContextMenu", ImGuiPopupFlags_NoOpenOverItems | ImGuiPopupFlags_MouseButtonRight))
+        {
+            return;
+        }
+        const CommandScope here{.keys = {}, .folder = m_selectedFolder};
+        CommandMenuItem(ContentCommand::Paste, here, icons::Paste);
+        CommandMenuItem(ContentCommand::SelectAll, here);
+        ImGui::Separator();
+        RenderAddMenu();
+        ImGui::Separator();
+        CommandMenuItem(ContentCommand::RevealInFileManager, here, icons::FolderOpen);
+        CommandMenuItem(ContentCommand::CopyPath, here, icons::Link);
+        ImGui::EndPopup();
+    }
+
+    void ContentBrowserPanel::RenderItemGrid(assets::Project &project)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        const auto metrics = BeginCardGrid(m_assetGridScale);
+        m_gridColumns = metrics.columns;
+        if (!m_itemsFilter.empty())
+        {
+            ImGui::TextDisabled("Search results in %s", m_selectedFolder.empty() ? "Assets" : m_selectedFolder.c_str());
+        }
+        if (m_items.empty())
+        {
+            ImGui::TextDisabled(m_itemsFilter.empty() ? "This folder is empty. Right-click to create something, or drop files here."
+                                                      : "No matching assets.");
+        }
+
+        const auto &assets = project.GetManifest().assetEntries;
+        const int rowCount = static_cast<int>((m_items.size() + static_cast<std::size_t>(metrics.columns) - 1) /
+                                              static_cast<std::size_t>(metrics.columns));
+        int scrollRow = -1;
+        if (!m_scrollToKey.empty())
+        {
+            const auto it = std::find_if(m_items.begin(), m_items.end(), [&](const ContentItem &item) { return item.key == m_scrollToKey; });
+            if (it != m_items.end()) scrollRow = static_cast<int>(it - m_items.begin()) / metrics.columns;
+        }
+
+        if (ImGui::BeginTable("AssetIconGrid", metrics.columns, ImGuiTableFlags_SizingFixedFit))
+        {
+            for (int column = 0; column < metrics.columns; ++column)
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, metrics.width);
+            ImGuiListClipper clipper;
+            clipper.Begin(rowCount);
+            if (scrollRow >= 0) clipper.IncludeItemByIndex(scrollRow);
+            while (clipper.Step())
+            {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, metrics.height);
+                    for (int column = 0; column < metrics.columns; ++column)
+                    {
+                        const std::size_t index = static_cast<std::size_t>(row) * static_cast<std::size_t>(metrics.columns) +
+                                                  static_cast<std::size_t>(column);
+                        if (index >= m_items.size()) break;
+                        ImGui::TableSetColumnIndex(column);
+                        const ContentItem &item = m_items[index];
+                        const bool selected = m_selection.Contains(item.key);
+                        const bool cut = m_clipboardCut &&
+                                         std::find(m_clipboardKeys.begin(), m_clipboardKeys.end(), item.key) != m_clipboardKeys.end();
+                        const float alpha = cut ? kCutAlpha : 1.0f;
+                        const bool renaming = m_rename.key == item.key;
+                        ImGui::PushID(item.key.c_str());
+                        // The rename field sits on top of the card and must receive its clicks.
+                        if (renaming) ImGui::SetNextItemAllowOverlap();
+                        ImGui::InvisibleButton("Card", ImVec2(metrics.width, metrics.height));
+                        const bool hovered = ImGui::IsItemHovered();
+                        DrawCardBackground(metrics, selected, hovered);
+                        const ImVec2 minimum = ImGui::GetItemRectMin();
+                        if (item.folder)
+                        {
+                            // Folders have no preview frame, so the icon and name are centred together as one group.
+                            const FittedIcon folderIcon = FitIcon(icons::Folder, ImVec2(metrics.previewSize * 0.86f, metrics.previewSize * 0.86f));
+                            const float groupHeight = folderIcon.size.y + metrics.labelGap + ImGui::GetTextLineHeight();
+                            const float iconTop = minimum.y + std::floor((metrics.height - groupHeight) * 0.5f);
+                            ImU32 folderColor = kFolderColor;
+                            if (cut) folderColor = (folderColor & ~IM_COL32_A_MASK) | (static_cast<ImU32>(255 * kCutAlpha) << IM_COL32_A_SHIFT);
+                            DrawFittedIcon(ImGui::GetWindowDrawList(), icons::Folder, folderIcon,
+                                           ImVec2(minimum.x + (metrics.width - folderIcon.size.x) * 0.5f, iconTop), folderColor);
+                            if (!renaming)
+                                DrawCenteredCardText(ImGui::GetWindowDrawList(), item.name, minimum.x + metrics.inset, metrics.textWidth,
+                                                     iconTop + folderIcon.size.y + metrics.labelGap, ImGui::GetColorU32(ImGuiCol_Text, alpha));
+                        }
+                        else
+                        {
+                            const auto &asset = assets[static_cast<std::size_t>(item.assetIndex)];
+                            DrawAssetPreview(metrics, m_thumbnailCache->Get(project, editorShell.GetEngine(), asset), item.type, alpha);
+                            DrawCardLabels(metrics, item.name, item.typeName, alpha, !renaming);
+                        }
+                        if (item.key == m_scrollToKey)
+                        {
+                            if (!ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);
+                            m_scrollToKey.clear();
+                        }
+                        HandleItemInteraction(project, item);
+                        if (renaming)
+                        {
+                            ImGui::SetCursorScreenPos(ImVec2(minimum.x + metrics.inset / 2.0f, minimum.y + metrics.labelTop - 2.0f));
+                            RenderInlineRename(metrics.width - metrics.inset);
+                        }
+                        ImGui::PopID();
+                    }
+                }
+            }
+            ImGui::EndTable();
+        }
+        EndCardGrid();
+        HandleArrowNavigation();
+    }
+
+    void ContentBrowserPanel::RenderItemList(assets::Project &project)
+    {
+        constexpr ImGuiTableFlags flags = ImGuiTableFlags_Sortable | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp;
+        m_gridColumns = 1;
+        if (!ImGui::BeginTable("ContentList", 4, flags, ImGui::GetContentRegionAvail()))
+        {
+            return;
+        }
+        ImGui::TableSetupScrollFreeze(0, 1);
+        const auto sortFlags = [this](ContentSortKey key)
+        { return m_sortOrder.key == key ? ImGuiTableColumnFlags_DefaultSort : ImGuiTableColumnFlags_None; };
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch | sortFlags(ContentSortKey::Name), 3.0f, static_cast<ImGuiID>(ContentSortKey::Name));
+        ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthStretch | sortFlags(ContentSortKey::Type), 1.2f, static_cast<ImGuiID>(ContentSortKey::Type));
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthStretch | sortFlags(ContentSortKey::Size), 0.8f, static_cast<ImGuiID>(ContentSortKey::Size));
+        ImGui::TableSetupColumn("Date Modified", ImGuiTableColumnFlags_WidthStretch | sortFlags(ContentSortKey::Modified), 1.4f, static_cast<ImGuiID>(ContentSortKey::Modified));
+        ImGui::TableHeadersRow();
+
+        // Headers and the toolbar's sort menu share one sort order.
+        if (ImGuiTableSortSpecs *specs = ImGui::TableGetSortSpecs())
+        {
+            if (specs->SpecsDirty && specs->SpecsCount > 0)
+            {
+                m_sortOrder = {static_cast<ContentSortKey>(specs->Specs[0].ColumnUserID),
+                               specs->Specs[0].SortDirection != ImGuiSortDirection_Descending};
+                m_itemsDirty = true;
+                specs->SpecsDirty = false;
+            }
+            else if (specs->SpecsCount > 0 &&
+                     (static_cast<ContentSortKey>(specs->Specs[0].ColumnUserID) != m_sortOrder.key ||
+                      (specs->Specs[0].SortDirection != ImGuiSortDirection_Descending) != m_sortOrder.ascending))
+            {
+                // Columns are declared Name, Type, Size, Date Modified.
+                const int column = m_sortOrder.key == ContentSortKey::Name   ? 0
+                                   : m_sortOrder.key == ContentSortKey::Type ? 1
+                                   : m_sortOrder.key == ContentSortKey::Size ? 2
+                                                                             : 3;
+                ImGui::TableSetColumnSortDirection(column, m_sortOrder.ascending ? ImGuiSortDirection_Ascending : ImGuiSortDirection_Descending, false);
+            }
+        }
+
+        const float rowHeight = ImGui::GetFrameHeight();
+        int scrollRow = -1;
+        if (!m_scrollToKey.empty())
+        {
+            const auto it = std::find_if(m_items.begin(), m_items.end(), [&](const ContentItem &item) { return item.key == m_scrollToKey; });
+            if (it != m_items.end()) scrollRow = static_cast<int>(it - m_items.begin());
+        }
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(m_items.size()), rowHeight);
+        if (scrollRow >= 0) clipper.IncludeItemByIndex(scrollRow);
+        while (clipper.Step())
+        {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+            {
+                const ContentItem &item = m_items[static_cast<std::size_t>(row)];
+                const bool selected = m_selection.Contains(item.key);
+                const bool cut = m_clipboardCut && std::find(m_clipboardKeys.begin(), m_clipboardKeys.end(), item.key) != m_clipboardKeys.end();
+                const bool renaming = m_rename.key == item.key;
+                ImGui::PushID(item.key.c_str());
+                ImGui::TableNextRow(ImGuiTableRowFlags_None, rowHeight);
+                ImGui::TableSetColumnIndex(0);
+                if (cut) ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * kCutAlpha);
+                const ImVec2 rowStart = ImGui::GetCursorScreenPos();
+                ImGui::Selectable("##Row", selected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap,
+                                  ImVec2(0.0f, rowHeight));
+                if (item.key == m_scrollToKey)
+                {
+                    if (!ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);
+                    m_scrollToKey.clear();
+                }
+                HandleItemInteraction(project, item);
+
+                const auto icon = item.folder ? AssetTypeIcon{icons::Folder, kFolderColor} : GetAssetTypeIcon(item.type);
+                auto *drawList = ImGui::GetWindowDrawList();
+                const float textY = rowStart.y + (rowHeight - ImGui::GetTextLineHeight()) * 0.5f;
+                drawList->AddText(ImVec2(rowStart.x + 2.0f, textY), icon.color, icon.glyph);
+                const float nameX = rowStart.x + ImGui::GetFontSize() * 1.6f;
+                if (renaming)
+                {
+                    ImGui::SetCursorScreenPos(ImVec2(nameX, rowStart.y));
+                    RenderInlineRename(ImGui::GetContentRegionAvail().x);
+                }
+                else
+                {
+                    drawList->AddText(ImVec2(nameX, textY), ImGui::GetColorU32(ImGuiCol_Text), item.name.c_str());
+                }
+                const auto cell = [&](int column, const std::string &text)
+                {
+                    ImGui::TableSetColumnIndex(column);
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextDisabled("%s", text.c_str());
+                };
+                cell(1, item.typeName);
+                cell(2, item.folder ? std::string{} : FormatContentSize(item.size));
+                cell(3, FormatContentTimestamp(item.modified));
+                if (cut) ImGui::PopStyleVar();
+                ImGui::PopID();
+            }
+        }
+        // The list scrolls inside the table, so its empty space hosts the background menu.
+        RenderBackgroundContextMenu();
+        ImGui::EndTable();
+        HandleArrowNavigation();
+    }
+
+    void ContentBrowserPanel::RenderModelObjectGrid(assets::Project &project)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        const auto metrics = BeginCardGrid(m_assetGridScale);
+        const int rowCount = static_cast<int>((m_openModelObjects.size() + static_cast<std::size_t>(metrics.columns) - 1) /
+                                              static_cast<std::size_t>(metrics.columns));
+        if (ImGui::BeginTable("ModelObjectGrid", metrics.columns, ImGuiTableFlags_SizingFixedFit))
+        {
+            for (int column = 0; column < metrics.columns; ++column)
+                ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, metrics.width);
+            ImGuiListClipper clipper;
+            clipper.Begin(rowCount);
+            while (clipper.Step())
+            {
+                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+                {
+                    ImGui::TableNextRow(ImGuiTableRowFlags_None, metrics.height);
+                    for (int column = 0; column < metrics.columns; ++column)
+                    {
+                        const std::size_t index = static_cast<std::size_t>(row) * static_cast<std::size_t>(metrics.columns) +
+                                                  static_cast<std::size_t>(column);
+                        if (index >= m_openModelObjects.size()) break;
+                        ImGui::TableSetColumnIndex(column);
+                        const auto &object = m_openModelObjects[index];
+                        const assets::ProjectAssetEntry asset{.reference = object.reference, .type = object.type};
+                        ImGui::PushID(static_cast<int>(index));
+                        ImGui::InvisibleButton("ModelObjectCard", ImVec2(metrics.width, metrics.height));
+                        const bool hovered = ImGui::IsItemHovered();
+                        DrawCardBackground(metrics, false, hovered);
+                        DrawAssetPreview(metrics, m_thumbnailCache->Get(project, editorShell.GetEngine(), asset), object.type, 1.0f);
+                        DrawCardLabels(metrics, object.name, std::string(assets::Project::GetAssetTypeName(object.type)), 1.0f);
+                        if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, project, asset);
+                        if (ImGui::BeginDragDropSource())
+                        {
+                            ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, object.reference.c_str(), object.reference.size() + 1);
+                            ImGui::TextUnformatted(object.name.c_str());
+                            ImGui::EndDragDropSource();
+                        }
+                        if (ImGui::BeginPopupContextItem("ModelObjectContext"))
+                        {
+                            if (object.type == assets::ProjectAssetType::Mesh &&
+                                ImGui::MenuItem("Add to Scene", nullptr, false, editorShell.GetScene() && !editorShell.GetEngine().IsRuntimeRunning()))
+                                AddAssetInFrontOfCamera(object.reference);
+                            const char *extractLabel = object.type == assets::ProjectAssetType::Material ? "Extract and Use" : "Extract";
+                            if (ImGui::MenuItem(extractLabel))
+                            {
+                                const auto extracted = object;
+                                Defer([this, extracted]()
+                                      {
+                                          auto &shell = EditorShell::GetInstance();
+                                          auto *currentProject = shell.GetProject();
+                                          std::string extractedReference, extractionError;
+                                          if (currentProject && ExtractModelSubAsset(*currentProject, extracted, m_selectedFolder, &extractedReference, &extractionError))
+                                          {
+                                              shell.RefreshProjectAssets();
+                                              m_assetCacheDirty = true;
+                                              shell.MarkProjectDirty();
+                                              shell.Log(EditorShell::ConsoleSeverity::Info, "Extracted model sub-asset: " + extractedReference);
+                                          }
+                                          else if (!extractionError.empty()) shell.Log(EditorShell::ConsoleSeverity::Error, extractionError);
+                                      });
+                            }
+                            ImGui::EndPopup();
+                        }
+                        if (hovered) ImGui::SetTooltip("%s\n%s\nRight-click to extract", object.name.c_str(), object.reference.c_str());
+                        ImGui::PopID();
+                    }
+                }
+            }
+            ImGui::EndTable();
+        }
+        EndCardGrid();
+    }
+
+    // ---------------------------------------------------------------------
+    // Keyboard, OS drops and confirmation
+
+    void ContentBrowserPanel::HandleShortcuts(assets::Project &project)
+    {
+        (void)project;
+        const ImGuiIO &io = ImGui::GetIO();
+        if (!HasKeyboardFocus() || io.WantTextInput || !m_rename.key.empty() ||
+            ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+        {
+            return;
+        }
+        const auto scope = SelectionScope();
+        for (const auto &info : GetContentCommands())
+        {
+            if (info.chord != ImGuiKey_None && ImGui::IsKeyChordPressed(info.chord))
+            {
+                Execute(info.command, scope);
+                return;
+            }
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) && !io.KeyCtrl && !io.KeyAlt)
+            Execute(ContentCommand::GoUp, scope);
+        else if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            m_selection.Clear();
+            SyncDetailsSelection();
+        }
+    }
+
+    void ContentBrowserPanel::HandleArrowNavigation()
+    {
+        const ImGuiIO &io = ImGui::GetIO();
+        if (!HasKeyboardFocus() || io.WantTextInput || !m_rename.key.empty() || io.KeyAlt || io.KeyCtrl || m_items.empty())
+        {
+            return;
+        }
+        int step = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) step = m_gridColumns > 1 ? 1 : 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) step = m_gridColumns > 1 ? -1 : 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) step = m_gridColumns;
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) step = -m_gridColumns;
+        const bool home = ImGui::IsKeyPressed(ImGuiKey_Home, false);
+        const bool end = ImGui::IsKeyPressed(ImGuiKey_End, false);
+        if (step == 0 && !home && !end)
+        {
+            return;
+        }
+        const int count = static_cast<int>(m_items.size());
+        int current = -1;
+        if (const auto *primary = m_selection.Primary())
+        {
+            const auto it = std::find_if(m_items.begin(), m_items.end(), [&](const ContentItem &item) { return item.key == *primary; });
+            if (it != m_items.end()) current = static_cast<int>(it - m_items.begin());
+        }
+        int next = home ? 0 : end ? count - 1 : current < 0 ? 0 : std::clamp(current + step, 0, count - 1);
+        const auto &key = m_items[static_cast<std::size_t>(next)].key;
+        if (io.KeyShift)
+            m_selection.Click(key, false, true, ShownKeys());
+        else
+            m_selection.Select(key);
+        m_scrollToKey = key;
+        SyncDetailsSelection();
+    }
+
+    void ContentBrowserPanel::ProcessDroppedFiles(assets::Project &project)
+    {
+        auto &window = EditorShell::GetInstance().GetEngine().GetWindow();
+        if (window.GetDroppedPaths().empty() || !IsOpen() || !m_openModelReference.empty())
+        {
+            return;
+        }
+        // The content browser is the editor's only OS drop target: files land
+        // in the folder under the cursor, or in the current folder.
+        const auto paths = window.GetDroppedPaths();
+        window.ClearDroppedPaths();
+        const auto folder = m_hoveringFolderItem ? m_hoveredFolder : m_selectedFolder;
+        const auto report = ContentFileOperations(project).Import(paths, PathForKey(FolderKey(folder)));
+        ApplyReport(report, "Imported " + std::to_string(report.results.size()) + " item(s) into " +
+                                (folder.empty() ? std::string("Assets") : folder) + ".");
+
+        // Source models also need their import run before they can be used.
+        auto &shell = EditorShell::GetInstance();
+        if (shell.GetEngine().IsRuntimeRunning() || shell.IsModelImportRunning())
+        {
+            return;
+        }
+        for (const auto &imported : report.results)
+        {
+            std::vector<std::filesystem::path> models;
+            std::error_code error;
+            if (std::filesystem::is_directory(imported, error))
+            {
+                for (std::filesystem::recursive_directory_iterator it(imported, error), end; it != end && !error; it.increment(error))
+                    if (it->is_regular_file(error) && IsSupportedModelFile(it->path())) models.push_back(it->path());
+            }
+            else if (IsSupportedModelFile(imported))
+            {
+                models.push_back(imported);
+            }
+            for (const auto &model : models)
+            {
+                const assets::ProjectAssetEntry entry{.reference = project.MakeAssetReference(model), .type = assets::ProjectAssetType::Model};
+                std::string importError;
+                if (ImportSourceModelAsset(project, entry, &importError))
+                    shell.Log(EditorShell::ConsoleSeverity::Info, "Imported model: " + entry.reference);
+                else if (!importError.empty())
+                    shell.Log(EditorShell::ConsoleSeverity::Error, importError);
+            }
+        }
+    }
+
+    void ContentBrowserPanel::RenderDeleteConfirmation(assets::Project &project)
+    {
+        if (m_openDeletePopup)
+        {
+            ImGui::OpenPopup("Delete Content");
+            m_openDeletePopup = false;
+        }
+        if (!ImGui::BeginPopupModal("Delete Content", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            return;
+        }
+        const auto count = m_pendingDeletePaths.size();
+        const bool anyFolder = std::any_of(m_pendingDeletePaths.begin(), m_pendingDeletePaths.end(), [](const std::filesystem::path &path)
+                                           { std::error_code error; return std::filesystem::is_directory(path, error); });
+        if (count == 1)
+            ImGui::TextWrapped("Permanently delete '%s'?", PathToUtf8(m_pendingDeletePaths.front().filename()).c_str());
+        else
+            ImGui::Text("Permanently delete %zu items?", count);
+        constexpr std::size_t kListed = 8;
+        if (count > 1)
+        {
+            for (std::size_t index = 0; index < std::min(count, kListed); ++index)
+                ImGui::BulletText("%s", PathToUtf8(m_pendingDeletePaths[index].filename()).c_str());
+            if (count > kListed) ImGui::TextDisabled("...and %zu more", count - kListed);
+        }
+        if (anyFolder) ImGui::TextDisabled("Folders are deleted with all of their contents.");
+        ImGui::TextDisabled("This cannot be undone. Scenes that use these assets will lose them.");
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, GetEditorColorU32(EditorColor::Error, 0.75f));
+        const bool confirmed = ImGui::Button("Delete") || ImGui::IsKeyPressed(ImGuiKey_Enter, false);
+        ImGui::PopStyleColor();
+        if (confirmed)
+        {
+            const auto report = ContentFileOperations(project).Delete(m_pendingDeletePaths);
+            ApplyReport(report, "Deleted " + std::to_string(report.moved.size()) + " item(s).");
+            m_pendingDeletePaths.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        {
+            m_pendingDeletePaths.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }

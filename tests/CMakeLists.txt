@@ -862,6 +862,13 @@ add_test(NAME PlutoGEModelHierarchyViewTests COMMAND PlutoGEModelHierarchyViewTe
 add_dependencies(PlutoGEAssetPipelineChecks PlutoGEModelHierarchyViewTests)
 
 if(TARGET PlutoGEEditorUI)
+    add_executable(PlutoGEContentBrowserTests ContentBrowserTests.cpp)
+    target_link_libraries(PlutoGEContentBrowserTests PRIVATE PlutoGE::EditorUI)
+    pluto_link_engine(PlutoGEContentBrowserTests)
+    add_test(NAME PlutoGEContentBrowserTests COMMAND PlutoGEContentBrowserTests)
+endif()
+
+if(TARGET PlutoGEEditorUI)
     add_executable(PlutoGESceneHierarchyTests SceneHierarchyTests.cpp)
     target_link_libraries(PlutoGESceneHierarchyTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGESceneHierarchyTests)

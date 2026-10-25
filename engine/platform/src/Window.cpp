@@ -230,6 +230,19 @@ namespace PlutoGE::platform
             instance->m_inputState.mouseState.scrollDeltaX += xOffset;
             instance->m_inputState.mouseState.scrollDeltaY += yOffset; });
 
+        glfwSetDropCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window, int count, const char **paths)
+                            {
+            auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
+            if (!instance)
+            {
+                return;
+            }
+            // GLFW reports UTF-8 paths.
+            for (int index = 0; index < count; ++index)
+            {
+                instance->m_droppedPaths.emplace_back(std::u8string(reinterpret_cast<const char8_t *>(paths[index])));
+            } });
+
         glfwSetWindowCloseCallback(static_cast<GLFWwindow *>(m_window), [](GLFWwindow *window)
                                    {
             auto *instance = static_cast<Window *>(glfwGetWindowUserPointer(window));
@@ -268,6 +281,7 @@ namespace PlutoGE::platform
         RestoreNativeEventRouting(static_cast<GLFWwindow *>(m_window));
 #endif
         m_inputState.BeginFrame();
+        m_droppedPaths.clear();
         glfwPollEvents();
         // The framebuffer is authoritative even when a native resize notification
         // was missed or another integration replaced GLFW's callback. Keep the

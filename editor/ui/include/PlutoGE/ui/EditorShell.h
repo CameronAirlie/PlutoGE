@@ -62,6 +62,7 @@ namespace PlutoGE::ui
 {
     class RmlDocumentEditorPanel;
     class AnimationGraphEditorPanel;
+    class ContentBrowserPanel;
     class ProfilerPanel;
     class ViewportPanel;
     class EditorSceneRenderService;
@@ -501,6 +502,8 @@ namespace PlutoGE::ui
         bool m_openLoadingScreenEditorRequested = false;
         RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
         AnimationGraphEditorPanel *m_animationGraphEditor = nullptr;
+        // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
+        ContentBrowserPanel *m_contentBrowser = nullptr;
         TimelinePreview m_timelinePreview;
         std::string m_runtimeSceneSnapshot;
         SceneGenerationRetention m_runtimeSceneGenerations;

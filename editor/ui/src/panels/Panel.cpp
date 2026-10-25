@@ -6,6 +6,15 @@
 
 namespace PlutoGE::ui
 {
+    bool Panel::HasKeyboardFocus() const
+    {
+        if (!IsOpen() || !ImGui::GetCurrentContext())
+            return false;
+        auto *window = ImGui::FindWindowByName(GetName().c_str());
+        auto *focused = ImGui::GetCurrentContext()->NavWindow;
+        return window && focused && ImGui::IsWindowChildOf(focused, window, true, false);
+    }
+
     namespace
     {
         bool IsHostedInMainViewport()

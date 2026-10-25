@@ -1,8 +1,10 @@
 #pragma once
 
 #include <string>
+#include <filesystem>
 #include <functional>
 #include <array>
+#include <vector>
 #include "PlutoGE/platform/InputState.h"
 
 struct GLFWwindow;
@@ -60,6 +62,10 @@ namespace PlutoGE::platform
         [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }
         [[nodiscard]] bool IsCursorLockOverridden() const { return m_forceCursorVisible; }
         [[nodiscard]] bool IsScriptInputEnabled() const { return m_isScriptInputEnabled; }
+        // Files dropped onto the window from the OS during the last PollEvents.
+        // Valid until the next poll; consumers check where the cursor is.
+        [[nodiscard]] const std::vector<std::filesystem::path> &GetDroppedPaths() const { return m_droppedPaths; }
+        void ClearDroppedPaths() { m_droppedPaths.clear(); }
 
         void SetResizeCallback(const std::function<void(int, int)> &callback);
         void SetCursorLocked(bool locked);
@@ -81,6 +87,7 @@ namespace PlutoGE::platform
         std::array<double, 16> m_rumbleUntil{};
         WindowConfig m_config;
         InputState m_inputState;
+        std::vector<std::filesystem::path> m_droppedPaths;
         GLFWwindow *m_window = nullptr;
         int m_clientWidth = 0;
         int m_clientHeight = 0;

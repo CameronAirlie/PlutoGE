@@ -1007,6 +1007,10 @@ target_include_directories(PlutoGEManagedAssetFieldMetadataTests PRIVATE ${CMAKE
 add_test(NAME PlutoGEManagedAssetFieldMetadataTests COMMAND PlutoGEManagedAssetFieldMetadataTests)
 add_dependencies(PlutoGEAssetPipelineChecks PlutoGEManagedAssetFieldMetadataTests)
 
+add_executable(PlutoGEListEditorTests ListEditorTests.cpp)
+target_include_directories(PlutoGEListEditorTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../editor/ui/include)
+add_test(NAME PlutoGEListEditorTests COMMAND PlutoGEListEditorTests)
+
 if (PLUTOGE_TEST_DOTNET)
     set(PLUTO_ASSET_REFERENCE_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ManagedAssetReferenceProbe")
     add_custom_command(OUTPUT "${PLUTO_ASSET_REFERENCE_PROBE_OUTPUT}/PlutoGE.AssetReferenceProbe.dll"

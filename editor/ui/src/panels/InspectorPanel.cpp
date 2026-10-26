@@ -8,6 +8,7 @@
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
+#include "PlutoGE/ui/ScriptAssetFieldPicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/assets/Project.h"
@@ -742,19 +743,6 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
-        std::string ReadScriptableObjectType(const assets::Project *project, const std::string &reference)
-        {
-            if (!project)
-            {
-                return {};
-            }
-            std::ifstream input(project->ResolveAssetReference(reference));
-            std::string header;
-            std::getline(input, header);
-            constexpr std::string_view prefix = "SCRIPTABLE\t";
-            return header.rfind(prefix, 0) == 0 ? header.substr(prefix.size()) : std::string{};
-        }
-
         std::optional<std::string> AcceptDroppedTextureAssetReference()
         {
             std::optional<std::string> droppedReference;
@@ -1093,10 +1081,47 @@ namespace PlutoGE::ui
             return literal;
         }
 
-        std::optional<std::string> ToCSharpDefaultLiteral(scripting::ScriptFieldType fieldType,
+        // Asset fields always hold reference strings, but only string members can be initialised with one.
+        bool IsStringBackedAssetField(const scripting::ScriptFieldDefinition &field)
+        {
+            switch (field.type)
+            {
+            case scripting::ScriptFieldType::MaterialAsset:
+            case scripting::ScriptFieldType::InputMappingAsset:
+                return true;
+            case scripting::ScriptFieldType::Asset:
+                return field.referenceTypeName == "System.String";
+            default:
+                return false;
+            }
+        }
+
+        std::optional<std::string> ToCSharpDefaultLiteral(const scripting::ScriptFieldDefinition &field,
                                                           const scripting::ScriptFieldValue &value)
         {
-            switch (fieldType)
+            if (field.isArray)
+            {
+                // Collection expressions initialise both T[] and List<T>.
+                const auto &references = std::get<scripting::ScriptReferenceArray>(value);
+                if (references.empty())
+                    return "[]";
+                if (!IsStringBackedAssetField(field))
+                    return std::nullopt;
+                std::string literal = "[";
+                for (std::size_t index = 0; index < references.size(); ++index)
+                    literal += (index ? ", " : "") + EscapeCSharpStringLiteral(references[index]);
+                return literal + "]";
+            }
+
+            if (scripting::IsAssetFieldType(field.type))
+            {
+                const auto &reference = std::get<std::string>(value);
+                if (IsStringBackedAssetField(field))
+                    return EscapeCSharpStringLiteral(reference);
+                return reference.empty() ? std::optional<std::string>{"null"} : std::nullopt;
+            }
+
+            switch (field.type)
             {
             case scripting::ScriptFieldType::Boolean:
                 return std::get<bool>(value) ? "true" : "false";
@@ -1107,10 +1132,6 @@ namespace PlutoGE::ui
             case scripting::ScriptFieldType::Double:
                 return FormatDoubleLiteral(std::get<double>(value));
             case scripting::ScriptFieldType::String:
-            case scripting::ScriptFieldType::PrefabAsset:
-            case scripting::ScriptFieldType::ScriptableObjectAsset:
-            case scripting::ScriptFieldType::MaterialAsset:
-            case scripting::ScriptFieldType::InputMappingAsset:
                 return EscapeCSharpStringLiteral(std::get<std::string>(value));
             case scripting::ScriptFieldType::Vector2:
             {
@@ -1178,20 +1199,18 @@ namespace PlutoGE::ui
 
             for (const auto &field : fields)
             {
-                scripting::ScriptFieldValue fieldValue = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
-                                                             ? field.defaultValue
-                                                             : scripting::MakeDefaultFieldValue(field.type);
+                scripting::ScriptFieldValue fieldValue = scripting::ResolveFieldDefault(field);
                 if (const auto iterator = fieldValues.find(field.name); iterator != fieldValues.end())
                 {
-                    fieldValue = iterator->second;
+                    fieldValue = scripting::NormalizeFieldValue(field, iterator->second);
                 }
-                if (!scripting::IsFieldValueCompatible(field.type, fieldValue))
+                if (!scripting::IsFieldValueCompatible(field, fieldValue))
                 {
                     ++result.skipped;
                     continue;
                 }
 
-                const auto literal = ToCSharpDefaultLiteral(field.type, fieldValue);
+                const auto literal = ToCSharpDefaultLiteral(field, fieldValue);
                 if (!literal)
                 {
                     ++result.skipped;
@@ -2468,16 +2487,23 @@ namespace PlutoGE::ui
             std::optional<scripting::ScriptFieldValue> fieldValue;
             if (const auto fieldIterator = fieldValues.find(field.name); fieldIterator != fieldValues.end())
             {
-                fieldValue = fieldIterator->second;
+                fieldValue = scripting::NormalizeFieldValue(field, fieldIterator->second);
             }
-            if (!fieldValue.has_value())
+            // A stored value of the wrong shape (for example after a field became an array) shows the default.
+            if (!fieldValue.has_value() || !scripting::IsFieldValueCompatible(field, *fieldValue))
             {
-                fieldValue = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
-                                 ? field.defaultValue
-                                 : scripting::MakeDefaultFieldValue(field.type);
+                fieldValue = scripting::ResolveFieldDefault(field);
             }
 
             ImGui::PushID(fieldIndex++);
+            if (field.isArray)
+            {
+                auto references = std::get<scripting::ScriptReferenceArray>(*fieldValue);
+                if (RenderScriptAssetArrayField(field.name.c_str(), editorShell.GetProject(), field, references))
+                    changed |= scriptComponent.SetFieldValue(field.name, references);
+                ImGui::PopID();
+                continue;
+            }
             switch (field.type)
             {
             case scripting::ScriptFieldType::Boolean:
@@ -2527,44 +2553,14 @@ namespace PlutoGE::ui
                 }
                 break;
             }
-            case scripting::ScriptFieldType::MaterialAsset:
-            {
-                auto value = std::get<std::string>(*fieldValue);
-                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::Material,
-                                             value, {.noneLabel = "<None>", .includeEngineAssets = true}))
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                break;
-            }
-            case scripting::ScriptFieldType::InputMappingAsset:
-            {
-                auto value = std::get<std::string>(*fieldValue);
-                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::InputMapping,
-                                             value, {.noneLabel = "<None>", .includeEngineAssets = true}))
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                break;
-            }
             case scripting::ScriptFieldType::PrefabAsset:
-            {
-                auto value = std::get<std::string>(*fieldValue);
-                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::Prefab,
-                                             value, {.noneLabel = "<None>", .includeEngineAssets = true}))
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                break;
-            }
             case scripting::ScriptFieldType::ScriptableObjectAsset:
+            case scripting::ScriptFieldType::MaterialAsset:
+            case scripting::ScriptFieldType::InputMappingAsset:
+            case scripting::ScriptFieldType::Asset:
             {
                 auto value = std::get<std::string>(*fieldValue);
-                const auto matchesType = [&](const AssetReferenceOption &option)
-                {
-                    if (field.referenceTypeName.empty())
-                        return true;
-                    const auto actualType = ReadScriptableObjectType(editorShell.GetProject(), option.reference);
-                    const auto *actualDefinition = core::Engine::GetInstance().GetScriptEngine().FindClass(actualType);
-                    return actualType == field.referenceTypeName ||
-                           (actualDefinition && std::find(actualDefinition->assignableTypeNames.begin(), actualDefinition->assignableTypeNames.end(), field.referenceTypeName) != actualDefinition->assignableTypeNames.end());
-                };
-                if (RenderProjectAssetPicker(field.name.c_str(), editorShell.GetProject(), assets::ProjectAssetType::ScriptableObject,
-                                             value, {.noneLabel = "<None>", .includeEngineAssets = true, .filter = matchesType}))
+                if (RenderScriptAssetField(field.name.c_str(), editorShell.GetProject(), field, value))
                     changed |= scriptComponent.SetFieldValue(field.name, value);
                 break;
             }

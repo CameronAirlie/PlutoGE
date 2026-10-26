@@ -1,48 +1,97 @@
 #pragma once
 #include "PlutoGE/assets/AssetType.h"
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace PlutoGE::assets
 {
-    enum class ManagedAssetFieldKind { Prefab, ScriptableObject, Material, InputMapping };
+    // What a typed managed field references: one asset of `type`, or an array of
+    // them. Roles persist as the stable ProjectAssetTypeId ("Prefab", "InputMapping")
+    // with a "[]" suffix for arrays, so new asset types need no edits here.
+    struct ManagedAssetFieldRole
+    {
+        ProjectAssetType type = ProjectAssetType::Unknown;
+        bool isArray = false;
+        friend bool operator==(const ManagedAssetFieldRole &, const ManagedAssetFieldRole &) = default;
+    };
     inline constexpr std::string_view kManagedAssetFieldSchema = "__Pluto.AssetFields.Version";
     inline constexpr std::string_view kManagedAssetFieldPrefix = "__Pluto.AssetField.";
+    inline constexpr std::string_view kManagedAssetArraySuffix = "[]";
     inline constexpr std::size_t kMaxManagedAssetFields = 4096;
+    inline constexpr std::size_t kMaxManagedAssetReferenceBytes = 64 * 1024;
+    inline constexpr std::size_t kMaxManagedAssetArrayBytes = 1024 * 1024;
 
-    inline std::string_view ManagedAssetFieldKindName(ManagedAssetFieldKind kind)
+    inline std::string ManagedAssetFieldRoleName(const ManagedAssetFieldRole &role)
     {
-        switch (kind)
-        {
-        case ManagedAssetFieldKind::Prefab: return "Prefab";
-        case ManagedAssetFieldKind::ScriptableObject: return "ScriptableObject";
-        case ManagedAssetFieldKind::Material: return "Material";
-        case ManagedAssetFieldKind::InputMapping: return "InputMapping";
-        }
-        return {};
+        std::string name(ProjectAssetTypeId(role.type));
+        if (role.isArray) name += kManagedAssetArraySuffix;
+        return name;
     }
-    inline std::optional<ManagedAssetFieldKind> ParseManagedAssetFieldKind(std::string_view name)
+    inline std::optional<ManagedAssetFieldRole> ParseManagedAssetFieldRole(std::string_view name)
     {
-        for (const auto kind : {ManagedAssetFieldKind::Prefab, ManagedAssetFieldKind::ScriptableObject,
-            ManagedAssetFieldKind::Material, ManagedAssetFieldKind::InputMapping})
-            if (ManagedAssetFieldKindName(kind) == name) return kind;
-        return std::nullopt;
+        const bool isArray = name.ends_with(kManagedAssetArraySuffix);
+        if (isArray) name.remove_suffix(kManagedAssetArraySuffix.size());
+        const auto type = ParseProjectAssetTypeId(name);
+        return type ? std::optional<ManagedAssetFieldRole>(ManagedAssetFieldRole{*type, isArray}) : std::nullopt;
     }
-    inline ProjectAssetType ManagedAssetFieldAssetType(ManagedAssetFieldKind kind)
+
+    // An array persists as one string with every element followed by '\n'. References
+    // never contain newlines (any are dropped), and the terminator keeps an array
+    // holding one empty slot distinct from an empty array.
+    inline constexpr char kAssetReferenceArrayTerminator = '\n';
+    inline std::string EncodeAssetReferenceArray(std::span<const std::string> references)
     {
-        switch (kind)
+        std::string encoded;
+        for (const auto &reference : references)
         {
-        case ManagedAssetFieldKind::Prefab: return ProjectAssetType::Prefab;
-        case ManagedAssetFieldKind::ScriptableObject: return ProjectAssetType::ScriptableObject;
-        case ManagedAssetFieldKind::Material: return ProjectAssetType::Material;
-        case ManagedAssetFieldKind::InputMapping: return ProjectAssetType::InputMapping;
+            std::copy_if(reference.begin(), reference.end(), std::back_inserter(encoded),
+                         [](char c) { return c != kAssetReferenceArrayTerminator; });
+            encoded.push_back(kAssetReferenceArrayTerminator);
         }
-        return ProjectAssetType::Unknown;
+        return encoded;
+    }
+    // nullopt when `text` is not an encoded array (it does not end with a terminator).
+    inline std::optional<std::vector<std::string>> DecodeAssetReferenceArray(std::string_view text)
+    {
+        std::vector<std::string> references;
+        if (text.empty()) return references;
+        if (text.back() != kAssetReferenceArrayTerminator) return std::nullopt;
+        for (std::size_t start = 0; start < text.size();)
+        {
+            const auto end = text.find(kAssetReferenceArrayTerminator, start);
+            references.emplace_back(text.substr(start, end - start));
+            start = end + 1;
+        }
+        return references;
+    }
+
+    // The non-empty references a typed field value holds, whatever its shape.
+    inline std::vector<std::string> ManagedAssetFieldReferences(const ManagedAssetFieldRole &role, std::string_view value)
+    {
+        std::vector<std::string> references;
+        if (!role.isArray) references.emplace_back(value);
+        else if (auto decoded = DecodeAssetReferenceArray(value)) references = std::move(*decoded);
+        std::erase_if(references, [](const std::string &reference) { return reference.empty(); });
+        return references;
+    }
+    // Rewrites each reference of a typed field value (for example to a persistent
+    // identity), keeping array order and empty slots. Scalars pass through `transform`.
+    template <typename Transform>
+    std::string TransformManagedAssetFieldValue(const ManagedAssetFieldRole &role, const std::string &value, Transform &&transform)
+    {
+        if (!role.isArray) return transform(value);
+        auto references = DecodeAssetReferenceArray(value);
+        if (!references) return value;
+        for (auto &reference : *references)
+            if (!reference.empty()) reference = transform(reference);
+        return EncodeAssetReferenceArray(*references);
     }
     // Dots cannot occur in C# field identifiers, so these records cannot collide
     // with ordinary managed fields. Unknown engine metadata fails closed.
@@ -57,7 +106,7 @@ namespace PlutoGE::assets
     struct ManagedAssetFieldMetadata
     {
         bool declared = false;
-        std::map<std::string, ManagedAssetFieldKind, std::less<>> fields;
+        std::map<std::string, ManagedAssetFieldRole, std::less<>> fields;
     };
 
     // Shared by scene persistence, dependency scanning and migration. Legacy
@@ -92,19 +141,21 @@ namespace PlutoGE::assets
             }
             if (!record.name.starts_with(kManagedAssetFieldPrefix)) return fail("Unknown managed asset field metadata.");
             const auto field = record.name.substr(kManagedAssetFieldPrefix.size());
-            const auto kind = ParseManagedAssetFieldKind(record.value);
+            const auto role = ParseManagedAssetFieldRole(record.value);
             if (field.empty() || field.size() > 1024 || field == "Source" || field.find('.') != std::string_view::npos ||
-                std::any_of(field.begin(), field.end(), [](unsigned char c) { return c < 32; }) || !kind ||
-                parsed.fields.size() >= kMaxManagedAssetFields || !parsed.fields.emplace(std::string(field), *kind).second)
+                std::any_of(field.begin(), field.end(), [](unsigned char c) { return c < 32; }) || !role ||
+                parsed.fields.size() >= kMaxManagedAssetFields || !parsed.fields.emplace(std::string(field), *role).second)
                 return fail("Invalid or duplicate managed asset field role.");
         }
         if (any && (!parsed.declared || duplicateProperties || properties.size() > kMaxManagedAssetFields + 1)) return fail("Managed asset field schema is missing or its fields are duplicated.");
-        for (const auto &[name, kind] : parsed.fields)
+        for (const auto &[name, role] : parsed.fields)
         {
-            (void)kind;
             const auto property = properties.find(name);
-            if (property == properties.end() || !property->second->isString || property->second->value.size() > 64 * 1024)
+            const auto limit = role.isArray ? kMaxManagedAssetArrayBytes : kMaxManagedAssetReferenceBytes;
+            if (property == properties.end() || !property->second->isString || property->second->value.size() > limit)
                 return fail("Managed asset role must identify one bounded string field.");
+            if (role.isArray && !DecodeAssetReferenceArray(property->second->value))
+                return fail("Managed asset array field is malformed.");
         }
         output = std::move(parsed);
         if (errorMessage) errorMessage->clear();

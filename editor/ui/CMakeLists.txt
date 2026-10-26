@@ -39,6 +39,8 @@ add_library(PlutoGEEditorUI
     src/EditorViewportOverlay.cpp
     src/EditorLoadingPresenter.cpp
     src/AssetReferencePicker.cpp
+    src/ScriptAssetFieldPicker.cpp
+    src/ListEditor.cpp
     src/EditorSceneRenderService.cpp
     src/panels/Panel.cpp
     src/panels/ConsolePanel.cpp

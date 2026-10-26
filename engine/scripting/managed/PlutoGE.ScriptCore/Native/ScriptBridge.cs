@@ -189,7 +189,9 @@ internal static unsafe partial class ScriptBridge
         }
     }
 
-    private sealed record ScriptFieldMetadata(string Name, int Type, string ReferenceTypeName, object? DefaultValue, MemberInfo Member);
+    // ElementType is set for T[] and List<T> members; Type then describes each element.
+    private sealed record ScriptFieldMetadata(string Name, int Type, string ReferenceTypeName, object? DefaultValue, MemberInfo Member,
+        string AssetTypeId, Type? ElementType);
 
     // Mirrors PlutoGE::scripting::ScriptCallback: native skips transitions for unset bits.
     [Flags]
@@ -3251,21 +3253,10 @@ internal static unsafe partial class ScriptBridge
                     continue;
                 }
 
-                var fieldType = MapFieldType(field.FieldType);
-                if (field.FieldType == typeof(string) && field.GetCustomAttribute<MaterialAssetAttribute>() is not null)
+                if (CreateFieldMetadata(field, field.FieldType, field.GetValue(defaultInstance)) is { } metadata)
                 {
-                    fieldType = 25;
+                    fields.Add(metadata);
                 }
-                if (field.FieldType == typeof(string) && field.GetCustomAttribute<InputMappingAssetAttribute>() is not null)
-                {
-                    fieldType = 26;
-                }
-                if (fieldType is null)
-                {
-                    continue;
-                }
-
-                fields.Add(new ScriptFieldMetadata(field.Name, fieldType.Value, GetReferenceTypeName(field.FieldType, fieldType.Value), field.GetValue(defaultInstance), field));
             }
 
             foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -3275,21 +3266,10 @@ internal static unsafe partial class ScriptBridge
                     continue;
                 }
 
-                var fieldType = MapFieldType(property.PropertyType);
-                if (property.PropertyType == typeof(string) && property.GetCustomAttribute<MaterialAssetAttribute>() is not null)
+                if (CreateFieldMetadata(property, property.PropertyType, property.GetValue(defaultInstance)) is { } metadata)
                 {
-                    fieldType = 25;
+                    fields.Add(metadata);
                 }
-                if (property.PropertyType == typeof(string) && property.GetCustomAttribute<InputMappingAssetAttribute>() is not null)
-                {
-                    fieldType = 26;
-                }
-                if (fieldType is null)
-                {
-                    continue;
-                }
-
-                fields.Add(new ScriptFieldMetadata(property.Name, fieldType.Value, GetReferenceTypeName(property.PropertyType, fieldType.Value), property.GetValue(defaultInstance), property));
             }
 
             yield return new ScriptClassMetadata(
@@ -3302,6 +3282,56 @@ internal static unsafe partial class ScriptBridge
                 fields,
                 GetImplementedCallbacks(type, fields));
         }
+    }
+
+    private const int AssetFieldType = 27;
+
+    // Collections describe their elements: Type, ReferenceTypeName and AssetTypeId all refer to T.
+    private static ScriptFieldMetadata? CreateFieldMetadata(MemberInfo member, Type memberType, object? defaultValue)
+    {
+        var elementType = SerializedArrays.GetElementType(memberType);
+        var valueType = elementType ?? memberType;
+        var assetType = GetAssetType(member, valueType);
+        var fieldType = assetType is null ? MapFieldType(valueType) : AssetFieldType;
+        if (fieldType is null || (elementType is not null && !IsAssetReferenceFieldType(fieldType.Value)))
+        {
+            return null;
+        }
+
+        return new ScriptFieldMetadata(member.Name, fieldType.Value, GetReferenceTypeName(valueType, fieldType.Value),
+            defaultValue, member, assetType?.ToString() ?? string.Empty, elementType);
+    }
+
+    // Collections are supported for asset references (prefabs, scriptable objects and Asset fields).
+    private static bool IsAssetReferenceFieldType(int fieldType) => fieldType is 23 or 24 or AssetFieldType;
+
+    private static object? ParseFieldValue(ScriptFieldMetadata field, string text, Type memberType)
+    {
+        if (field.ElementType is not { } elementType)
+        {
+            return ParseValue(field.Type, text, memberType);
+        }
+
+        var elements = SerializedArrays.Decode(text).Select(element => ParseValue(field.Type, element, elementType)).ToList();
+        return SerializedArrays.Create(memberType, elementType, elements);
+    }
+
+    private static string SerializeFieldValue(ScriptFieldMetadata field, object? value)
+    {
+        return field.ElementType is null
+            ? SerializeValue(field.Type, value)
+            : SerializedArrays.Encode(SerializedArrays.Enumerate(value).Select(element => SerializeValue(field.Type, element)));
+    }
+
+    // A string marked [AssetReference], or a registered typed asset class.
+    private static AssetType? GetAssetType(MemberInfo member, Type memberType)
+    {
+        if (memberType == typeof(string))
+        {
+            return member.GetCustomAttribute<AssetReferenceAttribute>()?.Type;
+        }
+
+        return SerializedAssetTypes.TryGet(memberType, out var handler) ? handler.AssetType : null;
     }
 
     private static int? MapFieldType(Type type)
@@ -3429,9 +3459,10 @@ internal static unsafe partial class ScriptBridge
         return null;
     }
 
+    // Scriptable objects filter assignable assets; asset fields tell the editor whether the member is a string.
     private static string GetReferenceTypeName(Type memberType, int fieldType)
     {
-        return fieldType == 24 ? memberType.FullName ?? memberType.Name : string.Empty;
+        return fieldType is 24 or AssetFieldType ? memberType.FullName ?? memberType.Name : string.Empty;
     }
 
     private static IReadOnlyList<string> GetAssignableTypeNames(Type type)
@@ -3502,9 +3533,11 @@ internal static unsafe partial class ScriptBridge
                     .Append(Escape(field.Name)).Append('\t')
                     .Append(field.Type.ToString(CultureInfo.InvariantCulture)).Append('\t')
                     .Append('1').Append('\t')
-                    .Append(Escape(SerializeValue(field.Type, field.DefaultValue))).Append('\t')
+                    .Append(Escape(SerializeFieldValue(field, field.DefaultValue))).Append('\t')
                     .Append(Escape(field.ReferenceTypeName)).Append('\t')
-                    .Append(field.DefaultValue is null ? '1' : '0').Append('\n');
+                    .Append(field.DefaultValue is null ? '1' : '0').Append('\t')
+                    .Append(Escape(field.AssetTypeId)).Append('\t')
+                    .Append(field.ElementType is null ? '0' : '1').Append('\n');
             }
 
             builder.Append("END\n");
@@ -3537,7 +3570,10 @@ internal static unsafe partial class ScriptBridge
                 PropertyInfo propertyInfo => propertyInfo.PropertyType,
                 _ => typeof(object),
             };
-            var value = ParseValue(fieldType, tokens[3], memberType);
+            // Arrays follow the reflected shape; scalars keep the stored type (legacy assets may record 25/26).
+            var value = member.ElementType is null
+                ? ParseValue(fieldType, tokens[3], memberType)
+                : ParseFieldValue(member, tokens[3], memberType);
 
             if (member.Member is FieldInfo field)
             {
@@ -3566,7 +3602,7 @@ internal static unsafe partial class ScriptBridge
             builder.Append("FIELD\t")
                 .Append(Escape(field.Name)).Append('\t')
                 .Append(field.Type.ToString(CultureInfo.InvariantCulture)).Append('\t')
-                .Append(Escape(SerializeValue(field.Type, value))).Append('\n');
+                .Append(Escape(SerializeFieldValue(field, value))).Append('\n');
         }
 
         return builder.ToString();
@@ -3602,6 +3638,7 @@ internal static unsafe partial class ScriptBridge
             24 => LoadScriptableObject(value, memberType),
             25 => value,
             26 => value,
+            AssetFieldType => memberType == typeof(string) ? value : SerializedAssetTypes.Load(memberType, value),
             _ => null,
         };
     }
@@ -3636,6 +3673,7 @@ internal static unsafe partial class ScriptBridge
             24 => (value as ScriptableObject)?.AssetReference ?? string.Empty,
             25 => value as string ?? string.Empty,
             26 => value as string ?? string.Empty,
+            AssetFieldType => value as string ?? SerializedAssetTypes.GetReference(value),
             _ => string.Empty,
         };
     }
@@ -3737,6 +3775,16 @@ internal static unsafe partial class ScriptBridge
             if (value is ScriptableObject scriptableObject)
             {
                 RefreshScriptableObject(scriptableObject);
+            }
+            else if (value is IEnumerable<ScriptableObject?> scriptableObjects)
+            {
+                foreach (var element in scriptableObjects)
+                {
+                    if (element is not null)
+                    {
+                        RefreshScriptableObject(element);
+                    }
+                }
             }
         }
     }

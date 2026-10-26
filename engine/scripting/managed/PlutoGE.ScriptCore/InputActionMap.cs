@@ -36,6 +36,8 @@ public sealed class InputActionDefinition
 public sealed class InputActionMap
 {
     public List<InputActionDefinition> Actions { get; set; } = [];
+    /// <summary>The asset this map was loaded from; empty for maps built in code or parsed from JSON.</summary>
+    [JsonIgnore] public string AssetReference { get; private set; } = string.Empty;
     [JsonIgnore] private Dictionary<string, InputActionDefinition>? _lookup;
     // Trigger state per binding object, so editing or replacing a binding at runtime starts it afresh.
     [JsonIgnore] private readonly Dictionary<InputBinding, TriggerState> _triggers = new(ReferenceEqualityComparer.Instance);
@@ -88,6 +90,7 @@ public sealed class InputActionMap
         else
             loaded = ProjectStorage.ReadAssetJson<InputActionMap>(relative, options);
         var map = loaded ?? throw new InvalidDataException($"Input mapping asset '{assetReference}' is empty.");
+        map.AssetReference = assetReference;
         map.RebuildLookup();
         return map;
     }

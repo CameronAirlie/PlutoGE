@@ -79,6 +79,13 @@ try
         {.name="Data", .type=scripting::ScriptFieldType::ScriptableObjectAsset},
         {.name="Paint", .type=scripting::ScriptFieldType::MaterialAsset},
         {.name="Controls", .type=scripting::ScriptFieldType::InputMappingAsset},
+        {.name="Map", .type=scripting::ScriptFieldType::Asset, .assetType=assets::ProjectAssetType::InputMapping},
+        {.name="Spawns", .type=scripting::ScriptFieldType::PrefabAsset, .isArray=true},
+        {.name="Configs", .type=scripting::ScriptFieldType::ScriptableObjectAsset,
+         .referenceTypeName="PlutoGE.AssetReferenceProbe.ProbeData", .isArray=true},
+        {.name="Paints", .type=scripting::ScriptFieldType::Asset, .assetType=assets::ProjectAssetType::Material, .isArray=true},
+        {.name="Surface", .type=scripting::ScriptFieldType::Asset, .assetType=assets::ProjectAssetType::Material},
+        {.name="CustomSurfaces", .type=scripting::ScriptFieldType::Asset, .assetType=assets::ProjectAssetType::Material, .isArray=true},
         {.name="Text", .type=scripting::ScriptFieldType::String},
         {.name="Accepted", .type=scripting::ScriptFieldType::Boolean},
         {.name="SpawnedId", .type=scripting::ScriptFieldType::Int32}
@@ -89,8 +96,18 @@ try
     auto *component = owner->AddComponent(new scene::ScriptComponent(scene::ScriptComponentConfig{.source=definition.GetFullName()}));
     for (const auto &[field, reference] : {std::pair{"Template", "project://Target.plutoprefab"},
         {"Data", "project://Data.plutoscriptable"}, {"Paint", "project://Paint.plutomaterial"},
-        {"Controls", "project://Controls.plutoinput"}, {"Text", "project://Unused.plutomaterial"}})
+        {"Controls", "project://Controls.plutoinput"}, {"Map", "project://Controls.plutoinput"},
+        {"Surface", "project://Paint.plutomaterial"},
+        {"Text", "project://Unused.plutomaterial"}})
         Require(component->SetFieldValue(field, std::string(reference)), "Cannot assign managed fixture field");
+    for (const auto &[field, references] : {
+        std::pair{"Spawns", scripting::ScriptReferenceArray{"project://Target.plutoprefab", ""}},
+        {"Configs", scripting::ScriptReferenceArray{"project://Data.plutoscriptable"}},
+        {"Paints", scripting::ScriptReferenceArray{"project://Paint.plutomaterial"}},
+        {"CustomSurfaces", scripting::ScriptReferenceArray{"project://Paint.plutomaterial"}}})
+        Require(component->SetFieldValue(field, references), "Cannot assign managed fixture array field");
+    Require(!component->SetFieldValue("Spawns", std::string("project://Target.plutoprefab")),
+        "An array field accepted a scalar value");
     std::string saved;
     Require(scene::SceneSerializer::SaveToString(authored, saved, &error) && saved.starts_with("SCENE\t3\n"), error);
     Require(std::get<std::string>(*component->GetFieldValue("Template")) == "project://Target.plutoprefab",
@@ -99,10 +116,14 @@ try
     auto missingClass = scene::SceneSerializer::LoadFromString(saved, &error);
     Require(missingClass != nullptr, error);
     auto *restored = missingClass->FindEntityByName("ScriptOwner")->GetComponent<scene::ScriptComponent>();
-    Require(restored && restored->GetSerializedFields().empty() && restored->GetFieldValues().size() == 7,
+    Require(restored && restored->GetSerializedFields().empty() && restored->GetFieldValues().size() == 13,
         "Missing-class metadata leaked into managed fields");
     std::string missingSaved;
     Require(scene::SceneSerializer::SaveToString(*missingClass, missingSaved, &error), error);
+    const auto spawns = std::get<scripting::ScriptReferenceArray>(*restored->GetFieldValue("Spawns"));
+    Require(missingSaved.find("__Pluto.AssetField.Spawns\t2\tPrefab[]") != std::string::npos &&
+        spawns.size() == 2 && spawns[0].starts_with("asset://") && spawns[1].empty(),
+        "Missing class lost an array role, its logical element identities or an empty slot");
     Require(missingSaved.find("__Pluto.AssetField.Template") != std::string::npos &&
         std::get<std::string>(*restored->GetFieldValue("Template")).starts_with("asset://"),
         "Missing class discarded asset field roles or logical values");
@@ -126,7 +147,7 @@ try
     Require(database.Scan(project, &error), error);
     manager.SetAssetSnapshot(database.GetCatalog(), database.GetStorageMap());
     const auto scan = assets::ScanAssetReferences(assetRoot / "Main.plutoscene", {}, assetRoot);
-    Require(scan.errors.empty() && scan.occurrences.size() == 4, "Missing-class scene dependency scan failed");
+    Require(scan.errors.empty() && scan.occurrences.size() == 10, "Missing-class scene dependency scan failed");
     assets::CookOptions options; options.includeUnreferencedAssets = false;
     const auto cooked = scratch.root / "Cooked";
     auto wrongKind = missingSaved;
@@ -161,7 +182,10 @@ try
     const auto reflected = scripts.GetSerializedFields(definition.GetFullName());
     for (const auto &field : definition.fields)
         Require(std::any_of(reflected.begin(), reflected.end(), [&](const auto &actual) {
-            return actual.name == field.name && actual.type == field.type;
+            // [MaterialAsset]/[InputMappingAsset] now reflect as generic Asset fields of the same asset type.
+            return actual.name == field.name && actual.isArray == field.isArray && (scripting::IsAssetFieldType(field.type)
+                ? scripting::GetFieldAssetType(actual) == scripting::GetFieldAssetType(field)
+                : actual.type == field.type);
         }), "Actual managed reflection disagrees with serialized field role: " + field.name);
     auto instance = scripts.CreateInstance(definition.GetFullName());
     Require(instance != nullptr, scripts.GetLastError());
@@ -175,7 +199,10 @@ try
     Require(manager.LoadMaterialAsset(std::get<std::string>(values.at("Paint"))) != nullptr,
         "Renamed packed managed material field could not resolve");
     Require(std::get<std::string>(values.at("Template")) == std::get<std::string>(*runtimeScript->GetFieldValue("Template")) &&
-        std::get<std::string>(values.at("Data")) == std::get<std::string>(*runtimeScript->GetFieldValue("Data")),
+        std::get<std::string>(values.at("Data")) == std::get<std::string>(*runtimeScript->GetFieldValue("Data")) &&
+        std::get<std::string>(values.at("Map")) == std::get<std::string>(*runtimeScript->GetFieldValue("Map")) &&
+        std::get<scripting::ScriptReferenceArray>(values.at("Spawns")) == std::get<scripting::ScriptReferenceArray>(*runtimeScript->GetFieldValue("Spawns")) &&
+        std::get<scripting::ScriptReferenceArray>(values.at("Configs")) == std::get<scripting::ScriptReferenceArray>(*runtimeScript->GetFieldValue("Configs")),
         "Managed field round trip changed persistent identities");
     Require(!std::filesystem::exists(runtime), "Managed asset reads extracted packed assets");
     instance.reset();

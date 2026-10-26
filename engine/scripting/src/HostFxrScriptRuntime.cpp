@@ -585,7 +585,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::InputMappingAsset))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::Asset))
             {
                 return ScriptFieldType::None;
             }
@@ -624,6 +624,7 @@ namespace PlutoGE::scripting
             case ScriptFieldType::ScriptableObjectAsset:
             case ScriptFieldType::MaterialAsset:
             case ScriptFieldType::InputMappingAsset:
+            case ScriptFieldType::Asset:
                 return token;
             case ScriptFieldType::Vector2:
             {
@@ -669,6 +670,15 @@ namespace PlutoGE::scripting
             default:
                 return std::monostate{};
             }
+        }
+
+        ScriptFieldValue ParseFieldValue(const ScriptFieldDefinition &field, const std::string &token)
+        {
+            if (!field.isArray)
+            {
+                return ParseFieldValue(field.type, token);
+            }
+            return DecodeReferenceArray(token).value_or(ScriptReferenceArray{});
         }
 
         ScriptFieldType GetFieldTypeForValue(const ScriptFieldValue &value)
@@ -766,6 +776,10 @@ namespace PlutoGE::scripting
                     {
                         return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
                     }
+                    else if constexpr (std::is_same_v<ValueType, ScriptReferenceArray>)
+                    {
+                        return EncodeReferenceArray(typedValue);
+                    }
                     else
                     {
                         return {};
@@ -834,7 +848,6 @@ namespace PlutoGE::scripting
                             fieldDefinition.name = tokens[1];
                             fieldDefinition.type = ParseFieldType(tokens[2]);
                             fieldDefinition.serialized = tokens[3] == "1";
-                            fieldDefinition.defaultValue = ParseFieldValue(fieldDefinition.type, tokens[4]);
                             if (tokens.size() >= 6)
                             {
                                 fieldDefinition.referenceTypeName = tokens[5];
@@ -843,6 +856,28 @@ namespace PlutoGE::scripting
                             {
                                 fieldDefinition.defaultValueIsNull = tokens[6] == "1";
                             }
+                            if (tokens.size() >= 8)
+                            {
+                                fieldDefinition.assetType = assets::ParseProjectAssetTypeId(tokens[7]).value_or(assets::ProjectAssetType::Unknown);
+                            }
+                            if (tokens.size() >= 9)
+                            {
+                                fieldDefinition.isArray = tokens[8] == "1";
+                            }
+                            // An asset type this engine does not know: string members still edit as
+                            // reference text; typed members and arrays cannot be represented and are hidden.
+                            if (fieldDefinition.type == ScriptFieldType::Asset && fieldDefinition.assetType == assets::ProjectAssetType::Unknown)
+                            {
+                                fieldDefinition.type = fieldDefinition.referenceTypeName == "System.String" && !fieldDefinition.isArray
+                                                           ? ScriptFieldType::String : ScriptFieldType::None;
+                            }
+                            if (fieldDefinition.isArray && !IsAssetFieldType(fieldDefinition.type))
+                            {
+                                fieldDefinition.type = ScriptFieldType::None;
+                                fieldDefinition.isArray = false;
+                            }
+                            // The default's shape depends on every token above.
+                            fieldDefinition.defaultValue = ParseFieldValue(fieldDefinition, tokens[4]);
                             currentClass->fields.push_back(std::move(fieldDefinition));
                         }
                         else if (tokens[0] == "END" && currentClass)
@@ -869,7 +904,8 @@ namespace PlutoGE::scripting
             return classes;
         }
 
-        std::unordered_map<std::string, ScriptFieldValue> ParseFieldData(std::string_view fieldData)
+        std::unordered_map<std::string, ScriptFieldValue> ParseFieldData(std::string_view fieldData,
+                                                                        const std::vector<ScriptFieldDefinition> &fieldDefinitions)
         {
             std::unordered_map<std::string, ScriptFieldValue> fieldValues;
 
@@ -886,8 +922,11 @@ namespace PlutoGE::scripting
                     const auto tokens = SplitEscaped(line, '\t');
                     if (tokens.size() >= 4 && tokens[0] == "FIELD")
                     {
-                        const auto fieldType = ParseFieldType(tokens[2]);
-                        fieldValues[tokens[1]] = ParseFieldValue(fieldType, tokens[3]);
+                        const auto definition = std::find_if(fieldDefinitions.begin(), fieldDefinitions.end(),
+                                                             [&](const auto &field) { return field.name == tokens[1]; });
+                        fieldValues[tokens[1]] = definition != fieldDefinitions.end()
+                                                     ? ParseFieldValue(*definition, tokens[3])
+                                                     : ParseFieldValue(ParseFieldType(tokens[2]), tokens[3]);
                     }
                 }
 
@@ -4364,7 +4403,7 @@ namespace PlutoGE::scripting
                 const std::string wireData(managedText);
                 m_impl->freeMarshaledString(managedText);
 
-                const auto fieldValues = ParseFieldData(wireData);
+                const auto fieldValues = ParseFieldData(wireData, m_scriptClass.fields);
                 const auto iterator = fieldValues.find(std::string(fieldName));
                 if (iterator == fieldValues.end())
                 {
@@ -4389,7 +4428,7 @@ namespace PlutoGE::scripting
 
                 const std::string wireData(managedText);
                 m_impl->freeMarshaledString(managedText);
-                return ParseFieldData(wireData);
+                return ParseFieldData(wireData, m_scriptClass.fields);
             }
 
             ~ManagedScriptInstance() override

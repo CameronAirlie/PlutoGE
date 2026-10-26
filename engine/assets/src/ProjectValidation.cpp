@@ -295,15 +295,17 @@ namespace PlutoGE::assets
                         else for (const auto &property : c.scriptProperties)
                         {
                             if (!metadata.declared) { Reference(property.value, owner, c.entity, property.line); continue; }
-                            const auto kind = metadata.fields.find(property.name);
-                            if (kind == metadata.fields.end() || property.value.empty()) continue;
-                            auto reference = property.value;
-                            if (reference.find("://") == std::string::npos)
+                            const auto role = metadata.fields.find(property.name);
+                            if (role == metadata.fields.end()) continue;
+                            for (auto reference : ManagedAssetFieldReferences(role->second, property.value))
                             {
-                                const auto path = std::filesystem::path(std::u8string(reference.begin(), reference.end()));
-                                reference = "project://" + (path.is_absolute() ? Utf8(path.lexically_normal().lexically_relative(input.assetRoot.lexically_normal())) : reference);
+                                if (reference.find("://") == std::string::npos)
+                                {
+                                    const auto path = std::filesystem::path(std::u8string(reference.begin(), reference.end()));
+                                    reference = "project://" + (path.is_absolute() ? Utf8(path.lexically_normal().lexically_relative(input.assetRoot.lexically_normal())) : reference);
+                                }
+                                Reference(reference, owner, c.entity, property.line, role->second.type);
                             }
-                            Reference(reference, owner, c.entity, property.line, ManagedAssetFieldAssetType(kind->second));
                         }
                         const auto name = c.properties["Source"];
                         if (name.empty()) Add("script.empty", owner, c.entity, c.line, "Script component has no class assigned.", ValidationSeverity::Warning);

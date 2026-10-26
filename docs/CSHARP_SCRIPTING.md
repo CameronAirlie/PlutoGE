@@ -182,7 +182,9 @@ Supported `[SerializedField]` member types:
 | Vectors | `Vector2`, `Vector3` |
 | Entity | `uint`, `GameObject` |
 | Components | `MeshComponent`, `CameraComponent`, `LightComponent`, `RigidbodyComponent`, `ColliderComponent`, `AnimationComponent`, `CanvasComponent`, `RectTransformComponent`, `UIImageComponent`, `UITextComponent`, `UIButtonComponent`, `ParticleSystemComponent`, `SoundEmitterComponent` |
-| Assets | `Prefab`, any concrete class derived from `ScriptableObject` |
+| Assets | `Prefab`, `InputActionMap`, `Material`, `Shader`, `Texture`, `Mesh`, `Model`, `AudioClip`, `SceneAsset`, `Animation`, `AnimationClip`, `AnimationGraph`, `ParticleSystem`, `PostProcessPreset`, `RmlDocumentAsset`, `SurfaceResponseAsset`, `LoadingScreen`, any concrete class derived from `ScriptableObject` |
+| Asset references | `string` with `[AssetReference(AssetType.X)]`, for any project asset type |
+| Asset arrays | `T[]` or `List<T>` of any asset type above, including `ScriptableObject` classes and `string` with `[AssetReference]` |
 
 Examples:
 
@@ -192,10 +194,36 @@ Examples:
 [SerializedField] private RigidbodyComponent? body;
 [SerializedField] private Prefab? projectile;
 [SerializedField] private WeaponSettings? settings;
+[SerializedField] private InputActionMap? controls;
+[SerializedField] private Material? highlight;
+[SerializedField] private Shader? dissolve;
+[SerializedField, AssetReference(AssetType.Audio)] private string hitSound = "";
+[SerializedField, AssetReference(AssetType.Scene)] private string nextLevel = "";
+[SerializedField] private Prefab?[] enemyVariants = [];
+[SerializedField] private List<WeaponSettings?> loadouts = [];
+[SerializedField, AssetReference(AssetType.Audio)] private string[] footsteps = [];
 
 [SerializedField]
 private string DisplayName { get; set; } = "Player";
 ```
+
+Every asset field shows a dropdown of matching project assets in the Inspector (and in the ScriptableObject
+editor), accepts drag-and-drop from the Content Browser, and is kept as a cook dependency, so the asset
+ships with builds and survives renames. `[MaterialAsset]` and `[InputMappingAsset]` remain as shorthands for
+`[AssetReference(AssetType.Material)]` and `[AssetReference(AssetType.InputMapping)]`.
+
+Typed asset handles (`Material`, `Shader`, `Texture`...) derive from `Asset`. They expose `AssetReference`
+and convert implicitly to it, so they can be passed to any API that takes a reference string, such as
+`Decals.Spawn(hit, highlight, ...)`. `Shader` references shader graph assets.
+
+To add a typed asset of your own, game code included, derive a sealed class and name its asset type:
+
+```csharp
+[AssetKind(AssetType.Texture)] public sealed class Decal : Asset;
+```
+
+Classes that load their own data (as `InputActionMap` does) are registered in `SerializedAssetTypes` instead,
+with their `AssetType`, a load function and a way to read their reference back.
 
 Important serialization behavior:
 
@@ -208,6 +236,8 @@ Important serialization behavior:
 - `GameObject` and component references may be `null`.
 - A `Prefab` stores an asset reference and offers `Instantiate` methods.
 - A `ScriptableObject` reference is loaded from its asset and materialized as the declared derived type.
+- Asset arrays appear as reorderable lists (drag the handle to reorder, add and remove elements). Unassigned elements are kept as `null` (or `""` for strings), so indices stay stable. Arrays of other types (numbers, entities, components) are not serialized yet.
+- An `InputActionMap` is loaded from its `.plutoinput` asset when the script is created; `AssetReference` names its source. A missing or invalid asset logs a warning and leaves the field `null`.
 
 ## GameObject and transforms
 

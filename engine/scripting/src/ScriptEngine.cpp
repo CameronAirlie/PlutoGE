@@ -5,6 +5,7 @@
 
 #include "PlutoGE/scripting/HostFxrScriptRuntime.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
+#include "PlutoGE/assets/ManagedAssetFieldMetadata.h"
 
 #include <cstdlib>
 #include <algorithm>
@@ -130,6 +131,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::ScriptableObjectAsset:
         case ScriptFieldType::MaterialAsset:
         case ScriptFieldType::InputMappingAsset:
+        case ScriptFieldType::Asset:
             return std::holds_alternative<std::string>(value);
         case ScriptFieldType::Vector2:
             return std::holds_alternative<glm::vec2>(value);
@@ -174,6 +176,7 @@ namespace PlutoGE::scripting
         case ScriptFieldType::ScriptableObjectAsset:
         case ScriptFieldType::MaterialAsset:
         case ScriptFieldType::InputMappingAsset:
+        case ScriptFieldType::Asset:
             return std::string{};
         case ScriptFieldType::Vector2:
             return glm::vec2{0.0f, 0.0f};
@@ -198,6 +201,73 @@ namespace PlutoGE::scripting
         case ScriptFieldType::None:
         default:
             return std::monostate{};
+        }
+    }
+
+    bool IsAssetFieldType(ScriptFieldType type)
+    {
+        switch (type)
+        {
+        case ScriptFieldType::PrefabAsset:
+        case ScriptFieldType::ScriptableObjectAsset:
+        case ScriptFieldType::MaterialAsset:
+        case ScriptFieldType::InputMappingAsset:
+        case ScriptFieldType::Asset:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool IsFieldValueCompatible(const ScriptFieldDefinition &field, const ScriptFieldValue &value)
+    {
+        return field.isArray ? std::holds_alternative<ScriptReferenceArray>(value) : IsFieldValueCompatible(field.type, value);
+    }
+
+    ScriptFieldValue MakeDefaultFieldValue(const ScriptFieldDefinition &field)
+    {
+        return field.isArray ? ScriptFieldValue{ScriptReferenceArray{}} : MakeDefaultFieldValue(field.type);
+    }
+
+    ScriptFieldValue ResolveFieldDefault(const ScriptFieldDefinition &field)
+    {
+        return IsFieldValueCompatible(field, field.defaultValue) ? field.defaultValue : MakeDefaultFieldValue(field);
+    }
+
+    ScriptFieldValue NormalizeFieldValue(const ScriptFieldDefinition &field, ScriptFieldValue value)
+    {
+        if (const auto *text = std::get_if<std::string>(&value); text && field.isArray)
+        {
+            if (auto references = DecodeReferenceArray(*text))
+            {
+                return std::move(*references);
+            }
+        }
+        return value;
+    }
+
+    std::string EncodeReferenceArray(const ScriptReferenceArray &references)
+    {
+        return assets::EncodeAssetReferenceArray(references);
+    }
+
+    std::optional<ScriptReferenceArray> DecodeReferenceArray(std::string_view text)
+    {
+        return assets::DecodeAssetReferenceArray(text);
+    }
+
+    std::optional<assets::ProjectAssetType> GetFieldAssetType(const ScriptFieldDefinition &field)
+    {
+        switch (field.type)
+        {
+        case ScriptFieldType::PrefabAsset: return assets::ProjectAssetType::Prefab;
+        case ScriptFieldType::ScriptableObjectAsset: return assets::ProjectAssetType::ScriptableObject;
+        case ScriptFieldType::MaterialAsset: return assets::ProjectAssetType::Material;
+        case ScriptFieldType::InputMappingAsset: return assets::ProjectAssetType::InputMapping;
+        case ScriptFieldType::Asset:
+            if (field.assetType != assets::ProjectAssetType::Unknown) return field.assetType;
+            return std::nullopt;
+        default: return std::nullopt;
         }
     }
 

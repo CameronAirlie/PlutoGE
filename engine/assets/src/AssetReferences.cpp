@@ -212,23 +212,24 @@ namespace PlutoGE::assets
             for (const auto &property : context.properties)
             {
                 if (!metadata.declared) { Add(scan, property.value, property.line); continue; }
-                const auto kind = metadata.fields.find(property.name);
-                if (kind == metadata.fields.end() || property.value.empty()) continue;
-                const auto expected = ManagedAssetFieldAssetType(kind->second);
-                auto reference = property.value;
-                if (reference.find("://") == std::string::npos)
+                const auto role = metadata.fields.find(property.name);
+                if (role == metadata.fields.end()) continue;
+                for (auto reference : ManagedAssetFieldReferences(role->second, property.value))
                 {
-                    const auto path = FromUtf8(reference);
-                    if (path.is_absolute())
+                    if (reference.find("://") == std::string::npos)
                     {
-                        if (root.empty()) { scan.errors.push_back("Typed managed field has an absolute path without an asset root."); continue; }
-                        reference = "project://" + Utf8(path.lexically_normal().lexically_relative(root.lexically_normal()));
+                        const auto path = FromUtf8(reference);
+                        if (path.is_absolute())
+                        {
+                            if (root.empty()) { scan.errors.push_back("Typed managed field has an absolute path without an asset root."); continue; }
+                            reference = "project://" + Utf8(path.lexically_normal().lexically_relative(root.lexically_normal()));
+                        }
+                        else reference = "project://" + reference;
                     }
-                    else reference = "project://" + reference;
+                    if (NormalizeAssetReference(reference).empty())
+                    { scan.errors.push_back("Invalid typed managed asset reference at line " + std::to_string(property.line)); continue; }
+                    Add(scan, reference, property.line, AssetReferenceRole::Runtime, role->second.type);
                 }
-                if (NormalizeAssetReference(reference).empty())
-                { scan.errors.push_back("Invalid typed managed asset reference at line " + std::to_string(property.line)); continue; }
-                Add(scan, reference, property.line, AssetReferenceRole::Runtime, expected);
             }
         }
         bool ManagedSceneRecord(AssetReferenceScan &scan, ManagedSceneScanContext &context,

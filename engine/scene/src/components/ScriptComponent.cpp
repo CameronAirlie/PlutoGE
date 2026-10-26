@@ -17,20 +17,13 @@ namespace PlutoGE::scene
 {
     namespace
     {
-        std::optional<assets::ManagedAssetFieldKind> AssetFieldKind(scripting::ScriptFieldType type)
-        {
-            switch (type)
-            {
-            case scripting::ScriptFieldType::PrefabAsset: return assets::ManagedAssetFieldKind::Prefab;
-            case scripting::ScriptFieldType::ScriptableObjectAsset: return assets::ManagedAssetFieldKind::ScriptableObject;
-            case scripting::ScriptFieldType::MaterialAsset: return assets::ManagedAssetFieldKind::Material;
-            case scripting::ScriptFieldType::InputMappingAsset: return assets::ManagedAssetFieldKind::InputMapping;
-            default: return std::nullopt;
-            }
-        }
-
         scene::PropertyType ToPropertyType(scripting::ScriptFieldType fieldType)
         {
+            if (scripting::IsAssetFieldType(fieldType))
+            {
+                return scene::PropertyType::String;
+            }
+
             switch (fieldType)
             {
             case scripting::ScriptFieldType::Boolean:
@@ -42,10 +35,6 @@ namespace PlutoGE::scene
             case scripting::ScriptFieldType::Double:
                 return scene::PropertyType::Double;
             case scripting::ScriptFieldType::String:
-            case scripting::ScriptFieldType::PrefabAsset:
-            case scripting::ScriptFieldType::ScriptableObjectAsset:
-            case scripting::ScriptFieldType::MaterialAsset:
-            case scripting::ScriptFieldType::InputMappingAsset:
                 return scene::PropertyType::String;
             case scripting::ScriptFieldType::Vector2:
                 return scene::PropertyType::Vec2;
@@ -152,6 +141,10 @@ namespace PlutoGE::scene
                     else if constexpr (std::is_same_v<ValueType, glm::vec3>)
                     {
                         return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
+                    }
+                    else if constexpr (std::is_same_v<ValueType, scripting::ScriptReferenceArray>)
+                    {
+                        return scripting::EncodeReferenceArray(typedValue);
                     }
                     else
                     {
@@ -379,14 +372,13 @@ namespace PlutoGE::scene
         for (const auto &field : serializedFields)
         {
             serializedFieldNames.insert(field.name);
-            if (const auto kind = AssetFieldKind(field.type)) assetKinds.insert_or_assign(field.name, *kind);
+            if (const auto type = scripting::GetFieldAssetType(field))
+                assetKinds.insert_or_assign(field.name, assets::ManagedAssetFieldRole{*type, field.isArray});
             else assetKinds.erase(field.name);
 
             auto fieldValue = m_fieldValues.contains(field.name)
                                   ? m_fieldValues.at(field.name)
-                                  : (scripting::IsFieldValueCompatible(field.type, field.defaultValue)
-                                         ? field.defaultValue
-                                         : scripting::MakeDefaultFieldValue(field.type));
+                                  : scripting::ResolveFieldDefault(field);
 
             properties.push_back(Property{
                 .name = field.name,
@@ -420,7 +412,7 @@ namespace PlutoGE::scene
                 .type=PropertyType::String, .value="1"});
             for (const auto &[name, kind] : assetKinds)
                 properties.push_back(Property{.name=std::string(assets::kManagedAssetFieldPrefix) + name,
-                    .type=PropertyType::String, .value=std::string(assets::ManagedAssetFieldKindName(kind))});
+                    .type=PropertyType::String, .value=assets::ManagedAssetFieldRoleName(kind)});
             std::vector<assets::ManagedAssetFieldRecord> records;
             records.reserve(properties.size());
             for (const auto &property : properties)
@@ -453,7 +445,11 @@ namespace PlutoGE::scene
             }
 
             if (assets::IsManagedAssetFieldMetadata(property.name)) continue;
-            fieldValues[property.name] = DeserializeFieldValue(property.type, property.value);
+            auto value = DeserializeFieldValue(property.type, property.value);
+            // Array roles keep their shape even while the script class is unavailable.
+            if (const auto role = metadata.fields.find(property.name); role != metadata.fields.end() && role->second.isArray)
+                value = scripting::DecodeReferenceArray(property.value).value_or(scripting::ScriptReferenceArray{});
+            fieldValues[property.name] = std::move(value);
         }
 
         const bool sourceChanged = m_scriptClass != source;
@@ -497,7 +493,7 @@ namespace PlutoGE::scene
         if (const auto *scriptClass = scriptEngine.FindClass(m_scriptClass))
         {
             const auto *fieldDefinition = scripting::FindFieldDefinition(*scriptClass, fieldName);
-            if (!fieldDefinition || !fieldDefinition->serialized || !scripting::IsFieldValueCompatible(fieldDefinition->type, value))
+            if (!fieldDefinition || !fieldDefinition->serialized || !scripting::IsFieldValueCompatible(*fieldDefinition, value))
             {
                 return false;
             }
@@ -555,7 +551,7 @@ namespace PlutoGE::scene
             // that can replace the component's current reference/value.
             if (field.defaultValueIsNull ||
                 std::holds_alternative<std::monostate>(field.defaultValue) ||
-                !scripting::IsFieldValueCompatible(field.type, field.defaultValue))
+                !scripting::IsFieldValueCompatible(field, field.defaultValue))
             {
                 continue;
             }
@@ -649,11 +645,13 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                if (!m_fieldValues.contains(field.name))
+                if (const auto value = m_fieldValues.find(field.name); value != m_fieldValues.end())
                 {
-                    m_fieldValues[field.name] = scripting::IsFieldValueCompatible(field.type, field.defaultValue)
-                                                    ? field.defaultValue
-                                                    : scripting::MakeDefaultFieldValue(field.type);
+                    value->second = scripting::NormalizeFieldValue(field, std::move(value->second));
+                }
+                else
+                {
+                    m_fieldValues[field.name] = scripting::ResolveFieldDefault(field);
                 }
             }
         }

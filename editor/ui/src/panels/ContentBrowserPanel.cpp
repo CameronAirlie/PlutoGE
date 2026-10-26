@@ -3,6 +3,7 @@
 #include "PlutoGE/asset_import/ModelObjectExtractionService.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
+#include "PlutoGE/ui/ScriptAssetFieldPicker.h"
 #include "PlutoGE/ui/ModelImportDependenciesInspector.h"
 #include "PlutoGE/ui/ModelHierarchyInspector.h"
 #include "PlutoGE/ui/StaticModelHierarchyDialog.h"
@@ -834,6 +835,7 @@ namespace PlutoGE::ui
                 if constexpr (std::is_same_v<T, std::monostate>) return {};
                 else if constexpr (std::is_same_v<T, bool>) return typedValue ? "true" : "false";
                 else if constexpr (std::is_same_v<T, std::string>) return typedValue;
+                else if constexpr (std::is_same_v<T, scripting::ScriptReferenceArray>) return scripting::EncodeReferenceArray(typedValue);
                 else if constexpr (std::is_same_v<T, glm::vec2>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y);
                 else if constexpr (std::is_same_v<T, glm::vec3>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
                 else return std::to_string(typedValue);
@@ -844,16 +846,14 @@ namespace PlutoGE::ui
         {
             try
             {
+                if (scripting::IsAssetFieldType(type)) return text;
                 switch (type)
                 {
                 case scripting::ScriptFieldType::Boolean: return text == "true" || text == "1";
                 case scripting::ScriptFieldType::Int32: return static_cast<int32_t>(std::stoi(text));
                 case scripting::ScriptFieldType::Float: return std::stof(text);
                 case scripting::ScriptFieldType::Double: return std::stod(text);
-                case scripting::ScriptFieldType::String:
-                case scripting::ScriptFieldType::PrefabAsset:
-                case scripting::ScriptFieldType::ScriptableObjectAsset: return text;
-                case scripting::ScriptFieldType::MaterialAsset: return text;
+                case scripting::ScriptFieldType::String: return text;
                 case scripting::ScriptFieldType::Vector2:
                 {
                     glm::vec2 value{};
@@ -2144,11 +2144,23 @@ namespace PlutoGE::ui
                     for (const auto &field : definition->fields)
                     {
                         auto iterator = values.find(field.name);
-                        if (iterator == values.end() || !scripting::IsFieldValueCompatible(field.type, iterator->second))
+                        if (iterator != values.end())
                         {
-                            iterator = values.insert_or_assign(field.name, field.defaultValue).first;
+                            // The asset stores arrays as encoded text; restore their shape.
+                            iterator->second = scripting::NormalizeFieldValue(field, std::move(iterator->second));
+                        }
+                        if (iterator == values.end() || !scripting::IsFieldValueCompatible(field, iterator->second))
+                        {
+                            iterator = values.insert_or_assign(field.name, scripting::ResolveFieldDefault(field)).first;
                         }
                         ImGui::PushID(fieldIndex++);
+                        if (field.isArray)
+                        {
+                            auto &references = std::get<scripting::ScriptReferenceArray>(iterator->second);
+                            changed |= RenderScriptAssetArrayField(field.name.c_str(), editorShell.GetProject(), field, references);
+                            ImGui::PopID();
+                            continue;
+                        }
                         switch (field.type)
                         {
                         case scripting::ScriptFieldType::Boolean:
@@ -2188,12 +2200,19 @@ namespace PlutoGE::ui
                             break;
                         }
                         case scripting::ScriptFieldType::String:
-                        case scripting::ScriptFieldType::PrefabAsset:
-                        case scripting::ScriptFieldType::ScriptableObjectAsset:
-                        case scripting::ScriptFieldType::MaterialAsset:
                         {
                             auto &value = std::get<std::string>(iterator->second);
                             if (InputTextString(field.name.c_str(), value)) { changed = true; }
+                            break;
+                        }
+                        case scripting::ScriptFieldType::PrefabAsset:
+                        case scripting::ScriptFieldType::ScriptableObjectAsset:
+                        case scripting::ScriptFieldType::MaterialAsset:
+                        case scripting::ScriptFieldType::InputMappingAsset:
+                        case scripting::ScriptFieldType::Asset:
+                        {
+                            auto &value = std::get<std::string>(iterator->second);
+                            if (RenderScriptAssetField(field.name.c_str(), editorShell.GetProject(), field, value)) { changed = true; }
                             break;
                         }
                         default:

@@ -684,8 +684,11 @@ namespace PlutoGE::scene
                         }
                         for (const auto &property : properties)
                         {
-                            std::string serializedValue = (IsAssetPathProperty(componentType, property.name) || managedFields.fields.contains(property.name))
-                                ? componentAssets.PersistAssetPath(property.value) : property.value;
+                            const auto managedRole = managedFields.fields.find(property.name);
+                            const auto persist = [&](const std::string &reference) { return componentAssets.PersistAssetPath(reference); };
+                            std::string serializedValue = managedRole != managedFields.fields.end()
+                                ? assets::TransformManagedAssetFieldValue(managedRole->second, property.value, persist)
+                                : IsAssetPathProperty(componentType, property.name) ? persist(property.value) : property.value;
                             if (privateReader && IsAssetPathProperty(componentType, property.name))
                                 if (const auto catalog = componentAssets.GetAssetCatalog())
                                     if (const auto identity = catalog->FindIdentityByLocation(serializedValue))
@@ -1170,8 +1173,9 @@ namespace PlutoGE::scene
                         if (metadata.declared && formatVersion < 3)
                             throw std::runtime_error("Typed managed asset fields require scene format 3 and project format 5.");
                         for (auto &property : activeComponent->properties)
-                            if (metadata.fields.contains(property.name))
-                                property.value = CanonicalizeStoredAssetPath(assetManager, property.value);
+                            if (const auto role = metadata.fields.find(property.name); role != metadata.fields.end())
+                                property.value = assets::TransformManagedAssetFieldValue(role->second, property.value,
+                                    [&](const std::string &reference) { return CanonicalizeStoredAssetPath(assetManager, reference); });
                     }
                     const auto entityIt = entityMap.find(activeComponent->entityId);
                     if (entityIt != entityMap.end())

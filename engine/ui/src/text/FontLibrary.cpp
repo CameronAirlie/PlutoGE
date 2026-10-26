@@ -102,6 +102,7 @@ namespace PlutoGE::ui
         }
         FT_Int spread = FontFace::kSdfSpread;
         FT_Property_Set(m_library, "sdf", "spread", &spread);
+        FT_Property_Set(m_library, "bsdf", "spread", &spread);
         // Fonts shipped beside the executable (the editor deploys resources/fonts).
         if (const auto directory = ExecutableDirectory(); !directory.empty())
         {

@@ -9,6 +9,7 @@
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -1674,6 +1675,7 @@ namespace PlutoGE::ui
             return true;
         }
 
+        SetRuntimePaused(false);
         // Capture before OnDestroy and physics teardown can change the values.
         m_playModeChanges.clear();
         if (reviewChanges && !m_runtimeSceneReplaced && m_scene)
@@ -1716,6 +1718,54 @@ namespace PlutoGE::ui
         UpdateWindowTitle();
         m_statusMessage = "Runtime stopped. Restored pre-Play scene state.";
         return true;
+    }
+
+    PlayState EditorShell::GetPlayState() const
+    {
+        if (!m_engine.IsRuntimeRunning())
+            return PlayState::Editing;
+        return m_runtimePaused ? PlayState::Paused : PlayState::Playing;
+    }
+
+    void EditorShell::SetRuntimePaused(bool paused)
+    {
+        paused = paused && m_engine.IsRuntimeRunning();
+        if (paused == m_runtimePaused)
+            return;
+        m_runtimePaused = paused;
+        // A paused scene stops feeding the mixer; silence what is already playing.
+        auto &audio = m_engine.GetAudioSystem();
+        if (paused)
+        {
+            m_pausedOutputVolume = audio.GetOutputVolume();
+            audio.SetOutputVolume(0.0f);
+        }
+        else
+        {
+            audio.SetOutputVolume(m_pausedOutputVolume);
+        }
+        m_statusMessage = paused ? "Paused." : "Resumed.";
+    }
+
+    void EditorShell::StepRuntime()
+    {
+        if (m_runtimePaused && m_scene)
+            m_scene->StepRuntime();
+    }
+
+    void EditorShell::ApplyPlayModeActions(const PlayModeToolbarActions &actions)
+    {
+        if (actions.play)
+            m_pendingRuntimeStart = true;
+        if (actions.stop)
+        {
+            StopEditorRuntime();
+            return;
+        }
+        if (actions.togglePause)
+            SetRuntimePaused(!m_runtimePaused);
+        if (actions.step)
+            StepRuntime();
     }
 
     void EditorShell::HandleRuntimeSceneLoadRequest(ViewportPanel &gameViewport)
@@ -2082,6 +2132,19 @@ namespace PlutoGE::ui
             else if (!isRuntimeRunning && !io.KeyShift)
                 m_pendingRuntimeStart = true;
             return;
+        }
+        if (isRuntimeRunning)
+        {
+            const bool command = io.KeyCtrl || io.KeySuper;
+            PlayModeToolbarActions actions;
+            actions.togglePause = ImGui::IsKeyPressed(ImGuiKey_Pause, false) ||
+                                  (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false));
+            actions.step = command && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P, false);
+            if (actions.togglePause || actions.step)
+            {
+                ApplyPlayModeActions(actions);
+                return;
+            }
         }
         // The content browser owns copy, paste, duplicate, delete and undo for
         // files while focused; scene shortcuts must not act behind it.
@@ -3751,13 +3814,16 @@ namespace PlutoGE::ui
             {
                 forceEditorCursorVisible = false;
             }
-            window.SetCursorLockOverride(forceEditorCursorVisible);
+            // Pausing hands the cursor back to the editor.
+            window.SetCursorLockOverride(forceEditorCursorVisible || m_runtimePaused);
             if (!isRuntimeRunning)
             {
                 window.SetCursorLocked(false);
             }
 
             viewportPanel->SetPanelControlsEnabled(true);
+            viewportPanel->SetPlayState(GetPlayState());
+            viewportPanel2->SetPlayState(GetPlayState());
             viewportPanel2->SetPanelControlsEnabled(!isRuntimeRunning);
 
             const auto renderTargetWidth = (std::max)(renderTarget->GetWidth(), 1);
@@ -3922,6 +3988,7 @@ namespace PlutoGE::ui
                     }
                     // Per-component and per-script timing costs frame time; only the profiler reads it.
                     m_scene->SetDetailedTimingEnabled(m_profiler.IsRecording() || (profilerPanel && profilerPanel->IsOpen()));
+                    m_scene->SetRuntimePaused(m_runtimePaused);
                     m_scene->Update(deltaTime.count());
                     const auto &sceneTimingStats = m_scene->GetUpdateTimingStats();
                     frameTimingStats.scenePreparationMs = sceneTimingStats.preparationMs;
@@ -4212,8 +4279,11 @@ namespace PlutoGE::ui
                 runBake(settings);
             }
 
-            // Toolbar menu
-            if (ImGui::BeginMainMenuBar())
+            // Toolbar menu, tinted while playing so play mode is hard to miss.
+            const int menuBarTint = PlayModeToolbar::PushMenuBarTint(GetPlayState());
+            const bool menuBarOpen = ImGui::BeginMainMenuBar();
+            ImGui::PopStyleColor(menuBarTint);
+            if (menuBarOpen)
             {
                 if (ConsumeMaterialEditorOpenRequest())
                 {
@@ -4671,6 +4741,10 @@ namespace PlutoGE::ui
                     }
                     if (runtimeRunning && m_runtimeSceneReplaced)
                         ImGui::SetItemTooltip("Keeping changes is unavailable after replacing the play scene.");
+                    if (ImGui::MenuItem("Pause", "Ctrl+Shift+P", m_runtimePaused, runtimeRunning))
+                        SetRuntimePaused(!m_runtimePaused);
+                    if (ImGui::MenuItem("Step Frame", "Ctrl+Alt+P", false, runtimeRunning && m_runtimePaused))
+                        StepRuntime();
                     ImGui::Separator();
                     if (ImGui::BeginMenu("Simulation Speed", canRunRuntime))
                     {
@@ -4728,6 +4802,8 @@ namespace PlutoGE::ui
                     }
                     ImGui::EndMenu();
                 }
+
+                ApplyPlayModeActions(PlayModeToolbar::Draw(GetPlayState(), m_scene != nullptr));
 
                 // Status sits right-aligned and is shortened to the free space; the full text is in the tooltip.
                 if (!m_statusMessage.empty())

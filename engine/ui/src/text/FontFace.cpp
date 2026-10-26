@@ -91,7 +91,10 @@ namespace PlutoGE::ui
         FT_GlyphSlot slot = m_face->glyph;
         if (slot->format != FT_GLYPH_FORMAT_OUTLINE || slot->outline.n_points == 0)
             return true; // whitespace and empty glyphs have no bitmap
-        if (FT_Render_Glyph(slot, FT_RENDER_MODE_SDF) != 0)
+        // FreeType's outline SDF renderer gets the sign wrong where contours
+        // overlap (common in variable fonts), leaving holes in the glyph. A
+        // coverage bitmap merges overlaps, so build the field from that.
+        if (FT_Render_Glyph(slot, FT_RENDER_MODE_NORMAL) != 0 || FT_Render_Glyph(slot, FT_RENDER_MODE_SDF) != 0)
             return false;
 
         const FT_Bitmap &bitmap = slot->bitmap;

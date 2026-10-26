@@ -303,6 +303,8 @@ Useful shortcuts:
 |---|---|
 | `F5` | Start play mode |
 | `Shift+F5` | Stop play mode |
+| `Ctrl+Shift+P` or `Pause` | Pause or resume play mode (the cursor is released while paused) |
+| `Ctrl+Alt+P` | Advance one 1/60 s frame while paused |
 | `W`, `E`, `R` | Move, rotate, and scale gizmos while the viewport is focused |
 | `F` | Focus the selected entity in the viewport |
 | `Ctrl+Z`, `Ctrl+Y` | Undo and redo |

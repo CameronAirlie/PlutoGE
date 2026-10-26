@@ -151,6 +151,13 @@ namespace PlutoGE::scene
         [[nodiscard]] bool IsRuntimeStarted() const { return m_runtimeStarted; }
         void SetTimeScale(float timeScale);
         [[nodiscard]] float GetTimeScale() const { return m_timeScale; }
+        // A paused runtime keeps submitting rendering from Update but runs no
+        // scripts, UI, physics, animation or audio. StepRuntime advances exactly
+        // one kRuntimeStepSeconds frame on the next Update while paused.
+        static constexpr float kRuntimeStepSeconds = 1.0f / 60.0f;
+        void SetRuntimePaused(bool paused) { m_runtimePaused = paused; }
+        [[nodiscard]] bool IsRuntimePaused() const { return m_runtimePaused; }
+        void StepRuntime() { m_runtimeStepPending = true; }
         [[nodiscard]] const SceneUpdateTimingStats &GetUpdateTimingStats() const { return m_updateTimingStats; }
         // Per-component, per-script and animation-phase breakdowns of GetUpdateTimingStats (phase totals are always
         // measured). Timing and naming every component update costs real frame time, so hosts turn it off while no
@@ -365,6 +372,8 @@ namespace PlutoGE::scene
         render::Texture *m_environmentMapTexture = nullptr;
         float m_environmentIntensity = 1.0f;
         bool m_runtimeStarted = false;
+        bool m_runtimePaused = false;
+        bool m_runtimeStepPending = false;
         float m_timeScale = 1.0f;
         float m_shaderTime = 0.0f;
         float m_physicsTimeAccumulator = 0.0f;

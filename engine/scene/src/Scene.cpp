@@ -2474,6 +2474,8 @@ namespace PlutoGE::scene
             m_streaming->Reset();
         FlushPendingDestroyEntities();
         m_runtimeStarted = false;
+        m_runtimePaused = false;
+        m_runtimeStepPending = false;
         ResetSequencers(m_rootEntities);
         VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig)
                         { rig.ResetRuntime(); });
@@ -3092,6 +3094,18 @@ namespace PlutoGE::scene
         const ScopedFlag updateInProgress(m_updateInProgress);
         if (m_streaming)
             m_streaming->Pump();
+        if (m_runtimeStarted && m_runtimePaused)
+        {
+            if (!std::exchange(m_runtimeStepPending, false))
+            {
+                // Paused: present the frozen state without advancing anything.
+                m_updateTimingStats = {};
+                if (!core::Engine::GetInstance().GetConfig().headless)
+                    SubmitRenderCommands();
+                return;
+            }
+            deltaTime = kRuntimeStepSeconds;
+        }
         using Clock = std::chrono::high_resolution_clock;
         core::CpuScope preparationScope("Scene.Preparation");
         const auto updateStart = Clock::now();

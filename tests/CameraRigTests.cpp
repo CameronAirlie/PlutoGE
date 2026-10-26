@@ -18,7 +18,12 @@ namespace
     using namespace PlutoGE::scene;
     void Require(bool condition, const char *message) { if (!condition) throw std::runtime_error(message); }
     void Near(glm::vec3 actual, glm::vec3 expected, float tolerance = 0.002f)
-    { Require(glm::length(actual - expected) < tolerance, "Unexpected camera pose"); }
+    {
+        if (glm::length(actual - expected) >= tolerance)
+            throw std::runtime_error("Unexpected camera pose (" + std::to_string(actual.x) + ", " + std::to_string(actual.y) + ", " +
+                                     std::to_string(actual.z) + "), expected (" + std::to_string(expected.x) + ", " +
+                                     std::to_string(expected.y) + ", " + std::to_string(expected.z) + ")");
+    }
     struct Fixture
     {
         Scene scene;
@@ -121,6 +126,24 @@ namespace
         f.scene.Update(0.01f);
         Near(f.camera->GetWorldPosition(), {8, 0, 6});
         f.scene.StopRuntime();
+    }
+    void PausedRuntime()
+    {
+        Fixture f;
+        f.scene.StartRuntime();
+        f.scene.Update(0.01f);
+        f.scene.SetRuntimePaused(true);
+        f.target->SetPosition({4, 0, 0});
+        f.scene.Update(1);
+        Near(f.camera->GetWorldPosition(), {0, 0, 6}); // Paused frames advance nothing.
+        f.scene.StepRuntime();
+        f.scene.Update(1); // One damped 1/60 s frame, not the 1 s passed in...
+        const auto stepped = f.camera->GetWorldPosition();
+        Require(stepped.x > 0.01f && stepped.x < 3.0f, "A step did not advance exactly one frame");
+        f.scene.Update(1);
+        Near(f.camera->GetWorldPosition(), stepped); // ...and only one.
+        f.scene.StopRuntime();
+        Require(!f.scene.IsRuntimePaused(), "Stopping the runtime left it paused");
     }
     void Collision()
     {
@@ -245,6 +268,6 @@ void StandaloneViewportInput()
 
 int main()
 {
-    try { StandaloneViewportInput(); ViewportPointerBounds(); OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, collision, lifecycle, serialization and history\n"; }
+    try { StandaloneViewportInput(); ViewportPointerBounds(); OrthographicProjection(); MotionAndLifetime(); BlendsAndShake(); RuntimePhase(); PausedRuntime(); Collision(); Persistence(); std::cout << "PASS: camera projection, rigs, pause, collision, lifecycle, serialization and history\n"; }
     catch (const std::exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

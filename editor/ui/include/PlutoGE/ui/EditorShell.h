@@ -17,6 +17,7 @@
 #include "PlutoGE/ui/EditorProfiler.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/ui/PlayModeChanges.h"
+#include "PlutoGE/ui/PlayModeToolbar.h"
 #include "PlutoGE/ui/ViewportBookmarks.h"
 #include "PlutoGE/ui/GroundPlacement.h"
 #include "PlutoGE/ui/SceneHistory.h"
@@ -423,6 +424,10 @@ namespace PlutoGE::ui
         bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
         bool StartEditorRuntime(ViewportPanel &gameViewport);
         bool StopEditorRuntime(bool reviewChanges = false);
+        [[nodiscard]] PlayState GetPlayState() const;
+        void SetRuntimePaused(bool paused);
+        void StepRuntime();
+        void ApplyPlayModeActions(const PlayModeToolbarActions &actions);
         void RenderPlayModeChanges();
         bool ApplyPlayModeChanges();
         void RenderViewportBookmarks();
@@ -516,6 +521,8 @@ namespace PlutoGE::ui
         std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;
         bool m_runtimeSceneReplaced = false;
+        bool m_runtimePaused = false;
+        float m_pausedOutputVolume = 1.0f;
         bool m_openPlayModeChanges = false;
         std::string m_playModeChangesError;
         PlayModeChanges::Snapshot m_playModeBaseline;

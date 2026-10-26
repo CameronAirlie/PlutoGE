@@ -5,6 +5,7 @@
 #include "PlutoGE/render/RenderDebugView.h"
 #include "PlutoGE/render/rhi/Types.h"
 #include "PlutoGE/ui/panels/Panel.h"
+#include "PlutoGE/ui/PlayModeToolbar.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorViewportOverlay.h"
 #include "PlutoGE/ui/ViewportEntityIcons.h"
@@ -92,6 +93,8 @@ namespace PlutoGE::ui
         }
         void SetPanelControlsEnabled(bool enabled) { m_panelControlsEnabled = enabled; }
         void SetEditorMovementEnabled(bool enabled) { m_editorMovementEnabled = enabled; }
+        // Frames the viewport while the runtime is playing or paused.
+        void SetPlayState(PlayState state) { m_playState = state; }
         void SetEditorCameraData(const render::CameraData &cameraData);
         void ClearEditorCameraData();
         void SetGraphicsApi(render::rhi::GraphicsApi graphicsApi);
@@ -110,6 +113,7 @@ namespace PlutoGE::ui
         void ReleaseRegisteredTexture();
 
         ViewportPanelConfig m_config;
+        PlayState m_playState = PlayState::Editing;
         render::CameraData m_gameDebugCamera{};
         bool m_hasGameDebugCamera = false;
         float m_renderScale = 1.0f;

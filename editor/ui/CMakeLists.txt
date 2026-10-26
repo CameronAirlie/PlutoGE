@@ -21,6 +21,7 @@ add_library(PlutoGEEditorUI
     src/DebugDrawUI.cpp
     src/PlayModeChanges.cpp
     src/PlayModeChangesUI.cpp
+    src/PlayModeToolbar.cpp
     src/ViewportOverlayLayout.cpp
     src/ViewportBookmarks.cpp
     src/ViewportBookmarksUI.cpp

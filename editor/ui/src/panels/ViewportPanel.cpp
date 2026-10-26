@@ -2129,6 +2129,7 @@ namespace PlutoGE::ui
             draw->AddText(statusMin, IM_COL32(166, 170, 178, 255), status.c_str());
             draw->PopClipRect();
         }
+        PlayModeToolbar::DrawViewportFrame(*ImGui::GetWindowDrawList(), viewportMin, viewportMax, m_playState);
         if (m_rhiRenderService && !m_rhiRenderService->GetLastRenderError().empty())
         {
             const auto &error = m_rhiRenderService->GetLastRenderError();

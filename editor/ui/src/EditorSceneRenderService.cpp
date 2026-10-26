@@ -190,6 +190,7 @@ namespace PlutoGE::ui
     void EditorSceneRenderService::Shutdown()
     {
         render::RmlUiRuntime::Get().Shutdown();
+        m_nativeUi.Shutdown();
         m_cameraStack.Shutdown();
         m_renderTextures.Shutdown();
         if (m_sceneRenderer)
@@ -356,8 +357,11 @@ namespace PlutoGE::ui
             // Initialization creates GPU resources, so keep the first runtime
             // UI frame independent. Once initialized, append it to the active
             // scene command buffer and submit both together.
-            const bool combineRuntimeUiSubmission = cameraData.renderRuntimeUI && m_isVulkan && scene && scene->HasRmlRuntimeUI() &&
-                                                    render::RmlUiRuntime::Get().IsInitialized();
+            const bool rmlUi = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI();
+            const bool nativeUi = cameraData.renderRuntimeUI && scene && render::NativeUIRenderer::HasContent(*scene);
+            const bool combineRuntimeUiSubmission = (rmlUi || nativeUi) && m_isVulkan &&
+                                                    (!rmlUi || render::RmlUiRuntime::Get().IsInitialized()) &&
+                                                    (!nativeUi || m_nativeUi.IsInitialized());
             // Debug views show the base camera's buffers alone. Overlay renderers
             // record their own frames, so the base frame is submitted first.
             if (debugView != render::PostProcessDebugView::None)
@@ -380,7 +384,11 @@ namespace PlutoGE::ui
                                          !combineRuntimeUiSubmission, scene, lights, compose))
                 throw std::runtime_error("Scene renderer returned no frame at " + std::to_string(width) + "x" + std::to_string(height));
             m_viewportTexture = m_sceneRenderer->GetColorTexture();
-            if (cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI())
+            // Native canvases draw beneath RmlUi documents.
+            if (nativeUi)
+                m_nativeUi.Render(*scene, *m_device, m_viewportTexture, static_cast<int>(width), static_cast<int>(height),
+                                  cameraData.view, cameraData.projection, !combineRuntimeUiSubmission);
+            if (rmlUi)
                 render::RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_viewportTexture,
                                                       static_cast<int>(width), static_cast<int>(height),
                                                       ++m_frameSequence, cameraData.view,

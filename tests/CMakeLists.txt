@@ -256,6 +256,37 @@ pluto_link_engine(PlutoGERuntimeUITests)
 
 add_test(NAME PlutoGERuntimeUITests COMMAND PlutoGERuntimeUITests)
 
+add_executable(PlutoGEComponentRegistryTests ComponentRegistryTests.cpp)
+pluto_link_engine(PlutoGEComponentRegistryTests)
+add_test(NAME PlutoGEComponentRegistryTests COMMAND PlutoGEComponentRegistryTests)
+
+add_executable(PlutoGENativeUICoreTests NativeUICoreTests.cpp)
+target_link_libraries(PlutoGENativeUICoreTests PRIVATE PlutoGE::UI)
+target_compile_definitions(PlutoGENativeUICoreTests PRIVATE
+    PLUTO_UI_TEST_FONT="${CMAKE_SOURCE_DIR}/editor/resources/fonts/Roboto.ttf")
+add_test(NAME PlutoGENativeUICoreTests COMMAND PlutoGENativeUICoreTests)
+
+add_executable(PlutoGENativeUILayoutTests NativeUILayoutTests.cpp)
+target_link_libraries(PlutoGENativeUILayoutTests PRIVATE PlutoGE::UI)
+add_test(NAME PlutoGENativeUILayoutTests COMMAND PlutoGENativeUILayoutTests)
+
+add_executable(PlutoGENativeUIRenderTests NativeUIRenderTests.cpp)
+pluto_link_engine(PlutoGENativeUIRenderTests)
+target_link_libraries(PlutoGENativeUIRenderTests PRIVATE PlutoGE::Platform)
+target_compile_definitions(PlutoGENativeUIRenderTests PRIVATE
+    PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders"
+    PLUTO_UI_TEST_FONT="${CMAKE_SOURCE_DIR}/editor/resources/fonts/Roboto.ttf")
+add_test(NAME PlutoGEVulkanNativeUIRender COMMAND PlutoGENativeUIRenderTests)
+add_test(NAME PlutoGEOpenGLNativeUIRender COMMAND PlutoGENativeUIRenderTests --opengl)
+
+add_executable(PlutoGENativeUISceneTests NativeUISceneTests.cpp)
+pluto_link_engine(PlutoGENativeUISceneTests)
+add_test(NAME PlutoGENativeUISceneTests COMMAND PlutoGENativeUISceneTests)
+
+add_executable(PlutoGENativeUIControlsTests NativeUIControlsTests.cpp)
+pluto_link_engine(PlutoGENativeUIControlsTests)
+add_test(NAME PlutoGENativeUIControlsTests COMMAND PlutoGENativeUIControlsTests)
+
 add_executable(PlutoGESkeletonAttachmentTests
     SkeletonAttachmentTests.cpp
 )
@@ -880,6 +911,11 @@ if(TARGET PlutoGEEditorUI)
     target_link_libraries(PlutoGESceneHierarchyTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGESceneHierarchyTests)
     add_test(NAME PlutoGESceneHierarchyTests COMMAND PlutoGESceneHierarchyTests)
+
+    add_executable(PlutoGENativeUIEditorTests NativeUIEditorTests.cpp)
+    target_link_libraries(PlutoGENativeUIEditorTests PRIVATE PlutoGE::EditorUI)
+    pluto_link_engine(PlutoGENativeUIEditorTests)
+    add_test(NAME PlutoGENativeUIEditorTests COMMAND PlutoGENativeUIEditorTests)
 endif()
 
 if(TARGET PlutoGEEditorUI)
@@ -1031,6 +1067,25 @@ if (PLUTOGE_TEST_DOTNET)
     endif()
     add_test(NAME PlutoGEManagedAssetReferenceTests COMMAND PlutoGEManagedAssetReferenceTests)
     add_dependencies(PlutoGEAssetPipelineChecks PlutoGEManagedAssetReferenceTests)
+
+    set(PLUTO_NATIVE_UI_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/NativeUIProbe")
+    add_custom_command(OUTPUT "${PLUTO_NATIVE_UI_PROBE_OUTPUT}/PlutoGE.NativeUIProbe.dll"
+        COMMAND "${PLUTOGE_TEST_DOTNET}" build
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.NativeUIProbe/PlutoGE.NativeUIProbe.csproj"
+            --configuration Release --output "${PLUTO_NATIVE_UI_PROBE_OUTPUT}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.NativeUIProbe/PlutoGE.NativeUIProbe.csproj"
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.NativeUIProbe/Probe.cs" PlutoGEScriptCore
+        VERBATIM)
+    add_custom_target(PlutoGENativeUIProbe DEPENDS "${PLUTO_NATIVE_UI_PROBE_OUTPUT}/PlutoGE.NativeUIProbe.dll")
+    add_executable(PlutoGENativeUIScriptingTests NativeUIScriptingTests.cpp)
+    target_compile_definitions(PlutoGENativeUIScriptingTests PRIVATE
+        PLUTOGE_NATIVE_UI_PROBE_ASSEMBLY="${PLUTO_NATIVE_UI_PROBE_OUTPUT}/PlutoGE.NativeUIProbe.dll")
+    pluto_link_engine(PlutoGENativeUIScriptingTests)
+    add_dependencies(PlutoGENativeUIScriptingTests PlutoGENativeUIProbe)
+    if (TARGET PlutoGETestOpenAL)
+        add_dependencies(PlutoGENativeUIScriptingTests PlutoGETestOpenAL)
+    endif()
+    add_test(NAME PlutoGENativeUIScriptingTests COMMAND PlutoGENativeUIScriptingTests)
 endif()
 
 add_executable(PlutoGEHeadlessServerTests HeadlessServerTests.cpp)

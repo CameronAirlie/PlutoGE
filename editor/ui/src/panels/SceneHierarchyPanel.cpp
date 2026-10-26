@@ -15,6 +15,7 @@
 #include "PlutoGE/ui/HierarchyTransforms.h"
 #include "PlutoGE/ui/hierarchy/HierarchyEntityIcons.h"
 #include "PlutoGE/ui/hierarchy/HierarchyEntityPresets.h"
+#include "PlutoGE/ui/hierarchy/UIWidgetPresets.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include <imgui.h>
@@ -661,6 +662,18 @@ namespace PlutoGE::ui
                 // Presets live in a static table, so the reference outlives the edit.
                 Defer([this, &preset, parentId]() { CreatePresetEntity(preset, parentId); });
             }
+        }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("UI"))
+        {
+            for (const auto &preset : GetUIWidgetPresets())
+            {
+                if (preset.separatorBefore)
+                    ImGui::Separator();
+                if (ImGui::MenuItem(preset.menuLabel))
+                    Defer([this, &preset, parentId]() { CreatePresetEntity(preset, parentId); });
+            }
+            ImGui::EndMenu();
         }
     }
 

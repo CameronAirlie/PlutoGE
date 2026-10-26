@@ -79,6 +79,9 @@ add_library(PlutoGEEditorUI
     src/hierarchy/HierarchyDropPlacement.cpp
     src/hierarchy/HierarchyEntityIcons.cpp
     src/hierarchy/HierarchyEntityPresets.cpp
+    src/hierarchy/UIWidgetPresets.cpp
+    src/inspectors/ComponentInspectors.cpp
+    src/inspectors/UIComponentInspectors.cpp
     src/hierarchy/HierarchyExpansion.cpp
     src/hierarchy/HierarchyFilter.cpp
     src/hierarchy/HierarchyNavigation.cpp

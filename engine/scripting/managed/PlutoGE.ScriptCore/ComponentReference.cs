@@ -17,7 +17,15 @@ public abstract class ComponentReference
 
     public bool Enabled
     {
-        get => ScriptBridge.GetComponentEnabled(EntityId, ComponentType);
-        set => ScriptBridge.SetComponentEnabled(EntityId, ComponentType, value);
+        get => this is RegisteredComponent registered
+            ? registered.GetProperty("Enabled") is "true" or "1"
+            : ScriptBridge.GetComponentEnabled(EntityId, ComponentType);
+        set
+        {
+            if (this is RegisteredComponent registered)
+                registered.SetProperty("Enabled", value ? "true" : "false");
+            else
+                ScriptBridge.SetComponentEnabled(EntityId, ComponentType, value);
+        }
     }
 }

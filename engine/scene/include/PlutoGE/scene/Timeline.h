@@ -7,12 +7,14 @@
 
 namespace PlutoGE::scene
 {
-    enum class TimelineChannel { Position, Rotation, Scale, CameraFov, LightColor, LightIntensity, AudioVolume, AudioPlay, ScriptEvent };
+    // Property (appended) animates any registered component property named by
+    // TimelineTrack::property, e.g. "UIShapeComponent.Color".
+    enum class TimelineChannel { Position, Rotation, Scale, CameraFov, LightColor, LightIntensity, AudioVolume, AudioPlay, ScriptEvent, Property };
     enum class TimelineInterpolation { Step, Linear, Smooth };
     struct TimelineKey
     {
         double time = 0;
-        std::array<float, 3> value{};
+        std::array<float, 4> value{}; // channels use the first 1-4 components
         std::string event;
     };
     struct TimelineTrack
@@ -21,6 +23,7 @@ namespace PlutoGE::scene
         TimelineChannel channel = TimelineChannel::Position;
         TimelineInterpolation interpolation = TimelineInterpolation::Linear;
         std::vector<TimelineKey> keys;
+        std::string property; // "<ComponentType>.<Property>" for TimelineChannel::Property
     };
     struct Timeline
     {
@@ -44,7 +47,7 @@ namespace PlutoGE::scene
         bool IsPlaying() const { return m_playing; }
         double Time() const { return m_time; }
         const Timeline &Data() const { return m_data; }
-        std::array<float, 3> Evaluate(std::size_t track) const;
+        std::array<float, 4> Evaluate(std::size_t track) const;
     private:
         Timeline m_data;
         double m_time = 0;

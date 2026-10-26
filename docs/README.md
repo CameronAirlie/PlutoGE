@@ -27,6 +27,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | --- | --- |
 | Engine build and requirements | [Repository README](../README.md#build-and-run) |
 | Current renderer support and limitations | [Rendering support](RENDERING.md) |
+| Entity-based UI: layout, controls, styles, designer, scripting | [Native UI](NATIVE_UI.md) |
 | Editor iteration, recovery, validation, debug drawing | [Editor workflows](EDITOR_WORKFLOWS.md) |
 | Editing several entities | [Multi-entity editing](MULTI_ENTITY_EDITING.md) |
 | Reusable entity variations | [Prefab variants](PREFAB_VARIANTS.md) |

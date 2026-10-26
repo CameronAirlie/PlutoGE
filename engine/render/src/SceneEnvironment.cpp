@@ -120,7 +120,8 @@ namespace PlutoGE::render
         render::BasicLighting lighting;
         lighting.cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
         lighting.view = cameraData.view;
-        lighting.ambientIntensity = 0.0f;
+        // Preview lighting has no sky or probes, so fill faces turned from the key light.
+        lighting.ambientIntensity = scene && scene->IsPreviewLightingEnabled() ? 0.55f : 0.0f;
         lighting.directionalIntensity = 0.0f;
         lighting.directionalDirection = -glm::normalize(glm::vec3(0.25f, 0.8f, 0.4f));
         for (const auto *light : lights)

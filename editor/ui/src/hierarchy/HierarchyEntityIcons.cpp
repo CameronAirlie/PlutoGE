@@ -22,6 +22,13 @@
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/UIDropdownComponent.h"
+#include "PlutoGE/scene/components/UIInputFieldComponent.h"
+#include "PlutoGE/scene/components/UILayoutComponents.h"
+#include "PlutoGE/scene/components/UIScrollViewComponent.h"
+#include "PlutoGE/scene/components/UIShapeComponent.h"
+#include "PlutoGE/scene/components/UISliderComponent.h"
+#include "PlutoGE/scene/components/UIToggleComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/ui/EditorIcons.h"
 
@@ -79,6 +86,17 @@ namespace PlutoGE::ui
             IconRule{&Has<scene::SoundEmitterComponent>, icons::AudioAsset},
             IconRule{&Has<scene::SoundListenerComponent>, icons::EntityListener},
             IconRule{&Has<scene::CanvasComponent>, icons::RmlDocumentAsset},
+            // Native UI: controls before the graphics they are built from.
+            IconRule{&Has<scene::UIScrollViewComponent>, icons::ExpandAll},
+            IconRule{&Has<scene::UIDropdownComponent>, icons::Chevron},
+            IconRule{&Has<scene::UIInputFieldComponent>, icons::Paste},
+            IconRule{&Has<scene::UISliderComponent>, icons::Quality},
+            IconRule{&Has<scene::UIToggleComponent>, icons::Check},
+            IconRule{&Has<scene::UIButtonComponent>, icons::Crosshairs},
+            IconRule{&Has<scene::UILayoutComponent>, icons::Grid},
+            IconRule{&Has<scene::UITextComponent>, icons::Font},
+            IconRule{&Has<scene::UIImageComponent>, icons::TextureAsset},
+            IconRule{&Has<scene::UIShapeComponent>, icons::Swatches},
             IconRule{&Has<scene::DecalComponent>, icons::EntityDecal},
             IconRule{&Has<scene::SplineComponent>, icons::EntitySpline},
             IconRule{&Has<scene::NavigationMeshComponent>, icons::EntityNavMesh},

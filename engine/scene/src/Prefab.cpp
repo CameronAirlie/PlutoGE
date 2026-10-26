@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/Prefab.h"
+#include "PlutoGE/scene/ComponentRegistry.h"
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -117,122 +118,12 @@ namespace PlutoGE::scene
 
         std::string ResolveComponentTypeName(const Component &component)
         {
-            if (dynamic_cast<const MeshComponent *>(&component))
-                return "MeshComponent";
-            if (dynamic_cast<const TerrainComponent *>(&component))
-                return "TerrainComponent";
-            if (dynamic_cast<const ClothComponent *>(&component))
-                return "ClothComponent";
-            if (dynamic_cast<const FoliageComponent *>(&component))
-                return "FoliageComponent";
-            if (dynamic_cast<const ParticleSystemComponent *>(&component))
-                return "ParticleSystemComponent";
-            if (dynamic_cast<const AnimationComponent *>(&component))
-                return "AnimationComponent";
-            if (dynamic_cast<const ActiveRagdollComponent *>(&component))
-                return "ActiveRagdollComponent";
-            if (dynamic_cast<const RagdollTuningComponent *>(&component))
-                return "RagdollTuningComponent";
-            if (dynamic_cast<const SkeletonAttachmentComponent *>(&component))
-                return "SkeletonAttachmentComponent";
-            if (dynamic_cast<const SequencerComponent *>(&component)) return "SequencerComponent";
-            if (dynamic_cast<const IKComponent *>(&component)) return "IKComponent";
-            if (dynamic_cast<const CameraRigComponent *>(&component))
-                return "CameraRigComponent";
-            if (dynamic_cast<const CameraComponent *>(&component))
-                return "CameraComponent";
-            if (dynamic_cast<const LightComponent *>(&component))
-                return "LightComponent";
-            if (dynamic_cast<const RigidbodyComponent *>(&component))
-                return "RigidbodyComponent";
-            if (dynamic_cast<const NavAgentComponent *>(&component))
-                return "NavAgentComponent";
-            if (dynamic_cast<const NavigationMeshComponent *>(&component))
-                return "NavigationMeshComponent";
-            if (dynamic_cast<const ColliderComponent *>(&component))
-                return "ColliderComponent";
-            if (dynamic_cast<const IblCaptureComponent *>(&component))
-                return "IblCaptureComponent";
-            if (dynamic_cast<const ScriptComponent *>(&component))
-                return "ScriptComponent";
-            if (dynamic_cast<const SoundEmitterComponent *>(&component))
-                return "SoundEmitterComponent";
-            if (dynamic_cast<const SoundListenerComponent *>(&component))
-                return "SoundListenerComponent";
-            if (dynamic_cast<const AudioEnvironmentVolumeComponent *>(&component)) return "AudioEnvironmentVolumeComponent";
-            if (dynamic_cast<const CanvasComponent *>(&component))
-                return "CanvasComponent";
-            if (dynamic_cast<const RmlWidgetComponent *>(&component))
-                return "RmlWidgetComponent";
-            if (dynamic_cast<const RectTransformComponent *>(&component))
-                return "RectTransformComponent";
-            if (dynamic_cast<const UIImageComponent *>(&component))
-                return "UIImageComponent";
-            if (dynamic_cast<const UITextComponent *>(&component))
-                return "UITextComponent";
-            if (dynamic_cast<const UIButtonComponent *>(&component))
-                return "UIButtonComponent";
-            return {};
+            return ComponentRegistry::Get().GetTypeName(component);
         }
 
         std::unique_ptr<Component> CreateComponentForType(std::string_view componentType)
         {
-            if (componentType == "MeshComponent")
-                return std::make_unique<MeshComponent>(MeshComponentConfig{});
-            if (componentType == "TerrainComponent")
-                return std::make_unique<TerrainComponent>(TerrainComponentConfig{});
-            if (componentType == "ClothComponent")
-                return std::make_unique<ClothComponent>();
-            if (componentType == "FoliageComponent")
-                return std::make_unique<FoliageComponent>();
-            if (componentType == "ParticleSystemComponent")
-                return CreateParticleSystemComponent();
-            if (componentType == "AnimationComponent")
-                return std::make_unique<AnimationComponent>();
-            if (componentType == "ActiveRagdollComponent")
-                return std::make_unique<ActiveRagdollComponent>();
-            if (componentType == "RagdollTuningComponent")
-                return std::make_unique<RagdollTuningComponent>();
-            if (componentType == "SkeletonAttachmentComponent")
-                return std::make_unique<SkeletonAttachmentComponent>();
-            if (componentType == "SequencerComponent") return std::make_unique<SequencerComponent>();
-            if (componentType == "IKComponent") return std::make_unique<IKComponent>();
-            if (componentType == "CameraRigComponent")
-                return std::make_unique<CameraRigComponent>();
-            if (componentType == "CameraComponent")
-                return std::make_unique<CameraComponent>(new render::Camera(render::CameraConfig{}), false);
-            if (componentType == "LightComponent")
-                return std::make_unique<LightComponent>();
-            if (componentType == "RigidbodyComponent")
-                return std::make_unique<RigidbodyComponent>();
-            if (componentType == "NavAgentComponent")
-                return std::make_unique<NavAgentComponent>();
-            if (componentType == "NavigationMeshComponent")
-                return std::make_unique<NavigationMeshComponent>();
-            if (componentType == "ColliderComponent")
-                return std::make_unique<ColliderComponent>();
-            if (componentType == "IblCaptureComponent")
-                return std::make_unique<IblCaptureComponent>();
-            if (componentType == "ScriptComponent")
-                return std::make_unique<ScriptComponent>(ScriptComponentConfig{});
-            if (componentType == "SoundEmitterComponent")
-                return std::make_unique<SoundEmitterComponent>();
-            if (componentType == "SoundListenerComponent")
-                return std::make_unique<SoundListenerComponent>();
-            if (componentType == "AudioEnvironmentVolumeComponent") return std::make_unique<AudioEnvironmentVolumeComponent>();
-            if (componentType == "CanvasComponent")
-                return std::make_unique<CanvasComponent>();
-            if (componentType == "RmlWidgetComponent")
-                return std::make_unique<RmlWidgetComponent>();
-            if (componentType == "RectTransformComponent")
-                return std::make_unique<RectTransformComponent>();
-            if (componentType == "UIImageComponent")
-                return std::make_unique<UIImageComponent>();
-            if (componentType == "UITextComponent")
-                return std::make_unique<UITextComponent>();
-            if (componentType == "UIButtonComponent")
-                return std::make_unique<UIButtonComponent>();
-            return nullptr;
+            return ComponentRegistry::Get().Create(componentType);
         }
 
         void RemoveAllComponents(Entity &entity)

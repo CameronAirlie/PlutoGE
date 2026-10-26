@@ -105,9 +105,11 @@ add_library(PlutoGERender
     src/passes/VolumetricCloudPass.cpp
     src/passes/PostProcessPass.cpp
     src/passes/PhysicalSkyPass.cpp
-    src/passes/RuntimeUIPass.cpp
     src/RmlUiRuntime.cpp
     src/RmlUiRhiRenderer.cpp
+    src/UIRhiRenderer.cpp
+    src/NativeUIRenderer.cpp
+    src/NativeUIPreview.cpp
     src/passes/RmlUiPass.cpp
 )
 
@@ -293,6 +295,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SelectionOutline "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SelectionOutline.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(LoadingScreen "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LoadingScreen.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(RmlUi "${CMAKE_CURRENT_SOURCE_DIR}/shaders/RmlUi.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(NativeUI "${CMAKE_CURRENT_SOURCE_DIR}/shaders/NativeUI.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ToneMapping "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ToneMapping.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorOperations.slang")
     pluto_add_slang_graphics_shader(GammaCorrection "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GammaCorrection.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(FXAA "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FXAA.slang" vertexMain fragmentMain)
@@ -493,6 +496,7 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::Core
     PlutoGE::glad
     PlutoGE::Scene
+    PlutoGE::UI
     PlutoGE::stb_image
     PlutoGE::rmlui
     PlutoGE::vulkan

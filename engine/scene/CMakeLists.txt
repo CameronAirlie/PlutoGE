@@ -6,6 +6,8 @@ add_library(PlutoGEScene
     src/RoadJunction.cpp
     src/components/SequencerComponent.cpp
     src/AffineTransform.cpp
+    src/ComponentRegistry.cpp
+    src/BuiltinComponentTypes.cpp
     src/Entity.cpp
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp
@@ -56,6 +58,21 @@ add_library(PlutoGEScene
     src/components/SplineComponent.cpp
     src/components/TerrainComponent.cpp
     src/components/UIComponent.cpp
+    src/components/UIComponentPainting.cpp
+    src/components/UIComponentTypes.cpp
+    src/components/UILayoutComponents.cpp
+    src/components/UIShapeComponent.cpp
+    src/components/UIToggleComponent.cpp
+    src/components/UISliderComponent.cpp
+    src/components/UIScrollViewComponent.cpp
+    src/components/UIInputFieldComponent.cpp
+    src/components/UIDropdownComponent.cpp
+    src/components/UIStyleComponents.cpp
+    src/ui/UIStyleSheet.cpp
+    src/ui/UIEngineServices.cpp
+    src/ui/UIInputMapper.cpp
+    src/ui/UISelectable.cpp
+    src/ui/UILayoutAdapter.cpp
     src/components/VolumetricCloudComponent.cpp
 )
 
@@ -89,6 +106,7 @@ target_link_libraries(PlutoGEScene PUBLIC
     PlutoGE::Render
     PlutoGE::Assets
     PlutoGE::Scripting
+    PlutoGE::UI
     PlutoGE::bullet
     PlutoGE::stb_image
 )

@@ -10,6 +10,7 @@
 #include <memory>
 #include "PlutoGE/core/FrameWorker.h"
 #include "PlutoGE/render/LoadingScreenRenderer.h"
+#include "PlutoGE/render/NativeUIRenderer.h"
 #include "PlutoGE/render/rhi/DeferredCommandList.h"
 
 namespace PlutoGE::scene
@@ -118,6 +119,7 @@ namespace PlutoGE::render
         // Render thread state: the worker, the frame's runtime UI captured for it, and stats published on completion.
         std::unique_ptr<core::FrameWorker> m_renderThread;
         rhi::DeferredCommandList m_runtimeUiCommands;
+        NativeUIRenderer m_nativeUi;
         RhiSceneTimingStats m_completedTimingStats;
         TemporalUpscalerStatus m_completedUpscalerStatus;
         // Records a prepared frame, its runtime UI and presentation on the render thread.

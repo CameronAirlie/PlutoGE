@@ -176,6 +176,8 @@ public sealed class GameObject
 
     public bool HasComponent<T>() where T : class
     {
+        if (RegisteredComponent.IsRegisteredType(typeof(T)))
+            return ScriptBridge.HasRegisteredComponent(EntityId, RegisteredComponent.TypeNameOf(typeof(T)));
         return typeof(T) switch
         {
             var type when type == typeof(MeshComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Mesh),
@@ -198,8 +200,20 @@ public sealed class GameObject
         };
     }
 
+    /// <summary>Adds a native component reached through the property bridge (or returns the existing one).</summary>
+    public T? AddComponent<T>() where T : RegisteredComponent =>
+        ScriptBridge.AddRegisteredComponent(EntityId, RegisteredComponent.TypeNameOf(typeof(T)))
+            ? RegisteredComponent.Create<T>(EntityId)
+            : null;
+
+    public bool RemoveComponent<T>() where T : RegisteredComponent =>
+        ScriptBridge.RemoveRegisteredComponent(EntityId, RegisteredComponent.TypeNameOf(typeof(T)));
+
     public T? GetComponent<T>() where T : class
     {
+        if (RegisteredComponent.IsRegisteredType(typeof(T)))
+            return HasComponent<T>() ? RegisteredComponent.Create<T>(EntityId) : null;
+
         if (typeof(T) == typeof(MeshComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Mesh))
         {
             return new MeshComponent(EntityId) as T;

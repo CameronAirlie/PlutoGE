@@ -10,7 +10,19 @@ namespace PlutoGE::scene
 {
     namespace
     {
-        constexpr std::size_t MaxTracks = 256, MaxKeys = 65536, MaxText = 16 * 1024 * 1024, MaxEvents = 65536;
+        constexpr std::size_t MaxTracks = 256, MaxKeys = 65536, MaxText = 16 * 1024 * 1024, MaxEvents = 65536, MaxProperty = 256;
+        constexpr unsigned LastChannel = static_cast<unsigned>(TimelineChannel::Property);
+        // Version 1 predates property tracks and fourth value components;
+        // timelines that need neither still encode as version 1.
+        bool NeedsVersion2(const Timeline &timeline)
+        {
+            for (const auto &track : timeline.tracks)
+            {
+                if (track.channel == TimelineChannel::Property) return true;
+                for (const auto &key : track.keys) if (key.value[3] != 0.0f) return true;
+            }
+            return false;
+        }
         bool EventChannel(TimelineChannel channel) { return channel == TimelineChannel::AudioPlay || channel == TimelineChannel::ScriptEvent; }
         bool Fail(std::string *error, const char *message) { if (error) *error = message; return false; }
     }
@@ -22,8 +34,12 @@ namespace PlutoGE::scene
         std::size_t total = 0, encodedBudget = 128;
         for (const auto &track : tracks)
         {
-            if (track.entity == 0 || static_cast<unsigned>(track.channel) > 8 || static_cast<unsigned>(track.interpolation) > 2)
+            if (track.entity == 0 || static_cast<unsigned>(track.channel) > LastChannel || static_cast<unsigned>(track.interpolation) > 2)
                 return Fail(error, "Invalid timeline binding or channel");
+            if ((track.channel == TimelineChannel::Property) != !track.property.empty() || track.property.size() > MaxProperty ||
+                (!track.property.empty() && track.property.find('.') == std::string::npos))
+                return Fail(error, "Property tracks need a Component.Property name");
+            encodedBudget += 2 * track.property.size();
             if (track.keys.size() > MaxKeys - total) return Fail(error, "Too many timeline keys");
             total += track.keys.size();
             double previous = -1;
@@ -46,12 +62,19 @@ namespace PlutoGE::scene
         std::ostringstream out;
         out.imbue(std::locale::classic());
         out << std::setprecision(std::numeric_limits<double>::max_digits10);
-        out << "PLUTO_TIMELINE 1 " << duration << ' ' << loop << ' ' << tracks.size() << '\n';
+        const bool version2 = NeedsVersion2(*this);
+        out << "PLUTO_TIMELINE " << (version2 ? 2 : 1) << ' ' << duration << ' ' << loop << ' ' << tracks.size() << '\n';
         for (const auto &track : tracks)
         {
-            out << track.entity << ' ' << static_cast<int>(track.channel) << ' ' << static_cast<int>(track.interpolation) << ' ' << track.keys.size() << '\n';
+            out << track.entity << ' ' << static_cast<int>(track.channel) << ' ' << static_cast<int>(track.interpolation) << ' ' << track.keys.size();
+            if (version2) out << ' ' << std::quoted(track.property);
+            out << '\n';
             for (const auto &key : track.keys)
-                out << key.time << ' ' << key.value[0] << ' ' << key.value[1] << ' ' << key.value[2] << ' ' << std::quoted(key.event) << '\n';
+            {
+                out << key.time << ' ' << key.value[0] << ' ' << key.value[1] << ' ' << key.value[2] << ' ';
+                if (version2) out << key.value[3] << ' ';
+                out << std::quoted(key.event) << '\n';
+            }
         }
         auto text = out.str();
         return text.size() <= MaxText ? text : std::string{};
@@ -65,21 +88,24 @@ namespace PlutoGE::scene
         std::string magic;
         unsigned version = 0, loop = 0;
         std::size_t count = 0, total = 0;
-        if (!(in >> magic >> version >> data.duration >> loop >> count) || magic != "PLUTO_TIMELINE" || version != 1 || loop > 1 || count > MaxTracks)
+        if (!(in >> magic >> version >> data.duration >> loop >> count) || magic != "PLUTO_TIMELINE" || version < 1 || version > 2 || loop > 1 || count > MaxTracks)
             return Fail(error, "Invalid timeline header");
         data.loop = loop != 0;
         data.tracks.resize(count);
         for (auto &track : data.tracks)
         {
             unsigned channel, interpolation;
-            if (!(in >> track.entity >> channel >> interpolation >> count) || channel > 8 || interpolation > 2 || count > MaxKeys - total)
+            if (!(in >> track.entity >> channel >> interpolation >> count) || channel > LastChannel || interpolation > 2 || count > MaxKeys - total)
                 return Fail(error, "Invalid timeline track");
+            if (version >= 2 && !(in >> std::quoted(track.property)))
+                return Fail(error, "Invalid timeline track property");
             total += count;
             track.channel = static_cast<TimelineChannel>(channel);
             track.interpolation = static_cast<TimelineInterpolation>(interpolation);
             track.keys.resize(count);
             for (auto &key : track.keys)
-                if (!(in >> key.time >> key.value[0] >> key.value[1] >> key.value[2] >> std::quoted(key.event)))
+                if (!(in >> key.time >> key.value[0] >> key.value[1] >> key.value[2]) ||
+                    (version >= 2 && !(in >> key.value[3])) || !(in >> std::quoted(key.event)))
                     return Fail(error, "Invalid timeline key");
         }
         in >> std::ws;
@@ -150,7 +176,7 @@ namespace PlutoGE::scene
         events = std::move(pending);
         return true;
     }
-    std::array<float, 3> TimelinePlayer::Evaluate(std::size_t index) const
+    std::array<float, 4> TimelinePlayer::Evaluate(std::size_t index) const
     {
         if (index >= m_data.tracks.size()) return {};
         const auto &track = m_data.tracks[index];
@@ -161,8 +187,8 @@ namespace PlutoGE::scene
         if (next == track.keys.end() || track.interpolation == TimelineInterpolation::Step) return previous.value;
         double alpha = (m_time - previous.time) / (next->time - previous.time);
         if (track.interpolation == TimelineInterpolation::Smooth) alpha = alpha * alpha * (3 - 2 * alpha);
-        std::array<float, 3> value;
-        for (int i = 0; i < 3; ++i)
+        std::array<float, 4> value;
+        for (int i = 0; i < 4; ++i)
             value[i] = static_cast<float>((1 - alpha) * previous.value[i] + alpha * next->value[i]);
         return value;
     }

@@ -7,6 +7,7 @@ add_subdirectory(assets)
 add_subdirectory(import)
 add_subdirectory(asset_import)
 add_subdirectory(scripting)
+add_subdirectory(ui)
 add_subdirectory(scene)
     
 add_library(PlutoGE INTERFACE)
@@ -22,4 +23,5 @@ target_link_libraries(PlutoGE
         PlutoGE::Import
         PlutoGE::Scripting
         PlutoGE::Scene
+        PlutoGE::UI
 )

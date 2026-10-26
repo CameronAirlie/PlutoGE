@@ -20,7 +20,6 @@
 #include "PlutoGE/render/passes/PostProcessPass.h"
 #include "PlutoGE/render/passes/ParticlePass.h"
 #include "PlutoGE/render/passes/PhysicalSkyPass.h"
-#include "PlutoGE/render/passes/RuntimeUIPass.h"
 #include "PlutoGE/render/passes/RmlUiPass.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/passes/ShadowPass.h"
@@ -568,10 +567,6 @@ namespace PlutoGE::render
         auto transparentPass = new TransparentPass();
         transparentPass->Initialize();
         m_renderPasses.push_back(transparentPass);
-
-        auto runtimeUIPass = new RuntimeUIPass();
-        runtimeUIPass->Initialize();
-        m_renderPasses.push_back(runtimeUIPass);
 
         auto rmlUiPass = new RmlUiPass();
         rmlUiPass->Initialize();

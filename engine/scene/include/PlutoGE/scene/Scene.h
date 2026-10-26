@@ -235,6 +235,11 @@ namespace PlutoGE::scene
         std::vector<Light *> GetLights() const; // Get active lights in the scene (for rendering)
         // Active lights whose owning entity passes `include` (for example a camera tag filter).
         std::vector<Light *> GetLights(const std::function<bool(const Entity &)> &include) const;
+        // Editor-only key light and ambient for content authored without lights
+        // (for example prefabs). It has no entity, so it is never serialized and
+        // any directional light in the scene takes precedence over it.
+        void SetPreviewLightingEnabled(bool enabled);
+        [[nodiscard]] bool IsPreviewLightingEnabled() const { return m_previewLight != nullptr; }
         const std::vector<PhysicalSkyComponent *> &GetPhysicalSkyComponents() const;
         const std::vector<VolumetricCloudComponent *> &GetVolumetricCloudComponents() const;
         void MarkShadowLightsDirty();
@@ -354,6 +359,7 @@ namespace PlutoGE::scene
         std::vector<CanvasComponent *> m_canvasComponents;
         std::vector<RmlWidgetComponent *> m_rmlWidgetComponents;
         std::vector<Light *> m_lights;
+        std::unique_ptr<Light> m_previewLight;
         std::string m_filePath;
         std::string m_environmentMapPath;
         render::Texture *m_environmentMapTexture = nullptr;

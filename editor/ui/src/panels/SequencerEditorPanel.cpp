@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/panels/SequencerEditorPanel.h"
+#include "PlutoGE/scene/ComponentRegistry.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/TimelineEditing.h"
 #include "PlutoGE/ui/SequencerTimelineView.h"
@@ -16,6 +17,31 @@ namespace PlutoGE::ui
         constexpr auto &Channels = TimelineChannelLabels;
         int Frame(double time) { return static_cast<int>(std::round(time * Fps)); }
 
+
+        // "<Type>.<Property>" for every numeric property of the entity's registered components.
+        std::vector<std::string> AnimatableProperties(scene::Entity *entity)
+        {
+            std::vector<std::string> options;
+            if (!entity) return options;
+            const auto &registry = scene::ComponentRegistry::Get();
+            for (const auto &bucket : entity->GetComponentBuckets())
+                for (const auto *component : bucket)
+                {
+                    const auto type = component ? registry.GetTypeName(*component) : std::string{};
+                    if (type.empty()) continue;
+                    for (const auto &property : component->Serialize())
+                        switch (property.type)
+                        {
+                        case scene::PropertyType::Float: case scene::PropertyType::Double: case scene::PropertyType::Int:
+                        case scene::PropertyType::Bool: case scene::PropertyType::Vec2: case scene::PropertyType::Vec3:
+                        case scene::PropertyType::Vec4: case scene::PropertyType::Color:
+                            if (property.name != "Enabled") options.push_back(type + "." + property.name);
+                            break;
+                        default: break;
+                        }
+                }
+            return options;
+        }
 
         void EntityOptions(scene::Entity &entity, std::uint32_t &binding, bool &edited)
         {
@@ -137,7 +163,29 @@ namespace PlutoGE::ui
                 ImGui::EndCombo();
             }
             int channel = static_cast<int>(track.channel);
-            if (ImGui::Combo("Channel", &channel, Channels, 9)) { track.channel = static_cast<scene::TimelineChannel>(channel); m_dirty = true; }
+            if (ImGui::Combo("Channel", &channel, Channels, IM_ARRAYSIZE(Channels)))
+            {
+                track.channel = static_cast<scene::TimelineChannel>(channel);
+                if (track.channel != scene::TimelineChannel::Property) track.property.clear();
+                else if (track.property.empty())
+                {
+                    const auto options = AnimatableProperties(target);
+                    track.property = options.empty() ? "UIShapeComponent.Color" : options.front();
+                }
+                for (auto &key : track.keys) key.value = {}; // values of another channel are meaningless
+                m_dirty = true;
+            }
+            if (track.channel == scene::TimelineChannel::Property &&
+                ImGui::BeginCombo("Property", track.property.empty() ? "Choose..." : track.property.c_str()))
+            {
+                for (const auto &option : AnimatableProperties(target))
+                    if (ImGui::Selectable(option.c_str(), option == track.property))
+                    {
+                        track.property = option;
+                        m_dirty = true;
+                    }
+                ImGui::EndCombo();
+            }
             int interpolation = static_cast<int>(track.interpolation);
             if (ImGui::Combo("Interpolation", &interpolation, "Step\0Linear\0Smooth\0")) { track.interpolation = static_cast<scene::TimelineInterpolation>(interpolation); m_dirty = true; }
         }
@@ -180,7 +228,14 @@ namespace PlutoGE::ui
                 }
                 else
                 {
-                    if (track.channel == scene::TimelineChannel::LightColor) m_dirty |= ImGui::ColorEdit3("Value", key.value.data());
+                    scene::PropertyType propertyType{};
+                    const bool property = scene::GetTimelinePropertyType(scene, track, propertyType);
+                    const int width = property ? scene::GetTimelinePropertyWidth(scene, track) : 0;
+                    if (property && propertyType == scene::PropertyType::Color) m_dirty |= ImGui::ColorEdit4("Value", key.value.data());
+                    else if (property && width == 4) m_dirty |= ImGui::InputFloat4("Value", key.value.data());
+                    else if (property && width == 3) m_dirty |= ImGui::InputFloat3("Value", key.value.data());
+                    else if (property && width == 2) m_dirty |= ImGui::InputFloat2("Value", key.value.data());
+                    else if (track.channel == scene::TimelineChannel::LightColor) m_dirty |= ImGui::ColorEdit3("Value", key.value.data());
                     else if (track.channel <= scene::TimelineChannel::Scale) m_dirty |= ImGui::InputFloat3("Value", key.value.data());
                     else m_dirty |= ImGui::InputFloat("Value", key.value.data());
                     if (ImGui::Button("Capture Current Value")) m_dirty |= scene::ReadTimelineValue(scene, track, key.value);

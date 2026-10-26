@@ -165,6 +165,8 @@ internal static unsafe partial class ScriptBridge
         RmlWidget = 14,
         ActiveRagdoll = 15,
         Terrain = 16,
+        // Components reached through the generic property bridge (RegisteredComponent).
+        Registered = 1000,
     }
 
     private sealed class ScriptLoadContext : AssemblyLoadContext
@@ -1647,6 +1649,10 @@ internal static unsafe partial class ScriptBridge
             {
                 RemoveInstanceFromEntityIndex(instance);
             }
+            // Native UI handlers die with their script; with none left (play stopped), none remain.
+            UI.ForgetSubscriber(instance);
+            if (Instances.IsEmpty)
+                UI.ClearSubscriptions();
         }
     }
 
@@ -1706,6 +1712,7 @@ internal static unsafe partial class ScriptBridge
                 var uiUpdateSequence = GetUIUpdateSequence();
                 UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
                 RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
+                UI.DispatchEvents();
                 RefreshScriptableObjectReferences(instance);
             }
             instance.OnUpdate(deltaTime);
@@ -3187,6 +3194,7 @@ internal static unsafe partial class ScriptBridge
 
     private static void ResetLoadedAssembly()
     {
+        UI.ClearSubscriptions();
         Instances.Clear();
         InstancesByEntity.Clear();
         ScriptClasses.Clear();

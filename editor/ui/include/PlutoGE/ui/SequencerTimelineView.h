@@ -7,7 +7,7 @@
 
 namespace PlutoGE::ui
 {
-    inline constexpr const char *TimelineChannelLabels[] = {"Position", "Rotation (Euler)", "Scale", "Camera FOV", "Light Color", "Light Intensity", "Audio Volume", "Audio Play", "Script Event"};
+    inline constexpr const char *TimelineChannelLabels[] = {"Position", "Rotation (Euler)", "Scale", "Camera FOV", "Light Color", "Light Intensity", "Audio Volume", "Audio Play", "Script Event", "Component Property"};
     class SequencerTimelineView final : public ImSequencer::SequenceInterface
     {
     public:
@@ -18,7 +18,9 @@ namespace PlutoGE::ui
             for (const auto &trackData : data.tracks)
             {
                 const auto *target = scene.FindEntityByID(trackData.entity);
-                labels.push_back((target ? target->GetName() : "Missing target") + " / " + TimelineChannelLabels[static_cast<int>(trackData.channel)]);
+                labels.push_back((target ? target->GetName() : "Missing target") + " / " +
+                                 (trackData.channel == scene::TimelineChannel::Property ? trackData.property
+                                                                                       : std::string(TimelineChannelLabels[static_cast<int>(trackData.channel)])));
                 starts.push_back(trackData.keys.empty() ? 0 : static_cast<int>(std::round(trackData.keys.front().time * 60)));
                 ends.push_back(trackData.keys.empty() ? 0 : static_cast<int>(std::round(trackData.keys.back().time * 60)));
             }

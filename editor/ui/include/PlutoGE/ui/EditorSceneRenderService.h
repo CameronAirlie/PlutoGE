@@ -2,6 +2,7 @@
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/NativeUIRenderer.h"
 #include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
@@ -110,6 +111,7 @@ namespace PlutoGE::ui
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;
         render::RhiCameraStackCompositor m_cameraStack;
         render::RhiRenderTextureRenderer m_renderTextures;
+        render::NativeUIRenderer m_nativeUi;
         std::string m_lastRenderTextureError;
         render::rhi::TextureHandle m_viewportTexture;
         bool m_isVulkan = false;

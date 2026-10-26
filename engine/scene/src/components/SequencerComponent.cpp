@@ -14,11 +14,12 @@ namespace PlutoGE::scene
 {
     namespace
     {
-        bool Bound(Entity *entity, TimelineChannel channel)
+        bool Bound(Entity *entity, const TimelineTrack &track)
         {
             if (!entity) return false;
-            switch (channel)
+            switch (track.channel)
             {
+            case TimelineChannel::Property: return entity->GetScene() && GetTimelinePropertyWidth(*entity->GetScene(), track) > 0;
             case TimelineChannel::CameraFov: { auto *c = entity->GetComponent<CameraComponent>(); return c && c->GetCamera(); }
             case TimelineChannel::LightColor: case TimelineChannel::LightIntensity: return entity->HasComponent<LightComponent>();
             case TimelineChannel::AudioVolume: case TimelineChannel::AudioPlay: return entity->HasComponent<SoundEmitterComponent>();
@@ -62,7 +63,7 @@ namespace PlutoGE::scene
         {
             const auto &track = tracks[i];
             auto *entity = scene->FindEntityByID(track.entity);
-            if (track.keys.empty() || !Bound(entity, track.channel)) continue;
+            if (track.keys.empty() || !Bound(entity, track)) continue;
             WriteTimelineValue(*scene, track, m_player.Evaluate(i));
         }
     }
@@ -107,7 +108,7 @@ namespace PlutoGE::scene
         std::vector<std::size_t> missing;
         auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
         for (std::size_t i = 0; i < m_timeline.tracks.size(); ++i)
-            if (!Bound(scene ? scene->FindEntityByID(m_timeline.tracks[i].entity) : nullptr, m_timeline.tracks[i].channel)) missing.push_back(i);
+            if (!Bound(scene ? scene->FindEntityByID(m_timeline.tracks[i].entity) : nullptr, m_timeline.tracks[i])) missing.push_back(i);
         return missing;
     }
     void SequencerComponent::RemapBindings(const std::unordered_map<std::uint32_t, std::uint32_t> &ids)

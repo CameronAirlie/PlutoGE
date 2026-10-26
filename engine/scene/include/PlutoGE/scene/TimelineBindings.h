@@ -1,12 +1,17 @@
 #pragma once
 #include "PlutoGE/scene/Timeline.h"
+#include "PlutoGE/scene/components/Component.h"
 
 namespace PlutoGE::scene
 {
     class Scene;
     class LightComponent;
-    bool ReadTimelineValue(Scene &scene, const TimelineTrack &track, std::array<float, 3> &value);
-    bool WriteTimelineValue(Scene &scene, const TimelineTrack &track, const std::array<float, 3> &value);
+    bool ReadTimelineValue(Scene &scene, const TimelineTrack &track, std::array<float, 4> &value);
+    bool WriteTimelineValue(Scene &scene, const TimelineTrack &track, const std::array<float, 4> &value);
+    // Components of a property track's value (1-4), or 0 when it cannot bind.
+    int GetTimelinePropertyWidth(Scene &scene, const TimelineTrack &track);
+    // True and the serialized type when a property track binds.
+    bool GetTimelinePropertyType(Scene &scene, const TimelineTrack &track, PropertyType &type);
 
     // Main-thread render scope only: no scene edits, callbacks or scene replacement
     // may occur until destruction. Captures all values before applying any pose.
@@ -19,10 +24,10 @@ namespace PlutoGE::scene
         ScopedTimelinePose(const ScopedTimelinePose &) = delete;
         ScopedTimelinePose &operator=(const ScopedTimelinePose &) = delete;
     private:
-        struct Saved { TimelineTrack binding; std::array<float, 3> value; };
+        struct Saved { TimelineTrack binding; std::array<float, 4> value; };
         Scene &m_scene;
         std::vector<Saved> m_saved;
-        struct SavedLight { LightComponent *component; std::array<float, 3> position, direction; };
+        struct SavedLight { LightComponent *component; std::array<float, 4> position, direction; };
         std::vector<SavedLight> m_lights;
     };
 }

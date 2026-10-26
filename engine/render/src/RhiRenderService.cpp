@@ -45,6 +45,7 @@ namespace PlutoGE::render
         m_runtimeUiCommands.Clear();
         m_loadingRenderer.Shutdown();
         RmlUiRuntime::Get().Shutdown();
+        m_nativeUi.Shutdown();
         m_cameraStack.Shutdown();
         m_renderTextures.Shutdown();
         if (m_sceneRenderer)
@@ -157,10 +158,13 @@ namespace PlutoGE::render
             m_sceneRenderer = std::move(sceneRenderer);
         }
         const bool runtimeUi = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI();
+        const bool nativeUi = cameraData.renderRuntimeUI && scene && NativeUIRenderer::HasContent(*scene);
+        const bool anyUi = runtimeUi || nativeUi;
         // Let the first UI frame initialize its pipelines and upload resources
         // outside an active scene command buffer. Subsequent frames can safely
         // append UI rendering to the scene submission.
-        const bool combineRuntimeUiSubmission = runtimeUi && RmlUiRuntime::Get().IsInitialized() &&
+        const bool combineRuntimeUiSubmission = anyUi && (!runtimeUi || RmlUiRuntime::Get().IsInitialized()) &&
+                                                (!nativeUi || m_nativeUi.IsInitialized()) &&
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
         if (runtimeUi) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
@@ -175,7 +179,7 @@ namespace PlutoGE::render
             };
 
         // Overlay cameras composite from the scene while recording, so those frames stay on this thread.
-        if (m_renderThread && overlays.empty() && (!runtimeUi || combineRuntimeUiSubmission))
+        if (m_renderThread && overlays.empty() && (!anyUi || combineRuntimeUiSubmission))
         {
             auto frame = m_sceneRenderer->Prepare(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting,
                                                   commands, commands, postProcessEffects, atmosphere, texturePixelReader,
@@ -185,6 +189,11 @@ namespace PlutoGE::render
             // The UI reads its documents now; the render thread replays what it drew after the scene.
             m_runtimeUiCommands.Clear();
             m_runtimeUiCommands.SetReplayTarget(&m_device->GetImmediateContext());
+            // Native canvases draw beneath RmlUi documents.
+            if (nativeUi)
+                m_nativeUi.Render(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
+                                  static_cast<int>(m_swapchain->GetWidth()), static_cast<int>(m_swapchain->GetHeight()),
+                                  cameraData.view, cameraData.projection, false, &m_runtimeUiCommands);
             if (runtimeUi)
                 RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
                                              static_cast<int>(m_swapchain->GetWidth()),
@@ -198,6 +207,10 @@ namespace PlutoGE::render
                                      commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
                                      !combineRuntimeUiSubmission, scene, lights, compose))
             return false;
+        if (nativeUi)
+            m_nativeUi.Render(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
+                              static_cast<int>(m_swapchain->GetWidth()), static_cast<int>(m_swapchain->GetHeight()),
+                              cameraData.view, cameraData.projection, !combineRuntimeUiSubmission);
         if (runtimeUi)
             RmlUiRuntime::Get().RenderRhi(*scene, *m_device, m_sceneRenderer->GetColorTexture(),
                                          static_cast<int>(m_swapchain->GetWidth()),

@@ -20,6 +20,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/render/SkeletonJointLookup.h"
@@ -38,6 +39,7 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 
 #include "TerrainScriptApi.h"
+#include "ComponentScriptApi.h"
 
 #include <algorithm>
 #include <array>
@@ -148,6 +150,7 @@ namespace PlutoGE::scripting
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_terrain_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_component_property_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_camera_rig_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_skeletal_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_debug_draw_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
@@ -1168,6 +1171,23 @@ namespace PlutoGE::scripting
             return core::Engine::GetInstance().GetWindow().IsScriptInputEnabled();
         }
 
+        // Gameplay input yields to UI: RmlUi documents and native canvases.
+        bool IsUIPointerCaptured()
+        {
+            if (render::RmlUiRuntime::Get().IsPointerInputCaptured())
+                return true;
+            const auto *scene = core::Engine::GetInstance().GetScene();
+            return scene && scene->GetUISystem().IsPointerOverUI();
+        }
+
+        bool IsUIKeyboardCaptured()
+        {
+            if (render::RmlUiRuntime::Get().IsKeyboardInputCaptured())
+                return true;
+            const auto *scene = core::Engine::GetInstance().GetScene();
+            return scene && scene->GetUISystem().IsKeyboardCaptured();
+        }
+
         bool IsFiniteVector3(NativeVector3 value)
         {
             return std::isfinite(value.x) &&
@@ -1436,6 +1456,21 @@ namespace PlutoGE::scripting
                        : 0;
         }
 
+        // Mirrors RuntimeComponentIndex::Active: inactive entities and disabled
+        // scripts stay unstarted until the scene's own update reaches them.
+        void StartPrefabScripts(scene::Entity *entity)
+        {
+            if (!entity || !entity->IsActive())
+                return;
+            for (auto *script : entity->GetComponents<scene::ScriptComponent>())
+                if (script->IsEnabled())
+                    script->Start();
+            // OnCreate may reparent or destroy children, so iterate a copy.
+            const auto children = entity->GetChildren();
+            for (auto *child : children)
+                StartPrefabScripts(child);
+        }
+
         uint32_t InstantiatePrefab(const char *prefabReference)
         {
             auto *activeScene = core::Engine::GetInstance().GetScene();
@@ -1455,6 +1490,11 @@ namespace PlutoGE::scripting
                 }
                 return 0;
             }
+
+            // Start scripts now so the caller can GetComponent<TScript>() on the
+            // returned entity instead of waiting for the next script update.
+            if (activeScene->IsRuntimeStarted())
+                StartPrefabScripts(instance);
 
             return instance->GetID();
         }
@@ -1576,7 +1616,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetViewportPointer()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured()) return {};
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured()) return {};
             auto &window = core::Engine::GetInstance().GetWindow();
             auto *scene = core::Engine::GetInstance().GetScene();
             glm::vec2 size{}, pointer{};
@@ -3118,7 +3158,7 @@ namespace PlutoGE::scripting
         {
             if (!IsScriptInputEnabled() ||
                 (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
-                 render::RmlUiRuntime::Get().IsKeyboardInputCaptured()))
+                 IsUIKeyboardCaptured()))
             {
                 return 0;
             }
@@ -3131,7 +3171,7 @@ namespace PlutoGE::scripting
         {
             if (!IsScriptInputEnabled() ||
                 (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
-                 render::RmlUiRuntime::Get().IsKeyboardInputCaptured()))
+                 IsUIKeyboardCaptured()))
             {
                 return 0;
             }
@@ -3147,7 +3187,7 @@ namespace PlutoGE::scripting
         {
             if (!IsScriptInputEnabled() ||
                 (keyCode != static_cast<int32_t>(platform::KeyCode::Escape) &&
-                 render::RmlUiRuntime::Get().IsKeyboardInputCaptured()))
+                 IsUIKeyboardCaptured()))
             {
                 return 0;
             }
@@ -3161,7 +3201,7 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonDown(int32_t button)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured())
             {
                 return 0;
             }
@@ -3172,7 +3212,7 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonPressed(int32_t button)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured())
             {
                 return 0;
             }
@@ -3183,7 +3223,7 @@ namespace PlutoGE::scripting
 
         int32_t GetMouseButtonReleased(int32_t button)
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured())
             {
                 return 0;
             }
@@ -3209,7 +3249,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetMousePosition()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured())
             {
                 return {};
             }
@@ -3220,7 +3260,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetMouseDelta()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured())
             {
                 return {};
             }
@@ -3231,7 +3271,7 @@ namespace PlutoGE::scripting
 
         NativeVector3 GetMouseScrollDelta()
         {
-            if (!IsScriptInputEnabled() || render::RmlUiRuntime::Get().IsPointerInputCaptured())
+            if (!IsScriptInputEnabled() || IsUIPointerCaptured())
             {
                 return {};
             }
@@ -3847,6 +3887,7 @@ namespace PlutoGE::scripting
         register_debug_api_fn registerDebugApi = nullptr;
         register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
         register_terrain_api_fn registerTerrainApi = nullptr;
+        register_component_property_api_fn registerComponentPropertyApi = nullptr;
         register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
         register_skeletal_api_fn registerSkeletalApi = nullptr;
@@ -3974,6 +4015,7 @@ namespace PlutoGE::scripting
             impl.registerDebugApi = nullptr;
             impl.registerSurfaceResponseApi = nullptr;
             impl.registerTerrainApi = nullptr;
+            impl.registerComponentPropertyApi = nullptr;
             impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
             impl.registerSkeletalApi = nullptr;
@@ -4342,6 +4384,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterTerrainApi"), impl.registerTerrainApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterComponentPropertyApi"), impl.registerComponentPropertyApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneStreamingApi"), impl.registerSceneStreamingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugDrawApi"), impl.registerDebugDrawApi) &&
@@ -5189,6 +5232,12 @@ namespace PlutoGE::scripting
         if (!m_impl->registerTerrainApi || m_impl->registerTerrainApi(reinterpret_cast<void *>(&ControlTerrain)) == 0)
         {
             setManagedBridgeFailure("RegisterTerrainApi");
+            return false;
+        }
+        if (!m_impl->registerComponentPropertyApi ||
+            m_impl->registerComponentPropertyApi(reinterpret_cast<void *>(&ControlComponents)) == 0)
+        {
+            setManagedBridgeFailure("RegisterComponentPropertyApi");
             return false;
         }
         if (!m_impl->registerSceneStreamingApi || m_impl->registerSceneStreamingApi(reinterpret_cast<void *>(&ControlSceneStreaming)) == 0)

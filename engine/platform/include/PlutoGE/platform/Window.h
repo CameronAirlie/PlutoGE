@@ -69,6 +69,9 @@ namespace PlutoGE::platform
         // Valid until the next poll; consumers check where the cursor is.
         [[nodiscard]] const std::vector<std::filesystem::path> &GetDroppedPaths() const { return m_droppedPaths; }
         void ClearDroppedPaths() { m_droppedPaths.clear(); }
+        // System clipboard as UTF-8; empty when unavailable.
+        [[nodiscard]] std::string GetClipboardText() const;
+        void SetClipboardText(const std::string &text) const;
         // Delivers OS file drops on another native window (such as a detached
         // editor viewport) through this window's GetDroppedPaths.
         void ForwardDropsFrom(GLFWwindow *window);

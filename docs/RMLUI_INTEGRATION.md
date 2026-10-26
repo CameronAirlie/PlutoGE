@@ -1,8 +1,9 @@
 # RmlUi runtime integration
 
-PlutoGE uses document-driven RmlUi for new runtime UI. Legacy native canvases
-remain loadable and editable so existing scenes can be migrated incrementally;
-both systems can coexist during that migration.
+PlutoGE has two runtime UI systems that coexist: document-driven RmlUi,
+described here, and the entity-based [native UI](NATIVE_UI.md). A
+`CanvasComponent` chooses its backend; native canvases draw beneath RmlUi
+documents.
 
 For a minimal setup walkthrough and copyable example, see the
 [RmlUi project quick start](RMLUI_QUICKSTART.md). The [developer and agent authoring guide](RMLUI_AUTHORING.md) and [pinned feature reference](RMLUI_REFERENCE.md) cover units, controls, supported features and engine extensions.
@@ -16,9 +17,9 @@ For a minimal setup walkthrough and copyable example, see the
 - Mouse buttons, pointer movement, two-axis wheel input, keyboard transitions,
   Unicode character input, clipboard, cursor styles, and resize events are
   connected.
-- A `CanvasComponent` selects either `RmlUi` or `Legacy Native`. New canvases
-  default to RmlUi and own their project-relative document path directly.
-  Legacy native canvases own RectTransform/Image/Text/Button trees.
+- A `CanvasComponent` selects either `RmlUi` or `Native`. RmlUi canvases own
+  their project-relative document path directly; native canvases own entity
+  trees (see [Native UI](NATIVE_UI.md)).
 - Documents are opened and closed automatically as active RmlUi canvases enter
   and leave the rendered scene.
 - Documents honor their Canvas scale factor, reference resolution, and
@@ -97,10 +98,9 @@ from the game viewport.
 
 ### Phase 4 — native UI compatibility
 
-The FPS HUD has an RmlUi controller and document sample. Native components
-remain as the compatibility and world-space path because serialized external
-projects cannot be audited from the engine repository. Removing their
-deserializer would corrupt those scenes. New screen-space UI should use RmlUi.
+The FPS HUD has an RmlUi controller and document sample. The native
+components have since become the [native UI](NATIVE_UI.md) system, rendered on
+the RHI; both are supported.
 
 ## Intentional limitations of this slice
 

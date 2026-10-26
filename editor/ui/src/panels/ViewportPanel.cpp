@@ -2609,6 +2609,23 @@ namespace PlutoGE::ui
         }
 
         endControls();
+        if (auto &editorShell = EditorShell::GetInstance();
+            m_config.editorViewport && editorShell.IsEditingPrefab() && !editorShell.GetPrefabReturnScenePath().empty())
+        {
+            beginControls("Prefab", ImVec2(0.5f, 0), ImVec2(0, 8));
+            const std::string backLabel = "Back to " + editorShell.GetPrefabReturnScenePath().stem().string();
+            const std::string tooltip = "Return to " + editorShell.GetPrefabReturnScenePath().filename().string() +
+                                        " (prefab instances update from the saved prefab)";
+            ImGui::BeginDisabled(editorShell.GetEngine().IsRuntimeRunning());
+            if (toolButton("##BackToScene", icons::ArrowLeft, tooltip.c_str(), false, backLabel.c_str()))
+                editorShell.ReturnFromPrefab();
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextDisabled("%s %s", icons::PrefabAsset,
+                                std::filesystem::path(editorShell.GetScene()->GetFilePath()).stem().string().c_str());
+            endControls();
+        }
         if (m_config.editorViewport)
         {
             beginControls("Tools", ImVec2(0, 0), ImVec2(48, 48));

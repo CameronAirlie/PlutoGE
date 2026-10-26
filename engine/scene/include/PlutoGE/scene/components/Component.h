@@ -28,6 +28,7 @@ namespace PlutoGE::scene
         Vec2,
         Double,
         Entity,
+        Vec4, // appended: serialized values are indices
     };
 
     struct Property

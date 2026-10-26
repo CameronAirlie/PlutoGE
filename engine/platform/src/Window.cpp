@@ -725,4 +725,16 @@ namespace PlutoGE::platform
                glad_glPixelStorei != nullptr &&
                glad_glGenerateMipmap != nullptr;
     }
+
+    std::string Window::GetClipboardText() const
+    {
+        const char *text = m_window ? glfwGetClipboardString(m_window) : nullptr;
+        return text ? std::string(text) : std::string{};
+    }
+
+    void Window::SetClipboardText(const std::string &text) const
+    {
+        if (m_window)
+            glfwSetClipboardString(m_window, text.c_str());
+    }
 }

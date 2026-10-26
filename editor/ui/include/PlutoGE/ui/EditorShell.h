@@ -227,6 +227,11 @@ namespace PlutoGE::ui
         void SetStatusMessage(std::string message) { m_statusMessage = std::move(message); }
         bool LoadProjectFromPath(const std::filesystem::path &manifestPath);
         bool OpenSceneFromPath(const std::filesystem::path &scenePath);
+        // A .plutoprefab opened as the active scene, with preview lighting.
+        [[nodiscard]] bool IsEditingPrefab() const;
+        [[nodiscard]] const std::filesystem::path &GetPrefabReturnScenePath() const { return m_prefabReturnScenePath; }
+        // Reopens the scene that was active when the prefab was opened.
+        bool ReturnFromPrefab();
         void OpenMaterialAsset(std::string materialAssetReference);
         // Opens a script source file in the system's default editor for its type.
         bool OpenScriptSource(const std::filesystem::path &sourcePath);
@@ -476,6 +481,7 @@ namespace PlutoGE::ui
         std::string m_validationCurrentOwner;
         std::string m_validationCurrentState;
         bool m_recoveredSceneNeedsSaveAs = false;
+        std::filesystem::path m_prefabReturnScenePath;
         std::string m_recoveryError;
         std::vector<RecoveryBackup> m_recoveryBackups;
         std::vector<std::string> m_recoveryScanErrors;

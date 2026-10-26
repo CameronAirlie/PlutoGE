@@ -17,7 +17,7 @@ int main()
     Check(Timeline::Decode(timeline.Encode(), decoded));
     Check(decoded.Encode() == timeline.Encode());
     const auto original = decoded.Encode();
-    Check(!Timeline::Decode("PLUTO_TIMELINE 2 1 0 0", decoded));
+    Check(!Timeline::Decode("PLUTO_TIMELINE 3 1 0 0", decoded)); // an unknown future version
     Check(decoded.Encode() == original);
     Check(!Timeline::Decode(original + "garbage", decoded));
     auto invalid = timeline;

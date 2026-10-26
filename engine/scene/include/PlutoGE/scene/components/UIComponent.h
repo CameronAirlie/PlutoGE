@@ -1,6 +1,9 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/ui/UIGraphic.h"
+#include "PlutoGE/scene/ui/UISelectable.h"
+#include "PlutoGE/ui/text/TextLayout.h"
 
 #include <glm/glm.hpp>
 
@@ -57,6 +60,7 @@ namespace PlutoGE::scene
         ProceduralCircle,
         ProceduralArc,
         ProceduralRoundedRect,
+        Tiled, // appended: serialized values are indices
     };
 
     enum class UITextAlignment
@@ -70,6 +74,13 @@ namespace PlutoGE::scene
         BottomLeft,
         BottomCenter,
         BottomRight,
+    };
+
+    enum class UITextOverflow
+    {
+        Overflow = 0,
+        Clip,
+        Ellipsis,
     };
 
     enum class UIWorldSizeMode
@@ -266,10 +277,16 @@ namespace PlutoGE::scene
         UIContentSizeMode m_verticalContentSize = UIContentSizeMode::Unconstrained;
     };
 
-    class UIImageComponent : public TypedComponent<UIImageComponent>
+    class UIImageComponent : public TypedComponent<UIImageComponent>, public IUIGraphic, public IUIContentSize
     {
     public:
         void Update(float deltaTime) override {}
+        bool RequiresFrameUpdate() const override { return false; }
+
+        [[nodiscard]] UIPaintLayer GetPaintLayer() const override { return UIPaintLayer::Image; }
+        void Paint(UIPaintContext &context) const override;
+        // The texture's pixel size (or zero without a texture).
+        [[nodiscard]] glm::vec2 MeasureContent(glm::vec2 available, UIMeasureContext &context) const override;
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
@@ -292,6 +309,10 @@ namespace PlutoGE::scene
         void SetCornerRadius(float value) { m_cornerRadius = std::max(value, 0.0f); }
         float GetStartAngle() const { return m_startAngle; }
         void SetStartAngle(float value) { m_startAngle = value; }
+        bool GetFillClockwise() const { return m_fillClockwise; }
+        void SetFillClockwise(bool value) { m_fillClockwise = value; }
+        float GetSliceScale() const { return m_sliceScale; }
+        void SetSliceScale(float value) { m_sliceScale = std::max(value, 0.01f); }
 
     private:
         glm::vec4 m_color{1.0f};
@@ -303,12 +324,19 @@ namespace PlutoGE::scene
         float m_thickness = 2.0f;
         float m_cornerRadius = 0.0f;
         float m_startAngle = 0.0f;
+        bool m_fillClockwise = false;
+        float m_sliceScale = 1.0f;
     };
 
-    class UITextComponent : public TypedComponent<UITextComponent>
+    class UITextComponent : public TypedComponent<UITextComponent>, public IUIGraphic, public IUIContentSize
     {
     public:
         void Update(float deltaTime) override {}
+        bool RequiresFrameUpdate() const override { return false; }
+
+        [[nodiscard]] UIPaintLayer GetPaintLayer() const override { return UIPaintLayer::Text; }
+        void Paint(UIPaintContext &context) const override;
+        [[nodiscard]] glm::vec2 MeasureContent(glm::vec2 available, UIMeasureContext &context) const override;
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
@@ -333,8 +361,47 @@ namespace PlutoGE::scene
         void SetOutlineColor(glm::vec4 value) { m_outlineColor = glm::clamp(value, glm::vec4(0.0f), glm::vec4(1.0f)); }
         float GetOutlineWidth() const { return m_outlineWidth; }
         void SetOutlineWidth(float value) { m_outlineWidth = glm::clamp(value, 0.0f, 8.0f); }
+        UITextOverflow GetOverflow() const { return m_overflow; }
+        void SetOverflow(UITextOverflow value) { m_overflow = value; }
+        float GetLetterSpacing() const { return m_letterSpacing; }
+        void SetLetterSpacing(float value) { m_letterSpacing = value; }
+        bool IsBold() const { return m_bold; }
+        void SetBold(bool value) { m_bold = value; }
+        bool IsItalic() const { return m_italic; }
+        void SetItalic(bool value) { m_italic = value; }
+        glm::vec4 GetShadowColor() const { return m_shadowColor; }
+        void SetShadowColor(glm::vec4 value) { m_shadowColor = value; }
+        glm::vec2 GetShadowOffset() const { return m_shadowOffset; }
+        void SetShadowOffset(glm::vec2 value) { m_shadowOffset = value; }
+        float GetShadowSoftness() const { return m_shadowSoftness; }
+        void SetShadowSoftness(float value) { m_shadowSoftness = std::max(value, 0.0f); }
+
+        // Inset of the text inside its rect: left, bottom, right, top.
+        glm::vec4 GetPadding() const { return m_padding; }
+        void SetPadding(glm::vec4 value) { m_padding = glm::max(value, glm::vec4(0.0f)); }
+        // The area the text lays out in for an element rect.
+        [[nodiscard]] ui::Rect GetTextRect(const ui::Rect &rect) const;
+
+        // Runtime-only horizontal scroll (input fields keep the caret in view).
+        float GetScrollOffset() const { return m_scrollOffset; }
+        void SetScrollOffset(float value) { m_scrollOffset = value; }
+
+        // Lays out the text for a box of the given size (kUnbounded allowed).
+        // Results are cached until the text, style or box changes.
+        const ui::TextLayout &GetLayout(glm::vec2 box, ui::FontLibrary &fonts) const;
+        const ui::TextContent &GetContent(ui::FontLibrary &fonts) const;
 
     private:
+        struct LayoutCache
+        {
+            ui::TextLayoutSettings settings;
+            ui::TextLayout layout;
+            std::uint64_t contentRevision = 0;
+            bool valid = false;
+        };
+        [[nodiscard]] ui::TextStyle BaseStyle(ui::FontLibrary &fonts) const;
+        [[nodiscard]] ui::TextLayoutSettings Settings(glm::vec2 box) const;
+
         std::string m_text;
         glm::vec4 m_color{1.0f};
         float m_fontSize = 18.0f;
@@ -345,57 +412,62 @@ namespace PlutoGE::scene
         float m_lineSpacing = 1.0f;
         glm::vec4 m_outlineColor{0.0f, 0.0f, 0.0f, 0.8f};
         float m_outlineWidth = 0.0f;
+        UITextOverflow m_overflow = UITextOverflow::Overflow;
+        float m_letterSpacing = 0.0f;
+        bool m_bold = false;
+        bool m_italic = false;
+        glm::vec4 m_shadowColor{0.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec2 m_shadowOffset{1.0f, -1.0f};
+        float m_shadowSoftness = 0.0f;
+        float m_scrollOffset = 0.0f;
+        glm::vec4 m_padding{0.0f};
+
+        // Derived state, rebuilt on demand. Measuring and painting usually ask
+        // for different boxes, so each keeps its own slot.
+        mutable ui::TextContent m_content;
+        mutable std::string m_contentText;     // inputs m_content was built from
+        mutable ui::TextStyle m_contentStyle;
+        mutable bool m_contentRich = false;
+        mutable std::uint64_t m_contentRevision = 0;
+        mutable LayoutCache m_layoutCache[2];
+        mutable std::size_t m_nextCacheSlot = 0;
     };
 
-    class UIButtonComponent : public TypedComponent<UIButtonComponent>
+    // A clickable control. Pointer clicks and Submit (Enter / gamepad A) on
+    // the focused button both click it; scripts read the per-frame results.
+    class UIButtonComponent : public TypedComponent<UIButtonComponent>, public IUIGraphic, public UISelectable
     {
     public:
-        void Update(float deltaTime) override
-        {
-            const glm::vec4 target = !m_interactable ? m_disabledTint
-                                     : m_pressed    ? m_pressedTint
-                                     : m_hovered    ? m_hoveredTint
-                                                    : m_normalTint;
-            const float blend = m_transitionDuration <= 0.0001f
-                                    ? 1.0f
-                                    : 1.0f - std::exp(-std::max(deltaTime, 0.0f) * 4.6f / m_transitionDuration);
-            m_currentTint = glm::mix(m_currentTint, target, glm::clamp(blend, 0.0f, 1.0f));
-        }
-
+        void Update(float) override {}
+        bool RequiresFrameUpdate() const override { return false; }
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
 
-        bool IsInteractable() const { return m_interactable; }
-        void SetInteractable(bool interactable) { m_interactable = interactable; }
-        bool IsHovered() const { return m_hovered; }
-        bool WasPressed() const { return m_pressed; }
+        // Draws the default button face when the entity has no other graphic.
+        [[nodiscard]] UIPaintLayer GetPaintLayer() const override { return UIPaintLayer::Background; }
+        void Paint(UIPaintContext &context) const override;
+        void OnUIEvent(UIEvent &event, UIEventContext &context) override;
+
+        // Results of the latest UI update.
+        bool WasPressed() const { return IsPressedDown(); }
         bool WasReleased() const { return m_released; }
         bool WasClicked() const { return m_clicked; }
+        void ResetFrameState() { m_released = m_clicked = false; }
+        // Overrides the pointer state directly (tests and tools).
         void SetRuntimeState(bool hovered, bool pressed, bool released, bool clicked);
-        glm::vec4 GetCurrentTint() const { return m_currentTint; }
-        glm::vec4 GetNormalTint() const { return m_normalTint; }
-        void SetNormalTint(glm::vec4 value) { m_normalTint = value; }
-        glm::vec4 GetHoveredTint() const { return m_hoveredTint; }
-        void SetHoveredTint(glm::vec4 value) { m_hoveredTint = value; }
-        glm::vec4 GetPressedTint() const { return m_pressedTint; }
-        void SetPressedTint(glm::vec4 value) { m_pressedTint = value; }
-        glm::vec4 GetDisabledTint() const { return m_disabledTint; }
-        void SetDisabledTint(glm::vec4 value) { m_disabledTint = value; }
-        float GetTransitionDuration() const { return m_transitionDuration; }
-        void SetTransitionDuration(float value) { m_transitionDuration = std::max(value, 0.0f); }
+
+        glm::vec4 GetNormalTint() const { return GetStateTint(UISelectableState::Normal); }
+        void SetNormalTint(glm::vec4 value) { SetStateTint(UISelectableState::Normal, value); }
+        glm::vec4 GetHoveredTint() const { return GetStateTint(UISelectableState::Highlighted); }
+        void SetHoveredTint(glm::vec4 value) { SetStateTint(UISelectableState::Highlighted, value); }
+        glm::vec4 GetPressedTint() const { return GetStateTint(UISelectableState::Pressed); }
+        void SetPressedTint(glm::vec4 value) { SetStateTint(UISelectableState::Pressed, value); }
+        glm::vec4 GetDisabledTint() const { return GetStateTint(UISelectableState::Disabled); }
+        void SetDisabledTint(glm::vec4 value) { SetStateTint(UISelectableState::Disabled, value); }
 
     private:
-        bool m_interactable = true;
-        bool m_hovered = false;
-        bool m_pressed = false;
         bool m_released = false;
         bool m_clicked = false;
-        glm::vec4 m_normalTint{1.0f};
-        glm::vec4 m_hoveredTint{1.12f, 1.12f, 1.12f, 1.0f};
-        glm::vec4 m_pressedTint{0.78f, 0.78f, 0.78f, 1.0f};
-        glm::vec4 m_disabledTint{0.45f, 0.45f, 0.45f, 0.75f};
-        glm::vec4 m_currentTint{1.0f};
-        float m_transitionDuration = 0.08f;
     };
 
     RectTransformLayout ResolveRectTransformLayout(const RectTransformComponent &rectTransform,

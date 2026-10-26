@@ -92,6 +92,58 @@ public static class UIBind
     public static UIBinding<TSource> Convert<TSource, TTarget>(
         IReadOnlyObservable<TSource> source, Func<TSource, TTarget> convert, Action<TTarget> apply) =>
         new(source, value => apply(convert(value)));
+
+    // Two-way bindings for native controls: the control shows the value, and user edits write it back.
+
+    public static IDisposable Value(UISliderComponent slider, ObservableValue<float> source) =>
+        new TwoWayBinding<float>(source, value => slider.Value = value,
+                                 handler => slider.ValueChanged += handler, handler => slider.ValueChanged -= handler);
+
+    public static IDisposable IsOn(UIToggleComponent toggle, ObservableValue<bool> source) =>
+        new TwoWayBinding<bool>(source, value => toggle.IsOn = value,
+                                handler => toggle.ValueChanged += handler, handler => toggle.ValueChanged -= handler);
+
+    public static IDisposable Text(UIInputFieldComponent field, ObservableValue<string> source) =>
+        new TwoWayBinding<string>(source, value => field.Text = value ?? string.Empty,
+                                  handler => field.ValueChanged += handler, handler => field.ValueChanged -= handler);
+
+    public static IDisposable Selection(UIDropdownComponent dropdown, ObservableValue<int> source) =>
+        new TwoWayBinding<int>(source, value => dropdown.Value = value,
+                               handler => dropdown.ValueChanged += handler, handler => dropdown.ValueChanged -= handler);
+
+    /// <summary>Text showing a value through a format string, such as "Score: {0}".</summary>
+    public static UIBinding<T> Format<T>(UITextComponent target, IReadOnlyObservable<T> source, string format) =>
+        new(source, value => target.Text = string.Format(System.Globalization.CultureInfo.CurrentCulture, format, value));
+}
+
+/// <summary>Keeps a control and an observable value in step in both directions.</summary>
+public sealed class TwoWayBinding<T> : IDisposable
+{
+    private readonly ObservableValue<T> _source;
+    private readonly Action<T> _applyToControl;
+    private readonly Action<Action<T>> _unsubscribe;
+    private readonly Action<T> _fromControl;
+    private bool _disposed;
+
+    public TwoWayBinding(ObservableValue<T> source, Action<T> applyToControl,
+                         Action<Action<T>> subscribe, Action<Action<T>> unsubscribe)
+    {
+        _source = source ?? throw new ArgumentNullException(nameof(source));
+        _applyToControl = applyToControl ?? throw new ArgumentNullException(nameof(applyToControl));
+        _unsubscribe = unsubscribe ?? throw new ArgumentNullException(nameof(unsubscribe));
+        _fromControl = value => _source.Value = value;
+        _source.Changed += _applyToControl;
+        subscribe(_fromControl);
+        _applyToControl(_source.Value);
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _source.Changed -= _applyToControl;
+        _unsubscribe(_fromControl);
+    }
 }
 
 /// <summary>

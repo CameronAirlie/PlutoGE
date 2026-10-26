@@ -7,6 +7,8 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
 #include "PlutoGE/ui/panels/InspectorPanel.h"
+#include "PlutoGE/scene/ComponentRegistry.h"
+#include "PlutoGE/ui/ComponentInspectors.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/ScriptAssetFieldPicker.h"
 #include "PlutoGE/ui/EditorShell.h"
@@ -166,46 +168,6 @@ namespace PlutoGE::ui
         constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
         constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
         constexpr const char *kHierarchyEntityDragDropPayload = "PLUTOGE_SCENE_ENTITY";
-        enum class AddableComponentType
-        {
-            Mesh = 0,
-            Terrain = 1,
-            Foliage = 2,
-            Animation = 3,
-            Cloth = 4,
-            Camera = 5,
-            Light = 6,
-            Rigidbody = 7,
-            Collider = 8,
-            IblCapture = 9,
-            PhysicalSky = 10,
-            VolumetricCloud = 11,
-            ParticleSystem = 12,
-            Spline = 13,
-            Ocean = 14,
-            Script = 15,
-            SoundEmitter = 16,
-            SoundListener = 17,
-            Canvas = 18,
-            RectTransform = 19,
-            UIImage = 20,
-            UIText = 21,
-            UIButton = 22,
-            NavAgent = 23,
-            NavigationMesh = 24,
-            Decal = 25,
-            RmlWidget = 26,
-            AudioEnvironmentVolume = 29,
-            LegacyCanvas = 27,
-            ActiveRagdoll = 28,
-            CameraRig = 30,
-            Sequencer = 31,
-            IK = 32,
-            SkeletonAttachment = 33,
-            AmbientLightVolume = 34,
-            RagdollTuning = 35,
-        };
-
         struct ScriptAssetOption
         {
             std::string reference;
@@ -1277,205 +1239,14 @@ namespace PlutoGE::ui
             return nameBuffers[std::to_string(entityId) + ":" + std::to_string(typeIndex)];
         }
 
-        const char *GetComponentDisplayName(const scene::Component &component)
+        std::string GetComponentDisplayName(const scene::Component &component)
         {
-            if (dynamic_cast<const scene::MeshComponent *>(&component))
-            {
-                return "Mesh Component";
-            }
-            if (dynamic_cast<const scene::DecalComponent *>(&component))
-                return "Decal Component";
-            if (dynamic_cast<const scene::TerrainComponent *>(&component))
-            {
-                return "Terrain Component";
-            }
-            if (dynamic_cast<const scene::FoliageComponent *>(&component))
-            {
-                return "Foliage Component";
-            }
-            if (dynamic_cast<const scene::ClothComponent *>(&component))
-            {
-                return "Cloth Component";
-            }
-            if (dynamic_cast<const scene::ParticleSystemComponent *>(&component))
-            {
-                return "Particle System Component";
-            }
-            if (dynamic_cast<const scene::SplineComponent *>(&component))
-            {
-                return "Spline Track Component";
-            }
-            if (dynamic_cast<const scene::OceanComponent *>(&component))
-            {
-                return "Ocean Component";
-            }
-            if (dynamic_cast<const scene::AnimationComponent *>(&component))
-            {
-                return "Animation Component";
-            }
-            if (dynamic_cast<const scene::ActiveRagdollComponent *>(&component))
-            {
-                return "Active Ragdoll Component";
-            }
-            if (dynamic_cast<const scene::RagdollTuningComponent *>(&component))
-            {
-                return "Ragdoll Tuning Component";
-            }
-            if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
-            {
-                return "Skeleton Attachment Component";
-            }
-            if (dynamic_cast<const scene::SequencerComponent *>(&component))
-                return "Sequencer";
-            if (dynamic_cast<const scene::IKComponent *>(&component)) return "Two Bone IK Rig";
-            if (dynamic_cast<const scene::CameraRigComponent *>(&component))
-                return "Camera Rig";
-            if (dynamic_cast<const scene::CameraComponent *>(&component))
-            {
-                return "Camera Component";
-            }
-            if (dynamic_cast<const scene::LightComponent *>(&component))
-            {
-                return "Light Component";
-            }
-            if (dynamic_cast<const scene::RigidbodyComponent *>(&component))
-            {
-                return "Rigidbody Component";
-            }
-            if (dynamic_cast<const scene::NavAgentComponent *>(&component))
-                return "Navigation Agent Component";
-            if (dynamic_cast<const scene::NavigationMeshComponent *>(&component))
-                return "Navigation Mesh Component";
-            if (dynamic_cast<const scene::ColliderComponent *>(&component))
-            {
-                return "Collider Component";
-            }
-            if (dynamic_cast<const scene::AmbientLightVolumeComponent *>(&component)) return "Ambient Light Volume";
-            if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
-            {
-                return "IBL Capture Component";
-            }
-            if (dynamic_cast<const scene::VolumetricCloudComponent *>(&component))
-            {
-                return "Volumetric Cloud Component";
-            }
-            if (dynamic_cast<const scene::PhysicalSkyComponent *>(&component))
-            {
-                return "Physical Sky Component";
-            }
-            if (dynamic_cast<const scene::ScriptComponent *>(&component))
-            {
-                return "Script Component";
-            }
-            if (dynamic_cast<const scene::SoundEmitterComponent *>(&component))
-            {
-                return "Sound Emitter Component";
-            }
-            if (dynamic_cast<const scene::SoundListenerComponent *>(&component))
-            {
-                return "Sound Listener Component";
-            }
-            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component))
-                return "Audio Environment Volume Component";
-            if (const auto *canvas = dynamic_cast<const scene::CanvasComponent *>(&component))
-            {
-                return canvas->GetBackend() == scene::UIRenderBackend::RmlUi
-                           ? "RmlUi Canvas Component"
-                           : "Legacy Native Canvas Component";
-            }
-            if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
-                return "RML Widget Component (Deprecated)";
-            if (dynamic_cast<const scene::RectTransformComponent *>(&component))
-            {
-                return "Rect Transform Component";
-            }
-            if (dynamic_cast<const scene::UIImageComponent *>(&component))
-            {
-                return "UI Image Component";
-            }
-            if (dynamic_cast<const scene::UITextComponent *>(&component))
-            {
-                return "UI Text Component";
-            }
-            if (dynamic_cast<const scene::UIButtonComponent *>(&component))
-            {
-                return "UI Button Component";
-            }
-
-            return typeid(component).name();
+            return scene::ComponentRegistry::Get().GetDisplayName(component);
         }
 
         std::string GetComponentPrefabTypeName(const scene::Component &component)
         {
-            if (dynamic_cast<const scene::MeshComponent *>(&component))
-                return "MeshComponent";
-            if (dynamic_cast<const scene::DecalComponent *>(&component))
-                return "DecalComponent";
-            if (dynamic_cast<const scene::TerrainComponent *>(&component))
-                return "TerrainComponent";
-            if (dynamic_cast<const scene::FoliageComponent *>(&component))
-                return "FoliageComponent";
-            if (dynamic_cast<const scene::ClothComponent *>(&component))
-                return "ClothComponent";
-            if (dynamic_cast<const scene::ParticleSystemComponent *>(&component))
-                return "ParticleSystemComponent";
-            if (dynamic_cast<const scene::AnimationComponent *>(&component))
-                return "AnimationComponent";
-            if (dynamic_cast<const scene::ActiveRagdollComponent *>(&component))
-                return "ActiveRagdollComponent";
-            if (dynamic_cast<const scene::RagdollTuningComponent *>(&component))
-                return "RagdollTuningComponent";
-            if (dynamic_cast<const scene::SkeletonAttachmentComponent *>(&component))
-                return "SkeletonAttachmentComponent";
-            if (dynamic_cast<const scene::SequencerComponent *>(&component))
-                return "SequencerComponent";
-            if (dynamic_cast<const scene::IKComponent *>(&component)) return "IKComponent";
-            if (dynamic_cast<const scene::CameraRigComponent *>(&component))
-                return "CameraRigComponent";
-            if (dynamic_cast<const scene::CameraComponent *>(&component))
-                return "CameraComponent";
-            if (dynamic_cast<const scene::LightComponent *>(&component))
-                return "LightComponent";
-            if (dynamic_cast<const scene::RigidbodyComponent *>(&component))
-                return "RigidbodyComponent";
-            if (dynamic_cast<const scene::NavAgentComponent *>(&component))
-                return "NavAgentComponent";
-            if (dynamic_cast<const scene::NavigationMeshComponent *>(&component))
-                return "NavigationMeshComponent";
-            if (dynamic_cast<const scene::ColliderComponent *>(&component))
-                return "ColliderComponent";
-            if (dynamic_cast<const scene::AmbientLightVolumeComponent *>(&component)) return "AmbientLightVolumeComponent";
-            if (dynamic_cast<const scene::IblCaptureComponent *>(&component))
-                return "IblCaptureComponent";
-            if (dynamic_cast<const scene::VolumetricCloudComponent *>(&component))
-                return "VolumetricCloudComponent";
-            if (dynamic_cast<const scene::PhysicalSkyComponent *>(&component))
-                return "PhysicalSkyComponent";
-            if (dynamic_cast<const scene::ScriptComponent *>(&component))
-                return "ScriptComponent";
-            if (dynamic_cast<const scene::SoundEmitterComponent *>(&component))
-                return "SoundEmitterComponent";
-            if (dynamic_cast<const scene::SoundListenerComponent *>(&component))
-                return "SoundListenerComponent";
-            if (dynamic_cast<const scene::AudioEnvironmentVolumeComponent *>(&component))
-                return "AudioEnvironmentVolumeComponent";
-            if (dynamic_cast<const scene::CanvasComponent *>(&component))
-                return "CanvasComponent";
-            if (dynamic_cast<const scene::RmlWidgetComponent *>(&component))
-                return "RmlWidgetComponent";
-            if (dynamic_cast<const scene::RectTransformComponent *>(&component))
-                return "RectTransformComponent";
-            if (dynamic_cast<const scene::UIImageComponent *>(&component))
-                return "UIImageComponent";
-            if (dynamic_cast<const scene::UITextComponent *>(&component))
-                return "UITextComponent";
-            if (dynamic_cast<const scene::UIButtonComponent *>(&component))
-                return "UIButtonComponent";
-            if (dynamic_cast<const scene::SplineComponent *>(&component))
-                return "SplineComponent";
-            if (dynamic_cast<const scene::OceanComponent *>(&component))
-                return "OceanComponent";
-            return {};
+            return scene::ComponentRegistry::Get().GetTypeName(component);
         }
 
         void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
@@ -1490,30 +1261,6 @@ namespace PlutoGE::ui
             {
                 CollectEntitiesRecursive(child, entities);
             }
-        }
-
-        bool SceneHasAnyCamera(const scene::Scene *scene)
-        {
-            if (!scene)
-            {
-                return false;
-            }
-
-            std::vector<scene::Entity *> entities;
-            for (auto *rootEntity : scene->GetRootEntities())
-            {
-                CollectEntitiesRecursive(rootEntity, entities);
-            }
-
-            for (auto *candidate : entities)
-            {
-                if (candidate && candidate->GetComponent<scene::CameraComponent>())
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         void SetSceneMainCamera(scene::Scene *scene, scene::CameraComponent *selectedCamera, bool isMainCamera)
@@ -1549,91 +1296,82 @@ namespace PlutoGE::ui
             }
         }
 
-        bool CanAddComponentType(const scene::Entity &entity, AddableComponentType componentType)
+        struct AddComponentMenuNode
         {
-            switch (componentType)
+            std::string label;
+            const scene::ComponentMenuItem *item = nullptr;
+            std::vector<AddComponentMenuNode> children;
+        };
+
+        // Groups the registry's slash-separated menu paths into nested menus,
+        // keeping registration order. Rebuilt only when items are registered.
+        const AddComponentMenuNode &GetAddComponentMenuTree()
+        {
+            static AddComponentMenuNode root;
+            static std::size_t builtItemCount = 0;
+            const auto &items = scene::ComponentRegistry::Get().GetMenuItems();
+            if (builtItemCount == items.size())
+                return root;
+
+            root.children.clear();
+            for (const auto &item : items)
             {
-            case AddableComponentType::Mesh:
-                return !entity.HasComponent<scene::MeshComponent>();
-            case AddableComponentType::Decal:
-                return !entity.HasComponent<scene::DecalComponent>();
-            case AddableComponentType::Terrain:
-                return !entity.HasComponent<scene::TerrainComponent>();
-            case AddableComponentType::Foliage:
-                return !entity.HasComponent<scene::FoliageComponent>();
-            case AddableComponentType::Cloth:
-                return !entity.HasComponent<scene::ClothComponent>();
-            case AddableComponentType::ParticleSystem:
-                return !entity.HasComponent<scene::ParticleSystemComponent>();
-            case AddableComponentType::Spline:
-                return !entity.HasComponent<scene::SplineComponent>();
-            case AddableComponentType::Ocean:
-                return !entity.HasComponent<scene::OceanComponent>();
-            case AddableComponentType::Animation:
-                return !entity.HasComponent<scene::AnimationComponent>();
-            case AddableComponentType::ActiveRagdoll:
-                return entity.HasComponent<scene::AnimationComponent>() &&
-                       !entity.HasComponent<scene::ActiveRagdollComponent>();
-            case AddableComponentType::RagdollTuning:
-                return entity.HasComponent<scene::AnimationComponent>() &&
-                       !entity.HasComponent<scene::RagdollTuningComponent>();
-            case AddableComponentType::Sequencer:
-                return !entity.HasComponent<scene::SequencerComponent>();
-            case AddableComponentType::IK:
-                return entity.HasComponent<scene::AnimationComponent>() && !entity.HasComponent<scene::IKComponent>();
-            case AddableComponentType::SkeletonAttachment:
-                return !entity.HasComponent<scene::SkeletonAttachmentComponent>();
-            case AddableComponentType::CameraRig:
-                return entity.HasComponent<scene::CameraComponent>() && !entity.HasComponent<scene::CameraRigComponent>();
-            case AddableComponentType::Camera:
-                return !entity.HasComponent<scene::CameraComponent>();
-            case AddableComponentType::Light:
-                return !entity.HasComponent<scene::LightComponent>();
-            case AddableComponentType::Rigidbody:
-                return !entity.HasComponent<scene::RigidbodyComponent>();
-            case AddableComponentType::NavAgent:
-                return !entity.HasComponent<scene::NavAgentComponent>();
-            case AddableComponentType::NavigationMesh:
-                return !entity.HasComponent<scene::NavigationMeshComponent>();
-            case AddableComponentType::Collider:
-                return !entity.HasComponent<scene::ColliderComponent>();
-            case AddableComponentType::AmbientLightVolume:
-                return !entity.HasComponent<scene::AmbientLightVolumeComponent>();
-            case AddableComponentType::IblCapture:
-                return !entity.HasComponent<scene::IblCaptureComponent>();
-            case AddableComponentType::PhysicalSky:
-                return !entity.HasComponent<scene::PhysicalSkyComponent>();
-            case AddableComponentType::VolumetricCloud:
-                return !entity.HasComponent<scene::VolumetricCloudComponent>();
-            case AddableComponentType::Script:
-                return true;
-            case AddableComponentType::SoundEmitter:
-                return !entity.HasComponent<scene::SoundEmitterComponent>();
-            case AddableComponentType::SoundListener:
-                return !entity.HasComponent<scene::SoundListenerComponent>();
-            case AddableComponentType::AudioEnvironmentVolume:
-                return !entity.HasComponent<scene::AudioEnvironmentVolumeComponent>();
-            case AddableComponentType::Canvas:
-            case AddableComponentType::LegacyCanvas:
-                return !entity.HasComponent<scene::CanvasComponent>();
-            case AddableComponentType::RmlWidget:
-                return !entity.HasComponent<scene::RmlWidgetComponent>();
-            case AddableComponentType::RectTransform:
-                return !entity.HasComponent<scene::RectTransformComponent>();
-            case AddableComponentType::UIImage:
-                return !entity.HasComponent<scene::UIImageComponent>();
-            case AddableComponentType::UIText:
-                return !entity.HasComponent<scene::UITextComponent>();
-            case AddableComponentType::UIButton:
-                return !entity.HasComponent<scene::UIButtonComponent>();
-            default:
-                return false;
+                AddComponentMenuNode *node = &root;
+                std::string_view remaining = item.path;
+                while (!remaining.empty())
+                {
+                    const auto separator = remaining.find('/');
+                    const std::string_view segment = remaining.substr(0, separator);
+                    remaining = separator == std::string_view::npos ? std::string_view{} : remaining.substr(separator + 1);
+                    if (remaining.empty())
+                    {
+                        node->children.push_back({.label = std::string(segment), .item = &item});
+                        break;
+                    }
+                    auto found = std::find_if(node->children.begin(), node->children.end(),
+                                              [&](const AddComponentMenuNode &child)
+                                              { return !child.item && child.label == segment; });
+                    if (found == node->children.end())
+                        found = node->children.insert(node->children.end(), {.label = std::string(segment)});
+                    node = &*found;
+                }
+            }
+            builtItemCount = items.size();
+            return root;
+        }
+
+        void RenderAddComponentMenuNodes(const AddComponentMenuNode &node,
+                                         const scene::Entity &entity,
+                                         const ImGuiTextFilter &search,
+                                         int &matches,
+                                         const scene::ComponentMenuItem *&selected)
+        {
+            const auto &registry = scene::ComponentRegistry::Get();
+            for (const auto &child : node.children)
+            {
+                if (child.item)
+                {
+                    if (!search.PassFilter(child.label.c_str()))
+                        continue;
+                    ++matches;
+                    const auto *info = registry.Find(child.item->typeID);
+                    if (ImGui::MenuItem(child.label.c_str(), nullptr, false, info && registry.CanAdd(entity, *info)))
+                        selected = child.item;
+                    continue;
+                }
+                // While searching, every match is listed flat instead of in submenus.
+                if (search.IsActive())
+                    RenderAddComponentMenuNodes(child, entity, search, matches, selected);
+                else if (ImGui::BeginMenu(child.label.c_str()))
+                {
+                    RenderAddComponentMenuNodes(child, entity, search, matches, selected);
+                    ImGui::EndMenu();
+                }
             }
         }
 
-        std::optional<AddableComponentType> RenderAddComponentMenu(const scene::Entity &entity)
+        const scene::ComponentMenuItem *RenderAddComponentMenu(const scene::Entity &entity)
         {
-            std::optional<AddableComponentType> selectedType;
             static ImGuiTextFilter search;
             if (ImGui::IsWindowAppearing())
             {
@@ -1643,269 +1381,11 @@ namespace PlutoGE::ui
             search.Draw("Search components", 260.0f);
             ImGui::Separator();
             int matches = 0;
-            const auto renderItem = [&](const char *label, AddableComponentType type)
-            {
-                if (!search.PassFilter(label))
-                    return;
-                ++matches;
-                if (ImGui::MenuItem(label, nullptr, false, CanAddComponentType(entity, type)))
-                {
-                    selectedType = type;
-                }
-            };
-
-            if (search.IsActive() || ImGui::BeginMenu("Rendering"))
-            {
-                renderItem("Mesh", AddableComponentType::Mesh);
-                renderItem("Decal", AddableComponentType::Decal);
-                renderItem("Terrain", AddableComponentType::Terrain);
-                renderItem("Road / Spline Track", AddableComponentType::Spline);
-                renderItem("Ocean", AddableComponentType::Ocean);
-                renderItem("Foliage", AddableComponentType::Foliage);
-                renderItem("Cloth", AddableComponentType::Cloth);
-                renderItem("Particle System", AddableComponentType::ParticleSystem);
-                renderItem("Camera", AddableComponentType::Camera);
-                renderItem("Camera Rig", AddableComponentType::CameraRig);
-                renderItem("Sequencer", AddableComponentType::Sequencer);
-                renderItem("Light", AddableComponentType::Light);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("Animation"))
-            {
-                renderItem("Animation", AddableComponentType::Animation);
-                renderItem("Active Ragdoll", AddableComponentType::ActiveRagdoll);
-                renderItem("Ragdoll Tuning", AddableComponentType::RagdollTuning);
-                renderItem("Two Bone IK Rig", AddableComponentType::IK);
-                renderItem("Skeleton Attachment", AddableComponentType::SkeletonAttachment);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("Physics"))
-            {
-                renderItem("Rigidbody", AddableComponentType::Rigidbody);
-                renderItem("Collider", AddableComponentType::Collider);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("AI"))
-            {
-                renderItem("Navigation Agent", AddableComponentType::NavAgent);
-                renderItem("Navigation Mesh", AddableComponentType::NavigationMesh);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("Environment"))
-            {
-                renderItem("Ambient Light Volume", AddableComponentType::AmbientLightVolume);
-                renderItem("IBL Capture", AddableComponentType::IblCapture);
-                renderItem("Physical Sky", AddableComponentType::PhysicalSky);
-                renderItem("Volumetric Cloud", AddableComponentType::VolumetricCloud);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("Scripting"))
-            {
-                renderItem("Script", AddableComponentType::Script);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("Audio"))
-            {
-                renderItem("Sound Emitter", AddableComponentType::SoundEmitter);
-                renderItem("Sound Listener", AddableComponentType::SoundListener);
-                renderItem("Environment Volume", AddableComponentType::AudioEnvironmentVolume);
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-            if (search.IsActive() || ImGui::BeginMenu("UI"))
-            {
-                renderItem("RmlUi Canvas", AddableComponentType::Canvas);
-                if (search.IsActive() || ImGui::BeginMenu("Legacy Native UI"))
-                {
-                    renderItem("Native Canvas", AddableComponentType::LegacyCanvas);
-                    renderItem("Rect Transform", AddableComponentType::RectTransform);
-                    renderItem("Image", AddableComponentType::UIImage);
-                    renderItem("Text", AddableComponentType::UIText);
-                    renderItem("Button", AddableComponentType::UIButton);
-                    if (!search.IsActive())
-                        ImGui::EndMenu();
-                }
-                if (!search.IsActive())
-                    ImGui::EndMenu();
-            }
-
+            const scene::ComponentMenuItem *selected = nullptr;
+            RenderAddComponentMenuNodes(GetAddComponentMenuTree(), entity, search, matches, selected);
             if (search.IsActive() && matches == 0)
                 ImGui::TextDisabled("No matching components.");
-            return selectedType;
-        }
-
-        void AddComponentToEntity(scene::Entity &entity, AddableComponentType componentType)
-        {
-            auto &engine = core::Engine::GetInstance();
-            switch (componentType)
-            {
-            case AddableComponentType::Mesh:
-            {
-                auto *meshComponent = entity.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{
-                    .mesh = nullptr,
-                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
-                });
-                if (meshComponent)
-                {
-                    meshComponent->SetMaterialAssetForMaterialSlot(0, std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                }
-                break;
-            }
-            case AddableComponentType::Decal:
-                entity.CreateComponent<scene::DecalComponent>();
-                break;
-            case AddableComponentType::Terrain:
-            {
-                auto *terrainComponent = entity.CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
-                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
-                });
-                if (terrainComponent)
-                {
-                    terrainComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                }
-                break;
-            }
-            case AddableComponentType::Foliage:
-            {
-                auto *foliageComponent = entity.CreateComponent<scene::FoliageComponent>();
-                if (foliageComponent)
-                {
-                    foliageComponent->SetMaterialAssetReference(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference));
-                }
-                break;
-            }
-            case AddableComponentType::Cloth:
-                entity.CreateComponent<scene::ClothComponent>();
-                break;
-            case AddableComponentType::ParticleSystem:
-                entity.CreateComponent<scene::ParticleSystemComponent>();
-                break;
-            case AddableComponentType::Spline:
-            {
-                auto *splineComponent = entity.CreateComponent<scene::SplineComponent>(scene::SplineComponentConfig{
-                    .material = engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)),
-                    .materialAssetReference = std::string(assets::Project::kBuiltinDefaultShadedMaterialReference),
-                });
-                if (splineComponent)
-                {
-                    splineComponent->Rebuild();
-                }
-                break;
-            }
-            case AddableComponentType::Ocean:
-                entity.CreateComponent<scene::OceanComponent>();
-                break;
-            case AddableComponentType::Sequencer:
-                entity.CreateComponent<scene::SequencerComponent>();
-                break;
-            case AddableComponentType::IK:
-                entity.CreateComponent<scene::IKComponent>();
-                break;
-            case AddableComponentType::SkeletonAttachment:
-                entity.CreateComponent<scene::SkeletonAttachmentComponent>();
-                break;
-            case AddableComponentType::CameraRig:
-                entity.CreateComponent<scene::CameraRigComponent>();
-                break;
-            case AddableComponentType::Camera:
-            {
-                const bool sceneAlreadyHasCamera = SceneHasAnyCamera(entity.GetScene());
-                auto *cameraComponent = entity.CreateComponent<scene::CameraComponent>(new render::Camera(render::CameraConfig{
-                    .fovY = 60.0f,
-                    .nearPlane = 0.1f,
-                    .farPlane = 100.0f,
-                }));
-                if (cameraComponent)
-                {
-                    cameraComponent->SetMainCamera(!sceneAlreadyHasCamera);
-                }
-                break;
-            }
-            case AddableComponentType::Animation:
-                entity.CreateComponent<scene::AnimationComponent>();
-                break;
-            case AddableComponentType::ActiveRagdoll:
-                entity.CreateComponent<scene::ActiveRagdollComponent>();
-                break;
-            case AddableComponentType::RagdollTuning:
-                entity.CreateComponent<scene::RagdollTuningComponent>();
-                break;
-            case AddableComponentType::Light:
-                entity.CreateComponent<scene::LightComponent>();
-                break;
-            case AddableComponentType::Rigidbody:
-                entity.CreateComponent<scene::RigidbodyComponent>();
-                break;
-            case AddableComponentType::NavAgent:
-                entity.CreateComponent<scene::NavAgentComponent>();
-                break;
-            case AddableComponentType::NavigationMesh:
-                entity.CreateComponent<scene::NavigationMeshComponent>();
-                break;
-            case AddableComponentType::Collider:
-                entity.CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{
-                    .shape = entity.HasComponent<scene::TerrainComponent>()
-                                 ? scene::ColliderShape::Terrain
-                             : entity.HasComponent<scene::SplineComponent>() ? scene::ColliderShape::Mesh
-                                                                             : scene::ColliderShape::Box,
-                });
-                break;
-            case AddableComponentType::AmbientLightVolume:
-                entity.CreateComponent<scene::AmbientLightVolumeComponent>();
-                break;
-            case AddableComponentType::IblCapture:
-                entity.CreateComponent<scene::IblCaptureComponent>();
-                break;
-            case AddableComponentType::PhysicalSky:
-                entity.CreateComponent<scene::PhysicalSkyComponent>();
-                break;
-            case AddableComponentType::VolumetricCloud:
-                entity.CreateComponent<scene::VolumetricCloudComponent>();
-                break;
-            case AddableComponentType::Script:
-                entity.CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{});
-                break;
-            case AddableComponentType::SoundEmitter:
-                entity.CreateComponent<scene::SoundEmitterComponent>();
-                break;
-            case AddableComponentType::SoundListener:
-                entity.CreateComponent<scene::SoundListenerComponent>();
-                break;
-            case AddableComponentType::AudioEnvironmentVolume:
-                entity.CreateComponent<scene::AudioEnvironmentVolumeComponent>();
-                break;
-            case AddableComponentType::Canvas:
-                if (auto *canvas = entity.CreateComponent<scene::CanvasComponent>())
-                    canvas->SetBackend(scene::UIRenderBackend::RmlUi);
-                break;
-            case AddableComponentType::LegacyCanvas:
-                if (auto *canvas = entity.CreateComponent<scene::CanvasComponent>())
-                    canvas->SetBackend(scene::UIRenderBackend::Native);
-                break;
-            case AddableComponentType::RmlWidget:
-                entity.CreateComponent<scene::RmlWidgetComponent>();
-                break;
-            case AddableComponentType::RectTransform:
-                entity.CreateComponent<scene::RectTransformComponent>();
-                break;
-            case AddableComponentType::UIImage:
-                entity.CreateComponent<scene::UIImageComponent>();
-                break;
-            case AddableComponentType::UIText:
-                entity.CreateComponent<scene::UITextComponent>();
-                break;
-            case AddableComponentType::UIButton:
-                entity.CreateComponent<scene::UIButtonComponent>();
-                break;
-            default:
-                break;
-            }
+            return selected;
         }
     }
 
@@ -2049,6 +1529,18 @@ namespace PlutoGE::ui
             if (ImGui::DragFloat2(property.name.c_str(), &value.x))
             {
                 property.value = std::to_string(value.x) + "," + std::to_string(value.y);
+                return true;
+            }
+            break;
+        }
+        case scene::PropertyType::Vec4:
+        {
+            glm::vec4 value{0.0f};
+            std::sscanf(property.value.c_str(), "%f,%f,%f,%f", &value.x, &value.y, &value.z, &value.w);
+            if (ImGui::DragFloat4(property.name.c_str(), &value.x))
+            {
+                property.value = std::to_string(value.x) + "," + std::to_string(value.y) + "," +
+                                 std::to_string(value.z) + "," + std::to_string(value.w);
                 return true;
             }
             break;
@@ -3721,17 +3213,16 @@ namespace PlutoGE::ui
 
                 if (ImGui::BeginPopup("AddComponentMenu"))
                 {
-                    const auto selectedComponentType = RenderAddComponentMenu(*entity);
-                    if (selectedComponentType)
+                    if (const auto *menuItem = RenderAddComponentMenu(*entity))
                     {
                         const scene::EntityID entityId = entity->GetID();
                         editorShell.ExecuteSceneEdit("Add Component",
-                                                     [entityId, componentType = *selectedComponentType]()
+                                                     [entityId, menuItem = *menuItem]()
                                                      {
                                                          auto *currentScene = core::Engine::GetInstance().GetScene();
                                                          if (auto *target = currentScene ? currentScene->FindEntityByID(entityId) : nullptr)
                                                          {
-                                                             AddComponentToEntity(*target, componentType);
+                                                             scene::ComponentRegistry::Get().AddToEntity(*target, menuItem);
                                                          }
                                                      });
                         ImGui::CloseCurrentPopup();
@@ -3756,7 +3247,7 @@ namespace PlutoGE::ui
                         ++componentIndex;
                         const std::string headerLabel = GetComponentHeaderLabel(*componentPtr);
                         if (!componentFilter.PassFilter(headerLabel.c_str()) &&
-                            !componentFilter.PassFilter(GetComponentDisplayName(*componentPtr)))
+                            !componentFilter.PassFilter(GetComponentDisplayName(*componentPtr).c_str()))
                             continue;
                         ImGui::PushID(componentPtr);
                         ImGui::Separator();
@@ -3803,7 +3294,15 @@ namespace PlutoGE::ui
                         bool propertiesProvided = false;
                         bool propertiesChanged = false;
 
-                        if (auto *cameraComponent = dynamic_cast<scene::CameraComponent *>(componentPtr))
+                        if (const auto inspector = FindComponentInspector(componentPtr->GetTypeID()))
+                        {
+                            // Registered inspectors draw their own controls and pass the rest on.
+                            properties = componentPtr->Serialize();
+                            ComponentInspectorContext inspectorContext{*entity, editorShell};
+                            inspector(*componentPtr, inspectorContext, properties);
+                            propertiesProvided = true;
+                        }
+                        else if (auto *cameraComponent = dynamic_cast<scene::CameraComponent *>(componentPtr))
                         {
                             bool isMainCamera = cameraComponent->IsMainCamera();
                             if (ImGui::Checkbox("Main Camera", &isMainCamera))

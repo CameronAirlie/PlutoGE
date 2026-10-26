@@ -1,5 +1,9 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 
+#include "PlutoGE/scene/Entity.h"
+
+#include "../ui/UIPropertyCodec.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -460,11 +464,13 @@ namespace PlutoGE::scene
             {"TexturePath", PropertyType::String, m_texturePath},
             {"PreserveAspect", PropertyType::Bool, m_preserveAspect ? "true" : "false"},
             {"FillAmount", PropertyType::Float, std::to_string(m_fillAmount)},
-            {"ImageType", PropertyType::Enum, std::to_string(static_cast<int>(m_imageType)), {"Simple", "Sliced", "FilledHorizontal", "FilledVertical", "FilledRadial", "ProceduralCrosshair", "ProceduralCircle", "ProceduralArc", "ProceduralRoundedRect"}},
+            {"ImageType", PropertyType::Enum, std::to_string(static_cast<int>(m_imageType)), {"Simple", "Sliced", "FilledHorizontal", "FilledVertical", "FilledRadial", "ProceduralCrosshair", "ProceduralCircle", "ProceduralArc", "ProceduralRoundedRect", "Tiled"}},
             {"Border", PropertyType::Color, SerializeColor(m_border)},
             {"Thickness", PropertyType::Float, std::to_string(m_thickness)},
             {"CornerRadius", PropertyType::Float, std::to_string(m_cornerRadius)},
             {"StartAngle", PropertyType::Float, std::to_string(m_startAngle)},
+            uiprops::BoolProperty("FillClockwise", m_fillClockwise),
+            uiprops::FloatProperty("SliceScale", m_sliceScale),
         };
     }
 
@@ -483,7 +489,7 @@ namespace PlutoGE::scene
             else if (property.name == "FillAmount")
                 SetFillAmount(std::stof(property.value));
             else if (property.name == "ImageType")
-                m_imageType = static_cast<UIImageType>(std::clamp(std::stoi(property.value), 0, 8));
+                m_imageType = uiprops::ReadEnum(property.value, UIImageType::Tiled, m_imageType);
             else if (property.name == "Border")
                 SetBorder(ParseColor(property.value, m_border));
             else if (property.name == "Thickness")
@@ -491,7 +497,11 @@ namespace PlutoGE::scene
             else if (property.name == "CornerRadius")
                 SetCornerRadius(std::stof(property.value));
             else if (property.name == "StartAngle")
-                m_startAngle = std::stof(property.value);
+                m_startAngle = uiprops::ReadFloat(property.value, m_startAngle);
+            else if (property.name == "FillClockwise")
+                m_fillClockwise = uiprops::ReadBool(property.value);
+            else if (property.name == "SliceScale")
+                SetSliceScale(uiprops::ReadFloat(property.value, m_sliceScale));
         }
     }
 
@@ -509,6 +519,14 @@ namespace PlutoGE::scene
             {"LineSpacing", PropertyType::Float, std::to_string(m_lineSpacing)},
             {"OutlineColor", PropertyType::Color, SerializeColor(m_outlineColor)},
             {"OutlineWidth", PropertyType::Float, std::to_string(m_outlineWidth)},
+            uiprops::EnumProperty("Overflow", m_overflow, {"Overflow", "Clip", "Ellipsis"}),
+            uiprops::FloatProperty("LetterSpacing", m_letterSpacing),
+            uiprops::BoolProperty("Bold", m_bold),
+            uiprops::BoolProperty("Italic", m_italic),
+            uiprops::ColorProperty("ShadowColor", m_shadowColor),
+            uiprops::Vec2Property("ShadowOffset", m_shadowOffset),
+            uiprops::FloatProperty("ShadowSoftness", m_shadowSoftness),
+            uiprops::Vec4Property("Padding", m_padding),
         };
     }
 
@@ -537,29 +555,62 @@ namespace PlutoGE::scene
             else if (property.name == "OutlineColor")
                 SetOutlineColor(ParseColor(property.value, m_outlineColor));
             else if (property.name == "OutlineWidth")
-                SetOutlineWidth(std::stof(property.value));
+                SetOutlineWidth(uiprops::ReadFloat(property.value, m_outlineWidth));
+            else if (property.name == "Overflow")
+                m_overflow = uiprops::ReadEnum(property.value, UITextOverflow::Ellipsis, m_overflow);
+            else if (property.name == "LetterSpacing")
+                m_letterSpacing = uiprops::ReadFloat(property.value, m_letterSpacing);
+            else if (property.name == "Bold")
+                m_bold = uiprops::ReadBool(property.value);
+            else if (property.name == "Italic")
+                m_italic = uiprops::ReadBool(property.value);
+            else if (property.name == "ShadowColor")
+                m_shadowColor = uiprops::ReadVector(property.value, m_shadowColor);
+            else if (property.name == "ShadowOffset")
+                m_shadowOffset = uiprops::ReadVector(property.value, m_shadowOffset);
+            else if (property.name == "ShadowSoftness")
+                SetShadowSoftness(uiprops::ReadFloat(property.value, m_shadowSoftness));
+            else if (property.name == "Padding")
+                SetPadding(uiprops::ReadVector(property.value, m_padding));
         }
     }
 
     void UIButtonComponent::SetRuntimeState(bool hovered, bool pressed, bool released, bool clicked)
     {
-        m_hovered = hovered;
-        m_pressed = pressed;
+        SetHovered(hovered);
+        SetPressed(pressed);
         m_released = released;
         m_clicked = clicked;
     }
 
+    void UIButtonComponent::OnUIEvent(UIEvent &event, UIEventContext &context)
+    {
+        if (!IsInteractable())
+            return;
+        switch (event.type)
+        {
+        case UIEventType::PointerUp:
+            m_released = true;
+            break;
+        case UIEventType::Click:
+        case UIEventType::Submit:
+            m_clicked = true;
+            context.Emit(UIEventType::Click, GetOwner() ? GetOwner()->GetID() : 0);
+            event.Consume();
+            break;
+        case UIEventType::PointerDown:
+            event.Consume(); // become the press target so the click comes here
+            break;
+        default:
+            break;
+        }
+    }
+
     std::vector<Property> UIButtonComponent::Serialize() const
     {
-        return {
-            {"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"},
-            {"Interactable", PropertyType::Bool, m_interactable ? "true" : "false"},
-            {"NormalTint", PropertyType::Color, SerializeColor(m_normalTint)},
-            {"HoveredTint", PropertyType::Color, SerializeColor(m_hoveredTint)},
-            {"PressedTint", PropertyType::Color, SerializeColor(m_pressedTint)},
-            {"DisabledTint", PropertyType::Color, SerializeColor(m_disabledTint)},
-            {"TransitionDuration", PropertyType::Float, std::to_string(m_transitionDuration)},
-        };
+        std::vector<Property> properties{{"Enabled", PropertyType::Bool, IsEnabled() ? "true" : "false"}};
+        AppendSelectableProperties(properties);
+        return properties;
     }
 
     void UIButtonComponent::Deserialize(const std::vector<Property> &properties)
@@ -567,19 +618,9 @@ namespace PlutoGE::scene
         for (const auto &property : properties)
         {
             if (property.name == "Enabled")
-                SetEnabled(property.value == "true" || property.value == "1");
-            else if (property.name == "Interactable")
-                m_interactable = property.value == "true" || property.value == "1";
-            else if (property.name == "NormalTint")
-                m_normalTint = ParseColor(property.value, m_normalTint);
-            else if (property.name == "HoveredTint")
-                m_hoveredTint = ParseColor(property.value, m_hoveredTint);
-            else if (property.name == "PressedTint")
-                m_pressedTint = ParseColor(property.value, m_pressedTint);
-            else if (property.name == "DisabledTint")
-                m_disabledTint = ParseColor(property.value, m_disabledTint);
-            else if (property.name == "TransitionDuration")
-                SetTransitionDuration(std::stof(property.value));
+                SetEnabled(uiprops::ReadBool(property.value));
+            else
+                ReadSelectableProperty(property);
         }
     }
 }

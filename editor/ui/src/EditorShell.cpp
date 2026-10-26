@@ -889,6 +889,11 @@ namespace PlutoGE::ui
             return std::make_unique<scene::Scene>();
         }
 
+        bool IsPrefabEditingPath(const std::filesystem::path &path)
+        {
+            return path.extension() == ".plutoprefab";
+        }
+
         // Native dialogs report an empty path on cancel; a reason is logged when
         // no dialog is available so the menu action does not silently do nothing.
         std::string BrowseOpenPath(std::span<const FileDialogFilter> filters)
@@ -2300,6 +2305,9 @@ namespace PlutoGE::ui
         m_modelInstanceSourceDiagnostics.clear();
         m_modelInstanceRefreshError.clear();
         m_scene = std::move(scene);
+        // In-place replacements (play restore, model refresh) keep the previous preview state.
+        m_scene->SetPreviewLightingEnabled(IsPrefabEditingPath(m_scene->GetFilePath()) ||
+                                           (!updatePrefabs && previousScene && previousScene->IsPreviewLightingEnabled()));
         std::string prefabErrorMessage;
         const int updatedPrefabCount = updatePrefabs ? scene::Prefab::UpdateInstances(*m_scene, {}, &prefabErrorMessage) : 0;
         if (updatedPrefabCount > 0)
@@ -2436,7 +2444,14 @@ namespace PlutoGE::ui
             return false;
         }
 
+        // Opening a prefab from another prefab keeps the original scene as the way back.
+        std::filesystem::path returnScenePath;
+        if (IsPrefabEditingPath(scenePath))
+            returnScenePath = IsEditingPrefab() || !m_scene ? m_prefabReturnScenePath
+                                                            : std::filesystem::path(m_scene->GetFilePath());
+
         SetScene(std::move(loadedScene));
+        m_prefabReturnScenePath = std::move(returnScenePath);
         m_undoStack.clear();
         m_redoStack.clear();
         MarkSceneClean();
@@ -2448,6 +2463,26 @@ namespace PlutoGE::ui
             Log(ConsoleSeverity::Warning, errorMessage);
         }
         return true;
+    }
+
+    bool EditorShell::IsEditingPrefab() const
+    {
+        return m_scene && IsPrefabEditingPath(m_scene->GetFilePath());
+    }
+
+    bool EditorShell::ReturnFromPrefab()
+    {
+        if (!IsEditingPrefab() || m_prefabReturnScenePath.empty())
+            return false;
+        if (m_engine.IsRuntimeRunning())
+        {
+            m_statusMessage = "Stop Play before leaving the prefab.";
+            Log(ConsoleSeverity::Warning, m_statusMessage);
+            return false;
+        }
+        // Copy: a successful open clears the member.
+        const auto returnScenePath = m_prefabReturnScenePath;
+        return OpenSceneFromPath(returnScenePath);
     }
 
     void EditorShell::OpenMaterialAsset(std::string materialAssetReference)
@@ -4104,6 +4139,7 @@ namespace PlutoGE::ui
 
             loadingScreenEditorPanel->PreparePreview();
             m_rmlDocumentEditor->PreparePreview();
+            canvasEditorPanel->PreparePreview();
             core::CpuScope rendererScope("Renderer.BeginFrame", core::CpuCategory::Rendering);
             const auto beginFrameStart = std::chrono::high_resolution_clock::now();
             renderer.BeginFrame();

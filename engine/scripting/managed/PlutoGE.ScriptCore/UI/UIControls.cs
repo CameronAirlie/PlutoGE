@@ -248,19 +248,25 @@ public sealed class UIDropdownComponent : UISelectableComponent
     }
 }
 
-/// <summary>A style sheet for the elements under this entity (usually the canvas).</summary>
+/// <summary>
+/// The theme for the UI under this entity (usually the canvas): a theme asset plus local styles that extend it.
+/// Assigning <see cref="Theme"/> re-themes everything below, e.g. to switch between light and dark themes.
+/// </summary>
 [NativeComponent("UIStyleSheetComponent")]
-public sealed class UIStyleSheetComponent : RegisteredComponent
+public sealed class UIThemeComponent : RegisteredComponent
 {
-    internal UIStyleSheetComponent(uint entityId) : base(entityId)
+    internal UIThemeComponent(uint entityId) : base(entityId)
     {
     }
 
-    /// <summary>The sheet text; assigning it re-themes every element below.</summary>
-    public string Rules { get => GetString("Rules"); set => SetString("Rules", value); }
+    /// <summary>Asset reference of the theme; a <see cref="UIThemeAsset"/> field converts to it.</summary>
+    public string Theme { get => GetString("Theme"); set => SetString("Theme", value); }
+
+    /// <summary>Local styles in theme text, layered over <see cref="Theme"/>.</summary>
+    public string LocalStyles { get => GetString("Rules"); set => SetString("Rules", value); }
 }
 
-/// <summary>An element's style classes, matched against the nearest style sheet.</summary>
+/// <summary>The styles an element uses from the nearest theme, applied in order (later ones win).</summary>
 [NativeComponent("UIStyleComponent")]
 public sealed class UIStyleComponent : RegisteredComponent
 {
@@ -268,22 +274,37 @@ public sealed class UIStyleComponent : RegisteredComponent
     {
     }
 
-    public string Classes { get => GetString("Classes"); set => SetString("Classes", value); }
+    /// <summary>Space-separated style names, e.g. "Button Primary-Button".</summary>
+    public string Styles { get => GetString("Styles"); set => SetString("Styles", value); }
 
-    public bool HasClass(string name) => Classes.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(name);
+    public bool HasStyle(string name) => Split(Styles).Contains(name);
 
-    public void AddClass(string name)
+    public void AddStyle(string name)
     {
-        if (!HasClass(name))
-            Classes = (Classes + " " + name).Trim();
+        if (!HasStyle(name))
+            Styles = (Styles + " " + name).Trim();
     }
 
-    public void RemoveClass(string name) =>
-        Classes = string.Join(" ", Classes.Split(' ', StringSplitOptions.RemoveEmptyEntries).Where(item => item != name));
+    public void RemoveStyle(string name) => Styles = string.Join(" ", Split(Styles).Where(item => item != name));
 
-    public void ToggleClass(string name, bool on)
+    /// <summary>Adds or removes a style, e.g. to mark an answer as correct.</summary>
+    public void ToggleStyle(string name, bool on)
     {
-        if (on) AddClass(name);
-        else RemoveClass(name);
+        if (on) AddStyle(name);
+        else RemoveStyle(name);
     }
+
+    /// <summary>Replaces every style with one, e.g. switching a button between "Button" and "Primary-Button".</summary>
+    public void SetStyle(string name) => Styles = name;
+
+    /// <summary>"Component.Property" keys the element keeps its own value for instead of the style's.</summary>
+    public string Overrides { get => GetString("Overrides"); set => SetString("Overrides", value); }
+
+    [Obsolete("Use Styles.")] public string Classes { get => Styles; set => Styles = value; }
+    [Obsolete("Use HasStyle.")] public bool HasClass(string name) => HasStyle(name);
+    [Obsolete("Use AddStyle.")] public void AddClass(string name) => AddStyle(name);
+    [Obsolete("Use RemoveStyle.")] public void RemoveClass(string name) => RemoveStyle(name);
+    [Obsolete("Use ToggleStyle.")] public void ToggleClass(string name, bool on) => ToggleStyle(name, on);
+
+    private static string[] Split(string list) => list.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 }

@@ -39,3 +39,4 @@ public sealed class AssetKindAttribute(AssetType type) : Attribute
 [AssetKind(AssetType.RmlDocument)] public sealed class RmlDocumentAsset : Asset;
 [AssetKind(AssetType.SurfaceResponse)] public sealed class SurfaceResponseAsset : Asset;
 [AssetKind(AssetType.LoadingScreen)] public sealed class LoadingScreen : Asset;
+[AssetKind(AssetType.UITheme)] public sealed class UIThemeAsset : Asset;

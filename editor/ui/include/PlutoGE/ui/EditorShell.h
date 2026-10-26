@@ -63,6 +63,8 @@ namespace PlutoGE::ui
 {
     class RmlDocumentEditorPanel;
     class AnimationGraphEditorPanel;
+    class UIThemeEditorPanel;
+    struct UIThemeTarget;
     class ContentBrowserPanel;
     class ProfilerPanel;
     class ViewportPanel;
@@ -243,6 +245,8 @@ namespace PlutoGE::ui
         void OpenParticleSystemAsset(std::string particleSystemAssetReference);
         void OpenInputMappingAsset(std::string inputMappingAssetReference);
         void OpenRmlDocument(std::string reference);
+        // Shows a UI theme in the theme editor, selecting `style` when given.
+        void OpenUIThemeEditor(const UIThemeTarget &target, const std::string &style = {});
         void OpenLoadingScreenAsset(std::string reference)
         { m_activeLoadingScreenAssetReference = std::move(reference); m_openLoadingScreenEditorRequested = true; }
         const std::string &GetActiveLoadingScreenAssetReference() const { return m_activeLoadingScreenAssetReference; }
@@ -513,6 +517,7 @@ namespace PlutoGE::ui
         bool m_openLoadingScreenEditorRequested = false;
         RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
         AnimationGraphEditorPanel *m_animationGraphEditor = nullptr;
+        UIThemeEditorPanel *m_uiThemeEditor = nullptr;
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
         TimelinePreview m_timelinePreview;

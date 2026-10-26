@@ -125,6 +125,7 @@ int main()
     assert(reloadedProject->GetManifest().loadingScreen.title == "EMBERVAULT");
     assert(reloadedProject->GetManifest().loadingScreen.assetReference == "project://UI/loading.plutoloading");
     assert(Project::GetAssetTypeForReference("project://UI/loading.plutoloading") == ProjectAssetType::LoadingScreen);
+    assert(Project::GetAssetTypeForReference("project://UI/Themes/Main.plutotheme") == ProjectAssetType::UITheme);
     assert(reloadedProject->GetManifest().loadingScreen.accent == project.GetManifest().loadingScreen.accent);
     assert(reloadedProject->GetManifest().runtimeUpscaler == RuntimeUpscalerMode::Fsr2);
     assert(reloadedProject->GetManifest().runtimeUpscalerQuality == PlutoGE::render::rhi::UpscalerQuality::Balanced);

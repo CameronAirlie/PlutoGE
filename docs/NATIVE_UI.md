@@ -50,7 +50,7 @@ public sealed class MainMenu : ScriptBehaviour
 | `UIScrollViewComponent` | Scrolls a content element with the wheel or by dragging; inertia; elastic, clamped or unrestricted. |
 | `UIInputFieldComponent` | Text entry: selection, clipboard, filters (integer, decimal, alphanumeric, password), character limit, multiline, placeholder. |
 | `UIDropdownComponent` | Picks from a list in a popup. |
-| `UIStyleSheetComponent`, `UIStyleComponent` | Themes: class-based style rules. |
+| `UIThemeComponent`, `UIStyleComponent` | Themes and styles: shared, inheritable looks (see below). |
 
 Rich text tags: `<b> <i> <u> <s> <color=#RRGGBB[AA]> <size=N> <font=ref> <br>`.
 
@@ -86,27 +86,62 @@ wheel, drag, keyboard and gamepad:
 
 ### Styles and themes
 
-Put a `UIStyleSheetComponent` on the canvas and give elements a
-`UIStyleComponent` with class names:
+A **style** is a named look, such as *Button*, *Heading* or *Panel*: a set of
+component property values (shape colour, corner radii, font size...).
+A **theme** holds styles and **variables**, which are named values like the
+accent colour that styles share. Elements use styles from the nearest theme
+above them, so changing the theme re-themes the whole UI.
+
+1. Put a **UI Theme** component on the canvas and pick a theme asset. The
+   **+** button creates one with ready-made styles: Panel, Label, Heading,
+   Caption, Button, Primary/Danger Button and Input.
+2. Give elements a **UI Style** component and choose a style. Widgets created
+   from **Create > UI** pick up a matching style automatically.
+3. Edit the theme in the **UI Theme Editor** (Window menu, double-click a
+   `.plutotheme`, or the palette button next to a style). Changes show live.
+
+Styles can be **based on** another style: *Primary-Button* based on *Button*
+inherits everything Button sets and changes only the colour. Every style has
+values for **states**: *Normal* always applies, and *Hover*, *Pressed* and
+*Selected* layer on top while active. *Disabled* replaces Hover and Pressed.
+A state value set anywhere in the chain wins over a Normal value. States come
+from the nearest control at or above the element, and a style value for a
+component the element lacks goes to the first child that has it, so a button
+style can colour its label.
+
+Themes can be based on other themes, for example a *Dark* theme based on
+*Base* that overrides a few variables. A UI Theme component can also add
+**local styles** that extend or override its theme for that part of the UI.
+Theme components further down layer over the ones above.
+
+In the inspector, values a style controls are marked with a blue bar and are
+read-only. Right-click one to **Override on This Element** (marked orange,
+and the element keeps its own value) or to edit the style. **Create Style from
+Element** saves an element's current look as a new style. When a style stops
+applying, because it was removed or a state ended, the element gets its own
+value back.
+
+Theme files are text, editable in the editor's **Source** tab:
 
 ```
-@accent = 0.26,0.52,0.96,1
-@radius = 10
+@import "project://UI/Themes/Base.plutotheme"
+@accent: color = 0.26,0.52,0.96,1
+@radius: number = 10
 
-.button { UIShapeComponent.Color = @accent; UIShapeComponent.CornerRadii = @radius,@radius,@radius,@radius }
-.button:hover { UIShapeComponent.Color = 0.4,0.62,1,1 }
-.button:pressed { UIShapeComponent.Color = 0.18,0.4,0.82,1 }
-.button.danger { UIShapeComponent.Color = 0.9,0.25,0.25,1 }
-.label { UITextComponent.FontSize = 24; UITextComponent.Color = 1,1,1,1 }
+.Button {
+    UIShapeComponent.Color = @accent
+    UIShapeComponent.CornerRadii = @radius,@radius,@radius,@radius
+    :hover { UIShapeComponent.Color = 0.4,0.62,1,1 }
+    :pressed { UIShapeComponent.Color = 0.18,0.4,0.82,1 }
+}
+.Danger-Button extends .Button { UIShapeComponent.Color = 0.9,0.25,0.25,1 }
 ```
 
-Declarations are `ComponentType.Property = value`, using any component's
-serialized property names and value text. States are `hover`, `pressed`,
-`selected` and `disabled`, taken from the nearest control at or above the
-element, so a label can restyle with its button. Rules apply in sheet order.
-Elements use the nearest sheet above them: changing a canvas's sheet
-re-themes it. To share a theme between scenes, keep the sheet on a prefab.
-Styled properties are driven: edits to them in the inspector are overwritten.
+Values are `ComponentType.Property = value`, using the serialized property
+names and value text. Quote values containing `; { } #` or line breaks.
+Style sheets written before themes, with class rules like `.button:hover`,
+still load. Combined selectors (`.button.danger`) are no longer supported;
+use `extends` instead.
 
 ### Animation
 
@@ -126,8 +161,14 @@ works for every component, not only UI.
   padding and child slots, and the safe area; the palette adds widgets under
   the selection; the align buttons anchor the selection within its parent.
   Edits are undoable.
-- The inspector has an anchor-preset grid, mode-aware layout fields, a
-  multiline text editor with an alignment grid, and style sheet diagnostics.
+- The inspector has an anchor-preset grid, mode-aware layout fields and a
+  multiline text editor with an alignment grid. Style-driven properties are
+  marked, with override and revert actions.
+- **UI Theme Editor**: a style tree arranged by inheritance (drag a style onto
+  another to base it on that one), per-state values with typed controls,
+  inherited values shown with their source, variables, base themes, a text
+  view, and undo/redo. Asset themes save to their file (Ctrl+S); local
+  styles save with the scene.
 
 ## Scripting
 
@@ -143,7 +184,7 @@ Native UI components are C# classes in `PlutoGE.ScriptCore`. Get them with
 | `UIDropdownComponent` | `Options`, `Value`, `SelectedOption`, `ValueChanged(int)` |
 | `UIScrollViewComponent` | `ScrollPosition`, `NormalizedPosition`, `ScrollToTop/Bottom()` |
 | `UIShapeComponent`, `UILayoutComponent`, `UILayoutItemComponent` | Their properties |
-| `UIStyleSheetComponent`, `UIStyleComponent` | `Rules`; `AddClass`, `RemoveClass`, `ToggleClass` |
+| `UIThemeComponent`, `UIStyleComponent` | `Theme` (assign a `UIThemeAsset` to switch themes), `LocalStyles`; `Styles`, `SetStyle`, `AddStyle`, `RemoveStyle`, `ToggleStyle`, `Overrides` |
 | `UI` | `Focused`, `IsPointerOverUI`, `IsKeyboardCaptured`, `EventRaised` |
 
 Data binding keeps controls and values in step:
@@ -175,16 +216,21 @@ engine/ui (PlutoGE::UI)     layout/ Flex+Grid solver   text/ fonts, SDF atlas, s
 engine/scene                components (UIComponent.h and components/UI*.h)
                             UISystem: collect hierarchy -> layout -> transforms/clips -> paint | input -> events
                             ui/ interfaces: IUIGraphic, IUIContentSize, IUIEventHandler, IUIRectDriver,
-                                IUIUpdatable, IUIPopup, IUITextInput, UISelectable, UIStyleSheet
+                                IUIUpdatable, IUIPopup, IUITextInput, UISelectable
+                            ui/ themes: UITheme (model), UIThemeFormat (text), UIThemeResolver
+                                (inheritance, variables, layers), UIThemeAssets (cache, live edits),
+                                UIStyleCatalog (styleable properties from the registry)
 engine/render               UIRhiRenderer (NativeUI.slang), NativeUIRenderer (frame integration),
                             NativeUIPreview (tools)
 engine/scripting            ComponentScriptApi: generic component property and UI event bridge
 editor/ui                   CanvasEditorPanel (designer), UIWidgetPresets, ComponentInspectors
+                            theme/ UIThemeDocument (undo, storage), views; UIThemeEditorPanel
 ```
 
 - **`PlutoGE::UI`** depends only on glm and FreeType and is unit tested on its
-  own. Glyphs are rasterized once as signed distance fields (FreeType's SDF
-  renderer) into shared RGBA8 atlas pages, so text stays sharp at any scale.
+  own. Glyphs are rasterized once as signed distance fields (built from a
+  coverage bitmap, which handles fonts with overlapping contours) into shared
+  RGBA8 atlas pages, so text stays sharp at any scale.
   Text shaping is behind `ui::ITextShaper`; the default maps codepoints to
   glyphs with kerning and font fallback, and a HarfBuzz shaper can replace it
   for complex scripts without other changes.
@@ -197,7 +243,8 @@ editor/ui                   CanvasEditorPanel (designer), UIWidgetPresets, Compo
   `UISelectable` (or `IUIEventHandler`), and `IUIRectDriver` if it positions
   other elements. Register it in `UIComponentTypes.cpp`
   (`ComponentRegistry`); serialization, prefabs, the Add Component menu,
-  property animation, styles and the C# property bridge then work without
+  property animation, styles (including the theme editor's property lists)
+  and the C# property bridge then work without
   further changes. Add a C# wrapper class with `[NativeComponent("TypeName")]`
   for typed scripting, and optionally a custom inspector in
   `UIComponentInspectors.cpp` and a widget preset in `UIWidgetPresets.cpp`.
@@ -218,7 +265,9 @@ post-processing, below RmlUi.
   are not depth-tested yet.
 - Backdrop blur, sprite masks and complex-script shaping (HarfBuzz) are not
   implemented.
-- Style sheets apply instantly; state transitions animate only button tints.
+- Styles apply instantly; state transitions animate only button tints.
+- Renaming a style updates elements in the open scene only; other scenes keep
+  the old name. Editing a theme visually drops comments in its text.
 
 ## Tests
 
@@ -227,7 +276,9 @@ post-processing, below RmlUi.
 | `PlutoGENativeUICoreTests` | UTF-8, rich text, SDF atlas, line breaking, alignment, ellipsis, draw lists, painter |
 | `PlutoGENativeUILayoutTests` | Anchors, flex (grow/shrink/wrap/justify/align), grid, content sizing |
 | `PlutoGEVulkanNativeUIRender`, `PlutoGEOpenGLNativeUIRender` | GPU output: shapes, blending, borders, clips, gradients, images, glyphs, deferred replay |
-| `PlutoGENativeUISceneTests` | Hierarchy layout, legacy layout groups, transforms, clipping, canvas order, buttons, property animation, styles |
+| `PlutoGENativeUISceneTests` | Hierarchy layout, legacy layout groups, transforms, clipping, canvas order, buttons, property animation, themes and styles on elements |
+| `PlutoGENativeUIThemeTests` | Theme model edits, text format, inheritance, variables, layering, error reporting, style catalog |
+| `PlutoGEUIThemeEditorTests` | Theme documents (undo, saving, routed edits) and the editor views in a hidden window; pass a path prefix to capture images |
 | `PlutoGENativeUIControlsTests` | Toggles, sliders, scroll views, input fields, dropdowns, navigation, pointer capture |
 | `PlutoGENativeUIScriptingTests` | C# components, properties, events and bindings through the managed runtime |
 | `PlutoGENativeUIEditorTests` | Widget presets and inspector registration |

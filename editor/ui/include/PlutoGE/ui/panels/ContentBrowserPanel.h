@@ -182,6 +182,7 @@ namespace PlutoGE::ui
             CreateScriptableObject,
             CreateRmlDocument,
             CreateInputMapping,
+            CreateUITheme,
         };
 
         std::array<char, 160> m_filterBuffer{};
@@ -199,6 +200,8 @@ namespace PlutoGE::ui
         std::array<char, 96> m_newScriptableObjectNameBuffer{};
         std::array<char, 96> m_newRmlDocumentNameBuffer{};
         std::array<char, 96> m_newInputMappingNameBuffer{};
+        std::array<char, 96> m_newUIThemeNameBuffer{};
+        bool m_newUIThemeStarter = true;
         std::string m_rmlDocumentCreateError;
         int m_newScriptableObjectClassIndex = 0;
         // Primary selected asset, shown in the details pane (-1 for none).

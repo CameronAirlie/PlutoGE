@@ -1005,6 +1005,7 @@ namespace PlutoGE::assets
         case ProjectAssetType::ScriptableObject:
             return "Scriptable Object";
         case ProjectAssetType::LoadingScreen: return "Loading Screen";
+        case ProjectAssetType::UITheme: return "UI Theme";
         case ProjectAssetType::RmlDocument:
             return "RML Document";
         case ProjectAssetType::InputMapping:
@@ -1052,6 +1053,7 @@ namespace PlutoGE::assets
         if (typeName == "Scriptable Object" || typeName == "ScriptableObject")
             return ProjectAssetType::ScriptableObject;
         if (typeName == "Loading Screen" || typeName == "LoadingScreen") return ProjectAssetType::LoadingScreen;
+        if (typeName == "UI Theme" || typeName == "UITheme") return ProjectAssetType::UITheme;
         if (typeName == "RML Document" || typeName == "RmlDocument")
             return ProjectAssetType::RmlDocument;
         if (typeName == "Input Mapping" || typeName == "InputMapping")

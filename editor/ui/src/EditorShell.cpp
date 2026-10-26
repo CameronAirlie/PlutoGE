@@ -32,6 +32,7 @@
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
+#include "PlutoGE/ui/panels/UIThemeEditorPanel.h"
 #include "PlutoGE/ui/panels/QualitySettingsPanel.h"
 #include "PlutoGE/ui/panels/LoadingScreenEditorPanel.h"
 #include "PlutoGE/ui/panels/RmlDocumentEditorPanel.h"
@@ -2120,6 +2121,7 @@ namespace PlutoGE::ui
         const ImGuiIO &io = ImGui::GetIO();
         if (io.WantTextInput || (m_rmlDocumentEditor && m_rmlDocumentEditor->OwnsKeyboardFocus()) ||
             (m_animationGraphEditor && m_animationGraphEditor->OwnsKeyboardFocus()) ||
+            (m_uiThemeEditor && m_uiThemeEditor->HasKeyboardFocus()) ||
             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             return;
@@ -2213,10 +2215,16 @@ namespace PlutoGE::ui
         if (m_rmlDocumentEditor) m_rmlDocumentEditor->RequestOpen(reference);
     }
 
+    void EditorShell::OpenUIThemeEditor(const UIThemeTarget &target, const std::string &style)
+    {
+        if (m_uiThemeEditor) m_uiThemeEditor->Open(target, style);
+    }
+
     bool EditorShell::ConfirmContinueWithUnsavedChanges()
     {
         if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()) &&
-            !(m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges()))
+            !(m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges()) &&
+            !(m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges()))
         {
             return true;
         }
@@ -2238,6 +2246,12 @@ namespace PlutoGE::ui
         {
             m_animationGraphEditor->SetOpen(true);
             Log(ConsoleSeverity::Warning, "Save or revert animation graph edits before switching projects or exiting.");
+            return false;
+        }
+        if (m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges())
+        {
+            m_uiThemeEditor->SetOpen(true);
+            Log(ConsoleSeverity::Warning, "Save or revert UI theme edits before switching projects or exiting.");
             return false;
         }
         return true;
@@ -3621,6 +3635,9 @@ namespace PlutoGE::ui
         m_animationGraphEditor = new AnimationGraphEditorPanel(PanelConfig{"Animation Graph Editor", false});
         m_animationGraphEditor->Initialize();
         m_panelManager.AddPanel(m_animationGraphEditor);
+        m_uiThemeEditor = new UIThemeEditorPanel(PanelConfig{"UI Theme Editor", false});
+        m_uiThemeEditor->Initialize();
+        m_panelManager.AddPanel(m_uiThemeEditor);
 
         auto sequencerEditorPanel = new SequencerEditorPanel(PanelConfig{"Sequencer Editor", false});
         sequencerEditorPanel->Initialize();
@@ -4587,6 +4604,7 @@ namespace PlutoGE::ui
                         ImGui::Separator();
                         panelToggle("Canvas Editor", canvasEditorPanel);
                         panelToggle("UI Document Editor", m_rmlDocumentEditor);
+                        panelToggle("UI Theme Editor", m_uiThemeEditor);
                         panelToggle("Loading Screen Editor", loadingScreenEditorPanel);
                         panelToggle("Input Mapping Editor", inputMappingEditorPanel);
                         ImGui::EndMenu();

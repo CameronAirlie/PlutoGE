@@ -68,7 +68,11 @@ add_library(PlutoGEScene
     src/components/UIInputFieldComponent.cpp
     src/components/UIDropdownComponent.cpp
     src/components/UIStyleComponents.cpp
-    src/ui/UIStyleSheet.cpp
+    src/ui/UITheme.cpp
+    src/ui/UIThemeFormat.cpp
+    src/ui/UIThemeResolver.cpp
+    src/ui/UIThemeAssets.cpp
+    src/ui/UIStyleCatalog.cpp
     src/ui/UIEngineServices.cpp
     src/ui/UIInputMapper.cpp
     src/ui/UISelectable.cpp

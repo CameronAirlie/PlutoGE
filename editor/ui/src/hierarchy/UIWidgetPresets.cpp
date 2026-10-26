@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/UIScrollViewComponent.h"
 #include "PlutoGE/scene/components/UIShapeComponent.h"
 #include "PlutoGE/scene/components/UISliderComponent.h"
+#include "PlutoGE/scene/components/UIStyleComponents.h"
 #include "PlutoGE/scene/components/UIToggleComponent.h"
 
 #include <array>
@@ -98,6 +99,16 @@ namespace PlutoGE::ui
             return InsideCanvas(context.parent) ? context.parent : CreateCanvasEntity(context.scene, context.parent);
         }
 
+        // Uses the theme's style of that name when the canvas has one, so new
+        // widgets match the rest of the UI. The preset's own look stays as the
+        // fallback (and returns if the style is removed).
+        scene::Entity *UseThemeStyle(scene::Entity *entity, const char *style)
+        {
+            if (const auto theme = scene::FindEffectiveUITheme(*entity); theme && theme->FindStyle(style))
+                entity->CreateComponent<scene::UIStyleComponent>()->SetStyles({style});
+            return entity;
+        }
+
         scene::Entity *CreateCanvas(const EntityPresetContext &context)
         {
             return CreateCanvasEntity(context.scene, context.parent);
@@ -110,7 +121,7 @@ namespace PlutoGE::ui
             auto *shape = Shape(panel, kSurface, 14.0f);
             shape->SetShadowEnabled(true);
             shape->SetShadow({.color = {0.0f, 0.0f, 0.0f, 0.45f}, .offset = {0.0f, -6.0f}, .blur = 24.0f});
-            return panel;
+            return UseThemeStyle(panel, "Panel");
         }
 
         scene::Entity *CreateText(const EntityPresetContext &context)
@@ -119,7 +130,7 @@ namespace PlutoGE::ui
             Rect(entity, {240.0f, 48.0f});
             Text(entity, "New Text", 28.0f);
             entity->CreateComponent<scene::UILayoutItemComponent>()->SetHeightMode(SizeMode::Content);
-            return entity;
+            return UseThemeStyle(entity, "Label");
         }
 
         scene::Entity *CreateImage(const EntityPresetContext &context)
@@ -139,7 +150,7 @@ namespace PlutoGE::ui
             auto *label = Add(context.scene, button, "Label");
             Stretch(label);
             Text(label, "Button", 24.0f);
-            return button;
+            return UseThemeStyle(button, "Button");
         }
 
         scene::Entity *CreateToggle(const EntityPresetContext &context)
@@ -231,7 +242,7 @@ namespace PlutoGE::ui
                 ->SetPadding({14.0f, 0.0f, 14.0f, 0.0f});
             placeholder->GetComponent<scene::RectTransformComponent>()->SetRaycastTarget(false);
             input->SetPlaceholder(placeholder->GetID());
-            return field;
+            return UseThemeStyle(field, "Input");
         }
 
         scene::Entity *CreateDropdown(const EntityPresetContext &context)

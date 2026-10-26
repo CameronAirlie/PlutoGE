@@ -6,8 +6,12 @@
 #include "PlutoGE/scene/components/UILayoutComponents.h"
 #include "PlutoGE/scene/components/UIShapeComponent.h"
 #include "PlutoGE/scene/components/UIStyleComponents.h"
+#include "PlutoGE/scene/ui/UIThemeAssets.h"
+#include "PlutoGE/scene/ui/UIThemeFormat.h"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -226,47 +230,121 @@ namespace
         Require(GetTimelinePropertyWidth(scene, missing) == 0, "Unknown properties must not bind");
     }
 
-    void TestStyleSheets()
+    void TestThemes()
     {
-        std::vector<std::string> errors;
-        const auto parsed = UIStyleSheet::Parse(R"(
-            # theme tokens
-            @accent = 0.25,0.5,1,1
-            .button { UIShapeComponent.Color = @accent; UIShapeComponent.BorderWidth = 2 }
-            .button:hover { UIShapeComponent.Color = 1,1,1,1 }
-            .button.danger { UIShapeComponent.Color = 1,0,0,1 }
-            .bogus:unknown { }
-            stray = 1
-        )", &errors);
-        Require(parsed.GetRules().size() == 4, "Expected four rules, got " + std::to_string(parsed.GetRules().size()));
-        Require(errors.size() == 2, "Unknown states and stray declarations must be reported");
-        Require(errors[0].rfind("Line 7", 0) == 0, "Errors must name the source line: " + errors[0]);
-        Require(parsed.GetRules()[0].declarations[0].value == "0.25,0.5,1,1", "Tokens must be substituted");
-
         Scene scene;
         auto *canvas = AddCanvas(scene);
-        auto *sheet = canvas->CreateComponent<UIStyleSheetComponent>();
-        sheet->SetRules(".button { UIShapeComponent.Color = 0,1,0,1 } .button:hover { UIShapeComponent.Color = 1,1,0,1 }");
+        canvas->CreateComponent<UIThemeComponent>()->SetLocalStyles(R"(
+            .button { UIShapeComponent.Color = 0,1,0,1 }
+            .button:hover { UIShapeComponent.Color = 1,1,0,1; UIShapeComponent.BorderWidth = 5 }
+            .primary extends .button { UITextComponent.FontSize = 40 }
+        )");
         auto *button = Add(scene, "Button", canvas);
         AddRect(button, {200, 100});
         auto *shape = button->CreateComponent<UIShapeComponent>();
+        shape->SetBorderWidth(1.0f);
         button->CreateComponent<UIButtonComponent>();
-        button->CreateComponent<UIStyleComponent>()->SetClasses("button");
+        auto *label = Add(scene, "Label", button);
+        AddRect(label, {0, 0}, UIAnchorPreset::Stretch);
+        auto *text = label->CreateComponent<UITextComponent>();
+        text->SetFontSize(20.0f);
+        auto *style = button->CreateComponent<UIStyleComponent>();
+        style->SetStyles({"primary"});
 
         auto &ui = scene.GetUISystem();
-        ui.Update(scene, {.viewportSize = kViewport}, 0.016f);
-        Require(shape->GetColor() == glm::vec4(0, 1, 0, 1), "Base rule must apply");
-        UIInputContext hover{.viewportSize = kViewport, .pointerPosition = kViewport * 0.5f, .pointerInside = true};
-        ui.Update(scene, hover, 0.016f);
-        ui.Update(scene, hover, 0.016f); // styles read the state the previous update set
-        Require(shape->GetColor() == glm::vec4(1, 1, 0, 1), "Hover rule must apply while hovered");
-        ui.Update(scene, {.viewportSize = kViewport}, 0.016f);
-        ui.Update(scene, {.viewportSize = kViewport}, 0.016f);
-        Require(shape->GetColor() == glm::vec4(0, 1, 0, 1), "Leaving hover must restore the base style");
+        const UIInputContext idle{.viewportSize = kViewport};
+        const UIInputContext hover{.viewportSize = kViewport, .pointerPosition = kViewport * 0.5f, .pointerInside = true};
+        // Styles read the state the previous update set, so state changes take two updates.
+        const auto update = [&](const UIInputContext &input)
+        {
+            ui.Update(scene, input, 0.016f);
+            ui.Update(scene, input, 0.016f);
+        };
 
-        sheet->SetRules(".button { UIShapeComponent.Color = 0,0,1,1 }");
-        ui.Update(scene, {.viewportSize = kViewport}, 0.016f);
-        Require(shape->GetColor() == glm::vec4(0, 0, 1, 1), "Changing the sheet re-themes the UI");
+        update(idle);
+        Require(shape->GetColor() == glm::vec4(0, 1, 0, 1), "Values are inherited from the base style");
+        Require(text->GetFontSize() == 40.0f, "A style reaches the child label for components the element lacks");
+        update(hover);
+        Require(shape->GetColor() == glm::vec4(1, 1, 0, 1) && shape->GetBorderWidth() == 5.0f, "Hover values apply while hovered");
+        update(idle);
+        Require(shape->GetColor() == glm::vec4(0, 1, 0, 1), "Leaving hover restores the Normal value");
+        Require(shape->GetBorderWidth() == 1.0f, "A value only styled while hovered returns to the element's own");
+
+        style->SetOverridden("UIShapeComponent", "Color", true);
+        shape->SetColor(glm::vec4(0, 0, 1, 1));
+        update(idle);
+        Require(shape->GetColor() == glm::vec4(0, 0, 1, 1), "Overridden properties keep the element's value");
+        Require(style->Serialize()[2].value == "UIShapeComponent.Color", "Overrides are serialized");
+        style->SetOverridden("UIShapeComponent", "Color", false);
+        update(idle);
+        Require(shape->GetColor() == glm::vec4(0, 1, 0, 1), "Reverting an override gives the style control again");
+        Require(FindUIStyleDriver(*label, "UITextComponent", "FontSize"), "The inspector can find what drives a child's value");
+
+        style->SetStyles({});
+        update(idle);
+        // The element's own colour is the one it was given while overridden.
+        Require(shape->GetColor() == glm::vec4(0, 0, 1, 1) && text->GetFontSize() == 20.0f,
+                "Removing a style restores the elements' own values");
+
+        // A theme component further down layers over the outer theme.
+        Scene nested;
+        auto *root = AddCanvas(nested);
+        root->CreateComponent<UIThemeComponent>()->SetLocalStyles("@accent = 1,0,0,1\n.panel { UIShapeComponent.Color = @accent }");
+        const auto addPanel = [&](Entity *parent)
+        {
+            auto *panel = Add(nested, "Panel", parent);
+            AddRect(panel, {50, 50});
+            panel->CreateComponent<UIStyleComponent>()->SetStyles({"panel"});
+            return panel->CreateComponent<UIShapeComponent>();
+        };
+        auto *outside = addPanel(root);
+        auto *dialog = Add(nested, "Dialog", root);
+        AddRect(dialog, {0, 0}, UIAnchorPreset::Stretch);
+        dialog->CreateComponent<UIThemeComponent>()->SetLocalStyles("@accent = 0,0,1,1");
+        auto *inside = addPanel(dialog);
+        nested.GetUISystem().Update(nested, idle, 0.016f);
+        Require(outside->GetColor() == glm::vec4(1, 0, 0, 1), "The outer theme applies outside the inner one");
+        Require(inside->GetColor() == glm::vec4(0, 0, 1, 1), "An inner theme overrides the outer theme's variables");
+
+        UIStyleComponent legacy;
+        legacy.Deserialize({{"Classes", PropertyType::String, "button primary"}});
+        Require(legacy.GetStyles() == std::vector<std::string>{"button", "primary"}, "Scenes saved with style classes still load");
+    }
+
+    void TestThemeAssets()
+    {
+        const auto path = std::filesystem::temp_directory_path() / "PlutoGE_NativeUISceneTests.plutotheme";
+        const auto write = [&](const char *text) { std::ofstream(path, std::ios::binary | std::ios::trunc) << text; };
+        write(".panel { UIShapeComponent.Color = 1,0,0,1 }");
+        auto &assets = UIThemeAssets::Get();
+        assets.SetPathResolver([path](std::string_view) { return path; });
+        constexpr const char *kReference = "project://UI/Test.plutotheme";
+
+        Scene scene;
+        auto *canvas = AddCanvas(scene);
+        canvas->CreateComponent<UIThemeComponent>()->SetThemeAsset(kReference);
+        auto *panel = Add(scene, "Panel", canvas);
+        AddRect(panel, {50, 50});
+        panel->CreateComponent<UIStyleComponent>()->SetStyles({"panel"});
+        auto *shape = panel->CreateComponent<UIShapeComponent>();
+        const auto update = [&] { scene.GetUISystem().Update(scene, {.viewportSize = kViewport}, 0.016f); };
+
+        update();
+        Require(shape->GetColor() == glm::vec4(1, 0, 0, 1), "Theme assets style elements");
+        assets.SetLiveTheme(kReference, ParseUITheme(".panel { UIShapeComponent.Color = 0,1,0,1 }"));
+        update();
+        Require(shape->GetColor() == glm::vec4(0, 1, 0, 1), "Unsaved editor changes preview live");
+        assets.ClearLiveTheme(kReference);
+        update();
+        Require(shape->GetColor() == glm::vec4(1, 0, 0, 1), "Discarding the preview returns to the file");
+        write(".panel { UIShapeComponent.Color = 0,0,1,1 }");
+        assets.Invalidate();
+        update();
+        Require(shape->GetColor() == glm::vec4(0, 0, 1, 1), "Changed files re-theme the scene");
+
+        assets.SetPathResolver(nullptr);
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
     }
 
     void TestComponentRoundTrips()
@@ -313,7 +391,8 @@ int main()
         TestCanvasOrderAndButtons();
         TestComponentRoundTrips();
         TestPropertyAnimation();
-        TestStyleSheets();
+        TestThemes();
+        TestThemeAssets();
     }
     catch (const std::exception &error)
     {

@@ -63,6 +63,7 @@ namespace PlutoGE::assets
             return ProjectAssetType::Assembly;
         }
         if (EndsWithInsensitive(reference, ".plutoloading")) return ProjectAssetType::LoadingScreen;
+        if (EndsWithInsensitive(reference, ".plutotheme")) return ProjectAssetType::UITheme;
         if (EndsWithInsensitive(reference, ".rml"))
             return ProjectAssetType::RmlDocument;
         if (EndsWithInsensitive(reference, ".plutomaterial") || EndsWithInsensitive(reference, ".mat"))

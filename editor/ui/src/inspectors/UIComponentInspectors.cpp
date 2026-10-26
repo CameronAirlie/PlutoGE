@@ -6,7 +6,6 @@
 #include "PlutoGE/scene/components/UIInputFieldComponent.h"
 #include "PlutoGE/scene/components/UILayoutComponents.h"
 #include "PlutoGE/scene/components/UIShapeComponent.h"
-#include "PlutoGE/scene/components/UIStyleComponents.h"
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <imgui.h>
@@ -193,52 +192,10 @@ namespace PlutoGE::ui
             }
             Remove(properties, {"Options"});
         }
-
-        void InspectStyleSheet(scene::Component &component, ComponentInspectorContext &context,
-                               std::vector<scene::Property> &properties)
-        {
-            auto &sheet = static_cast<scene::UIStyleSheetComponent &>(component);
-            ImGui::TextDisabled("Rules: @token = value, .class[:hover|pressed|selected|disabled] { Type.Property = value }");
-            std::string rules = sheet.GetRules();
-            if (EditText("##Rules", rules, true, 14.0f))
-            {
-                sheet.SetRules(rules);
-                Changed(context, "UIStyleSheetComponent", {"Rules"});
-            }
-            for (const auto &error : sheet.GetErrors())
-                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", error.c_str());
-            Remove(properties, {"Rules"});
-        }
-
-        void InspectStyle(scene::Component &component, ComponentInspectorContext &context, std::vector<scene::Property> &properties)
-        {
-            // Show which rules this element's classes can match in the nearest sheet.
-            auto &style = static_cast<scene::UIStyleComponent &>(component);
-            const scene::UIStyleSheetComponent *sheet = nullptr;
-            for (const auto *entity = &context.entity; entity && !sheet; entity = entity->GetParent())
-                sheet = entity->GetComponent<scene::UIStyleSheetComponent>();
-            if (!sheet)
-            {
-                ImGui::TextDisabled("No UI Style Sheet on this element or above it.");
-                return;
-            }
-            int matching = 0;
-            for (const auto &rule : sheet->GetSheet().GetRules())
-            {
-                bool all = true;
-                for (const auto &required : rule.classes)
-                    all &= (" " + style.GetClasses() + " ").find(" " + required + " ") != std::string::npos;
-                matching += all ? 1 : 0;
-            }
-            ImGui::TextDisabled("%d rule(s) in the nearest sheet match these classes.", matching);
-            (void)properties;
-        }
     }
 
     void RegisterUIComponentInspectors()
     {
-        RegisterComponentInspector(scene::GetComponentTypeID<scene::UIStyleSheetComponent>(), &InspectStyleSheet);
-        RegisterComponentInspector(scene::GetComponentTypeID<scene::UIStyleComponent>(), &InspectStyle);
         RegisterComponentInspector(scene::GetComponentTypeID<scene::RectTransformComponent>(), &InspectRectTransform);
         RegisterComponentInspector(scene::GetComponentTypeID<scene::UILayoutComponent>(), &InspectLayout);
         RegisterComponentInspector(scene::GetComponentTypeID<scene::UIShapeComponent>(), &InspectShape);

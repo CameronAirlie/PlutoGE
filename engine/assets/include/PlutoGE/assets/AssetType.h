@@ -29,6 +29,7 @@ namespace PlutoGE::assets
         InputMapping,
         SurfaceResponse,
         LoadingScreen,
+        UITheme,
         Count,
     };
 
@@ -38,7 +39,7 @@ namespace PlutoGE::assets
     inline constexpr std::array<std::string_view, static_cast<std::size_t>(ProjectAssetType::Count)> kProjectAssetTypeIds = {
         "", "Scene", "Prefab", "Script", "Mesh", "Animation", "AnimationClip", "Model", "Material", "ShaderGraph",
         "AnimationGraph", "ParticleSystem", "PostProcessPreset", "Audio", "Texture", "Assembly", "ScriptableObject",
-        "RmlDocument", "InputMapping", "SurfaceResponse", "LoadingScreen",
+        "RmlDocument", "InputMapping", "SurfaceResponse", "LoadingScreen", "UITheme",
     };
     static_assert([] {
         for (std::size_t index = 1; index < kProjectAssetTypeIds.size(); ++index)

@@ -140,14 +140,38 @@ namespace PlutoGE::scene
         return static_cast<std::uint32_t>(m_canvases.size() - 1);
     }
 
+    namespace
+    {
+        // Styles follow the nearest control at or above the element, so a label restyles with its button.
+        UIStyleStateMask GetStyleStates(Entity &entity)
+        {
+            for (auto *current = &entity; current; current = current->GetParent())
+                for (const auto *selectable : ComponentsImplementing<UISelectable>(*current))
+                {
+                    UIStyleStateMask states = 0;
+                    if (!selectable->IsInteractable())
+                        states |= ToMask(UIStyleState::Disabled);
+                    else
+                    {
+                        if (selectable->IsHovered()) states |= ToMask(UIStyleState::Hovered);
+                        if (selectable->IsPressedDown()) states |= ToMask(UIStyleState::Pressed);
+                    }
+                    if (selectable->IsSelected()) states |= ToMask(UIStyleState::Selected);
+                    return states;
+                }
+            return 0;
+        }
+    }
+
     void UISystem::Collect(Entity *entity, std::uint32_t canvas, std::uint32_t parentElement, std::uint32_t parentNode,
                            const glm::vec2 &viewportSize, const UICameraInfo *camera, const UIMeasureContext &measure,
-                           const UIStyleSheet *sheet)
+                           const UIResolvedTheme *theme)
     {
         if (!entity || !entity->IsActive())
             return;
-        if (const auto *ownSheet = entity->GetComponent<UIStyleSheetComponent>(); ownSheet && ownSheet->IsEnabled())
-            sheet = &ownSheet->GetSheet();
+        // Theme components cache their resolved theme, so the pointer outlives this frame.
+        if (const auto *ownTheme = entity->GetComponent<UIThemeComponent>(); ownTheme && ownTheme->IsEnabled())
+            theme = ownTheme->Resolve(theme).get();
 
         if (const auto *ownCanvas = entity->GetComponent<CanvasComponent>(); ownCanvas && ownCanvas->IsEnabled())
         {
@@ -169,15 +193,8 @@ namespace PlutoGE::scene
                 for (auto *driver : ComponentsImplementing<IUIRectDriver>(*entity))
                     driver->DriveRects(*this);
                 // Styles follow the nearest selectable's state (a label restyles with its button).
-                if (const auto *style = entity->GetComponent<UIStyleComponent>(); style && style->IsEnabled() && sheet)
-                {
-                    const UISelectable *state = nullptr;
-                    for (auto *current = entity; current && !state; current = current->GetParent())
-                        for (auto *component : ComponentsImplementing<UISelectable>(*current))
-                            if ((state = component))
-                                break;
-                    sheet->Apply(*entity, style->GetClasses(), state);
-                }
+                if (auto *style = entity->GetComponent<UIStyleComponent>())
+                    style->Apply(style->IsEnabled() ? theme : nullptr, GetStyleStates(*entity));
             }
 
             ui::LayoutNode layoutNode = BuildLayoutNode(*entity, *rect, measure);
@@ -218,7 +235,7 @@ namespace PlutoGE::scene
         }
 
         for (auto *child : entity->GetChildren())
-            Collect(child, canvas, element != kNoUIElement ? element : parentElement, node, viewportSize, camera, measure, sheet);
+            Collect(child, canvas, element != kNoUIElement ? element : parentElement, node, viewportSize, camera, measure, theme);
     }
 
     void UISystem::SortCanvases()

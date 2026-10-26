@@ -24,4 +24,5 @@ public enum AssetType
     InputMapping,
     SurfaceResponse,
     LoadingScreen,
+    UITheme,
 }

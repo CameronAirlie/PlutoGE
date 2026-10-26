@@ -2,6 +2,8 @@
 #include "PlutoGE/asset_import/ModelSourcePackageCopy.h"
 #include "PlutoGE/asset_import/ModelObjectExtractionService.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/scene/ui/UITheme.h"
+#include "PlutoGE/ui/theme/UIThemeDocument.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/ScriptAssetFieldPicker.h"
 #include "PlutoGE/ui/ModelImportDependenciesInspector.h"
@@ -444,6 +446,7 @@ namespace PlutoGE::ui
                 case Type::InputMapping: return {icons::InputMappingAsset, IM_COL32(232, 116, 180, 255)};
                 case Type::SurfaceResponse: return {icons::SurfaceResponseAsset, IM_COL32(196, 160, 112, 255)};
                 case Type::LoadingScreen: return {icons::LoadingScreenAsset, IM_COL32(214, 176, 92, 255)};
+                case Type::UITheme: return {icons::Palette, IM_COL32(232, 128, 196, 255)};
                 default: return {icons::File, IM_COL32(150, 156, 166, 255)};
             }
         }
@@ -753,6 +756,10 @@ namespace PlutoGE::ui
             else if (asset.type == assets::ProjectAssetType::LoadingScreen)
             {
                 editorShell.OpenLoadingScreenAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::UITheme)
+            {
+                editorShell.OpenUIThemeEditor(UIThemeTarget::ForAsset(asset.reference));
             }
             else if (asset.type == assets::ProjectAssetType::InputMapping)
             {
@@ -1566,9 +1573,36 @@ namespace PlutoGE::ui
         case PendingMenuAction::CreateInputMapping:
             ImGui::OpenPopup("Create Input Mapping Asset");
             break;
+        case PendingMenuAction::CreateUITheme:
+            ImGui::OpenPopup("Create UI Theme");
+            break;
         case PendingMenuAction::None:
         default:
             break;
+        }
+
+        if (ImGui::BeginPopupModal("Create UI Theme", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newUIThemeNameBuffer.data(), m_newUIThemeNameBuffer.size());
+            ImGui::Checkbox("Start with ready-made styles", &m_newUIThemeStarter);
+            ImGui::SetItemTooltip("Panel, Label, Heading, Button, Primary Button, Input and more, with shared colours");
+            const std::string name = SanitizeAssetFileName(m_newUIThemeNameBuffer.data());
+            if (ImGui::Button("Create") && !name.empty())
+            {
+                std::string error;
+                const auto reference = CreateUIThemeAsset(GetCreateDirectory(*project, m_selectedFolder, "UI/Themes"), name,
+                                                          m_newUIThemeStarter ? scene::MakeStarterUITheme() : scene::UITheme{}, error);
+                if (!reference.empty())
+                {
+                    m_assetCacheDirty = true;
+                    editorShell.MarkProjectDirty();
+                    editorShell.OpenUIThemeEditor(UIThemeTarget::ForAsset(reference));
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
         }
 
         if (ImGui::BeginPopupModal("Create Input Mapping Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -2508,6 +2542,11 @@ namespace PlutoGE::ui
             else if (asset.type == assets::ProjectAssetType::LoadingScreen)
             {
                 editorShell.OpenLoadingScreenAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::UITheme)
+            {
+                if (ImGui::Button("Open Theme Editor"))
+                    editorShell.OpenUIThemeEditor(UIThemeTarget::ForAsset(asset.reference));
             }
             else if (asset.type == assets::ProjectAssetType::InputMapping)
             {
@@ -3449,6 +3488,12 @@ namespace PlutoGE::ui
         {
             m_newInputMappingNameBuffer.fill('\0');
             m_pendingMenuAction = PendingMenuAction::CreateInputMapping;
+        }
+        if (ImGui::MenuItem("UI Theme"))
+        {
+            m_newUIThemeNameBuffer.fill('\0');
+            m_newUIThemeStarter = true;
+            m_pendingMenuAction = PendingMenuAction::CreateUITheme;
         }
         if (ImGui::BeginMenu("Import"))
         {

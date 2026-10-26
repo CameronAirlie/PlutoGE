@@ -38,7 +38,9 @@ namespace PlutoGE::scene
         registry.Register<UIScrollViewComponent>("UIScrollViewComponent", "UI Scroll View Component");
         registry.Register<UIInputFieldComponent>("UIInputFieldComponent", "UI Input Field Component");
         registry.Register<UIDropdownComponent>("UIDropdownComponent", "UI Dropdown Component");
-        registry.Register<UIStyleSheetComponent>("UIStyleSheetComponent", "UI Style Sheet Component");
+        // Serialized under its original name; scenes written before themes still load.
+        registry.Register<UIThemeComponent>("UIStyleSheetComponent", "UI Theme Component").isAssetPathProperty =
+            [](std::string_view name) { return name == "Theme"; };
         registry.Register<UIStyleComponent>("UIStyleComponent", "UI Style Component");
 
         registry.AddMenuItem<CanvasComponent>("UI/Canvas",
@@ -58,7 +60,7 @@ namespace PlutoGE::scene
         registry.AddMenuItem<UIDropdownComponent>("UI/Controls/Dropdown");
         registry.AddMenuItem<UILayoutComponent>("UI/Layout/Layout Group");
         registry.AddMenuItem<UILayoutItemComponent>("UI/Layout/Layout Item");
-        registry.AddMenuItem<UIStyleSheetComponent>("UI/Style/Style Sheet");
-        registry.AddMenuItem<UIStyleComponent>("UI/Style/Style Classes");
+        registry.AddMenuItem<UIThemeComponent>("UI/Style/Theme");
+        registry.AddMenuItem<UIStyleComponent>("UI/Style/Style");
     }
 }

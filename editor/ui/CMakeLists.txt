@@ -22,6 +22,7 @@ add_library(PlutoGEEditorUI
     src/PlayModeChanges.cpp
     src/PlayModeChangesUI.cpp
     src/PlayModeToolbar.cpp
+    src/PropertyEditor.cpp
     src/ViewportOverlayLayout.cpp
     src/ViewportBookmarks.cpp
     src/ViewportBookmarksUI.cpp
@@ -83,6 +84,12 @@ add_library(PlutoGEEditorUI
     src/hierarchy/UIWidgetPresets.cpp
     src/inspectors/ComponentInspectors.cpp
     src/inspectors/UIComponentInspectors.cpp
+    src/inspectors/UIStyleInspectors.cpp
+    src/theme/UIThemeDocument.cpp
+    src/theme/UIThemeWidgets.cpp
+    src/theme/UIThemeStylesView.cpp
+    src/theme/UIThemeVariablesView.cpp
+    src/panels/UIThemeEditorPanel.cpp
     src/hierarchy/HierarchyExpansion.cpp
     src/hierarchy/HierarchyFilter.cpp
     src/hierarchy/HierarchyNavigation.cpp

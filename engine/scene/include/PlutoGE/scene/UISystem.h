@@ -25,7 +25,7 @@ namespace PlutoGE::scene
     class Entity;
     class Scene;
     class UISelectable;
-    class UIStyleSheet;
+    class UIResolvedTheme;
     class IUIPopup;
 
     // Camera used to place world-space canvases.
@@ -155,7 +155,7 @@ namespace PlutoGE::scene
 
         void Collect(Entity *entity, std::uint32_t canvas, std::uint32_t parentElement, std::uint32_t parentNode,
                      const glm::vec2 &viewportSize, const UICameraInfo *camera, const UIMeasureContext &measure,
-                     const UIStyleSheet *sheet);
+                     const UIResolvedTheme *theme);
         std::uint32_t BeginCanvas(Entity &entity, const CanvasComponent &canvas, const glm::vec2 &viewportSize,
                                   const UICameraInfo *camera);
         void SortCanvases();

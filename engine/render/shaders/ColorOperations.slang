@@ -10,9 +10,25 @@ float3 aces(float3 value)
     return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
 }
 
+uint colorGrainHash(uint value)
+{
+    value ^= value >> 16u;
+    value *= 0x7feb352du;
+    value ^= value >> 15u;
+    value *= 0x846ca68bu;
+    value ^= value >> 16u;
+    return value;
+}
+
+// Integer hash keeps the grain uncorrelated across pixels and frames; a sin-based hash of
+// (pixel + time) drifts diagonally and loses precision, which shows up as scrolling bands.
 float colorGrain(float2 pixel, float time)
 {
-    return frac(sin(dot(pixel + time, float2(12.9898, 78.233))) * 43758.5453);
+    const uint2 coord = uint2(max(pixel, 0.0));
+    uint value = coord.x * 0x9e3779b9u;
+    value ^= coord.y * 0x85ebca6bu;
+    value ^= colorGrainHash(asuint(time)) * 0xc2b2ae35u;
+    return float(colorGrainHash(value) & 0x00ffffffu) / 16777216.0;
 }
 
 float3 applyColorGrading(float3 color, float2 uv, float2 pixel, float time, float4 parameters[PLUTO_POST_PROCESS_LANES])

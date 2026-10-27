@@ -41,8 +41,14 @@ at one third resolution on each axis and is intended for very high-resolution
 output, so it is a poor preview mode for a small panel. PlutoGE preserves a
 640x360 minimum temporal input for small viewports while retaining the selected
 quality ratio at normal game resolutions. This prevents a docked Quality view
-from discarding most of its source detail before temporal reconstruction; RCAS
-sharpness cannot recover detail which was never rendered.
+from discarding most of its source detail before temporal reconstruction;
+sharpening cannot recover detail which was never rendered.
+
+Choose the mode from the output height, not the GPU alone. FSR2 reconstructs
+from the internal image: Performance at 720p output is a 360p input, which
+softens the image and turns one-pixel features into dashes in motion. AMD
+positions Performance for 4K output. At 1080p or lower prefer Quality, or
+render natively with TAA when the GPU allows it.
 
 ## Frame contract
 
@@ -61,15 +67,32 @@ and receiver albedo. The current material and scene are composited after GI
 filtering, so stationary jittered detail reaches FSR2 without being
 accumulated twice.
 
-FSR2 RCAS sharpening uses `RUNTIME_UPSCALE_SHARPNESS`. The renderer also applies
+`RUNTIME_UPSCALE_SHARPNESS` drives the renderer's own sharpening of the
+upscaled image (`UpscalerSharpening`, `UpscalerSharpening.slang`), applied to
+every upscaler technology. FSR2's built-in RCAS is disabled: it runs on
+exposure-scaled linear HDR, where its range limiter fails at bright/dark edges
+and leaves checkered, ringing edges. The renderer runs the same RCAS filter in
+a reversible tone-mapped space (`c / (1 + max(c))`), then returns to linear HDR,
+so the result never leaves the local colour range. The renderer also applies
 the temporal mip bias `log2(render width / output width) - 1` through its
 backend-neutral material sampler, keeping texture detail available at reduced
 internal resolutions.
 
-The initial integration does not yet provide optional reactive or transparency
-and composition masks. FSR2 remains functional without them, but adding those
-masks will improve reconstruction around translucent particles, water, and
-other rapidly changing materials.
+Translucent surfaces and particles write no motion vectors. When any are
+composited before the upscale, the renderer snapshots the opaque colour first
+and passes it with an R32F target as `TemporalUpscalerFrame::opaqueColor` and
+`reactiveMask`. The FSR2 adapter generates a reactive mask from the
+difference with `ffxFsr2ContextGenerateReactiveMask`, using AMD's recommended
+settings, so history does not smear them. Frames without translucency skip the
+copy. Transparency-and-composition masks are not provided.
+
+Pixels with no surface (sky, background) receive camera motion from
+`BackgroundMotion` (`BackgroundMotion.slang`) after the geometry pass,
+whenever TAA or an upscaler reads motion. The background is treated as
+infinitely distant, so its motion is the rotation of its view direction
+between the previous and current unjittered view-projections; previously it
+stayed zero, gluing clouds and the sky to the screen while the camera turned.
+Orthographic cameras keep zero background motion.
 
 ## Motion history
 

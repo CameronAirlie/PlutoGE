@@ -174,8 +174,20 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const uint steps = clamp(pass.quality, 8u, 128u);
     // Integrate the GGX lobe with pixel-local, temporally stable stratified
     // samples. Rejected directions and misses remain in the denominator.
+#if defined(PLUTO_SSR_REDUCED_RAYS)
+    // Lane 2.y: rays per pixel, rounded up to whole unrolled groups of four.
+    // With a temporal resolve active (lane 2.w), rotate the stratification
+    // every frame (lane 2.z) so accumulation integrates the whole lobe.
+    const uint samples = clamp((uint(pass.parameters[2].y) + 3u) & ~3u, 4u, 16u);
+    float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
+    if (pass.parameters[2].w > 0.5)
+        sampleRotation = frac(sampleRotation + pass.parameters[2].z * float2(0.618033989, 0.754877666));
+#else
+    // The default count stays a compile-time constant: a runtime count
+    // measured 12% slower even at sixteen rays.
     const uint samples = 16;
     const float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
+#endif
     float3 reflection = 0.0;
     float3 totalResponse = 0.0;
     float3 coveredResponse = 0.0;

@@ -91,6 +91,7 @@ namespace PlutoGE::render
         result.ssrStages[0] = {Load("SSRTrace", "vertex"), Load("SSRTrace", "fragment")};
         result.ssrStages[1] = {Load("SSRResolve", "vertex"), Load("SSRResolve", "fragment")};
         result.ssrStages[2] = {Load("SSRFilter", "vertex"), Load("SSRFilter", "fragment")};
+        result.ssrStages[3] = {Load("SSRTraceReduced", "vertex"), Load("SSRTraceReduced", "fragment")};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {
@@ -140,6 +141,8 @@ namespace PlutoGE::render
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
         result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};
         result.diffuseProbeComposite = {Load("DiffuseProbeComposite", "vertex"), Load("DiffuseProbeComposite", "fragment")};
+        result.backgroundMotion = {Load("BackgroundMotion", "vertex"), Load("BackgroundMotion", "fragment")};
+        result.upscalerSharpening = {Load("UpscalerSharpening", "vertex"), Load("UpscalerSharpening", "fragment")};
         result.occlusion = {Load("OcclusionDepth", "vertex"), Load("OcclusionDepth", "fragment"),
                             Load("OcclusionReduce", "compute"), Load("OcclusionTest", "compute")};
         constexpr std::array<std::string_view, 7> virtualCompute{

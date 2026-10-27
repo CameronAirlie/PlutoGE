@@ -175,6 +175,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.ssrStages[0] = {{.glsl = ReadText("SSRTrace.vertex.glsl")}, {.glsl = ReadText("SSRTrace.fragment.glsl")}};
         shaders.ssrStages[1] = {{.glsl = ReadText("SSRResolve.vertex.glsl")}, {.glsl = ReadText("SSRResolve.fragment.glsl")}};
         shaders.ssrStages[2] = {{.glsl = ReadText("SSRFilter.vertex.glsl")}, {.glsl = ReadText("SSRFilter.fragment.glsl")}};
+        shaders.ssrStages[3] = {{.glsl = ReadText("SSRTraceReduced.vertex.glsl")}, {.glsl = ReadText("SSRTraceReduced.fragment.glsl")}};
         LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particleInstancedVertex.glsl = ReadText("ParticlesInstanced.vertex.glsl");
@@ -199,6 +200,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.maskedShadowFragment.glsl = ReadText("DirectionalShadowMasked.fragment.glsl");
         shaders.displayOutput.vertex.glsl = ReadText("DisplayOutput.vertex.glsl");
         shaders.displayOutput.fragment.glsl = ReadText("DisplayOutput.fragment.glsl");
+        shaders.backgroundMotion = {{.glsl = ReadText("BackgroundMotion.vertex.glsl")}, {.glsl = ReadText("BackgroundMotion.fragment.glsl")}};
+        shaders.upscalerSharpening = {{.glsl = ReadText("UpscalerSharpening.vertex.glsl")}, {.glsl = ReadText("UpscalerSharpening.fragment.glsl")}};
         shaders.occlusion.vertex.glsl = ReadText("OcclusionDepth.vertex.glsl");
         shaders.occlusion.fragment.glsl = ReadText("OcclusionDepth.fragment.glsl");
         shaders.occlusion.reduce.glsl = ReadText("OcclusionReduce.compute.glsl");
@@ -510,6 +513,13 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
             });
+            CheckBackgroundMotion(basicRenderer, [&](auto texture) {
+                std::vector<std::byte> pixels(basicRenderer.GetOutputWidth() * basicRenderer.GetOutputHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            }, [&](auto texture) { return device.ReadTextureRgbaFloat(texture); });
+            CheckUpscalerSharpening(device, shaders, [&](auto texture) { return device.ReadTextureRgbaFloat(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")

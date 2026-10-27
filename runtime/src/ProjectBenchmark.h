@@ -2,6 +2,7 @@
 #include "PlutoGE/render/GeometryDiagnostics.h"
 #include "PlutoGE/render/GraphicsQuality.h"
 #include <charconv>
+#include <cmath>
 #include <array>
 #include <algorithm>
 #include <map>
@@ -56,14 +57,26 @@ namespace PlutoGE
         // Project graphics tier applied before the scene loads. Frozen captures run
         // no scripts, so without it they render the scene's authored quality.
         std::optional<render::GraphicsPreset> quality;
+        // Swings the base camera's yaw by +/- this many degrees over CameraPanPeriodFrames,
+        // after the scene update, so temporal reconstruction is measured under motion.
+        float cameraPanDegrees = 0.0f;
+        static constexpr std::size_t CameraPanPeriodFrames = 120;
         static constexpr float FixedDelta = 1.0f / 60.0f;
+
+        // Yaw offset in degrees for a frame; zero when panning is off.
+        [[nodiscard]] float CameraPanOffset(std::size_t frame) const noexcept
+        {
+            constexpr float tau = 6.28318530718f;
+            return cameraPanDegrees * std::sin(tau * static_cast<float>(frame % CameraPanPeriodFrames) /
+                                               static_cast<float>(CameraPanPeriodFrames));
+        }
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 9) // project, output, two counts and five switches
+            if (args.size() < 2 || args.size() > 10) // project, output, two counts and six switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
                                             "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] "
-                                            "[--quality=low|medium|high|ultra]");
+                                            "[--quality=low|medium|high|ultra] [--camera-pan=<degrees>]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
             {
@@ -81,6 +94,7 @@ namespace PlutoGE
                 constexpr std::string_view diagnosticPrefix = "--geometry-diagnostic=";
                 constexpr std::string_view capturePrefix = "--capture=";
                 constexpr std::string_view qualityPrefix = "--quality=";
+                constexpr std::string_view panPrefix = "--camera-pan=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
@@ -99,6 +113,16 @@ namespace PlutoGE
                     if (tier == tiers.end())
                         throw std::invalid_argument("Unknown benchmark quality: " + std::string(value));
                     result.quality = tier->second;
+                }
+                else if (value.starts_with(panPrefix) && result.cameraPanDegrees == 0.0f)
+                {
+                    const auto text = value.substr(panPrefix.size());
+                    float degrees = 0.0f;
+                    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), degrees);
+                    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+                        !(degrees > 0.0f) || degrees > 180.0f)
+                        throw std::invalid_argument("Camera pan must be a number of degrees in (0, 180]");
+                    result.cameraPanDegrees = degrees;
                 }
                 else if (value == "--scalar-shadows" && !diagnosticSet)
                     result.geometryDiagnostic = render::GeometryDiagnosticMode::ReferenceDirectionalShadows;

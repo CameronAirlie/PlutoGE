@@ -948,7 +948,8 @@ namespace PlutoGE::render::rhi::opengl
     {
         const auto *texture = m_impl->textures.Get(handle);
         if (!texture || texture->descriptor.depth != 1 ||
-            (texture->descriptor.format != Format::R16G16B16A16Float && texture->descriptor.format != Format::R32G32B32A32Float))
+            (texture->descriptor.format != Format::R16G16B16A16Float && texture->descriptor.format != Format::R32G32B32A32Float &&
+             texture->descriptor.format != Format::R32G32Float))
             throw std::invalid_argument("Invalid OpenGL HDR color texture readback");
         std::vector<float> pixels(static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height * 4);
         // The engine supports OpenGL 4.3; direct-state-access readback requires 4.5.

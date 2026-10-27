@@ -115,6 +115,8 @@ namespace PlutoGE::render::rhi
         UpscalerQuality quality = UpscalerQuality::Quality;
         bool hdr = true;
         bool autoExposure = true;
+        // 0-1. Applied by the renderer after reconstruction for every
+        // technology (UpscalerSharpening), not by the SDK.
         float sharpness = 0.25f;
         auto operator<=>(const TemporalUpscalerOptions &) const = default;
     };
@@ -143,6 +145,13 @@ namespace PlutoGE::render::rhi
         TextureHandle depth;
         TextureHandle motionVectors;
         TextureHandle output;
+        // Optional reactive inputs: scene colour before translucent surfaces and
+        // particles (render resolution), and an R32Float storage target that an
+        // upscaler may fill with a reactive mask from the difference with color.
+        // Translucent content has no motion vectors; marking it reactive keeps
+        // history from smearing it. Ignored unless both are set.
+        TextureHandle opaqueColor;
+        TextureHandle reactiveMask;
         Extent2D renderSize;
         Extent2D outputSize;
         std::array<float, 2> jitterPixels{};

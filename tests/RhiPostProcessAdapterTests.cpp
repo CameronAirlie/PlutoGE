@@ -316,6 +316,16 @@ int main()
     const auto ssrCutoffPacket = AdaptPostProcessEffect(ssrCutoff);
     if (!ssrCutoffPacket || !Near(ssrCutoffPacket->parameters[2].x, 0.15f))
         return 144;
+    // Ray count reaches lane 2.y, defaults to the original 16 and is clamped.
+    SSREffect ssrRays;
+    if (!Near(AdaptPostProcessEffect(ssrRays)->parameters[2].y, 16.0f))
+        return 145;
+    ssrRays.SetParameters({PostProcessParameter{.name = "Rays per Pixel", .value = "4"}});
+    if (!Near(AdaptPostProcessEffect(ssrRays)->parameters[2].y, 4.0f))
+        return 146;
+    ssrRays.SetParameters({PostProcessParameter{.name = "Rays per Pixel", .value = "99"}});
+    if (ssrRays.GetSettings().rayCount != 16)
+        return 147;
     const auto fogPacket = AdaptPostProcessEffect(fog);
     const auto compositePacket = AdaptPostProcessEffect(composite);
     if (!ssaoPacket || !ssgiPacket || !ssrPacket || !fogPacket || !compositePacket ||

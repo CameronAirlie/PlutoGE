@@ -25,12 +25,15 @@ namespace PlutoGE::render
             float intensity, maxRayDistance, thickness, startOffset, edgeFade;
             float fresnelPower, metallicBoost, maxRoughness;
             int stepCount, binarySearchSteps;
+            // GGX rays traced per pixel per frame (1-16). Fewer than 16 rotate
+            // the sample pattern every frame for a temporal resolve to integrate.
+            int rayCount;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
             return {m_intensity, m_maxRayDistance, m_thickness, m_startOffset,
                     m_edgeFade, m_fresnelPower, m_metallicBoost, m_maxRoughness,
-                    m_stepCount, m_binarySearchSteps};
+                    m_stepCount, m_binarySearchSteps, m_rayCount};
         }
 
     private:
@@ -51,5 +54,6 @@ namespace PlutoGE::render
         float m_maxRoughness = 0.6f;
         int m_stepCount = 48;
         int m_binarySearchSteps = 5;
+        int m_rayCount = 16;
     };
 }

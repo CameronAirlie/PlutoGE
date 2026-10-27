@@ -34,6 +34,7 @@ add_library(PlutoGERender
     src/RhiSkinning.cpp
     src/RhiGpuSkinning.cpp
     src/DeferredProbeIrradiance.cpp
+    src/TemporalReconstructionPasses.cpp
     src/CloudNoiseVolume.cpp
     src/CloudOcclusion.cpp
     src/SkinningLodLayout.cpp
@@ -320,6 +321,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSGI "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSRTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRTrace.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
+    pluto_add_slang_graphics_shader(SSRTraceReduced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRTraceReduced.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRResolve.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRFilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRFilter.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain)
@@ -351,6 +353,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_compute_shader(VCTResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTResolve.slang" computeMain rgba16f)
     pluto_add_slang_compute_shader(VCTDirectionalMip "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTDirectionalMip.slang" computeMain rgba16f)
     pluto_add_slang_geometry_shader(VCTVoxelize "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTVoxelize.slang" vertexMain geometryMain fragmentMain)
+    pluto_add_slang_graphics_shader(BackgroundMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BackgroundMotion.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(UpscalerSharpening "${CMAKE_CURRENT_SOURCE_DIR}/shaders/UpscalerSharpening.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VCTConeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTConeTrace.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VCTTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTTemporal.slang" vertexMain fragmentMain)
     # Runtime shader-graph specialisation recompiles BasicLit.slang with

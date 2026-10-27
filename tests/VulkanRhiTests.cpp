@@ -83,6 +83,7 @@ int main(int argc, char **argv)
         shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
         shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
         shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
+        shaders.ssrStages[3] = {{.spirv = ReadSpirv("SSRTraceReduced.vertex.spv")}, {.spirv = ReadSpirv("SSRTraceReduced.fragment.spv")}};
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
@@ -113,6 +114,8 @@ int main(int argc, char **argv)
         }
         shaders.displayOutput.vertex.spirv = ReadSpirv("DisplayOutput.vertex.spv");
         shaders.displayOutput.fragment.spirv = ReadSpirv("DisplayOutput.fragment.spv");
+        shaders.backgroundMotion = {{.spirv = ReadSpirv("BackgroundMotion.vertex.spv")}, {.spirv = ReadSpirv("BackgroundMotion.fragment.spv")}};
+        shaders.upscalerSharpening = {{.spirv = ReadSpirv("UpscalerSharpening.vertex.spv")}, {.spirv = ReadSpirv("UpscalerSharpening.fragment.spv")}};
         const auto loadPostProcess = [&](BasicPostProcessEffectType type, const char *module)
         {
             auto &shader = shaders.postProcess[static_cast<std::size_t>(type)];
@@ -344,7 +347,13 @@ int main(int argc, char **argv)
         {
             CheckTemporalMotionRendering(renderer, device, false, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             if (device.GetTemporalUpscalerSupport(rhi::TemporalUpscaler::Fsr2).supported)
+            {
                 CheckTemporalMotionRendering(renderer, device, true, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+                CheckUpscalerTranslucentTrail(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            }
+            CheckUpscalerSharpening(device, shaders, [&](auto texture) { return device.ReadTextureRgbaFloat(texture); });
+            CheckBackgroundMotion(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); },
+                                  [&](auto texture) { return device.ReadTextureRgbaFloat(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")

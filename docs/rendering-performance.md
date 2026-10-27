@@ -11,7 +11,7 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 ```
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
                [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
-               [--quality=low|medium|high|ultra]
+               [--quality=low|medium|high|ultra] [--camera-pan=<degrees>]
 ```
 
 * Frames record on the render thread unless `--serial-render` is given (see [frame-pipeline.md](frame-pipeline.md));
@@ -32,6 +32,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 * `--quality` applies a project graphics tier before the scene loads. Frozen
   renders run no scripts, so without it they use the scene's authored quality
   rather than whatever tier a game's settings would select.
+* `--camera-pan` swings the base camera's yaw by +/- that many degrees over a
+  120-frame cycle, after the scene update, so temporal reconstruction (TAA,
+  upscalers) is measured and captured under motion.
 * `--capture` writes the last presented frame as an upright PNG (Vulkan only).
   Frozen renders are deterministic, so two captures of one mode match exactly
   and any difference between modes is real.

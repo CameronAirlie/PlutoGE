@@ -172,3 +172,83 @@ about 0.4 ms, materials 0.6 ms), TAA 1.7 ms and other post-processing about
   On this class of GPU, rendering at reduced scale with the existing FSR2
   upscaler is the largest remaining lever. It is a quality trade-off and a
   per-project choice.
+
+## Second pass: TAA, VSM, post-processing and FSR2
+
+Same machine and scene. Frozen runs use `--quality`; motion was checked with
+the new `--camera-pan=<degrees>` benchmark option.
+
+### FSR2 ghosting and smearing
+
+Panning captures at Performance (720p from 360p) showed checkered, comb-like
+vertical edges and a dotted pattern along near-horizontal edges, even in a
+static frame. At native scale (`DLAA`) FSR2 was clean, and every jitter or
+motion-vector sign/scale variant measured worse than the current conventions.
+Disabling FSR2's built-in RCAS removed the pattern: the SDK sharpens linear
+HDR colour, where its range limiter fails at bright/dark edges.
+
+- **Renderer sharpening** (`UpscalerSharpening`): the same RCAS filter, run
+  after reconstruction in a reversible tone-mapped space, for every upscaler.
+  The SDK sharpener is off. Against the native-TAA frame, the stationary error
+  fell from 0.387 to 0.350 with sharpening still on, and the comb on moving
+  vertical edges is gone. Net cost is about zero: the sharpening pass takes
+  0.26 ms, and FSR2's dispatch is 0.26 ms cheaper without its RCAS.
+- **Background motion** (`BackgroundMotion`): sky pixels now carry camera
+  rotation instead of zero motion (0.02 ms at the 360p input, 0.06–0.08 ms at
+  720p). This is a correctness gap; it matters most for detailed clouds.
+- **Reactive mask** for translucent surfaces and particles (see
+  [FSR2.md](FSR2.md)). The settlement has none. The synthetic translucent-pane
+  test showed no trail with or without the mask, so its benefit here is AMD's
+  guidance, not a measurement.
+
+The remaining softness and dashed one-pixel features in motion come from the
+360p input. Prefer Quality, or native TAA, at 720p–1080p output.
+
+### Performance
+
+| Change | Measured |
+| --- | --- |
+| VSM: page-crossing footprints gather per page, one path for every pixel | High opaque 5.58 → 5.39 ms, bit-exact |
+| TAA: history depth footprint is one raw `GatherRed` at matching resolution | 1.72 → 1.60 ms under motion, bit-exact |
+| SSR: `Rays per Pixel` setting (default 16), with a separate trace variant below 16 | 4 rays: trace 1.84 → 0.58 ms, SSR 2.77 → 1.51 ms |
+
+The SSR default is unchanged: 16 rays use the original trace, which is
+bit-identical, while fewer rays use `SSRTraceReduced`. A runtime ray count in
+one shader measured 12% slower even at 16 rays, so the variant keeps the
+default free. Below 16 rays the sample pattern rotates every frame when a
+temporal resolve is active, and counts round up to whole groups of four. In
+the settlement, 4 rays after accumulation differ from 16 by a mean of
+0.001 / 255. Check scenes with mirror-like floors under motion before
+lowering it.
+
+| Frozen | Start of pass | After | After, SSR at 4 rays |
+| --- | ---: | ---: | ---: |
+| Low scene GPU | 6.93 ms | 7.01 ms | — |
+| High scene GPU | 20.56 ms | 20.33 ms | 19.08 ms |
+
+On Low the TAA gain (−0.12 ms) is offset by background motion (+0.06 ms) and
+noise. The in-game Low frame was 7.81 ms before this pass and 7.60 ms after.
+
+### Measured and not kept
+
+- **Volumetric fog** (3.1 ms on High): VSM visibility 0.85 ms, point radiance
+  0.50 ms, density noise 0.38 ms, the march itself about 1.4 ms. The
+  visibility reads are a dependent page-table → atlas chain per step. Batching
+  them needs a restructured march (precomputed visibility per stride), which
+  remains a candidate.
+- **TAA**: a pass-through costs 0.23 ms, so about 1.4 ms is neighbourhood and
+  history logic. Sharing the 3×3 reads and pre-fetching dilation candidates
+  did not help. A compute version with a shared-memory tile is the next step.
+- **VSM**: the level search and footprint are cheap. Most of the remaining
+  2.3 ms is the per-level page lookups and dependent gathers.
+- **SSAO** (1.67 ms on Medium/High): six depth-pyramid dispatches (0.27 ms)
+  could be fused, and 16 instead of 32 samples is a project setting.
+
+### Validation
+
+Added `CheckBackgroundMotion` (surface and background motion agree across a
+silhouette under camera rotation, Vulkan and OpenGL), `CheckUpscalerSharpening`
+(HDR edge stays within its local range, a ramp still sharpens, both
+backends), `CheckUpscalerTranslucentTrail` (FSR2 translucent composition, no
+trail) and SSR ray-count adapter cases. 38 of 42 rendering suites pass. The
+same four suites listed above still fail with their original messages.

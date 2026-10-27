@@ -257,15 +257,30 @@ TemporalOutput fragmentMain(FullscreenVertexOutput input)
     float historyMinDepth = 1.0, historyMaxDepth = 0.0;
     bool hasMatchingLayer = false;
     bool historyLayersSupported = true;
+    uint historyWidth, historyHeight;
+    historyDepthTexture.GetDimensions(historyWidth, historyHeight);
+    // Encoded depths of the 2x2 history footprint, indexed y * 2 + x.
+    float4 historyDepths;
+    if (all(abs(float2(historyWidth, historyHeight) * pass.inverseResolution - 1.0) < 0.0001))
+    {
+        // History at the output resolution: one raw gather returns the same
+        // four texels; clamp addressing matches the clamped loads below.
+        historyDepths = historyDepthTexture.GatherRed((historyBase + 1.0) * pass.inverseResolution).wzxy;
+    }
+    else
+    {
+        for (int tap = 0; tap < 4; ++tap)
+        {
+            const float2 tapUv = (historyBase + float2(tap & 1, tap >> 1) + 0.5) * pass.inverseResolution;
+            const int2 historyTexel = clamp(int2(floor(saturate(tapUv) * float2(historyWidth, historyHeight))),
+                                            int2(0), int2(historyWidth, historyHeight) - 1);
+            historyDepths[tap] = historyDepthTexture.Load(int3(historyTexel, 0)).r;
+        }
+    }
     for (int y = 0; y < 2; ++y)
     for (int x = 0; x < 2; ++x)
     {
-        const float2 tap = (historyBase + float2(x,y) + 0.5) * pass.inverseResolution;
-        uint historyWidth, historyHeight;
-        historyDepthTexture.GetDimensions(historyWidth, historyHeight);
-        const int2 historyTexel = clamp(int2(floor(saturate(tap) * float2(historyWidth, historyHeight))),
-                                        int2(0), int2(historyWidth, historyHeight) - 1);
-        const float sampleEncodedDepth = historyDepthTexture.Load(int3(historyTexel, 0)).r;
+        const float sampleEncodedDepth = historyDepths[y * 2 + x];
         const float sampleLayer = floor(sampleEncodedDepth * 0.5);
         const float sampleDepth = sampleEncodedDepth - sampleLayer * 2.0;
         if (sampleLayer == layer)

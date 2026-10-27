@@ -1,13 +1,16 @@
-// Exact tent filtering for a footprint contained in one resident physical page.
+// Exact tent filtering over virtual texels resident in physical pages.
 // Gather raw depths so each virtual texel keeps its receiver-plane correction.
 // Gather order is bottom-left, bottom-right, top-right, top-left in texture UVs.
-float filterResidentVirtualTent(Sampler2D atlas, float atlasResolution, float resolution,
-                               int2 atlasOffset, int2 first, int2 last, float2 position,
-                               float2 coordinate, float2 gradient, float depth, float support,
-                               int2 nearestTexel, out float rawVisibility)
+
+// Accumulates the tent over the virtual texels [first, last], all resident in
+// the physical page at `atlasOffset`. A footprint crossing page boundaries
+// calls this once per page with that page's sub-rectangle.
+void accumulateResidentVirtualTent(Sampler2D atlas, float atlasResolution, float resolution,
+                                   int2 atlasOffset, int2 first, int2 last, float2 position,
+                                   float2 coordinate, float2 gradient, float depth, float support,
+                                   int2 nearestTexel, inout float visibility, inout float weightSum,
+                                   inout float rawVisibility)
 {
-    float visibility = 0.0, weightSum = 0.0;
-    rawVisibility = 1.0;
     for (int y = first.y; y <= last.y; y += 2)
         for (int x = first.x; x <= last.x; x += 2)
         {
@@ -18,8 +21,9 @@ float filterResidentVirtualTent(Sampler2D atlas, float atlasResolution, float re
             const float4 receiver = depth + gradient.x * ((tx + 0.5) / resolution - coordinate.x)
                                          + gradient.y * ((ty + 0.5) / resolution - coordinate.y);
             const float4 comparison = float4(receiver <= stored);
-            // An odd extent gathers one extra row/column, whose tent weight is
-            // zero. Mask it explicitly to avoid floating-point boundary residue.
+            // An odd extent gathers one extra row/column past `last` (outside
+            // the footprint, or in the next page). Its weight is zero; mask it
+            // explicitly to avoid floating-point boundary residue.
             const float4 valid = float4((tx <= float(last.x)) & (ty <= float(last.y)));
             const float4 weight = max(support - abs(tx - position.x), 0.0) *
                                   max(support - abs(ty - position.y), 0.0) * valid;
@@ -31,5 +35,4 @@ float filterResidentVirtualTent(Sampler2D atlas, float atlasResolution, float re
                 rawVisibility = comparison[local.y == 0 ? 3 - local.x : local.x];
             }
         }
-    return visibility / max(weightSum, 0.000001);
 }

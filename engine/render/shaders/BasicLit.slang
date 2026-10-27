@@ -624,16 +624,29 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
         const int2 nearestTexel = int2(floor(position + 0.5));
         // A resident contiguous footprint needs one raw gather per 2x2 block.
         // Page crossings and diagnostic reference mode retain scalar addressing.
-        if (pointParameters.w != 3.0 && all(lowPage == highPage))
-        {
-            normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
-            return filterResidentVirtualTent(virtualShadowAtlas, vsm.pool.z,
-                virtualResolution(vsm, level), atlasOffsets[0], first, last, position,
-                coordinate.xy, gradient, depth, support, nearestTexel, rawVisibility);
-        }
         const int pageBoundaryX = (lowPage.x + 1) * PLUTO_VSM_PAGE_SIZE;
         const int pageBoundaryY = (lowPage.y + 1) * PLUTO_VSM_PAGE_SIZE;
-        // All tent texels are visited once. At most four page-table fetches
+        normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
+        if (pointParameters.w != 3.0)
+        {
+            // The footprint is the union of up to four single-page rectangles
+            // (one unless it crosses a page edge). Gather each with its page's
+            // offset; weights and comparisons match the per-texel loop below.
+            // One path for every pixel keeps waves free of page-edge divergence.
+            for (int corner = 0; corner < 4; ++corner)
+            {
+                const bool right = (corner & 1) != 0, top = (corner & 2) != 0;
+                if ((right && lowPage.x == highPage.x) || (top && lowPage.y == highPage.y)) continue;
+                const int2 cornerFirst = int2(right ? pageBoundaryX : first.x, top ? pageBoundaryY : first.y);
+                const int2 cornerLast = int2(right || lowPage.x == highPage.x ? last.x : pageBoundaryX - 1,
+                                             top || lowPage.y == highPage.y ? last.y : pageBoundaryY - 1);
+                accumulateResidentVirtualTent(virtualShadowAtlas, vsm.pool.z, virtualResolution(vsm, level),
+                    atlasOffsets[corner], cornerFirst, cornerLast, position, coordinate.xy, gradient, depth,
+                    support, nearestTexel, visibility, weightSum, rawVisibility);
+            }
+            return visibility / max(weightSum, 0.000001);
+        }
+        // Reference mode visits every tent texel with a scalar read. At most four page-table fetches
         // resolve the entire footprint; depth is sampled at texel centres.
         for (int y = first.y; y <= last.y; ++y)
         {

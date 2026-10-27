@@ -555,6 +555,8 @@ int RunRuntime(int argc, char **argv)
     bool hasLoggedFirstFrame = false;
     bool hasLoggedFirstFrameDiagnostics = false;
     std::size_t benchmarkFrameIndex = 0;
+    // The orientation --camera-pan swings about: the base camera's on the first frame.
+    std::optional<glm::vec3> benchmarkCameraBaseRotation;
     std::vector<double> benchmarkFrameTimes;
     std::vector<PlutoGE::ProjectBenchmarkSample> projectBenchmarkSamples;
     PlutoGE::ProjectBenchmarkGpuScopes projectBenchmarkGpuScopes, projectBenchmarkCpuScopes;
@@ -684,6 +686,13 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
                 PlutoGE::g_runtimeDiagnostics.currentPhase = "render Vulkan frame";
 #endif
+                if (projectBenchmark && projectBenchmark->cameraPanDegrees > 0.0f)
+                    if (auto *cameraEntity = cameraComponent->GetOwner())
+                    {
+                        if (!benchmarkCameraBaseRotation) benchmarkCameraBaseRotation = cameraEntity->GetRotation();
+                        cameraEntity->SetRotation(*benchmarkCameraBaseRotation +
+                                                  glm::vec3(0.0f, projectBenchmark->CameraPanOffset(benchmarkFrameIndex), 0.0f));
+                    }
                 const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
                 const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
                 auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);

@@ -20,6 +20,7 @@
 #include "MaterialPreparationCache.h"
 #include "RhiGpuSkinning.h"
 #include "DeferredProbeIrradiance.h"
+#include "TemporalReconstructionPasses.h"
 #include "CloudNoiseVolume.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PostProcessParameterBlock.h"
@@ -1030,7 +1031,7 @@ namespace PlutoGE::render
                 if (hasShader(shaders.ssrStages[index]))
                     m_ssrStagePipelines[index] = createPostProcessPipeline(
                         shaders.ssrStages[index].vertex, shaders.ssrStages[index].fragment,
-                        index == 0 ? "SSR trace" : "SSR resolve", BasicPostProcessEffectType::SSR);
+                        index == 0 || index == 3 ? "SSR trace" : "SSR resolve", BasicPostProcessEffectType::SSR);
             for (std::size_t index = 0; index < m_volumetricTracePipelines.size(); ++index)
             {
                 const auto &shader = shaders.volumetricTrace[index];
@@ -1343,6 +1344,12 @@ namespace PlutoGE::render
             if (probeIrradiance->Initialize(device, {shaders.diffuseProbeTrace.vertex, shaders.diffuseProbeTrace.fragment,
                                                      shaders.diffuseProbeComposite.fragment}))
                 m_deferredProbeIrradiance = std::move(probeIrradiance);
+            auto backgroundMotion = std::make_unique<BackgroundMotion>();
+            if (backgroundMotion->Initialize(device, {shaders.backgroundMotion.vertex, shaders.backgroundMotion.fragment}))
+                m_backgroundMotion = std::move(backgroundMotion);
+            auto upscalerSharpening = std::make_unique<UpscalerSharpening>();
+            if (upscalerSharpening->Initialize(device, {shaders.upscalerSharpening.vertex, shaders.upscalerSharpening.fragment}))
+                m_upscalerSharpening = std::move(upscalerSharpening);
             m_cloudNoise = std::make_unique<CloudNoiseVolume>();
             if (!m_cloudNoise->Initialize(device)) throw std::runtime_error("Cloud noise lattice creation failed");
             m_occlusion->Initialize(device, shaders.occlusion);
@@ -1404,6 +1411,7 @@ namespace PlutoGE::render
         m_terrainShaders = {};
         m_depthTarget.Reset();
         m_temporalUpscalerOutput.Reset();
+        m_upscalerReactiveMask.Reset();
         m_displayTarget.Reset();
         for (auto &target : m_postProcessTargets)
             target.Reset();
@@ -1475,6 +1483,8 @@ namespace PlutoGE::render
         m_occlusion.reset();
         m_gpuSkinning.reset();
         m_deferredProbeIrradiance.reset();
+        m_backgroundMotion.reset();
+        m_upscalerSharpening.reset();
         m_cloudNoise.reset();
         m_geometrySweepFrame = 0;
         m_emptyVirtualShadowTable.Reset();
@@ -3466,6 +3476,14 @@ namespace PlutoGE::render
                 .material = m_materialTarget.Get(), .indirect = m_indirectTarget.Get(), .color = m_colorTarget.Get(),
                 .width = m_width, .height = m_height, .inverseViewProjection = m_inverseViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});
+        // Temporal reconstruction reads motion for every pixel, including background.
+        if (m_backgroundMotion && m_motionTarget && (upscalerFrame || taaEffect != postProcessEffects.end()))
+            m_backgroundMotion->Record({
+                .depth = m_depthTarget.Get(), .motion = m_motionTarget.Get(), .sampler = m_screenSampler.Get(),
+                .width = m_width, .height = m_height, .view = lighting.view,
+                .projection = currentMotionViewProjection * glm::inverse(lighting.view),
+                .previousViewProjection = m_framePreviousViewProjection,
+                .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan});
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
         m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[geometryJob] + elapsedMs(recordingEnd, geometryRecordingEnd);
 
@@ -3880,6 +3898,9 @@ namespace PlutoGE::render
             m_outputWidth != 0 && m_outputHeight != 0;
         bool upscalePending = temporalUpscalerRequested;
         bool temporalUpscalerEvaluated = false;
+        // Scene colour before translucent surfaces and particles: the upscaler's
+        // reactive input. Captured only when translucency precedes an upscale.
+        rhi::TextureHandle opaqueColor;
         const auto evaluateTemporalUpscaler = [&]()
         {
             if (!upscalePending)
@@ -3889,6 +3910,20 @@ namespace PlutoGE::render
             frame.depth = m_depthTarget.Get();
             frame.motionVectors = m_motionTarget.Get();
             frame.output = m_temporalUpscalerOutput.Get();
+            if (opaqueColor)
+            {
+                if (!m_upscalerReactiveMask || m_upscalerReactiveMaskSize.width != m_width ||
+                    m_upscalerReactiveMaskSize.height != m_height)
+                {
+                    m_upscalerReactiveMask = rhi::Texture(*m_device, m_device->CreateTexture(
+                        {.width = m_width, .height = m_height, .format = rhi::Format::R32Float,
+                         .usage = rhi::TextureUsage::Sampled, .debugName = "Temporal upscaler reactive mask",
+                         .sampled = true, .depth = 1, .storage = true, .mipLevels = 1}));
+                    m_upscalerReactiveMaskSize = {m_width, m_height};
+                }
+                frame.opaqueColor = opaqueColor;
+                frame.reactiveMask = m_upscalerReactiveMask.Get();
+            }
             frame.renderSize = {m_width, m_height};
             frame.outputSize = {m_outputWidth, m_outputHeight};
             upscalePending = false;
@@ -3904,6 +3939,13 @@ namespace PlutoGE::render
             if (evaluated)
             {
                 m_outputColor = m_temporalUpscalerOutput.Get();
+                // Sharpening belongs to the upscaler output for every technology;
+                // SDK sharpeners are disabled (see UpscalerSharpening).
+                if (m_upscalerSharpening)
+                    if (const auto sharpened = m_upscalerSharpening->Record({
+                            .source = m_outputColor, .sampler = m_screenSampler.Get(), .width = m_outputWidth,
+                            .height = m_outputHeight, .sharpness = m_upscalerOptions.sharpness}))
+                        m_outputColor = sharpened;
                 m_postProcessWidth = m_outputWidth;
                 m_postProcessHeight = m_outputHeight;
                 temporalUpscalerEvaluated = true;
@@ -3923,14 +3965,34 @@ namespace PlutoGE::render
         if (!hasSsao)
             m_ssaoHistoryValid = false;
         std::size_t fusedBufferIndex = 0;
+        // Composites transparency and the final particle interval. Ahead of an
+        // upscale, first snapshot the opaque colour for its reactive mask.
+        const auto composeTranslucency = [&]()
+        {
+            if (upscalePending && !opaqueColor && (transparencyPending || particlesPending) && m_glassColorCopyPipeline)
+            {
+                opaqueColor = AcquirePostProcessTarget(targetIndex++, m_width, m_height).Get();
+                rhi::RenderingInfo copyInfo;
+                copyInfo.colorAttachments = {opaqueColor};
+                copyInfo.width = m_width;
+                copyInfo.height = m_height;
+                copyInfo.clearColor = copyInfo.clearDepth = false;
+                commands.BeginRendering(copyInfo);
+                commands.BindPipeline(m_glassColorCopyPipeline.Get());
+                commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                commands.Draw(3);
+                commands.EndRendering();
+            }
+            renderTransparency();
+            renderParticles(true);
+        };
         bool compositionPending = static_cast<bool>(beforeTemporalResolve);
         const auto composeCameras = [&]()
         {
             if (!compositionPending)
                 return;
             compositionPending = false;
-            renderTransparency();
-            renderParticles(true);
+            composeTranslucency();
             // Overlays append to this recording. Keep the frame's resources and
             // GPU scope alive through composition and the shared temporal resolve.
             core::CpuScope compositionScope("Camera stack composition", core::CpuCategory::Rendering);
@@ -3945,8 +4007,7 @@ namespace PlutoGE::render
                 continue;
             if (StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
             {
-                renderTransparency();
-                renderParticles(true);
+                composeTranslucency();
                 composeCameras();
             }
             if (upscalePending && StageFor(effect.type) >= BasicPostProcessStage::TemporalResolve)
@@ -4050,11 +4111,18 @@ namespace PlutoGE::render
                 const auto traceHeight = fullResolution ? m_postProcessHeight : (m_postProcessHeight + 1u) / 2u;
                 const auto source = m_outputColor;
                 const auto trace = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
+                // Reduced ray counts rotate their samples per frame when a
+                // temporal resolve will accumulate them; see SSR.slang.
+                parameters.parameters[2].z = static_cast<float>(m_frameIndex % 64u);
+                parameters.parameters[2].w = temporalClipOffset.z;
                 const auto drawSsr = [&](rhi::TextureHandle destination, rhi::TextureHandle reflections,
                                          std::uint32_t width, std::uint32_t height, float mode)
                 {
                     ScopedGpuTiming ssrStage(commands, mode == 3.0f ? "RHI SSR / Filter" : (mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace"));
-                    const auto stageIndex = mode == 3.0f ? 2u : (mode == 2.0f ? 1u : 0u);
+                    // Fewer than 16 rays per pixel trace with their own variant (lane 2.y).
+                    const bool reducedRays = mode == 1.0f && effect.parameters[2].y > 0.5f &&
+                                             effect.parameters[2].y < 15.5f && m_ssrStagePipelines[3];
+                    const auto stageIndex = mode == 3.0f ? 2u : (mode == 2.0f ? 1u : (reducedRays ? 3u : 0u));
                     const auto stagePipeline = mode != 0.0f && m_ssrStagePipelines[stageIndex]
                         ? m_ssrStagePipelines[stageIndex].Get() : pipeline;
                     parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
@@ -4196,8 +4264,7 @@ namespace PlutoGE::render
                 m_outputCoverage = m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get();
             }
         }
-        renderTransparency();
-        renderParticles(true);
+        composeTranslucency();
         composeCameras();
         evaluateTemporalUpscaler();
         if (!linearOutput && m_displayPipeline && m_displayTarget)

@@ -36,6 +36,8 @@ namespace PlutoGE::render
 {
     class RhiGpuSkinning;
     class DeferredProbeIrradiance;
+    class BackgroundMotion;
+    class UpscalerSharpening;
     class CloudNoiseVolume;
     struct RhiGpuSkinningSource;
     struct RhiGpuSkinningState;
@@ -260,7 +262,8 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
-        std::array<BasicPostProcessShaderPackage, 3> ssrStages; // Trace, vertical resolve, horizontal filter.
+        // Trace, vertical resolve, horizontal filter, and the trace for fewer than 16 rays per pixel.
+        std::array<BasicPostProcessShaderPackage, 4> ssrStages;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -282,6 +285,8 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage ssaoFilter, ssaoUpsample;
         // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
         BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
+        // Temporal reconstruction inputs/outputs: background camera motion and upscaler sharpening.
+        BasicPostProcessShaderPackage backgroundMotion, upscalerSharpening;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 5> vctCompute;
         rhi::GraphicsPipelineDescriptor particles;
         rhi::GraphicsPipelineDescriptor::ShaderCode particleInstancedVertex;
@@ -845,6 +850,8 @@ namespace PlutoGE::render
         std::unique_ptr<OcclusionCulling> m_occlusion;
         std::unique_ptr<RhiGpuSkinning> m_gpuSkinning;
         std::unique_ptr<DeferredProbeIrradiance> m_deferredProbeIrradiance;
+        std::unique_ptr<BackgroundMotion> m_backgroundMotion;
+        std::unique_ptr<UpscalerSharpening> m_upscalerSharpening;
         std::unique_ptr<CloudNoiseVolume> m_cloudNoise;
         std::vector<RhiGpuSkinningDispatch> m_gpuSkinningDispatches;
         std::uint64_t m_geometrySweepFrame = 0;
@@ -859,7 +866,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
         rhi::GraphicsPipeline m_glassColorCopyPipeline, m_glassDepthCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
-        std::array<rhi::GraphicsPipeline, 3> m_ssrStagePipelines;
+        std::array<rhi::GraphicsPipeline, 4> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};
@@ -1061,6 +1068,9 @@ namespace PlutoGE::render
         glm::mat4 m_ssaoPreviousView{1.0f};
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
+        // Render-resolution reactive mask an upscaler derives from translucent composition.
+        rhi::Texture m_upscalerReactiveMask;
+        rhi::Extent2D m_upscalerReactiveMaskSize;
         rhi::GraphicsPipeline m_particlePipeline;
         rhi::GraphicsPipeline m_particleBoundaryPipeline, m_particleBoundaryTwoSidedPipeline;
         std::array<rhi::Texture, 2> m_particleTransparencyDepth;

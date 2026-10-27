@@ -860,9 +860,11 @@ namespace PlutoGE::render::rhi::vulkan
                         std::max(1u, static_cast<std::uint32_t>(std::lround(output.height * scale)))};
             }
 
+            // reactiveInputs: opaque-only colour and the mask target, both or neither.
             bool Evaluate(const TemporalUpscalerOptions &options, const TemporalUpscalerFrame &frame,
                           VkCommandBuffer commandBuffer,
-                          const std::array<TextureResource *, 4> &textures)
+                          const std::array<TextureResource *, 4> &textures,
+                          const std::array<TextureResource *, 2> &reactiveInputs)
             {
                 if (!EnsureContext(options, frame) || !commandBuffer ||
                     std::ranges::any_of(textures, [](auto *texture) { return !texture; }))
@@ -876,6 +878,23 @@ namespace PlutoGE::render::rhi::vulkan
                 dispatch.output = Resource(*textures[3], L"FSR2 output", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
                 dispatch.exposure = EmptyResource(L"FSR2 exposure");
                 dispatch.reactive = EmptyResource(L"FSR2 reactive mask");
+                if (reactiveInputs[0] && reactiveInputs[1])
+                {
+                    // AMD's recommended settings for translucent composition.
+                    FfxFsr2GenerateReactiveDescription reactive{};
+                    reactive.commandList = dispatch.commandList;
+                    reactive.colorOpaqueOnly = Resource(*reactiveInputs[0], L"FSR2 opaque-only color");
+                    reactive.colorPreUpscale = dispatch.color;
+                    reactive.outReactive = Resource(*reactiveInputs[1], L"FSR2 reactive mask", FFX_RESOURCE_STATE_UNORDERED_ACCESS);
+                    reactive.renderSize = {frame.renderSize.width, frame.renderSize.height};
+                    reactive.scale = 1.0f;
+                    reactive.cutoffThreshold = 0.2f;
+                    reactive.binaryValue = 0.9f;
+                    reactive.flags = FFX_FSR2_AUTOREACTIVEFLAGS_APPLY_TONEMAP | FFX_FSR2_AUTOREACTIVEFLAGS_APPLY_THRESHOLD |
+                                     FFX_FSR2_AUTOREACTIVEFLAGS_USE_COMPONENTS_MAX;
+                    if (ffxFsr2ContextGenerateReactiveMask(&m_context, &reactive) == FFX_OK)
+                        dispatch.reactive = reactive.outReactive;
+                }
                 dispatch.transparencyAndComposition = EmptyResource(L"FSR2 composition mask");
                 dispatch.jitterOffset = {frame.jitterPixels[0], frame.jitterPixels[1]};
                 // PlutoGE stores current-minus-previous motion in normalized UV
@@ -885,8 +904,10 @@ namespace PlutoGE::render::rhi::vulkan
                     -static_cast<float>(frame.renderSize.width) * frame.motionVectorScale[0],
                     static_cast<float>(frame.renderSize.height) * frame.motionVectorScale[1]};
                 dispatch.renderSize = {frame.renderSize.width, frame.renderSize.height};
-                dispatch.sharpness = std::clamp(options.sharpness, 0.0f, 1.0f);
-                dispatch.enableSharpening = dispatch.sharpness > 0.0001f;
+                // RCAS here runs on exposure-scaled linear HDR, where its range
+                // limiter fails at bright/dark edges (checkered, ringing edges).
+                // The renderer sharpens the output instead (UpscalerSharpening).
+                dispatch.enableSharpening = false;
                 const auto now = std::chrono::steady_clock::now();
                 dispatch.frameTimeDelta = m_previousDispatch.time_since_epoch().count() == 0
                                               ? 16.67f
@@ -4601,6 +4622,17 @@ namespace PlutoGE::render::rhi::vulkan
         m_impl->Transition(commandBuffer, *output, VK_IMAGE_LAYOUT_GENERAL,
                            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        auto *opaque = m_impl->textures.Get(frame.opaqueColor);
+        auto *reactive = m_impl->textures.Get(frame.reactiveMask);
+        if (!opaque || !reactive || !reactive->descriptor.storage)
+            opaque = reactive = nullptr;
+        if (opaque)
+        {
+            m_impl->Transition(commandBuffer, *opaque, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                               VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            m_impl->Transition(commandBuffer, *reactive, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                               VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        }
         bool result = false;
 #if PLUTO_HAS_STREAMLINE
         if (options.technology == TemporalUpscaler::Dlss && m_impl->streamline)
@@ -4621,7 +4653,7 @@ namespace PlutoGE::render::rhi::vulkan
             if (!context)
                 context = std::make_unique<Fsr2Vulkan>(m_impl->physicalDevice, m_impl->device);
             result = context->Evaluate(options, frame, commandBuffer,
-                                       {color, depth, motion, output});
+                                       {color, depth, motion, output}, {opaque, reactive});
             m_impl->fsr2FailureReason = result ? std::string{} : context->Support().reason;
         }
 #endif
@@ -4720,7 +4752,8 @@ namespace PlutoGE::render::rhi::vulkan
     std::vector<float> VulkanDevice::ReadTextureRgbaFloat(TextureHandle handle)
     {
         auto *texture = m_impl->textures.Get(handle);
-        if (!texture || (texture->descriptor.format != Format::R16G16B16A16Float && texture->descriptor.format != Format::R32G32B32A32Float))
+        if (!texture || (texture->descriptor.format != Format::R16G16B16A16Float && texture->descriptor.format != Format::R32G32B32A32Float &&
+                         texture->descriptor.format != Format::R32G32Float))
             throw std::invalid_argument("Invalid Vulkan color texture readback");
         const std::size_t pixelCount = static_cast<std::size_t>(texture->descriptor.width) * texture->descriptor.height;
         const std::size_t byteCount = pixelCount * BytesPerPixel(texture->descriptor.format);
@@ -4747,6 +4780,17 @@ namespace PlutoGE::render::rhi::vulkan
         {
             const auto *halves = static_cast<const std::uint16_t *>(mapped);
             for (std::size_t i = 0; i < pixels.size(); ++i) pixels[i] = glm::unpackHalf1x16(halves[i]);
+        }
+        else if (texture->descriptor.format == Format::R32G32Float)
+        {
+            // Two-channel targets (motion) expand to RGBA with z = 0, w = 1.
+            const auto *pairs = static_cast<const float *>(mapped);
+            for (std::size_t i = 0; i < pixelCount; ++i)
+            {
+                pixels[i * 4] = pairs[i * 2];
+                pixels[i * 4 + 1] = pairs[i * 2 + 1];
+                pixels[i * 4 + 3] = 1.0f;
+            }
         }
         else std::memcpy(pixels.data(), mapped, pixels.size() * sizeof(float));
         vmaUnmapMemory(m_impl->allocator, memory);

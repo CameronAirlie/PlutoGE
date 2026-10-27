@@ -44,7 +44,7 @@ namespace PlutoGE::ui
         static_assert(std::size(TriggerKindNames) == InputTriggerKindCount);
 
         double Rounded(float value) { return std::round(static_cast<double>(value) * 10000.0) / 10000.0; }
-        bool UsesGamepad(InputBindingKind kind) { return kind == InputBindingKind::GamepadButton || kind == InputBindingKind::GamepadAxis; }
+        static_assert(std::size(KindNames) == InputBindingKindCount && std::size(ValueFields) == InputBindingKindCount);
 
         InputMappingTrigger ParseTrigger(const assets::JsonValue &binding)
         {
@@ -146,7 +146,7 @@ namespace PlutoGE::ui
     std::string InputMappingBinding::InputId() const
     {
         std::string id = std::string(InputKindName(kind)) + ":" + value;
-        if (UsesGamepad(kind)) id += "@" + std::to_string(gamepad);
+        if (InputBindingUsesGamepad(kind)) id += "@" + std::to_string(gamepad);
         return id;
     }
 
@@ -220,12 +220,12 @@ namespace PlutoGE::ui
                 auto value = binding.source.IsObject() ? binding.source : assets::JsonValue::MakeObject();
                 value.Set("Kind", assets::JsonValue::MakeString(InputKindName(binding.kind)));
                 // Only the field for the current kind is meaningful; drop stale ones from kind changes.
-                for (int field = 0; field < 5; ++field)
+                for (int field = 0; field < InputBindingKindCount; ++field)
                     if (field != static_cast<int>(binding.kind)) value.Remove(ValueFields[field]);
                 value.Set(ValueFields[static_cast<int>(binding.kind)], assets::JsonValue::MakeString(binding.value));
-                if (UsesGamepad(binding.kind) && (binding.gamepad != 0 || value.Find("Gamepad")))
+                if (InputBindingUsesGamepad(binding.kind) && (binding.gamepad != 0 || value.Find("Gamepad")))
                     value.Set("Gamepad", assets::JsonValue::MakeNumber(binding.gamepad));
-                else if (!UsesGamepad(binding.kind))
+                else if (!InputBindingUsesGamepad(binding.kind))
                     value.Remove("Gamepad");
                 value.Set("Scale", assets::JsonValue::MakeNumber(Rounded(binding.scale)));
                 value.Set("DeadZone", assets::JsonValue::MakeNumber(Rounded(binding.deadZone)));

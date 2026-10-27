@@ -1,287 +1,317 @@
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
-#include "PlutoGE/assets/Project.h"
+
+#include "PlutoGE/assets/AssetType.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
+#include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorShell.h"
-#include <algorithm>
-#include <cctype>
-#include <filesystem>
-#include <fstream>
+#include "PlutoGE/ui/EditorTheme.h"
+#include "PlutoGE/ui/EditorWidgets.h"
+#include "PlutoGE/ui/input/InputMappingSession.h"
+#include "PlutoGE/ui/input/InputMappingWidgets.h"
+
 #include <imgui.h>
+
+#include <algorithm>
+#include <utility>
 
 namespace PlutoGE::ui
 {
     namespace
     {
-        std::string ReadFile(const std::filesystem::path &path)
-        { std::ifstream in(path, std::ios::binary); return {std::istreambuf_iterator<char>(in), {}}; }
-
-        bool ContainsInsensitive(std::string_view text, std::string_view needle)
+        const platform::InputState &EditorInput()
         {
-            if (needle.empty()) return true;
-            return std::search(text.begin(), text.end(), needle.begin(), needle.end(), [](char a, char b) {
-                return std::tolower(static_cast<unsigned char>(a)) == std::tolower(static_cast<unsigned char>(b));
-            }) != text.end();
-        }
-
-        // Combo over a name table that also shows a value this editor does not list, unchanged.
-        bool NameCombo(const char *label, std::string &value, std::span<const InputNamedCode> names)
-        {
-            bool changed = false;
-            const int current = FindInputName(names, value);
-            const std::string preview = current >= 0 ? value : value + " (unlisted)";
-            if (ImGui::BeginCombo(label, preview.c_str()))
-            {
-                for (int i = 0; i < static_cast<int>(names.size()); ++i)
-                    if (ImGui::Selectable(names[i].name, i == current)) { value = names[i].name; changed = true; }
-                ImGui::EndCombo();
-            }
-            return changed;
-        }
-
-        // Trigger kind and the settings that kind reads; returns true when anything changed.
-        bool TriggerEditor(InputMappingTrigger &trigger)
-        {
-            bool changed = false;
-            int kind = static_cast<int>(trigger.kind);
-            const char *kinds[InputTriggerKindCount];
-            for (int i = 0; i < InputTriggerKindCount; ++i) kinds[i] = InputTriggerKindName(static_cast<InputTriggerKind>(i));
-            if (ImGui::Combo("Trigger", &kind, kinds, InputTriggerKindCount))
-            {
-                trigger.kind = static_cast<InputTriggerKind>(kind);
-                changed = true;
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Press: fires on press, active while held.\nTap: fires on a quick release.\n"
-                                  "Hold: fires after holding, active until release.\nMultiTap: fires on repeated presses.");
-            switch (trigger.kind)
-            {
-            case InputTriggerKind::Tap:
-                changed |= ImGui::SliderFloat("Max Hold (s)", &trigger.duration, 0.05f, 1.0f, "%.2f");
-                break;
-            case InputTriggerKind::Hold:
-                changed |= ImGui::SliderFloat("Hold Time (s)", &trigger.duration, 0.0f, 2.0f, "%.2f");
-                break;
-            case InputTriggerKind::MultiTap:
-                changed |= ImGui::SliderInt("Presses", &trigger.count, 1, 4);
-                changed |= ImGui::SliderFloat("Window (s)", &trigger.window, 0.1f, 0.6f, "%.2f");
-                changed |= ImGui::Checkbox("Exclusive", &trigger.exclusive);
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Fire only after the window passes with no further press, so a single tap\n"
-                                      "and a double tap can share this input (adds the window's latency).");
-                break;
-            case InputTriggerKind::Press:
-                break;
-            }
-            return changed;
-        }
-
-        std::string Join(const std::vector<std::string> &values)
-        {
-            std::string text;
-            for (const auto &value : values) text += (text.empty() ? "" : ", ") + value;
-            return text;
+            return core::Engine::GetInstance().GetWindow().GetInputState();
         }
     }
 
-    void InputMappingEditorPanel::Load()
+    InputMappingEditorPanel::InputMappingEditorPanel(const PanelConfig &config) : Panel(config) {}
+    InputMappingEditorPanel::~InputMappingEditorPanel() = default;
+
+    void InputMappingEditorPanel::OnProjectChanged()
     {
-        auto &shell = EditorShell::GetInstance();
-        m_loadedReference = shell.GetActiveInputMappingAssetReference();
-        m_document = {};
-        m_loadError.clear();
-        m_saveError.clear();
-        m_captureAction = m_captureBinding = -1;
-        const auto *project = shell.GetProject();
-        if (!project) return;
-        const std::string json = ReadFile(project->ResolveAssetReference(m_loadedReference));
-        if (!m_document.Parse(json, &m_loadError))
-            m_loadError = "Cannot edit this mapping (" + m_loadError + "). Saving is disabled so the file is not overwritten.";
-        m_dirty = false;
+        m_session.reset();
+        m_reference.clear();
+        m_followedReference.clear();
+        m_pendingReference.reset();
+        m_error.clear();
     }
 
-    bool InputMappingEditorPanel::Save()
+    bool InputMappingEditorPanel::HasUnsavedChanges() const
     {
-        const auto *project = EditorShell::GetInstance().GetProject();
-        if (!project || !m_loadError.empty()) return false;
-        const auto path = project->ResolveAssetReference(m_loadedReference);
-        // Write beside the target first so a failed write cannot truncate the mapping.
-        const auto temporary = std::filesystem::path(path).concat(".saving");
-        {
-            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
-            out << m_document.Serialize();
-            if (!out) { m_saveError = "Could not write " + temporary.string(); return false; }
-        }
-        std::error_code error;
-        std::filesystem::rename(temporary, path, error);
-        if (error) { m_saveError = "Could not replace mapping: " + error.message(); return false; }
-        m_saveError.clear();
-        m_dirty = false;
-        return true;
+        return m_session && m_session->IsDirty();
     }
 
-    void InputMappingEditorPanel::UpdateCapture()
+    void InputMappingEditorPanel::Open(std::unique_ptr<InputMappingSession> session)
     {
-        auto &actions = m_document.Actions();
-        if (m_captureAction < 0 || m_captureAction >= static_cast<int>(actions.size()) || m_captureBinding < 0 ||
-            m_captureBinding >= static_cast<int>(actions[m_captureAction].bindings.size()))
+        SetOpen(true);
+        m_session = std::move(session);
+        m_reference.clear();
+        m_pendingReference.reset();
+        m_error.clear();
+        m_analysis = {};
+        m_actions = {};
+        m_requestedTab = Tab::Actions;
+    }
+
+    void InputMappingEditorPanel::OpenReference(const std::string &reference)
+    {
+        m_error.clear();
+        m_session = InputMappingSession::OpenAsset(reference, m_error);
+        m_reference = reference;
+        m_analysis = {};
+        m_actions = {};
+        m_requestedTab = Tab::Actions;
+    }
+
+    void InputMappingEditorPanel::FollowShell()
+    {
+        const auto &reference = EditorShell::GetInstance().GetActiveInputMappingAssetReference();
+        if (reference == m_followedReference)
+            return;
+        m_followedReference = reference;
+        if (reference.empty() || (reference == m_reference && m_session))
+            return;
+        if (HasUnsavedChanges())
         {
-            m_captureAction = m_captureBinding = -1;
+            m_pendingReference = reference;
+            m_openSavePrompt = true;
             return;
         }
-        const auto &input = core::Engine::GetInstance().GetWindow().GetInputState();
-        auto &binding = actions[m_captureAction].bindings[m_captureBinding];
-        const auto finish = [&](InputBindingKind kind, const char *value, int gamepad) {
-            binding.kind = kind;
-            binding.value = value;
-            binding.gamepad = gamepad;
-            m_captureAction = m_captureBinding = -1;
-            m_dirty = true;
-        };
-        for (const auto &key : InputKeyNames())
-            if (key.code >= 0 && key.code < static_cast<int>(input.keys.size()) && input.keys[key.code] && !input.previousKeys[key.code])
-            {
-                // Escape cancels; bind Escape from the Key list instead.
-                if (std::string_view(key.name) == "Escape") { m_captureAction = m_captureBinding = -1; return; }
-                return finish(InputBindingKind::Key, key.name, 0);
-            }
-        for (std::size_t pad = 0; pad < input.gamepads.size(); ++pad)
-            for (const auto &button : InputGamepadButtonNames())
-                if (input.IsGamepadButtonPressed(static_cast<std::uint16_t>(pad), static_cast<std::uint16_t>(button.code)))
-                    return finish(InputBindingKind::GamepadButton, button.name, static_cast<int>(pad));
-    }
-
-    void InputMappingEditorPanel::RenderReport()
-    {
-        if (!ImGui::CollapsingHeader("Mapping Report")) return;
-        const auto invalid = m_document.FindInvalidActionNames();
-        if (!invalid.empty())
-            ImGui::TextColored(ImVec4(1, .45f, .35f, 1), "Empty or duplicate action names: %s", Join(invalid).c_str());
-        ImGui::TextWrapped("Unused gamepad buttons (pad 0): %s", Join(m_document.FindUnusedGamepadButtons()).c_str());
-        const auto keys = m_document.FindUnusedKeys();
-        if (ImGui::TreeNode("UnusedKeys", "Unused keys (%zu)", keys.size()))
-        {
-            ImGui::TextWrapped("%s", Join(keys).c_str());
-            ImGui::TreePop();
-        }
-        const auto shared = m_document.FindSharedInputs();
-        if (ImGui::TreeNode("SharedInputs", "Inputs used by several actions (%zu)", shared.size()))
-        {
-            ImGui::TextDisabled("Often intentional, e.g. a menu action and a gameplay action on the same button.");
-            for (const auto &input : shared)
-                ImGui::BulletText("%s: %s%s", input.label.c_str(), Join(input.actions).c_str(),
-                                  input.disambiguatedByTriggers ? " (told apart by triggers)" : "");
-            ImGui::TreePop();
-        }
+        OpenReference(reference);
     }
 
     void InputMappingEditorPanel::Render()
     {
-        auto &shell = EditorShell::GetInstance();
-        const auto &reference = shell.GetActiveInputMappingAssetReference();
-        if (reference.empty()) { ImGui::TextDisabled("No input mapping selected."); return; }
-        if (reference != m_loadedReference) Load();
-        ImGui::TextWrapped("Input Mapping: %s", reference.c_str());
-        if (!m_loadError.empty()) { ImGui::TextColored(ImVec4(1, .45f, .35f, 1), "%s", m_loadError.c_str()); return; }
-        ImGui::SameLine();
-        if (ImGui::Button(m_dirty ? "Save *" : "Save")) Save();
-        ImGui::SameLine();
-        if (ImGui::Button("Revert")) Load();
-        if (!m_saveError.empty()) ImGui::TextColored(ImVec4(1, .45f, .35f, 1), "%s", m_saveError.c_str());
-        UpdateCapture();
-        ImGui::Separator();
-        if (ImGui::CollapsingHeader("Live Controller Diagnostics"))
+        FollowShell();
+        DrawSavePrompt();
+        if (!m_session)
         {
-            const auto &gamepads = core::Engine::GetInstance().GetWindow().GetInputState().gamepads;
-            bool anyConnected = false;
-            for (std::size_t index = 0; index < gamepads.size(); ++index)
-            {
-                const auto &gamepad = gamepads[index];
-                if (!gamepad.connected) continue;
-                anyConnected = true;
-                ImGui::Text("Gamepad %zu", index);
-                ImGui::Text("Axes: %.2f  %.2f  %.2f  %.2f  %.2f  %.2f",
-                            gamepad.axes[0], gamepad.axes[1], gamepad.axes[2],
-                            gamepad.axes[3], gamepad.axes[4], gamepad.axes[5]);
-                std::string pressed = "Buttons:";
-                for (const auto &button : InputGamepadButtonNames())
-                    if (button.code < static_cast<int>(gamepad.buttons.size()) && gamepad.buttons[button.code]) pressed += std::string(" ") + button.name;
-                ImGui::TextUnformatted(pressed.c_str());
-            }
-            if (!anyConnected) ImGui::TextDisabled("No controller detected by GLFW.");
-        }
-        RenderReport();
-        ImGui::Separator();
-        ImGui::SetNextItemWidth(220);
-        ImGui::InputTextWithHint("##filter", "Filter actions or inputs", m_filter, sizeof(m_filter));
-        ImGui::SameLine();
-        if (ImGui::Button("Add Action"))
-        {
-            m_document.Actions().push_back({"NewAction", {}, assets::JsonValue::MakeObject()});
-            m_dirty = true;
+            DrawEmptyState();
+            return;
         }
 
-        auto &actions = m_document.Actions();
-        int removeAction = -1, duplicateAction = -1;
-        for (int a = 0; a < static_cast<int>(actions.size()); ++a)
+        HandleShortcuts();
+        m_analysis.Update(*m_session);
+        DrawToolbar();
+        DrawProblems();
+        ImGui::Spacing();
+
+        if (ImGui::BeginTabBar("##InputMappingTabs"))
         {
-            auto &action = actions[a];
-            bool matches = ContainsInsensitive(action.name, m_filter);
-            for (const auto &binding : action.bindings) matches = matches || ContainsInsensitive(binding.Label(), m_filter);
-            if (!matches) continue;
-            ImGui::PushID(a);
-            const std::string header = (action.name.empty() ? std::string("Unnamed Action") : action.name) + "###action";
-            if (ImGui::CollapsingHeader(header.c_str()))
+            const auto tab = [this](const char *label, Tab id)
             {
-                char name[128]{};
-                action.name.copy(name, sizeof(name) - 1);
-                if (ImGui::InputText("Action", name, sizeof(name))) { action.name = name; m_dirty = true; }
-                if (ImGui::Button("Duplicate Action")) duplicateAction = a;
-                ImGui::SameLine();
-                if (ImGui::Button("Remove Action")) removeAction = a;
-                int removeBinding = -1;
-                for (int b = 0; b < static_cast<int>(action.bindings.size()); ++b)
-                {
-                    auto &binding = action.bindings[b];
-                    ImGui::PushID(b);
-                    ImGui::SeparatorText(binding.Label().c_str());
-                    int kind = static_cast<int>(binding.kind);
-                    const char *kinds[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis"};
-                    if (ImGui::Combo("Device", &kind, kinds, 5))
-                    {
-                        binding.kind = static_cast<InputBindingKind>(kind);
-                        binding.value = InputNamesFor(binding.kind)[0].name;
-                        m_dirty = true;
-                    }
-                    if (NameCombo("Input", binding.value, InputNamesFor(binding.kind))) m_dirty = true;
-                    if ((binding.kind == InputBindingKind::GamepadButton || binding.kind == InputBindingKind::GamepadAxis) &&
-                        ImGui::SliderInt("Gamepad", &binding.gamepad, 0, 15))
-                        m_dirty = true;
-                    if (ImGui::DragFloat("Scale", &binding.scale, .05f, -10, 10)) m_dirty = true;
-                    if (ImGui::SliderFloat("Dead Zone", &binding.deadZone, 0, .99f)) m_dirty = true;
-                    if (TriggerEditor(binding.trigger)) m_dirty = true;
-                    const bool capturing = m_captureAction == a && m_captureBinding == b;
-                    if (ImGui::Button(capturing ? "Press a key or pad button... (Esc cancels)" : "Listen"))
-                    {
-                        m_captureAction = capturing ? -1 : a;
-                        m_captureBinding = capturing ? -1 : b;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Remove Binding")) removeBinding = b;
-                    ImGui::PopID();
-                }
-                if (removeBinding >= 0) { action.bindings.erase(action.bindings.begin() + removeBinding); m_dirty = true; m_captureAction = -1; }
-                if (ImGui::Button("Add Binding")) { action.bindings.emplace_back(); m_dirty = true; }
+                const ImGuiTabItemFlags flags = m_requestedTab == id ? ImGuiTabItemFlags_SetSelected : 0;
+                return ImGui::BeginTabItem(label, nullptr, flags);
+            };
+            if (tab("Actions", Tab::Actions))
+            {
+                input::DrawActionsView(*m_session, m_actions, m_analysis, &EditorInput());
+                ImGui::EndTabItem();
             }
+            const int problems = m_analysis.ProblemCount();
+            const std::string overview = problems > 0 ? "Overview  " + std::string(icons::Warning) + " " + std::to_string(problems) + "###Overview"
+                                                      : std::string("Overview###Overview");
+            std::optional<int> show;
+            if (tab(overview.c_str(), Tab::Overview))
+            {
+                show = input::DrawOverviewView(*m_session, m_analysis);
+                ImGui::EndTabItem();
+            }
+            if (tab("Devices", Tab::Devices))
+            {
+                input::DrawDevicesView(&EditorInput());
+                ImGui::EndTabItem();
+            }
+            m_requestedTab.reset();
+            if (show)
+            {
+                m_actions.selected = *show;
+                m_actions.expandedBinding = -1;
+                m_requestedTab = Tab::Actions;
+            }
+            ImGui::EndTabBar();
+        }
+        m_session->EndFrame(ImGui::IsAnyItemActive());
+    }
+
+    void InputMappingEditorPanel::DrawEmptyState()
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *project = shell.GetProject();
+        widgets::PageTitle("Input Mappings", "Name what the player can do, then choose the keys and buttons that do it.");
+        if (!project)
+        {
+            ImGui::TextDisabled("Open a project to edit input mappings.");
+            return;
+        }
+        if (!m_reference.empty() && !m_error.empty())
+        {
+            ImGui::TextColored(GetEditorColor(EditorColor::Error), "%s  %s", icons::Warning, m_reference.c_str());
+            ImGui::TextWrapped("%s", m_error.c_str());
+            if (ImGui::Button("Try Again"))
+                OpenReference(m_reference);
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+        ImGui::TextWrapped("A mapping lists actions such as Jump or Fire, each with the inputs that trigger it on keyboard, mouse "
+                           "and controller. Scripts ask for actions by name, so controls can change without touching code.");
+        ImGui::Spacing();
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);
+        if (RenderProjectAssetPicker("Open mapping", project, assets::ProjectAssetType::InputMapping, m_pickerReference) &&
+            !m_pickerReference.empty())
+            shell.OpenInputMappingAsset(m_pickerReference);
+        ImGui::TextDisabled("To make a new one, use Create > Input Mapping in the Content Browser.");
+    }
+
+    void InputMappingEditorPanel::DrawToolbar()
+    {
+        auto &session = *m_session;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(icons::Gamepad);
+        ImGui::SameLine();
+        ImGui::TextUnformatted(session.GetLabel().c_str());
+        if (!m_reference.empty())
+            ImGui::SetItemTooltip("%s", m_reference.c_str());
+        if (session.IsDirty())
+        {
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::TextDisabled("(unsaved)");
+        }
+
+        // Actions sit at the right edge.
+        const float width = 5.0f * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x);
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width));
+        ImGui::BeginDisabled(!session.CanUndo());
+        if (widgets::IconButton("##Undo", icons::ArrowLeft, "Undo (Ctrl+Z)"))
+            session.Undo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!session.CanRedo());
+        if (widgets::IconButton("##Redo", icons::ArrowRight, "Redo (Ctrl+Y)"))
+            session.Redo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!session.IsDirty());
+        if (widgets::IconButton("##Save", icons::Save, "Save (Ctrl+S)"))
+            Save();
+        ImGui::SameLine();
+        if (widgets::IconButton("##Revert", icons::Revert, "Discard unsaved changes"))
+            session.Revert();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (widgets::IconButton("##Close", icons::Close, "Close this mapping"))
+        {
+            if (HasUnsavedChanges())
+            {
+                m_pendingReference = std::string{};
+                m_openSavePrompt = true;
+            }
+            else
+                m_session.reset();
+        }
+        if (!m_error.empty())
+            ImGui::TextColored(GetEditorColor(EditorColor::Error), "%s", m_error.c_str());
+    }
+
+    void InputMappingEditorPanel::DrawProblems()
+    {
+        const int count = m_analysis.ProblemCount();
+        if (count == 0 || !m_session)
+            return;
+        ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::Warning));
+        const bool open = ImGui::TreeNode("##Problems", "%s  %d problem%s", icons::Warning, count, count == 1 ? "" : "s");
+        ImGui::PopStyleColor();
+        if (!open)
+            return;
+        const auto &actions = m_session->GetActions();
+        const auto select = [&](const std::string &name)
+        {
+            for (int index = 0; index < static_cast<int>(actions.size()); ++index)
+                if (actions[index].name == name)
+                {
+                    m_actions.selected = index;
+                    m_actions.expandedBinding = -1;
+                    m_requestedTab = Tab::Actions;
+                    return;
+                }
+        };
+        for (const auto &name : m_analysis.invalidNames)
+        {
+            const bool unnamed = name == "(unnamed)";
+            const std::string text = unnamed ? "An action has no name" : "More than one action is called " + name;
+            if (ImGui::Selectable(text.c_str()))
+                select(unnamed ? std::string{} : name);
+        }
+        for (const auto &shared : m_analysis.sharedInputs)
+        {
+            if (shared.disambiguatedByTriggers)
+                continue;
+            std::string names;
+            for (const auto &name : shared.actions)
+                names += (names.empty() ? "" : ", ") + name;
+            const std::string text = shared.label + " fires " + names + " together";
+            ImGui::PushID(shared.inputId.c_str());
+            if (ImGui::Selectable(text.c_str()))
+                select(shared.actions.front());
+            ImGui::SetItemTooltip("Give the bindings different triggers (tap, hold, double tap) if one press should not do both");
             ImGui::PopID();
         }
-        if (duplicateAction >= 0)
+        ImGui::TreePop();
+    }
+
+    void InputMappingEditorPanel::DrawSavePrompt()
+    {
+        if (std::exchange(m_openSavePrompt, false))
+            ImGui::OpenPopup("Unsaved Input Mapping");
+        if (!ImGui::BeginPopupModal("Unsaved Input Mapping", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            return;
+        ImGui::Text("Save changes to %s?", m_session ? m_session->GetLabel().c_str() : "the mapping");
+        const auto proceed = [this]
         {
-            auto copy = actions[duplicateAction];
-            copy.name += "Copy";
-            actions.insert(actions.begin() + duplicateAction + 1, std::move(copy));
-            m_dirty = true;
-            m_captureAction = -1;
+            const auto pending = std::move(m_pendingReference);
+            m_pendingReference.reset();
+            m_session.reset();
+            if (pending && !pending->empty())
+                OpenReference(*pending);
+            ImGui::CloseCurrentPopup();
+        };
+        if (widgets::PrimaryButton("Save"))
+        {
+            m_error.clear();
+            if (!m_session || m_session->Save(m_error))
+                proceed();
         }
-        if (removeAction >= 0) { actions.erase(actions.begin() + removeAction); m_dirty = true; m_captureAction = -1; }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save"))
+            proceed();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            m_pendingReference.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    void InputMappingEditorPanel::HandleShortcuts()
+    {
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::GetIO().WantTextInput || m_actions.capture.IsActive())
+            return;
+        const auto &io = ImGui::GetIO();
+        if (!io.KeyCtrl && !io.KeySuper)
+            return;
+        if (ImGui::IsKeyPressed(ImGuiKey_Z, false))
+            io.KeyShift ? m_session->Redo() : m_session->Undo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+            m_session->Redo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_S, false) && m_session->IsDirty())
+            Save();
+    }
+
+    void InputMappingEditorPanel::Save()
+    {
+        m_error.clear();
+        m_session->Save(m_error);
     }
 }

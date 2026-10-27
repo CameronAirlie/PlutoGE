@@ -64,6 +64,7 @@ namespace PlutoGE::ui
     class RmlDocumentEditorPanel;
     class AnimationGraphEditorPanel;
     class UIThemeEditorPanel;
+    class InputMappingEditorPanel;
     struct UIThemeTarget;
     class ContentBrowserPanel;
     class ProfilerPanel;
@@ -518,6 +519,7 @@ namespace PlutoGE::ui
         RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
         AnimationGraphEditorPanel *m_animationGraphEditor = nullptr;
         UIThemeEditorPanel *m_uiThemeEditor = nullptr;
+        InputMappingEditorPanel *m_inputMappingEditor = nullptr;
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
         TimelinePreview m_timelinePreview;

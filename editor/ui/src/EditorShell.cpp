@@ -2122,6 +2122,7 @@ namespace PlutoGE::ui
         if (io.WantTextInput || (m_rmlDocumentEditor && m_rmlDocumentEditor->OwnsKeyboardFocus()) ||
             (m_animationGraphEditor && m_animationGraphEditor->OwnsKeyboardFocus()) ||
             (m_uiThemeEditor && m_uiThemeEditor->HasKeyboardFocus()) ||
+            (m_inputMappingEditor && m_inputMappingEditor->HasKeyboardFocus()) ||
             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             return;
@@ -2224,7 +2225,8 @@ namespace PlutoGE::ui
     {
         if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()) &&
             !(m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges()) &&
-            !(m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges()))
+            !(m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges()) &&
+            !(m_inputMappingEditor && m_inputMappingEditor->HasUnsavedChanges()))
         {
             return true;
         }
@@ -2252,6 +2254,12 @@ namespace PlutoGE::ui
         {
             m_uiThemeEditor->SetOpen(true);
             Log(ConsoleSeverity::Warning, "Save or revert UI theme edits before switching projects or exiting.");
+            return false;
+        }
+        if (m_inputMappingEditor && m_inputMappingEditor->HasUnsavedChanges())
+        {
+            m_inputMappingEditor->SetOpen(true);
+            Log(ConsoleSeverity::Warning, "Save or revert input mapping edits before switching projects or exiting.");
             return false;
         }
         return true;
@@ -3662,9 +3670,9 @@ namespace PlutoGE::ui
         m_rmlDocumentEditor = new RmlDocumentEditorPanel(PanelConfig{"UI Document Editor", false});
         m_panelManager.AddPanel(m_rmlDocumentEditor);
 
-        auto inputMappingEditorPanel = new InputMappingEditorPanel(PanelConfig{"Input Mapping Editor", false});
-        inputMappingEditorPanel->Initialize();
-        m_panelManager.AddPanel(inputMappingEditorPanel);
+        m_inputMappingEditor = new InputMappingEditorPanel(PanelConfig{"Input Mapping Editor", false});
+        m_inputMappingEditor->Initialize();
+        m_panelManager.AddPanel(m_inputMappingEditor);
 
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
@@ -4329,7 +4337,7 @@ namespace PlutoGE::ui
                 if (m_openLoadingScreenEditorRequested)
                 { loadingScreenEditorPanel->SetOpen(true); m_openLoadingScreenEditorRequested = false; }
                 if (ConsumeInputMappingEditorOpenRequest())
-                    inputMappingEditorPanel->SetOpen(true);
+                    m_inputMappingEditor->SetOpen(true);
 
                 const auto newProject = [&](const std::string &templateId = "pluto.empty")
                 {
@@ -4606,7 +4614,7 @@ namespace PlutoGE::ui
                         panelToggle("UI Document Editor", m_rmlDocumentEditor);
                         panelToggle("UI Theme Editor", m_uiThemeEditor);
                         panelToggle("Loading Screen Editor", loadingScreenEditorPanel);
-                        panelToggle("Input Mapping Editor", inputMappingEditorPanel);
+                        panelToggle("Input Mapping Editor", m_inputMappingEditor);
                         ImGui::EndMenu();
                     }
                     if (ImGui::BeginMenu("Tools"))

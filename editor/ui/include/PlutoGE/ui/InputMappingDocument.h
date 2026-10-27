@@ -27,6 +27,12 @@ namespace PlutoGE::ui
     std::span<const InputNamedCode> InputMouseAxisNames();
     std::span<const InputNamedCode> InputNamesFor(InputBindingKind kind);
     const char *InputKindName(InputBindingKind kind);
+    inline constexpr int InputBindingKindCount = 5;
+    // Gamepad kinds read a "Gamepad" index; axis kinds produce analogue values a dead zone applies to.
+    inline constexpr bool InputBindingUsesGamepad(InputBindingKind kind)
+    { return kind == InputBindingKind::GamepadButton || kind == InputBindingKind::GamepadAxis; }
+    inline constexpr bool InputBindingIsAxis(InputBindingKind kind)
+    { return kind == InputBindingKind::GamepadAxis || kind == InputBindingKind::MouseAxis; }
     const char *InputTriggerKindName(InputTriggerKind kind);
     inline constexpr int InputTriggerKindCount = 4;
     // Index of name in table, or -1 for a value this editor does not list (kept verbatim).

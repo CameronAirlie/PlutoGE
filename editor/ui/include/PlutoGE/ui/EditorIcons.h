@@ -95,6 +95,11 @@ namespace PlutoGE::ui::icons
     inline constexpr const char *Link = "\xef\x83\x81"; // link
     inline constexpr const char *Import = "\xef\x95\xaf"; // file-import
     inline constexpr const char *Rename = "\xef\x8c\x84"; // pen
+    inline constexpr const char *Gamepad = "\xef\x84\x9b"; // gamepad
+    inline constexpr const char *Keyboard = "\xef\x84\x9c"; // keyboard
+    inline constexpr const char *Mouse = "\xef\xa3\x8c"; // computer-mouse
+    inline constexpr const char *Record = "\xef\x86\x92"; // circle-dot
+    inline constexpr const char *ChevronRight = "\xef\x81\x94"; // chevron-right
     inline constexpr ImWchar Ranges[] = {
         0xe163, 0xe163,
         0xe2ca, 0xe2ca,
@@ -111,6 +116,7 @@ namespace PlutoGE::ui::icons
         0xf03d, 0xf03e,
         0xf042, 0xf042,
         0xf047, 0xf047,
+        0xf054, 0xf054,
         0xf05b, 0xf05b,
         0xf060, 0xf062,
         0xf065, 0xf065,
@@ -128,7 +134,7 @@ namespace PlutoGE::ui::icons
         0xf0e8, 0xf0e8,
         0xf0ea, 0xf0eb,
         0xf102, 0xf103,
-        0xf11b, 0xf11b,
+        0xf11b, 0xf11c,
         0xf12e, 0xf12e,
         0xf141, 0xf141,
         0xf15b, 0xf15b,
@@ -173,6 +179,7 @@ namespace PlutoGE::ui::icons
         0xf70c, 0xf70c,
         0xf773, 0xf773,
         0xf84c, 0xf84c,
+        0xf8cc, 0xf8cc,
         0
     };
 }

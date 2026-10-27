@@ -20,6 +20,10 @@ internal static unsafe partial class ScriptBridge
         public NativeUIEventRecord* Events;
         public int EventCapacity;
         public ulong Sequence;
+        public uint* Entities;
+        public int EntityCapacity;
+        public uint ArgumentEntity;
+        public int Argument;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -41,6 +45,10 @@ internal static unsafe partial class ScriptBridge
         IsPointerOverUI = 7,
         IsKeyboardCaptured = 8,
         PollUIEvents = 9,
+        CreateEntity = 10,
+        GetParent = 11,
+        SetParent = 12,
+        GetChildren = 13,
     }
 
     private static delegate* unmanaged[Cdecl]<NativeComponentRequest*, void> _controlComponents;
@@ -48,7 +56,7 @@ internal static unsafe partial class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterComponentPropertyApi")]
     public static int RegisterComponentPropertyApi(delegate* unmanaged[Cdecl]<NativeComponentRequest*, void> control)
     {
-        if (control == null || sizeof(NativeComponentRequest) != 72 || sizeof(NativeUIEventRecord) != 8) return 0;
+        if (control == null || sizeof(NativeComponentRequest) != 96 || sizeof(NativeUIEventRecord) != 8) return 0;
         _controlComponents = control;
         return 1;
     }
@@ -126,6 +134,56 @@ internal static unsafe partial class ScriptBridge
             _controlComponents(&request);
             sequence = request.Sequence;
             return request.Result;
+        }
+    }
+
+    // Entity hierarchy: what scripts need to build UI trees (and other hierarchies) at runtime.
+
+    internal static uint CreateEntity(string name, uint parent)
+    {
+        if (_controlComponents == null) return 0;
+        var bytes = Utf8(name);
+        fixed (byte* value = bytes)
+        {
+            var request = new NativeComponentRequest { Operation = (int)ComponentOperation.CreateEntity, Entity = parent, Value = (nint)value };
+            _controlComponents(&request);
+            return request.ResultEntity;
+        }
+    }
+
+    internal static uint GetEntityParent(uint entity) => ControlUI(ComponentOperation.GetParent, entity).ResultEntity;
+
+    internal static bool SetEntityParent(uint entity, uint parent, int siblingIndex)
+    {
+        if (_controlComponents == null) return false;
+        var request = new NativeComponentRequest
+        {
+            Operation = (int)ComponentOperation.SetParent, Entity = entity, ArgumentEntity = parent, Argument = siblingIndex,
+        };
+        _controlComponents(&request);
+        return request.Result != 0;
+    }
+
+    internal static uint[] GetEntityChildren(uint entity)
+    {
+        if (_controlComponents == null) return [];
+        Span<uint> stack = stackalloc uint[64];
+        var count = GetChildren(entity, stack);
+        if (count <= stack.Length) return stack[..count].ToArray();
+        var all = new uint[count];
+        return all[..GetChildren(entity, all)];
+    }
+
+    private static int GetChildren(uint entity, Span<uint> buffer)
+    {
+        fixed (uint* pointer = buffer)
+        {
+            var request = new NativeComponentRequest
+            {
+                Operation = (int)ComponentOperation.GetChildren, Entity = entity, Entities = pointer, EntityCapacity = buffer.Length,
+            };
+            _controlComponents(&request);
+            return Math.Max(request.Result, 0);
         }
     }
 }

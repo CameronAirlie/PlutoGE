@@ -90,6 +90,57 @@ public sealed class GameObject
         return gameObject is not null && ScriptBridge.DestroyEntity(gameObject.EntityId);
     }
 
+    /// <summary>
+    /// Creates an empty entity under <paramref name="parent"/> (the scene root when null), last among its siblings.
+    /// Add components to it with <see cref="AddComponent{T}"/>, e.g. a RectTransform and a UI Text to build UI from code.
+    /// Returns null when there is no scene or the parent no longer exists.
+    /// </summary>
+    public static GameObject? Create(string name, GameObject? parent = null)
+    {
+        var id = ScriptBridge.CreateEntity(name ?? string.Empty, parent?.EntityId ?? 0);
+        return id == 0 ? null : new GameObject(id);
+    }
+
+    /// <summary>The parent entity, or null for a scene root. Setting it keeps the local transform.</summary>
+    public GameObject? Parent
+    {
+        get
+        {
+            var id = ScriptBridge.GetEntityParent(EntityId);
+            return id == 0 ? null : new GameObject(id);
+        }
+        set => SetParent(value);
+    }
+
+    /// <summary>
+    /// Moves this entity under <paramref name="parent"/> (the scene root when null) at <paramref name="siblingIndex"/>
+    /// (-1 keeps it last; UI paints and lays out siblings in this order). False when either entity is gone or the
+    /// parent is this entity or one of its descendants.
+    /// </summary>
+    public bool SetParent(GameObject? parent, int siblingIndex = -1) =>
+        ScriptBridge.SetEntityParent(EntityId, parent?.EntityId ?? 0, siblingIndex);
+
+    /// <summary>Moves this entity within its siblings (UI paint and layout order).</summary>
+    public void SetSiblingIndex(int index) => ScriptBridge.SetEntityParent(EntityId, Parent?.EntityId ?? 0, Math.Max(index, 0));
+
+    /// <summary>The direct children, in sibling order.</summary>
+    public GameObject[] Children => ScriptBridge.GetEntityChildren(EntityId).Select(id => new GameObject(id)).ToArray();
+
+    /// <summary>
+    /// The first descendant named by <paramref name="path"/>: a child name, or names separated by '/' ("Panel/Title").
+    /// Unlike <see cref="Find"/>, this only searches below this entity.
+    /// </summary>
+    public GameObject? FindChild(string path)
+    {
+        var current = this;
+        foreach (var name in path.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            current = current.Children.FirstOrDefault(child => child.Name == name);
+            if (current is null) return null;
+        }
+        return current;
+    }
+
     public static GameObject? Find(string name)
     {
         var entityId = ScriptBridge.FindEntityByName(name);
@@ -200,14 +251,20 @@ public sealed class GameObject
         };
     }
 
-    /// <summary>Adds a native component reached through the property bridge (or returns the existing one).</summary>
-    public T? AddComponent<T>() where T : RegisteredComponent =>
-        ScriptBridge.AddRegisteredComponent(EntityId, RegisteredComponent.TypeNameOf(typeof(T)))
-            ? RegisteredComponent.Create<T>(EntityId)
-            : null;
+    /// <summary>
+    /// Adds a native component (or returns the existing one): any property-bridge wrapper, or a typed wrapper such as
+    /// <see cref="RectTransformComponent"/>, <see cref="UITextComponent"/>, <see cref="UIImageComponent"/>,
+    /// <see cref="UIButtonComponent"/> or <see cref="CanvasComponent"/>. Null when the type cannot be added.
+    /// </summary>
+    public T? AddComponent<T>() where T : ComponentReference =>
+        RegistryName(typeof(T)) is { } name && ScriptBridge.AddRegisteredComponent(EntityId, name) ? GetComponent<T>() : null;
 
-    public bool RemoveComponent<T>() where T : RegisteredComponent =>
-        ScriptBridge.RemoveRegisteredComponent(EntityId, RegisteredComponent.TypeNameOf(typeof(T)));
+    public bool RemoveComponent<T>() where T : ComponentReference =>
+        RegistryName(typeof(T)) is { } name && ScriptBridge.RemoveRegisteredComponent(EntityId, name);
+
+    // Typed wrappers carry their ComponentRegistry name as their class name.
+    private static string? RegistryName(Type type) =>
+        RegisteredComponent.IsRegisteredType(type) ? RegisteredComponent.TypeNameOf(type) : type.IsAbstract ? null : type.Name;
 
     public T? GetComponent<T>() where T : class
     {

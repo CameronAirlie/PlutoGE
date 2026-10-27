@@ -66,4 +66,32 @@ public sealed class RectTransformComponent : ComponentReference
         get => (UILayoutMode)ScriptBridge.GetRectLayoutMode(EntityId);
         set => ScriptBridge.SetRectLayoutMode(EntityId, (int)value);
     }
+
+    // Through the generic property bridge. UI coordinates are y-up: (0,0) is the parent's bottom-left corner.
+
+    private const string Type = "RectTransformComponent";
+
+    /// <summary>Lower-left anchor as a fraction of the parent (0,0 bottom-left; 1,1 top-right).</summary>
+    public Vector2 AnchorMin { get => ComponentProperties.GetVector2(EntityId, Type, "AnchorMin"); set => ComponentProperties.SetVector2(EntityId, Type, "AnchorMin", value); }
+    public Vector2 AnchorMax { get => ComponentProperties.GetVector2(EntityId, Type, "AnchorMax"); set => ComponentProperties.SetVector2(EntityId, Type, "AnchorMax", value); }
+    public Vector2 Pivot { get => ComponentProperties.GetVector2(EntityId, Type, "Pivot"); set => ComponentProperties.SetVector2(EntityId, Type, "Pivot", value); }
+
+    /// <summary>Insets from the resolved rect: left, bottom, right, top.</summary>
+    public Vector4 Margin { get => ComponentProperties.GetVector4(EntityId, Type, "Margin"); set => ComponentProperties.SetVector4(EntityId, Type, "Margin", value); }
+    public Vector2 MinimumSize { get => ComponentProperties.GetVector2(EntityId, Type, "MinimumSize"); set => ComponentProperties.SetVector2(EntityId, Type, "MinimumSize", value); }
+    public Vector2 MaximumSize { get => ComponentProperties.GetVector2(EntityId, Type, "MaximumSize"); set => ComponentProperties.SetVector2(EntityId, Type, "MaximumSize", value); }
+    public bool ClipChildren { get => ComponentProperties.GetBool(EntityId, Type, "ClipChildren"); set => ComponentProperties.SetBool(EntityId, Type, "ClipChildren", value); }
+
+    /// <summary>Whether the element can take the pointer; static HUD graphics usually turn it off.</summary>
+    public bool RaycastTarget { get => ComponentProperties.GetBool(EntityId, Type, "RaycastTarget"); set => ComponentProperties.SetBool(EntityId, Type, "RaycastTarget", value); }
+
+    /// <summary>Anchors, pivot, position and size in one call, e.g. to stretch over the parent with insets.</summary>
+    public void Place(Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 anchoredPosition, Vector2 sizeDelta)
+    {
+        AnchorMin = anchorMin;
+        AnchorMax = anchorMax;
+        Pivot = pivot;
+        AnchoredPosition = anchoredPosition;
+        SizeDelta = sizeDelta;
+    }
 }

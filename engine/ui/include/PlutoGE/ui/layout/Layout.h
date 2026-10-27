@@ -140,6 +140,10 @@ namespace PlutoGE::ui
         void ArrangeAnchored(std::uint32_t child, const Rect &parent);
         void ArrangeFlex(std::uint32_t node, const Rect &inner);
         void ArrangeGrid(std::uint32_t node, const Rect &inner);
+        // Measures with sizes the container has already decided (a stretched cross size, a grown main size) in place
+        // of the authored ones; a negative component keeps the authored size. Wrapped text then measures at the width
+        // it will get. Not cached.
+        glm::vec2 MeasureSized(std::uint32_t node, glm::vec2 available, glm::vec2 decided);
         glm::vec2 MeasureContent(std::uint32_t node, glm::vec2 available);
         glm::vec2 MeasureFlex(std::uint32_t node, glm::vec2 available);
         glm::vec2 MeasureGrid(std::uint32_t node, glm::vec2 available);

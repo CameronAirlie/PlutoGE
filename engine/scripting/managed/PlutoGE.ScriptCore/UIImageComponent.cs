@@ -56,4 +56,16 @@ public sealed class UIImageComponent : ComponentReference
         get => ScriptBridge.GetUIImageThickness(EntityId);
         set => ScriptBridge.SetUIImageThickness(EntityId, value);
     }
+
+    // Through the generic property bridge.
+
+    private const string Type = "UIImageComponent";
+
+    /// <summary>Colour with alpha.</summary>
+    public Vector4 Rgba { get => ComponentProperties.GetVector4(EntityId, Type, "Color"); set => ComponentProperties.SetVector4(EntityId, Type, "Color", value); }
+    public float CornerRadius { get => ComponentProperties.GetFloat(EntityId, Type, "CornerRadius"); set => ComponentProperties.SetFloat(EntityId, Type, "CornerRadius", value); }
+
+    /// <summary>Where a radial fill or procedural arc starts, in degrees.</summary>
+    public float StartAngle { get => ComponentProperties.GetFloat(EntityId, Type, "StartAngle"); set => ComponentProperties.SetFloat(EntityId, Type, "StartAngle", value); }
+    public bool FillClockwise { get => ComponentProperties.GetBool(EntityId, Type, "FillClockwise"); set => ComponentProperties.SetBool(EntityId, Type, "FillClockwise", value); }
 }

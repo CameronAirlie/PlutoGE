@@ -838,8 +838,15 @@ namespace PlutoGE::scene
             if (auto *button = element.entity->GetComponent<UIButtonComponent>())
                 button->ResetFrameState();
         // Focus or press on an element that no longer exists is dropped.
-        if (IndexOf(m_selected) == kNoUIElement)
+        if (const std::uint32_t selected = IndexOf(m_selected); selected == kNoUIElement)
             m_selected = 0;
+        else if (auto *selectable = m_links[selected].selectable; selectable && !selectable->IsSelected())
+        {
+            // Focused before it was collected (a menu shown and focused in the same frame): select it now.
+            selectable->SetSelected(true);
+            UIEvent event{.type = UIEventType::Select, .target = m_selected};
+            DispatchTo(selected, event);
+        }
         if (IndexOf(m_pressTarget) == kNoUIElement)
         {
             m_pressTarget = m_pressHandler = m_dragHandler = 0;

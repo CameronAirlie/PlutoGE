@@ -53,46 +53,29 @@ public abstract class RegisteredComponent : ComponentReference
     /// <summary>Sets a property from its serialized text; false when it does not exist.</summary>
     public bool SetProperty(string name, string value) => ScriptBridge.SetComponentProperty(EntityId, NativeTypeName, name, value);
 
-    protected string GetString(string name) => GetProperty(name) ?? string.Empty;
-    protected void SetString(string name, string value) => SetProperty(name, value ?? string.Empty);
+    protected string GetString(string name) => ComponentProperties.GetString(EntityId, NativeTypeName, name);
+    protected void SetString(string name, string value) => ComponentProperties.SetString(EntityId, NativeTypeName, name, value);
 
-    protected float GetFloat(string name, float fallback = 0.0f) =>
-        float.TryParse(GetProperty(name), NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : fallback;
-    protected void SetFloat(string name, float value) => SetProperty(name, value.ToString("R", CultureInfo.InvariantCulture));
+    protected float GetFloat(string name, float fallback = 0.0f) => ComponentProperties.GetFloat(EntityId, NativeTypeName, name, fallback);
+    protected void SetFloat(string name, float value) => ComponentProperties.SetFloat(EntityId, NativeTypeName, name, value);
 
-    protected int GetInt(string name, int fallback = 0) =>
-        int.TryParse(GetProperty(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
-    protected void SetInt(string name, int value) => SetProperty(name, value.ToString(CultureInfo.InvariantCulture));
+    protected int GetInt(string name, int fallback = 0) => ComponentProperties.GetInt(EntityId, NativeTypeName, name, fallback);
+    protected void SetInt(string name, int value) => ComponentProperties.SetInt(EntityId, NativeTypeName, name, value);
 
-    protected bool GetBool(string name) => GetProperty(name) is "true" or "1";
-    protected void SetBool(string name, bool value) => SetProperty(name, value ? "true" : "false");
+    protected bool GetBool(string name) => ComponentProperties.GetBool(EntityId, NativeTypeName, name);
+    protected void SetBool(string name, bool value) => ComponentProperties.SetBool(EntityId, NativeTypeName, name, value);
 
     protected TEnum GetEnum<TEnum>(string name) where TEnum : struct, Enum => (TEnum)Enum.ToObject(typeof(TEnum), GetInt(name));
     protected void SetEnum<TEnum>(string name, TEnum value) where TEnum : struct, Enum => SetInt(name, Convert.ToInt32(value, CultureInfo.InvariantCulture));
 
-    protected Vector2 GetVector2(string name) => ParseVector(GetProperty(name), 2) is { } v ? new Vector2(v[0], v[1]) : Vector2.Zero;
-    protected void SetVector2(string name, Vector2 value) => SetProperty(name, FormatVector(value.X, value.Y));
+    protected Vector2 GetVector2(string name) => ComponentProperties.GetVector2(EntityId, NativeTypeName, name);
+    protected void SetVector2(string name, Vector2 value) => ComponentProperties.SetVector2(EntityId, NativeTypeName, name, value);
 
-    protected Vector4 GetVector4(string name) => ParseVector(GetProperty(name), 4) is { } v ? new Vector4(v[0], v[1], v[2], v[3]) : Vector4.Zero;
-    protected void SetVector4(string name, Vector4 value) => SetProperty(name, FormatVector(value.X, value.Y, value.Z, value.W));
+    protected Vector4 GetVector4(string name) => ComponentProperties.GetVector4(EntityId, NativeTypeName, name);
+    protected void SetVector4(string name, Vector4 value) => ComponentProperties.SetVector4(EntityId, NativeTypeName, name, value);
 
     protected GameObject? GetEntity(string name) =>
         uint.TryParse(GetProperty(name), NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) && id != 0 ? new GameObject(id) : null;
     protected void SetEntity(string name, GameObject? value) =>
         SetProperty(name, (value?.EntityId ?? 0).ToString(CultureInfo.InvariantCulture));
-
-    private static float[]? ParseVector(string? text, int count)
-    {
-        if (string.IsNullOrEmpty(text)) return null;
-        var parts = text.Split(',');
-        if (parts.Length != count) return null;
-        var values = new float[count];
-        for (var index = 0; index < count; ++index)
-            if (!float.TryParse(parts[index], NumberStyles.Float, CultureInfo.InvariantCulture, out values[index]))
-                return null;
-        return values;
-    }
-
-    private static string FormatVector(params float[] values) =>
-        string.Join(",", values.Select(value => value.ToString("R", CultureInfo.InvariantCulture)));
 }

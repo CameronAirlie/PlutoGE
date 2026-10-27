@@ -10,6 +10,7 @@ public sealed class UIProbe : ScriptBehaviour
     [SerializedField] public bool ComponentsWork;
     [SerializedField] public float ObservedValue = -1.0f;
     [SerializedField] public int ObservedEvents;
+    [SerializedField] public bool HierarchyWorks;
     [SerializedField] public string Failure = string.Empty;
 
     private readonly ObservableValue<float> _volume = new(0.0f);
@@ -42,11 +43,38 @@ public sealed class UIProbe : ScriptBehaviour
             ComponentsWork = disabled && sliderObject.HasComponent<UISliderComponent>()
                 && sliderObject.GetComponent<UIToggleComponent>() is null
                 && GameObject.Find("Slider")!.GetComponent<UIShapeComponent>()?.Exists == true;
+
+            HierarchyWorks = BuildFromCode(GameObject.Find("Canvas") ?? throw new InvalidOperationException("No canvas entity"));
         }
         catch (Exception exception)
         {
             Failure = exception.ToString();
         }
+    }
+
+    // Creates a panel with two labels under the canvas, reorders and reparents them, and reads the tree back.
+    private static bool BuildFromCode(GameObject canvas)
+    {
+        var panel = GameObject.Create("Built Panel", canvas) ?? throw new InvalidOperationException("Create failed");
+        var rect = panel.AddComponent<RectTransformComponent>() ?? throw new InvalidOperationException("No RectTransform");
+        rect.AnchorMin = Vector2.Zero;
+        rect.AnchorMax = Vector2.One;
+        rect.RaycastTarget = false; // it covers the slider the C++ test presses
+        var label = panel.AddComponent<UITextComponent>() ?? throw new InvalidOperationException("No UI Text");
+        label.Text = "Built";
+        label.LetterSpacing = 2.0f;
+        var first = GameObject.Create("First", panel)!;
+        var second = GameObject.Create("Second", panel)!;
+        first.AddComponent<UILayoutItemComponent>();
+        second.SetSiblingIndex(0);
+        var ordered = panel.Children.Select(child => child.Name).SequenceEqual(["Second", "First"]);
+        var nested = GameObject.Create("Nested", second)!;
+        var found = panel.FindChild("Second/Nested")?.EntityId == nested.EntityId && panel.FindChild("Missing") is null;
+        var moved = nested.SetParent(first) && nested.Parent?.EntityId == first.EntityId && second.Children.Length == 0;
+        var refused = !panel.SetParent(nested); // a descendant cannot become the parent
+        var rooted = GameObject.Create("Root Entity") is { } root && root.Parent is null && first.Parent?.EntityId == panel.EntityId;
+        return ordered && found && moved && refused && rooted && panel.Parent?.EntityId == canvas.EntityId &&
+               rect.AnchorMax == Vector2.One && !rect.RaycastTarget && label.LetterSpacing == 2.0f && label.Text == "Built";
     }
 
     public override void OnUpdate(float deltaTime)

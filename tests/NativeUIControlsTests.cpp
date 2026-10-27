@@ -282,6 +282,24 @@ namespace
         Require(h.UI().GetFocusedEntity() == bottom->GetID(), "Explicit neighbours override spatial navigation");
     }
 
+    // A menu shows a hidden panel and focuses its button in one frame (scripts run after the UI update): the button is
+    // selected, and takes the Selected look, once the next update collects it.
+    void TestFocusWhileHidden()
+    {
+        Harness h;
+        auto *panel = h.Element("Panel", {0, 0}, {400, 400}, nullptr, false);
+        auto *button = h.Element("Button", {100, 100}, {100, 40}, panel);
+        button->CreateComponent<UIButtonComponent>();
+        panel->SetActive(false);
+        h.Run(h.Frame());
+        panel->SetActive(true);
+        h.UI().SetSelected(button->GetID());
+        Require(!button->GetComponent<UIButtonComponent>()->IsSelected(), "Not collected yet, so not selected yet");
+        h.Run(h.Frame());
+        Require(h.UI().GetFocusedEntity() == button->GetID(), "Focus set before collection is kept");
+        Require(button->GetComponent<UIButtonComponent>()->IsSelected(), "The button is selected once collected");
+    }
+
     void TestPointerCapture()
     {
         Harness h;
@@ -305,6 +323,7 @@ int main()
         TestInputField();
         TestDropdown();
         TestNavigation();
+        TestFocusWhileHidden();
         TestPointerCapture();
     }
     catch (const std::exception &error)

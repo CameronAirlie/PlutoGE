@@ -72,6 +72,12 @@ try
     Require(Field<std::string>(values, "Failure").empty(), "Probe failed: " + Field<std::string>(values, "Failure"));
     Require(Field<bool>(values, "PropertiesWork"), "Typed properties did not round-trip through the bridge");
     Require(Field<bool>(values, "ComponentsWork"), "Has/Get/Add component or Enabled failed for registered components");
+    Require(Field<bool>(values, "HierarchyWorks"), "Create/SetParent/Children/FindChild did not build the expected tree");
+    auto *built = scene.FindEntityByName("Built Panel");
+    Require(built && built->GetParent() == canvasEntity && built->GetChildren().size() == 2 &&
+                built->GetChildren()[0]->GetName() == "Second" && built->GetComponent<scene::UITextComponent>() &&
+                built->GetComponent<scene::UITextComponent>()->GetText() == "Built",
+            "The scripted hierarchy did not reach the scene");
     auto *shape = slider->GetComponent<scene::UIShapeComponent>();
     Require(shape && shape->GetCornerRadii().topLeft == 6.0f, "AddComponent<UIShapeComponent> did not reach the scene");
 

@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/UISystem.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 
 namespace PlutoGE::scripting
@@ -95,6 +96,51 @@ namespace PlutoGE::scripting
                     request.events[index] = {static_cast<std::int32_t>(events[index].type), events[index].entity};
                 request.result = static_cast<std::int32_t>(count);
                 request.sequence = ui.GetUpdateSequence();
+                return;
+            }
+            case ComponentScriptOperation::CreateEntity:
+            {
+                // A missing parent fails rather than creating a stray root.
+                auto *parent = request.entity != 0 ? FindEntity(request.entity) : nullptr;
+                if (request.entity != 0 && !parent)
+                    return;
+                auto *created = scene->AddEntity(
+                    std::make_unique<scene::Entity>(scene::EntityConfig{.name = request.value ? request.value : ""}), parent);
+                request.resultEntity = created ? created->GetID() : 0;
+                request.result = created ? 1 : 0;
+                return;
+            }
+            case ComponentScriptOperation::GetParent:
+                if (auto *child = FindEntity(request.entity); child && child->GetParent())
+                {
+                    request.resultEntity = child->GetParent()->GetID();
+                    request.result = 1;
+                }
+                return;
+            case ComponentScriptOperation::SetParent:
+            {
+                auto *child = FindEntity(request.entity);
+                auto *parent = request.argumentEntity != 0 ? FindEntity(request.argumentEntity) : nullptr;
+                if (!child || (request.argumentEntity != 0 && !parent) || (parent && parent->IsDescendantOf(child)) ||
+                    parent == child)
+                    return;
+                if (child->GetParent() != parent)
+                    child->SetParent(parent);
+                if (request.argument >= 0)
+                    child->SetSiblingIndex(static_cast<std::size_t>(request.argument));
+                request.result = 1;
+                return;
+            }
+            case ComponentScriptOperation::GetChildren:
+            {
+                const auto *parent = FindEntity(request.entity);
+                if (!parent)
+                    return;
+                const auto &children = parent->GetChildren();
+                const auto count = std::min<std::size_t>(children.size(), static_cast<std::size_t>(std::max(request.entityCapacity, 0)));
+                for (std::size_t index = 0; index < count && request.entities; ++index)
+                    request.entities[index] = children[index]->GetID();
+                request.result = static_cast<std::int32_t>(children.size());
                 return;
             }
             default:

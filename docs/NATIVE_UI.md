@@ -204,6 +204,33 @@ public override void OnDestroy() => _bindings.Dispose();
 
 `UIRepeater<T>` instantiates and reuses item views for lists.
 
+UI can also be built entirely from code. `GameObject.Create(name, parent)` makes an
+entity (last among its siblings), `AddComponent<T>()` adds any native component,
+including the typed `RectTransformComponent`, `UITextComponent`,
+`UIImageComponent`, `UIButtonComponent` and `CanvasComponent`, and
+`Parent`/`SetParent(parent, siblingIndex)`, `SetSiblingIndex`, `Children` and
+`FindChild("Panel/Title")` walk and rearrange the hierarchy:
+
+```csharp
+var panel = GameObject.Create("Panel", canvas)!;
+var rect = panel.AddComponent<RectTransformComponent>()!;
+rect.Place(anchorMin: new(0, 1), anchorMax: new(0, 1), pivot: new(0, 1),
+           anchoredPosition: new(24, -24), sizeDelta: new(300, 40)); // y-up
+var label = panel.AddComponent<UITextComponent>()!;
+label.Text = "<b>READY</b>";
+label.RichText = true;
+panel.AddComponent<UIStyleComponent>()!.Styles = "Heading";
+```
+
+Beyond their dedicated calls, the typed wrappers expose the rest of their
+serialized properties: `RectTransformComponent` (`AnchorMin`, `AnchorMax`,
+`Pivot`, `Margin`, `MinimumSize`, `MaximumSize`, `ClipChildren`,
+`RaycastTarget`), `UITextComponent` (`Rgba`, `FontPath`, `RichText`, `Wrap`,
+`Overflow`, `LetterSpacing`, `LineSpacing`, `Bold`, `Italic`, outline, shadow,
+`Padding`), `UIImageComponent` (`Rgba`, `CornerRadius`, `StartAngle`,
+`FillClockwise`) and `CanvasComponent` (`Backend`, `RenderMode`,
+`WorldSizeMode`, `MatchWidthOrHeight`).
+
 Any registered component can also be reached by property name:
 `component.GetProperty("Color")` / `SetProperty("Color", "1,0,0,1")` on a
 `RegisteredComponent`.
@@ -280,6 +307,6 @@ post-processing, below RmlUi.
 | `PlutoGENativeUIThemeTests` | Theme model edits, text format, inheritance, variables, layering, error reporting, style catalog |
 | `PlutoGEUIThemeEditorTests` | Theme documents (undo, saving, routed edits) and the editor views in a hidden window; pass a path prefix to capture images |
 | `PlutoGENativeUIControlsTests` | Toggles, sliders, scroll views, input fields, dropdowns, navigation, pointer capture |
-| `PlutoGENativeUIScriptingTests` | C# components, properties, events and bindings through the managed runtime |
+| `PlutoGENativeUIScriptingTests` | C# components, properties, events and bindings through the managed runtime; building a hierarchy from script |
 | `PlutoGENativeUIEditorTests` | Widget presets and inspector registration |
 | `PlutoGEComponentRegistryTests` | Component registration, creation and authoring rules |

@@ -27,6 +27,10 @@ namespace PlutoGE::scripting
         IsPointerOverUI = 7,  // result 1 while interactive UI has the pointer
         IsKeyboardCaptured = 8, // result 1 while a text field is being edited
         PollUIEvents = 9,     // copies the latest UI frame's events; result = count, sequence = UI update number
+        CreateEntity = 10,    // a new entity named `value` under `entity` (0 = scene root); resultEntity = its id
+        GetParent = 11,       // resultEntity = the parent of `entity` (0 for a root)
+        SetParent = 12,       // moves `entity` under argumentEntity (0 = scene root) at sibling `argument` (-1 = last)
+        GetChildren = 13,     // copies child ids into `entities` (up to entityCapacity); result = child count
     };
 
     struct NativeUIEventRecord
@@ -48,8 +52,12 @@ namespace PlutoGE::scripting
         NativeUIEventRecord *events = nullptr;
         std::int32_t eventCapacity = 0;
         std::uint64_t sequence = 0;
+        std::uint32_t *entities = nullptr;
+        std::int32_t entityCapacity = 0;
+        std::uint32_t argumentEntity = 0;
+        std::int32_t argument = 0;
     };
-    static_assert(sizeof(NativeComponentRequest) == 72, "Keep in step with ScriptBridge.Components.cs");
+    static_assert(sizeof(NativeComponentRequest) == 96, "Keep in step with ScriptBridge.Components.cs");
     static_assert(sizeof(NativeUIEventRecord) == 8, "Keep in step with ScriptBridge.Components.cs");
 
     void PLUTO_COMPONENT_API_CALL ControlComponents(NativeComponentRequest *request);

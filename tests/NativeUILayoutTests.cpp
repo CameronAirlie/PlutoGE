@@ -270,6 +270,57 @@ namespace
     }
 }
 
+    // Fixed-width wrapped text that a container sizes (stretched in a column, grown in a row) measures its height at
+    // the width it gets, not its authored width: a detail column of "label: value" rows with wrapping values.
+    void TestDecidedSizes()
+    {
+        const auto text = [](glm::vec2 available)
+        {
+            const float natural = 1000.0f;
+            const float width = std::isfinite(available.x) ? std::max(available.x, 1.0f) : natural;
+            return glm::vec2(std::min(width, natural), std::ceil(natural / width) * 20.0f);
+        };
+
+        LayoutTree tree;
+        const auto screenRoot = tree.Add({});
+        auto column = Container(LayoutMode::Flex);
+        column.container.direction = FlexDirection::Column;
+        column.container.alignItems = AlignItems::Stretch;
+        column.item.sizeDelta = {600, 600};
+        const auto columnIndex = tree.Add(column);
+        tree.AddChild(screenRoot, columnIndex);
+
+        // A body line stretched by the column: authored 10 wide, content height.
+        LayoutNode body;
+        body.item.sizeDelta = {10, 20};
+        body.item.heightMode = SizeMode::Content;
+        body.measure = text;
+        const auto bodyIndex = tree.Add(body);
+        tree.AddChild(columnIndex, bodyIndex);
+
+        // A field: a 100-wide label and a value that grows into the rest of the row.
+        auto row = Container(LayoutMode::Flex);
+        row.item.sizeDelta = {10, 20};
+        row.item.heightMode = SizeMode::Content;
+        row.container.alignItems = AlignItems::Start;
+        const auto rowIndex = tree.Add(row);
+        tree.AddChild(columnIndex, rowIndex);
+        const auto labelIndex = tree.Add(Fixed({100, 20}));
+        tree.AddChild(rowIndex, labelIndex);
+        auto value = body;
+        value.item.grow = 1.0f;
+        const auto valueIndex = tree.Add(value);
+        tree.AddChild(rowIndex, valueIndex);
+
+        tree.Compute(screenRoot, kScreen);
+        Require(Near(tree[bodyIndex].rect.Width(), 600) && Near(tree[bodyIndex].rect.Height(), 40),
+                "A stretched wrapped line must measure at the column width (2 lines)");
+        Require(Near(tree[valueIndex].rect.Width(), 500) && Near(tree[valueIndex].rect.Height(), 40),
+                "A grown wrapped value must measure at its grown width (2 lines)");
+        Require(Near(tree[rowIndex].rect.Height(), 40), "The row is as tall as its wrapped value");
+        Require(Near(tree[rowIndex].rect.max.y, tree[bodyIndex].rect.min.y), "The row follows the body line");
+    }
+
 int main()
 {
     try
@@ -280,6 +331,7 @@ int main()
         TestColumnAndMargins();
         TestWrap();
         TestContentMeasure();
+        TestDecidedSizes();
         TestGrid();
         TestIgnoreLayout();
     }

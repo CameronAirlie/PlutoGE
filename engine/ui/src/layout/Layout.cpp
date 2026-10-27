@@ -77,6 +77,15 @@ namespace PlutoGE::ui
                                                      : item.alignSelf;
         }
 
+        // The cross size a stretched item will get (a known container cross size less its margins); -1 otherwise.
+        glm::vec2 StretchedCross(const ItemLayout &item, const ContainerLayout &container, int cross, float crossSize)
+        {
+            glm::vec2 decided(-1.0f);
+            if (ResolveAlign(item, container.alignItems) == AlignSelf::Stretch && std::isfinite(crossSize))
+                decided[cross] = std::max(crossSize - (cross == 0 ? item.margin.Horizontal() : item.margin.Vertical()), 0.0f);
+            return decided;
+        }
+
         // Offset of an item of `size` inside `space` for an alignment.
         float AlignOffset(AlignSelf align, float space, float size)
         {
@@ -155,19 +164,25 @@ namespace PlutoGE::ui
     {
         if (m_cache.size() != m_nodes.size())
             m_cache.assign(m_nodes.size(), MeasureCache{});
-        auto &cache = m_cache[index];
-        if (cache.available == available)
-            return cache.result;
+        if (m_cache[index].available == available)
+            return m_cache[index].result;
+        const glm::vec2 size = MeasureSized(index, available, glm::vec2(-1.0f));
+        m_cache[index] = {available, size};
+        return size;
+    }
 
+    glm::vec2 LayoutTree::MeasureSized(std::uint32_t index, glm::vec2 available, glm::vec2 decided)
+    {
         const ItemLayout &item = m_nodes[index].item;
         glm::vec2 size = item.sizeDelta;
-        const bool contentWidth = item.widthMode == SizeMode::Content;
-        const bool contentHeight = item.heightMode == SizeMode::Content;
+        if (decided.x >= 0.0f) size.x = decided.x;
+        if (decided.y >= 0.0f) size.y = decided.y;
+        const bool contentWidth = item.widthMode == SizeMode::Content && decided.x < 0.0f;
+        const bool contentHeight = item.heightMode == SizeMode::Content && decided.y < 0.0f;
         if (contentWidth || contentHeight)
         {
             // A fixed width constrains how content (wrapped text) grows in height.
-            const glm::vec2 constraint{contentWidth ? available.x : item.sizeDelta.x,
-                                       contentHeight ? available.y : item.sizeDelta.y};
+            const glm::vec2 constraint{contentWidth ? available.x : size.x, contentHeight ? available.y : size.y};
             const glm::vec2 content = MeasureContent(index, constraint);
             if (contentWidth) size.x = content.x;
             if (contentHeight) size.y = content.y;
@@ -177,9 +192,7 @@ namespace PlutoGE::ui
             if (contentHeight && !contentWidth) size.y = size.x / item.aspectRatio;
             else if (contentWidth && !contentHeight) size.x = size.y * item.aspectRatio;
         }
-        size = glm::clamp(glm::max(size, glm::vec2(0.0f)), item.minSize, glm::max(item.maxSize, item.minSize));
-        cache = {available, size};
-        return size;
+        return glm::clamp(glm::max(size, glm::vec2(0.0f)), item.minSize, glm::max(item.maxSize, item.minSize));
     }
 
     glm::vec2 LayoutTree::MeasureContent(std::uint32_t index, glm::vec2 available)
@@ -211,16 +224,47 @@ namespace PlutoGE::ui
         const glm::vec2 inner = InnerAvailable(available, container.padding);
         const float mainGap = container.gap[main], crossGap = container.gap[cross];
 
+        // Without wrapping, items that grow take their share of a known main size before their cross size is
+        // measured, so wrapped text in a growing item measures at the width it will get.
+        std::vector<float> grownMain(children.size(), -1.0f);
+        if (container.wrap == FlexWrap::NoWrap && std::isfinite(inner[main]))
+        {
+            std::vector<float> bases(children.size(), 0.0f);
+            float used = 0.0f, grow = 0.0f;
+            std::size_t count = 0;
+            for (std::size_t i = 0; i < children.size(); ++i)
+            {
+                const LayoutNode &node = m_nodes[children[i]];
+                if (!InFlow(node))
+                    continue;
+                bases[i] = node.item.basis >= 0.0f
+                               ? node.item.basis
+                               : MeasureSized(children[i], inner, StretchedCross(node.item, container, cross, inner[cross]))[main];
+                used += bases[i] + MainMargins(node.item.margin, container.direction);
+                grow += std::max(node.item.grow, 0.0f);
+                ++count;
+            }
+            used += mainGap * static_cast<float>(count > 0 ? count - 1 : 0);
+            if (grow > 0.0f && inner[main] > used)
+                for (std::size_t i = 0; i < children.size(); ++i)
+                    if (InFlow(m_nodes[children[i]]) && m_nodes[children[i]].item.grow > 0.0f)
+                        grownMain[i] = bases[i] + (inner[main] - used) * m_nodes[children[i]].item.grow / grow;
+        }
+
         float mainTotal = 0.0f, crossTotal = 0.0f;
         float lineMain = 0.0f, lineCross = 0.0f;
         std::size_t lineCount = 0;
         bool lineStarted = false;
-        for (const std::uint32_t child : children)
+        for (std::size_t childIndex = 0; childIndex < children.size(); ++childIndex)
         {
+            const std::uint32_t child = children[childIndex];
             const ItemLayout &item = m_nodes[child].item;
             if (!InFlow(m_nodes[child]))
                 continue;
-            const glm::vec2 size = Measure(child, inner);
+            glm::vec2 decided = StretchedCross(item, container, cross, inner[cross]);
+            if (grownMain[childIndex] >= 0.0f)
+                decided[main] = grownMain[childIndex];
+            const glm::vec2 size = decided == glm::vec2(-1.0f) ? Measure(child, inner) : MeasureSized(child, inner, decided);
             const float itemMain = (item.basis >= 0.0f ? item.basis : size[main]) + MainMargins(item.margin, container.direction);
             const float itemCross = size[cross] + CrossMargins(item.margin, container.direction);
             const bool wraps = container.wrap == FlexWrap::Wrap && std::isfinite(inner[main]) && lineStarted &&
@@ -507,7 +551,8 @@ namespace PlutoGE::ui
                           .marginMain = MainMargins(item.margin, direction),
                           .marginCross = CrossMargins(item.margin, direction),
                           .align = ResolveAlign(item, container.alignItems)};
-            const float base = item.basis >= 0.0f ? item.basis : Measure(child, measureAvailable)[main];
+            const glm::vec2 decided = StretchedCross(item, container, cross, crossSize);
+            const float base = item.basis >= 0.0f ? item.basis : MeasureSized(child, measureAvailable, decided)[main];
             flex.hypothetical = std::clamp(base, flex.minMain, flex.maxMain);
             items.push_back(flex);
         }
@@ -594,7 +639,9 @@ namespace PlutoGE::ui
                 glm::vec2 available{0.0f};
                 available[main] = items[i].main;
                 available[cross] = crossSize;
-                items[i].cross = Measure(items[i].node, available)[cross];
+                glm::vec2 decided(-1.0f);
+                decided[main] = items[i].main;
+                items[i].cross = MeasureSized(items[i].node, available, decided)[cross];
                 line.cross = std::max(line.cross, items[i].cross + items[i].marginCross);
             }
         }

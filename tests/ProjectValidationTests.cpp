@@ -192,6 +192,22 @@ int main()
         input.currentScene = good;
         input.currentSceneOwner = "project://Main.plutoscene";
         Require(ValidateProject(input).diagnostics.empty(), "Current scene did not replace stale disk scene");
+        // Untyped script strings may list several assets joined with '|': each element is checked on its own.
+        Write(scratch.root / "Items/Sight.plutoscriptable", "SCRIPTABLE\n");
+        Write(scratch.root / "Items/Suppressor.plutoscriptable", "SCRIPTABLE\n");
+        const auto rack = [&](const std::string &list)
+        {
+            return "SCENE\t1\n" + entity + camera + "COMPONENT\t1\tScriptComponent\t1\nPROPERTY\tSource\t2\tGame.Player\t0\n"
+                   "PROPERTY\tattachments\t2\t" + list + "\t0\nEND_COMPONENT\n";
+        };
+        input.currentScene = rack("project://Items/Sight.plutoscriptable|project://Items/Suppressor.plutoscriptable");
+        Require(ValidateProject(input).diagnostics.empty(), "A '|'-joined list of existing assets was reported missing");
+        input.currentScene = rack("project://Items/Sight.plutoscriptable| project://Items/Missing.plutoscriptable");
+        result = ValidateProject(input);
+        Require(result.diagnostics.size() == 1 && Has(result, "asset.missing", 1) &&
+                result.diagnostics[0].message.find("Items/Missing.plutoscriptable") != std::string::npos &&
+                result.diagnostics[0].message.find('|') == std::string::npos,
+                "A missing element of a '|'-joined list was not reported on its own");
         input.currentScene = "SCENE\t1\n" + entity + camera + "COMPONENT\t1\tScriptComponent\t1\nPROPERTY\tSource\t2\tMissing.Class\t0\nEND_COMPONENT\n";
         Require(Has(ValidateProject(input), "script.missing", 1), "Missing script class not reported");
         input.scriptClasses.reset();

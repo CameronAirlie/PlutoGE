@@ -132,6 +132,7 @@ namespace PlutoGE::render
                                                    : BuildSceneLighting(view.view.cameraData, scene);
             const auto atmosphere = BuildSceneAtmosphere(scene, lighting, view.view.cameraData.tagFilter);
             target->renderer->SetGraphicsQuality(m_graphicsQuality);
+            target->renderer->SetRenderingSettings(m_renderingSettings);
             if (skinningSource) target->renderer->ReuseSkinningForFrame(*skinningSource);
             if (!target->renderer->Render(width, height, view.view.cameraData, lighting, view.view.commands,
                                           view.view.shadowCommands.empty() ? view.view.commands : view.view.shadowCommands,

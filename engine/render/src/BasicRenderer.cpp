@@ -8,6 +8,9 @@
 #include "OpaqueShadowBatches.h"
 #include "CascadedShadowLayers.h"
 #include "PointShadowLayers.h"
+#include "LightClusterGrid.h"
+#include "GpuDrivenOpaque.h"
+#include "PlutoGE/render/RenderGraph.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/VctVolumePlacement.h"
 #include "PlutoGE/render/PostProcessGraphExecutor.h"
@@ -172,8 +175,11 @@ namespace PlutoGE::render
             glm::vec4 probeAtlasParameters{}; // Prepared hit-point row and volume descriptors present.
             std::array<AmbientProbeVolumeParameters, PLUTO_AMBIENT_PROBE_VOLUMES> probeVolumes{};
             glm::vec4 geometryParameters{}; // Preserve receiver shadow sampling for diagnostic outputs.
+            glm::mat4 lightClusterProjection{1.0f}; // LightClusterShading
+            glm::vec4 lightClusterDepth{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 6016 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) == 6096 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         struct alignas(16) SelectionOutlineParameters
         {
@@ -637,6 +643,8 @@ namespace PlutoGE::render
                 {21, 1, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {20, 1, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                {LightClusterGrid::MasksSlot, 0, 4, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment},
+                // Object parameters stay last: the instanced variant replaces them.
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
             };
             descriptor.vertexLayout = {
@@ -1031,7 +1039,8 @@ namespace PlutoGE::render
                 if (hasShader(shaders.ssrStages[index]))
                     m_ssrStagePipelines[index] = createPostProcessPipeline(
                         shaders.ssrStages[index].vertex, shaders.ssrStages[index].fragment,
-                        index == 0 || index == 3 ? "SSR trace" : "SSR resolve", BasicPostProcessEffectType::SSR);
+                        index == 0 || index == 3 ? "SSR trace" : (index == 1 ? "SSR resolve" : "SSR filter"),
+                        BasicPostProcessEffectType::SSR);
             for (std::size_t index = 0; index < m_volumetricTracePipelines.size(); ++index)
             {
                 const auto &shader = shaders.volumetricTrace[index];
@@ -1353,6 +1362,8 @@ namespace PlutoGE::render
             m_cloudNoise = std::make_unique<CloudNoiseVolume>();
             if (!m_cloudNoise->Initialize(device)) throw std::runtime_error("Cloud noise lattice creation failed");
             m_occlusion->Initialize(device, shaders.occlusion);
+            m_lightClusters = std::make_unique<LightClusterGrid>();
+            m_lightClusters->Initialize(device, shaders.lightClusterCulling);
             m_virtualShadowShaders = shaders.virtualShadows;
             // Compile VSM pipelines during renderer initialization, alongside
             // the other pipelines, never on the first shadowed viewport frame.
@@ -1380,6 +1391,15 @@ namespace PlutoGE::render
             m_fallbackSampler = rhi::Sampler(device, device.CreateSampler(
                                                         {true, true, "BasicRenderer material sampler", true, 0.0f, 16.0f}));
             for(unsigned i=0;i<4;++i)m_graphSamplers[i]=rhi::Sampler(device,device.CreateSampler({(i&1)==0,(i&2)==0,"Graph texture sampler"}));
+            // Bindless materials stand in the fallback maps for absent ones, so they start once those exist.
+            m_bindlessShaders = shaders.bindless;
+            if (m_bindlessShaders.Available())
+            {
+                auto gpuDriven = std::make_unique<GpuDrivenOpaque>();
+                gpuDriven->Initialize(device, m_bindlessShaders.visibility, MaterialFallbacks());
+                if (gpuDriven->Available())
+                    m_gpuDriven = std::move(gpuDriven);
+            }
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
             m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
@@ -1481,6 +1501,11 @@ namespace PlutoGE::render
         m_shadowResolutions.fill(0);
         m_virtualShadows.reset();
         m_occlusion.reset();
+        m_lightClusters.reset();
+        if (m_gpuDriven)
+            m_gpuDriven->Shutdown(*m_device);
+        m_gpuDriven.reset();
+        m_bindlessGeometryPipelines.clear();
         m_gpuSkinning.reset();
         m_deferredProbeIrradiance.reset();
         m_backgroundMotion.reset();
@@ -1754,6 +1779,9 @@ namespace PlutoGE::render
                  .maxAnisotropy = 16.0f}));
             m_fallbackSampler = std::move(materialSampler);
             m_materialMipLodBias = materialMipLodBias;
+            // Bindless materials captured the previous sampler.
+            if (m_gpuDriven)
+                m_gpuDriven->ResetMaterials(*m_device, MaterialFallbacks());
         }
         if (width == m_width && height == m_height && outputWidth == m_outputWidth &&
             outputHeight == m_outputHeight && m_colorTarget && m_depthTarget &&
@@ -2006,10 +2034,15 @@ namespace PlutoGE::render
         if (!m_gpuSkinningDispatches.empty())
         {
             commands.BeginGpuScope("RHI GPU skinning");
-            commands.ShaderMemoryBarrier();
+            using rhi::BarrierAccess;
+            // Skinning rewrites vertices earlier draws (and their GI voxelization) fetched.
+            commands.PipelineBarrier(BarrierAccess::Graphics | BarrierAccess::ComputeShaderRead,
+                                     BarrierAccess::ComputeShaderWrite);
             m_gpuSkinning->BeginFrame();
             m_frameStats.gpuSkinningDispatches += m_gpuSkinning->Record(m_gpuSkinningDispatches);
-            commands.ShaderMemoryBarrier();
+            commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite,
+                                     BarrierAccess::VertexInputRead | BarrierAccess::VertexShaderRead |
+                                     BarrierAccess::ComputeShaderRead);
             commands.EndGpuScope();
         }
         const auto uploadDeformedMeshes = [&](std::span<const BasicDraw> list)
@@ -2272,6 +2305,20 @@ namespace PlutoGE::render
             frameParameters.pointSettings[index] = {-1, -1, cone.x, cone.y};
             if (virtualShadowsActive && spot.light.castsShadows && spot.light.range > 0.02f && spotShadowCount < PLUTO_VSM_SPOT_COUNT)
                 frameParameters.pointSettings[index].y = static_cast<float>(PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++);
+        }
+        {
+            std::array<LocalLightBounds, PLUTO_MAX_LOCAL_LIGHTS> localLights;
+            const auto localLightCount = pointCount + spotCount;
+            for (std::size_t index = 0; index < localLightCount; ++index)
+                localLights[index] = {glm::vec3(frameParameters.pointPositionRange[index]),
+                                      frameParameters.pointPositionRange[index].w};
+            const auto clusters = m_clusteredLighting
+                ? m_lightClusters->Prepare(*m_device, lighting.view, viewProjection * glm::inverse(lighting.view),
+                                           std::span(localLights).first(localLightCount))
+                : LightClusterShading{};
+            frameParameters.lightClusterProjection = clusters.projection;
+            frameParameters.lightClusterDepth = clusters.depth;
+            m_frameStats.clusteredLocalLights = clusters.Enabled() ? localLightCount : 0;
         }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         // Selected geometry is rasterized once more into its own depth mask,
@@ -3043,6 +3090,27 @@ namespace PlutoGE::render
         rhi::BufferHandle boundObjectBlock;
         rhi::BufferHandle boundMaterial;
         bool recordingParticleBoundary = false;
+        // Camera, light clusters, probes and reflection captures: bound once per pass.
+        const auto bindFrameResources = [&](rhi::ICommandContext &commands)
+        {
+            commands.BindUniformBuffer(0, drawCameraBuffer);
+            commands.BindStorageBuffer(LightClusterGrid::MasksSlot, m_lightClusters->Masks());
+            commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
+            for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
+                commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
+        };
+        // Shadow receivers: bound by a pass's first shading draw.
+        const auto bindShadowResources = [&](rhi::ICommandContext &commands)
+        {
+            for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
+                commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
+                    ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+            commands.BindUniformBuffer(1, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
+            commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
+                                 m_shadowSampler.Get());
+            commands.BindTexture(19, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+            commands.BindTexture(20, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+        };
         const auto recordDraw = [&](rhi::ICommandContext &commands, const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
@@ -3066,10 +3134,7 @@ namespace PlutoGE::render
             if (!frameResourcesBound)
             {
                 frameResourcesBound = true;
-                commands.BindUniformBuffer(0, drawCameraBuffer);
-                commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
-                for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
-                    commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
+                bindFrameResources(commands);
             }
             if (!instanced)
             {
@@ -3172,17 +3237,7 @@ namespace PlutoGE::render
                     // Pass boundaries explicitly invalidate bindings; consecutive draws
                     // within either geometry or transparency can retain shared resources.
                     if (!geometryResourcesBound)
-                        for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
-                            commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
-                                ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                    if (!geometryResourcesBound)
-                    {
-                        commands.BindUniformBuffer(1, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
-                        commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
-                                             m_shadowSampler.Get());
-                        commands.BindTexture(19, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                        commands.BindTexture(20, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
-                    }
+                        bindShadowResources(commands);
                     if (!geometryResourcesBound || !skyTextureBound)
                     {
                         commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
@@ -3281,6 +3336,38 @@ namespace PlutoGE::render
                 }
             }
         };
+        // GPU-driven opaque draws keep the bound path's per-object values (motion history included) and the
+        // pipeline state it would choose; Prepare decides which have bindless materials.
+        if (m_gpuDriven)
+        {
+            core::CpuScope gpuDrivenScope("GPU-driven opaque preparation", core::CpuCategory::Rendering);
+            std::vector<GpuDrivenOpaque::Source> sources;
+            if (m_gpuDrivenOpaqueEnabled)
+            {
+                std::size_t history = 0;
+                for (std::size_t index = 0; index < draws.size(); ++index)
+                {
+                    const auto &draw = draws[index];
+                    if (!draw.mesh || !draw.mesh->IsValid())
+                        continue;
+                    const auto historyIndex = history++;
+                    if (!GpuDrivenOpaque::Eligible(draw))
+                        continue;
+                    const bool singleInstance = draw.instanceModels && draw.instanceModels->size() == 1;
+                    const glm::mat4 &model = singleInstance ? draw.instanceModels->front() : draw.model;
+                    const glm::mat4 previousModel = singleInstance
+                        ? (draw.previousInstanceModels && !draw.previousInstanceModels->empty()
+                            ? draw.previousInstanceModels->front() : model)
+                        : draw.previousModel.value_or(m_hasPreviousFrame && historyIndex < m_previousModels.size()
+                            ? m_previousModels[historyIndex] : model);
+                    sources.push_back({&draw, index, model, m_hasPreviousFrame ? previousModel : model,
+                                       glm::vec4(draw.normalizedLod, 0.0f, draw.probeDebug.x, draw.probeDebug.y),
+                                       BindlessGeometryPipeline(draw, geometryLayout,
+                                                                depthPrepassActive && prepassEligible(draw))});
+                }
+            }
+            m_gpuDriven->Prepare(*m_device, sources, draws.size());
+        }
         std::vector<BasicDraw> transparentDraws;
         const auto geometryJob = recording.Add([&](rhi::ICommandContext &commands)
         {
@@ -3325,6 +3412,8 @@ namespace PlutoGE::render
                 }, depthPrepassActive ? m_depthTarget.Get() : reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
             m_frameStats.occlusionActive = occlusionActive;
             if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
+            if (m_gpuDriven)
+                m_gpuDriven->RecordVisibility(*m_device, commands, occlusionActive ? m_occlusion->Indirect() : rhi::BufferHandle{});
             // Compute/coverage passes invalidate all cached graphics bindings.
             boundDrawPipeline = {};
             boundDrawMesh = nullptr;
@@ -3337,6 +3426,31 @@ namespace PlutoGE::render
             m_frameStats.geometryColorOutputs = static_cast<std::uint32_t>(renderingInfo.colorAttachments.size());
             std::size_t historyIndex = 0;
             commands.BeginGpuScope("RHI Geometry / Opaque and alpha-tested");
+            if (m_gpuDriven && m_gpuDriven->FrameStats().draws != 0)
+            {
+                commands.BeginGpuScope("RHI Geometry / GPU-driven opaque");
+                frameResourcesBound = true;
+                bindFrameResources(commands);
+                bindShadowResources(commands);
+                commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+                skyTextureBound = true;
+                // Standard surfaces read no graph textures, but the shared layout declares them.
+                for (std::uint32_t slot = 22; slot < 26; ++slot)
+                    commands.BindTexture(slot, m_fallbackDataTexture.Get(), m_graphSamplers[0].Get());
+                m_gpuDriven->Draw(commands);
+                const auto &gpuDriven = m_gpuDriven->FrameStats();
+                m_frameStats.gpuDrivenDraws = gpuDriven.draws;
+                m_frameStats.gpuDrivenBatches = gpuDriven.batches;
+                m_frameStats.gpuDrivenMaterials = gpuDriven.materials;
+                m_frameStats.geometryDraws += gpuDriven.draws;
+                m_frameStats.geometryInstances += gpuDriven.draws;
+                m_frameStats.geometryTriangles[0] += gpuDriven.triangles;
+                // The next bound-path draw re-establishes its pipeline, geometry and material bindings.
+                boundDrawPipeline = {};
+                boundDrawMesh = nullptr;
+                geometryResourcesBound = false;
+                commands.EndGpuScope();
+            }
             // At most eight additional query pairs; avoid per-draw queries exhausting
             // the backend timestamp pool or materially changing submission cost.
             const bool rangeTimings = geometryMode == GeometryDiagnosticMode::DrawRanges;
@@ -3377,7 +3491,7 @@ namespace PlutoGE::render
                     else
                         transparentDraws.push_back(draw);
                 }
-                else
+                else if (!(m_gpuDriven && m_gpuDriven->Handles(drawIndex)))
                     recordDraw(commands, draw, false, historyIndex);
                 ++historyIndex;
             }
@@ -3460,7 +3574,23 @@ namespace PlutoGE::render
         if (pointShadowCount > 0)
             EnsurePointShadowAtlas();
         const auto recordingStart = std::chrono::steady_clock::now();
-        m_timingStats.parallelRecording = recording.Run();
+        // Light clustering runs on async compute beside the scene's shadow and geometry work (inline without an
+        // async queue); fragment shading waits for its masks.
+        RenderGraph sceneGraph;
+        const auto masks = m_lightClusters->Masks();
+        if (m_lightClusters->Pending())
+            sceneGraph.AddPass({"Light clusters", PassQueue::AsyncCompute,
+                                {{masks, rhi::BarrierAccess::ComputeShaderWrite}},
+                                [&](rhi::ICommandContext &context)
+                                {
+                                    if (m_lightClusters->Record(context))
+                                        ++m_frameStats.lightClusterUpdates;
+                                }});
+        sceneGraph.AddPass({"Shadows and geometry", PassQueue::Graphics,
+                            {{masks, rhi::BarrierAccess::FragmentShaderRead}},
+                            [&](rhi::ICommandContext &) { m_timingStats.parallelRecording = recording.Run(); }});
+        const auto graphStats = sceneGraph.Execute(commands);
+        m_frameStats.asyncComputeSections = graphStats.asyncSections;
         const auto recordingEnd = std::chrono::steady_clock::now();
         // CPU time each pass took to record (they overlap when recorded in parallel).
         m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, recordingStart);
@@ -4118,11 +4248,12 @@ namespace PlutoGE::render
                 const auto drawSsr = [&](rhi::TextureHandle destination, rhi::TextureHandle reflections,
                                          std::uint32_t width, std::uint32_t height, float mode)
                 {
-                    ScopedGpuTiming ssrStage(commands, mode == 3.0f ? "RHI SSR / Filter" : (mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace"));
+                    ScopedGpuTiming ssrStage(commands, mode == 3.0f ? "RHI SSR / Filter" : mode == 4.0f ? "RHI SSR / Vertical filter"
+                                                       : mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace");
                     // Fewer than 16 rays per pixel trace with their own variant (lane 2.y).
                     const bool reducedRays = mode == 1.0f && effect.parameters[2].y > 0.5f &&
                                              effect.parameters[2].y < 15.5f && m_ssrStagePipelines[3];
-                    const auto stageIndex = mode == 3.0f ? 2u : (mode == 2.0f ? 1u : (reducedRays ? 3u : 0u));
+                    const auto stageIndex = mode == 4.0f ? 4u : mode == 3.0f ? 2u : (mode == 2.0f ? 1u : (reducedRays ? 3u : 0u));
                     const auto stagePipeline = mode != 0.0f && m_ssrStagePipelines[stageIndex]
                         ? m_ssrStagePipelines[stageIndex].Get() : pipeline;
                     parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
@@ -4153,8 +4284,11 @@ namespace PlutoGE::render
                 m_outputColor = trace;
                 if (!fullResolution)
                 {
+                    // Separable bilateral filter at trace resolution, then a bilateral upsample.
+                    const auto horizontal = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
+                    drawSsr(horizontal, trace, traceWidth, traceHeight, 3.0f);
                     const auto filtered = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
-                    drawSsr(filtered, trace, traceWidth, traceHeight, 3.0f);
+                    drawSsr(filtered, horizontal, traceWidth, traceHeight, 4.0f);
                     const auto resolved = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth,
                                                                    m_postProcessHeight).Get();
                     drawSsr(resolved, filtered, m_postProcessWidth, m_postProcessHeight, 2.0f);

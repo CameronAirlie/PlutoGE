@@ -2,11 +2,69 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <string>
 #include <vector>
 #include <stdexcept>
 #include <iostream>
 #include <glm/gtc/matrix_transform.hpp>
+
+// A metallic floor reflecting an emissive wall, seen at a grazing angle, with the SSR effect configured for the
+// stress workload (or a project's default settings).
+class SsrFixture
+{
+public:
+    SsrFixture(PlutoGE::render::BasicRenderer &renderer, bool projectSettings)
+    {
+        using namespace PlutoGE::render;
+        constexpr std::array<BasicVertex, 4> vertices = {{
+            {{{-1,-1,0}}, {{0,0,1}}, {{0,0}}},
+            {{{ 1,-1,0}}, {{0,0,1}}, {{1,0}}},
+            {{{ 1, 1,0}}, {{0,0,1}}, {{1,1}}},
+            {{{-1, 1,0}}, {{0,0,1}}, {{0,1}}}
+        }};
+        constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
+        mesh = renderer.CreateMesh({vertices, indices});
+        lighting.requiredGeometryInputs = BasicPostProcessInput::Normal;
+        lighting.cameraPosition = {0,2,4};
+        lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0,0,-1), glm::vec3(0,1,0));
+        lighting.ambientIntensity = 0;
+        lighting.directionalIntensity = 0;
+        projection[0][0] = 1.5f;
+        projection[1][1] = 2.0f;
+        projection[2][2] = .1f / (100.f - .1f);
+        projection[2][3] = -1;
+        projection[3][2] = 100.f * .1f / (100.f - .1f);
+        auto &floor = draws[0];
+        floor.mesh = &mesh;
+        floor.model = glm::scale(glm::rotate(glm::mat4(1), glm::radians(-90.f), glm::vec3(1,0,0)), glm::vec3(4));
+        floor.baseColor = {1,.1f,.1f,1};
+        floor.metallic = 1;
+        floor.emission = {.02f,.02f,.02f};
+        auto &wall = draws[1];
+        wall.mesh = &mesh;
+        wall.model = glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,1.5f,-2)), glm::vec3(.65f,1.5f,1));
+        wall.emission = {1,1,1};
+        ssr.quality = 128;
+        ssr.parameters[0] = {1,20,.2f,.02f};
+        ssr.parameters[1] = {.02f,5,1,8};
+        if (projectSettings)
+        {
+            ssr.quality = 48;
+            ssr.parameters[0] = {.8f,30,.35f,.08f};
+            ssr.parameters[1] = {.12f,5,.75f,5};
+        }
+    }
+    SsrFixture(const SsrFixture &) = delete;
+    SsrFixture &operator=(const SsrFixture &) = delete;
+
+    PlutoGE::render::BasicMesh mesh;
+    PlutoGE::render::BasicLighting lighting;
+    glm::mat4 projection{0.0f};
+    std::array<PlutoGE::render::BasicDraw, 2> draws{};
+    PlutoGE::render::BasicPostProcessEffect ssr{PlutoGE::render::BasicPostProcessEffectType::SSR};
+};
 
 template <class ReadPixels>
 void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
@@ -14,47 +72,11 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
                        bool extendedTiming = false, PlutoGE::render::rhi::IRenderDevice *reflectionDevice = nullptr)
 {
     using namespace PlutoGE::render;
-    constexpr std::array<BasicVertex, 4> vertices = {{
-        {{{-1,-1,0}}, {{0,0,1}}, {{0,0}}},
-        {{{ 1,-1,0}}, {{0,0,1}}, {{1,0}}},
-        {{{ 1, 1,0}}, {{0,0,1}}, {{1,1}}},
-        {{{-1, 1,0}}, {{0,0,1}}, {{0,1}}}
-    }};
-    constexpr std::array<std::uint32_t,6> indices{0,1,2,0,2,3};
-    auto mesh = renderer.CreateMesh({vertices, indices});
-    BasicLighting lighting;
-    lighting.requiredGeometryInputs = BasicPostProcessInput::Normal;
-    lighting.cameraPosition = {0,2,4};
-    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0,0,-1), glm::vec3(0,1,0));
-    lighting.ambientIntensity = 0;
-    lighting.directionalIntensity = 0;
-    glm::mat4 projection(0);
-    projection[0][0] = 1.5f;
-    projection[1][1] = 2.0f;
-    projection[2][2] = .1f / (100.f - .1f);
-    projection[2][3] = -1;
-    projection[3][2] = 100.f * .1f / (100.f - .1f);
-    BasicDraw floor;
-    floor.mesh = &mesh;
-    floor.model = glm::scale(glm::rotate(glm::mat4(1), glm::radians(-90.f), glm::vec3(1,0,0)), glm::vec3(4));
-    floor.baseColor = {1,.1f,.1f,1};
-    floor.metallic = 1;
-    floor.emission = {.02f,.02f,.02f};
-    BasicDraw wall;
-    wall.mesh = &mesh;
-    wall.model = glm::scale(glm::translate(glm::mat4(1), glm::vec3(0,1.5f,-2)), glm::vec3(.65f,1.5f,1));
-    wall.emission = {1,1,1};
-    std::array draws{floor,wall};
-    BasicPostProcessEffect ssr{BasicPostProcessEffectType::SSR};
-    ssr.quality = 128;
-    ssr.parameters[0] = {1,20,.2f,.02f};
-    ssr.parameters[1] = {.02f,5,1,8};
-    if (projectSettings)
-    {
-        ssr.quality = 48;
-        ssr.parameters[0] = {.8f,30,.35f,.08f};
-        ssr.parameters[1] = {.12f,5,.75f,5};
-    }
+    SsrFixture fixture(renderer, projectSettings);
+    auto &lighting = fixture.lighting;
+    const auto &projection = fixture.projection;
+    auto &draws = fixture.draws;
+    auto &ssr = fixture.ssr;
     struct Measurement
     {
         std::array<std::uint64_t,3> energy{};
@@ -224,7 +246,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         for (const bool fullResolution : {true, false})
         {
             ssr.parameters[4].w = fullResolution ? 1.0f : 0.0f;
-            double gpuMs = 0, effectMs = 0, traceMs = 0, resolveMs = 0;
+            double gpuMs = 0, effectMs = 0, traceMs = 0, filterMs = 0, verticalMs = 0, resolveMs = 0;
             int samples = 0;
             // Capture-sized comparisons need a longer warmup/sample window to
             // reduce clock-ramp and scheduling noise on short GPU workloads.
@@ -241,6 +263,8 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
                     if (scope.name == "RHI SSR") effectMs += scope.milliseconds;
                     if (scope.name == "RHI SSR / Trace") { traceMs += scope.milliseconds; hasTrace = true; }
                     if (scope.name == "RHI SSR / Resolve") { resolveMs += scope.milliseconds; hasResolve = true; }
+                    if (scope.name == "RHI SSR / Filter") filterMs += scope.milliseconds;
+                    if (scope.name == "RHI SSR / Vertical filter") verticalMs += scope.milliseconds;
                 }
                 if (!hasTrace || (!fullResolution && !hasResolve))
                     throw std::runtime_error("SSR benchmark is missing stage GPU timings");
@@ -251,7 +275,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
             std::cout << "SSR benchmark (" << (fullResolution ? "full-resolution reference" : "half-resolution resolve")
                       << "): " << gpuMs / samples << " ms GPU frame, "
                       << effectMs / samples << " ms reflections, " << traceMs / samples << " ms trace, "
-                      << resolveMs / samples << " ms resolve (" << samples << " samples)\n";
+                      << filterMs / samples << " ms horizontal filter, " << verticalMs / samples << " ms vertical filter, " << resolveMs / samples << " ms resolve (" << samples << " samples)\n";
         }
     }
 }
@@ -279,4 +303,73 @@ void CheckSsrStageSpecialisation(PlutoGE::render::BasicRenderer &renderer,
     CheckSsrRendering(renderer, [&](auto texture) { return capture(actual, texture); }, nullptr, false, false, &device);
     if (expected != actual)
         throw std::runtime_error("Specialised SSR stages changed reference pixels");
+}
+
+// Lobe-adaptive ray counts (lane 3.x) keep wide lobes exact and narrow ones close to the sixteen-ray estimate.
+// With `performanceDevice`, also reports trace timings with and without them.
+template <class ReadPixels>
+void CheckSsrAdaptiveRays(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
+                          PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr, bool projectSettings = true)
+{
+    using namespace PlutoGE::render;
+    SsrFixture fixture(renderer, projectSettings);
+    auto &ssr = fixture.ssr;
+    ssr.parameters[2].x = 1.0f; // trace every roughness
+    const auto render = [&](bool adaptive)
+    {
+        ssr.parameters[3].x = adaptive ? 1.0f : 0.0f;
+        renderer.Render(fixture.projection * fixture.lighting.view, fixture.lighting, fixture.draws, std::span(&ssr, 1));
+        return readPixels(renderer.GetColorTexture());
+    };
+    for (const float roughness : {1.0f, 0.45f, 0.2f, 0.04f})
+    {
+        fixture.draws[0].roughness = roughness;
+        const auto fixed = render(false);
+        const auto adaptive = render(true);
+        if (fixed.size() != adaptive.size() || fixed.empty())
+            throw std::runtime_error("SSR adaptive ray readback mismatch");
+        double sum = 0.0;
+        int largest = 0;
+        std::size_t visible = 0; // channel values changed by more than a few levels
+        for (std::size_t index = 0; index < fixed.size(); ++index)
+        {
+            const int difference = std::abs(static_cast<int>(fixed[index]) - static_cast<int>(adaptive[index]));
+            sum += difference;
+            largest = std::max(largest, difference);
+            visible += difference > 8 ? 1u : 0u;
+        }
+        const double mean = sum / static_cast<double>(fixed.size());
+        std::cout << "SSR adaptive rays at roughness " << roughness << ": mean difference " << mean << ", max "
+                  << largest << ", " << visible << " of " << fixed.size() << " values above 8\n";
+        // Rough lobes span many pixels and keep every ray: identical. Narrower ones change by a few levels, except
+        // isolated pixels on reflected silhouettes, where four rays resolve partial coverage more coarsely.
+        if (roughness >= 1.0f && largest != 0)
+            throw std::runtime_error("SSR adaptive rays changed a wide lobe");
+        if (mean > 0.1 || visible * 200 > fixed.size())
+            throw std::runtime_error("SSR adaptive rays at roughness " + std::to_string(roughness) +
+                                     " differ too much (mean " + std::to_string(mean) + ", max " +
+                                     std::to_string(largest) + ")");
+        if (!performanceDevice)
+            continue;
+        // Sixteen fixed rays, sixteen adaptive, and four (the reduced-ray variant a temporal resolve integrates).
+        struct Configuration { const char *name; bool adaptive; float rays; };
+        for (const auto &configuration : {Configuration{"fixed", false, 16.0f}, Configuration{"adaptive", true, 16.0f},
+                                          Configuration{"four-ray", true, 4.0f}})
+        {
+            ssr.parameters[3].x = configuration.adaptive ? 1.0f : 0.0f;
+            ssr.parameters[2].y = configuration.rays;
+            double traceMs = 0.0;
+            int samples = 0;
+            for (int frame = 0; frame < 96; ++frame)
+            {
+                renderer.Render(fixture.projection * fixture.lighting.view, fixture.lighting, fixture.draws, std::span(&ssr, 1));
+                const auto timing = performanceDevice->GetTimingStats("Scene");
+                if (frame < 32 || !timing.hasGpuResult) continue;
+                for (const auto &scope : timing.gpuScopes)
+                    if (scope.name == "RHI SSR / Trace") { traceMs += scope.milliseconds; ++samples; }
+            }
+            std::cout << "  " << configuration.name << " rays: " << (samples ? traceMs / samples : 0.0) << " ms trace\n";
+        }
+        ssr.parameters[2].y = 0.0f;
+    }
 }

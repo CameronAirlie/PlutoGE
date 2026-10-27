@@ -92,6 +92,7 @@ namespace PlutoGE::render
         result.ssrStages[1] = {Load("SSRResolve", "vertex"), Load("SSRResolve", "fragment")};
         result.ssrStages[2] = {Load("SSRFilter", "vertex"), Load("SSRFilter", "fragment")};
         result.ssrStages[3] = {Load("SSRTraceReduced", "vertex"), Load("SSRTraceReduced", "fragment")};
+        result.ssrStages[4] = {Load("SSRFilterVertical", "vertex"), Load("SSRFilterVertical", "fragment")};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {
@@ -145,6 +146,13 @@ namespace PlutoGE::render
         result.upscalerSharpening = {Load("UpscalerSharpening", "vertex"), Load("UpscalerSharpening", "fragment")};
         result.occlusion = {Load("OcclusionDepth", "vertex"), Load("OcclusionDepth", "fragment"),
                             Load("OcclusionReduce", "compute"), Load("OcclusionTest", "compute")};
+        result.lightClusterCulling = Load("LightClusterCulling", "compute");
+        result.bindless = {.vertex = Load("BasicLitBindless", "vertex"),
+                           .colorVertex = Load("BasicLitBindlessColor", "vertex"),
+                           .fragments = {Load("BasicLitBindless", "fragment"), Load("BasicLitBindlessColor", "fragment"),
+                                         Load("BasicLitBindlessColorMotion", "fragment"),
+                                         Load("BasicLitBindlessIndirect", "fragment")},
+                           .visibility = Load("GpuDrivenVisibility", "compute")};
         constexpr std::array<std::string_view, 7> virtualCompute{
             "VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < virtualCompute.size(); ++index)

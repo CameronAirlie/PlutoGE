@@ -33,6 +33,8 @@ namespace PlutoGE::render
         { return m_graphicsPresets.Get(preset); }
         bool SetGraphicsQuality(const GraphicsQuality &quality) noexcept;
         [[nodiscard]] const GraphicsQuality &GetGraphicsQuality() const noexcept { return m_graphicsQuality; }
+        void SetRenderingSettings(const RenderingSettings &settings);
+        [[nodiscard]] const RenderingSettings &GetRenderingSettings() const noexcept { return m_renderingSettings; }
         bool Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain);
         void Shutdown();
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
@@ -105,6 +107,7 @@ namespace PlutoGE::render
     private:
         GraphicsQualityPresets m_graphicsPresets;
         GraphicsQuality m_graphicsQuality;
+        RenderingSettings m_renderingSettings;
         rhi::IRenderDevice *m_device = nullptr;
         rhi::ISwapchain *m_swapchain = nullptr;
         std::unique_ptr<BasicRenderer> m_renderer;

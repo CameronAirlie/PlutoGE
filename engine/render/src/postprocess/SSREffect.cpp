@@ -28,6 +28,7 @@ namespace PlutoGE::render
             {.name = "Steps", .type = PostProcessParameterType::Int, .value = std::to_string(m_stepCount)},
             {.name = "Binary Search Steps", .type = PostProcessParameterType::Int, .value = std::to_string(m_binarySearchSteps)},
             {.name = "Rays per Pixel", .type = PostProcessParameterType::Int, .value = std::to_string(m_rayCount)},
+            {.name = "Adaptive Rays", .type = PostProcessParameterType::Bool, .value = m_adaptiveRays ? "true" : "false"},
             {.name = "Edge Fade", .type = PostProcessParameterType::Float, .value = std::to_string(m_edgeFade)},
             {.name = "Max Roughness", .type = PostProcessParameterType::Float, .value = std::to_string(m_maxRoughness)},
         };
@@ -44,6 +45,7 @@ namespace PlutoGE::render
             else if (parameter.name == "Steps") m_stepCount = std::clamp(std::stoi(parameter.value), 8, 128);
             else if (parameter.name == "Binary Search Steps") m_binarySearchSteps = std::clamp(std::stoi(parameter.value), 0, 8);
             else if (parameter.name == "Rays per Pixel") m_rayCount = std::clamp(std::stoi(parameter.value), 1, 16);
+            else if (parameter.name == "Adaptive Rays") m_adaptiveRays = parameter.value == "true";
             else if (parameter.name == "Edge Fade") m_edgeFade = std::clamp(std::stof(parameter.value), 0.001f, 0.5f);
             else if (parameter.name == "Max Roughness") m_maxRoughness = std::clamp(std::stof(parameter.value), 0.15f, 1.0f);
             else if (parameter.name == "Fresnel Power") m_fresnelPower = std::clamp(std::stof(parameter.value), 0.25f, 10.0f);

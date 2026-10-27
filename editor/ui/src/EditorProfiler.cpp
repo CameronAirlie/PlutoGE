@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorProfiler.h"
+#include "PlutoGE/render/RenderingSettings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -470,8 +471,8 @@ namespace PlutoGE::ui
                << rhiScene.materialPreparationHits << " reused\n";
         report << "RHI shader graph draws: " << rhiScene.graphSpecializedDraws << " specialised / "
                << rhiScene.graphInterpretedDraws << " interpreted (pending, unsupported backend or no Slang runtime)\n";
-        report << "RHI occlusion mode: " << static_cast<int>(rhiScene.occlusionMode)
-               << " (0 off, 1 measure, 2 cull), active: " << rhiScene.occlusionActive << "\n";
+        report << "RHI occlusion mode: " << render::OcclusionModeName(rhiScene.occlusionMode)
+               << ", active: " << rhiScene.occlusionActive << "\n";
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)
             report << "RHI occlusion delayed frame " << rhiScene.occlusion.frame << ": "
                    << rhiScene.occlusion.tested << " tested, " << rhiScene.occlusion.rejected

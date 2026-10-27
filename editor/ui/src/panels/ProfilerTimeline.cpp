@@ -107,10 +107,13 @@ namespace PlutoGE::ui
             ImGui::SetTooltip("Copies the retained history: summary, complete per-frame metrics and all CPU trace samples. Stop recording first for a fixed capture.");
         if (ImGui::TreeNode("Geometry diagnostics"))
         {
-            int occlusion = static_cast<int>(m_profiler->occlusionMode);
-            if (ImGui::Combo("Occlusion culling", &occlusion, "Off\0Measure\0Cull\0"))
-                m_profiler->occlusionMode = static_cast<render::OcclusionMode>(occlusion);
-            ImGui::SetItemTooltip("Measure counts hidden draws without rejecting them. Cull skips hidden main-pass draws. Compare total scene GPU time.");
+            // Index 0 keeps the project setting; the others override it for this session.
+            int occlusion = m_profiler->occlusionOverride ? static_cast<int>(*m_profiler->occlusionOverride) + 1 : 0;
+            if (ImGui::Combo("Occlusion culling", &occlusion, "Project setting\0Off\0Measure\0Cull\0"))
+                m_profiler->occlusionOverride = occlusion == 0 ? std::nullopt
+                    : std::optional(static_cast<render::OcclusionMode>(occlusion - 1));
+            ImGui::SetItemTooltip("Overrides Project Settings > Graphics for this session without saving. Measure counts hidden draws "
+                                  "without rejecting them; Cull skips hidden main-pass draws. Compare total scene GPU time.");
             if (ImGui::BeginCombo("Comparison mode", render::GeometryDiagnosticName(m_profiler->geometryDiagnosticMode)))
             {
                 for (const auto &diagnostic : render::GeometryDiagnostics)

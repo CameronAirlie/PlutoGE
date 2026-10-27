@@ -55,7 +55,8 @@ namespace PlutoGE::ui
         { return m_runtimeGraphicsQuality ? *m_runtimeGraphicsQuality : m_graphicsQuality; }
         void SetTemporalUpscalerOptions(render::rhi::TemporalUpscalerOptions options) noexcept;
         void SetAmbientProbeDebugEnabled(bool enabled) { m_ambientProbeDebugEnabled = enabled; }
-        void SetOcclusionMode(render::OcclusionMode mode) noexcept { m_occlusionMode = mode; }
+        // The project's rendering settings, with any diagnostic override already applied.
+        void SetRenderingSettings(const render::RenderingSettings &settings) noexcept;
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
         // Outlines these entities in the next Render only; viewports sharing
         // this service set their own selection before each frame.
@@ -102,7 +103,7 @@ namespace PlutoGE::ui
         void ApplyGraphicsQuality() noexcept;
         render::GraphicsQuality m_graphicsQuality;
         std::optional<render::GraphicsQuality> m_runtimeGraphicsQuality;
-        render::OcclusionMode m_occlusionMode = render::OcclusionMode::Off;
+        render::RenderingSettings m_renderingSettings;
         render::GeometryDiagnosticMode m_geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
         std::vector<std::uint32_t> m_selectedEntities;
         render::BasicSelectionOutline m_selectionOutline;

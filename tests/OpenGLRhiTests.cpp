@@ -29,6 +29,7 @@
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "ShadowFilteringChecks.h"
 #include "OpaqueShadowBatchingChecks.h"
+#include "LightClusterChecks.h"
 #include "SsrRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VsmOnlyRenderingChecks.h"
@@ -176,6 +177,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.ssrStages[1] = {{.glsl = ReadText("SSRResolve.vertex.glsl")}, {.glsl = ReadText("SSRResolve.fragment.glsl")}};
         shaders.ssrStages[2] = {{.glsl = ReadText("SSRFilter.vertex.glsl")}, {.glsl = ReadText("SSRFilter.fragment.glsl")}};
         shaders.ssrStages[3] = {{.glsl = ReadText("SSRTraceReduced.vertex.glsl")}, {.glsl = ReadText("SSRTraceReduced.fragment.glsl")}};
+        shaders.ssrStages[4] = {{.glsl = ReadText("SSRFilterVertical.vertex.glsl")}, {.glsl = ReadText("SSRFilterVertical.fragment.glsl")}};
         LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particleInstancedVertex.glsl = ReadText("ParticlesInstanced.vertex.glsl");
@@ -206,6 +208,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.occlusion.fragment.glsl = ReadText("OcclusionDepth.fragment.glsl");
         shaders.occlusion.reduce.glsl = ReadText("OcclusionReduce.compute.glsl");
         shaders.occlusion.test.glsl = ReadText("OcclusionTest.compute.glsl");
+        shaders.lightClusterCulling.glsl = ReadText("LightClusterCulling.compute.glsl");
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].glsl = ReadText((std::string(vsmCompute[index]) + ".compute.glsl").c_str());
@@ -629,13 +632,15 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
         if (argc > 1 && std::string(argv[1]) == "--ssr-only")
         {
-            CheckSsrStageSpecialisation(basicRenderer, device, shaders, [&](render::rhi::TextureHandle texture)
+            const auto readPixels = [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
-            });
+            };
+            CheckSsrStageSpecialisation(basicRenderer, device, shaders, readPixels);
+            CheckSsrAdaptiveRays(basicRenderer, readPixels);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ssr-project-snapshots")
@@ -685,6 +690,14 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             }, false); // OpenGL RHI does not expose GPU scope timing.
             return 0;
         }
+        CheckLightClusters(basicRenderer, [&](auto texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--light-clusters")
+            return 0;
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 

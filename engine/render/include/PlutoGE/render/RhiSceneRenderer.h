@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/RhiTerrainLayerCache.h"
 #include "PlutoGE/render/GraphicsQuality.h"
+#include "PlutoGE/render/RenderingSettings.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
@@ -143,6 +144,9 @@ namespace PlutoGE::render
             m_graphicsQuality = quality;
             return true;
         }
+        // Replaces the matching BasicLighting fields (occlusion culling) of every view rendered. The image is
+        // unchanged, so temporal history survives a change.
+        void SetRenderingSettings(const RenderingSettings &settings) noexcept { m_renderingSettings = settings; }
         RhiSceneRenderer();
         ~RhiSceneRenderer();
         using TexturePixelReader = std::function<std::vector<std::byte>(const Texture &)>;
@@ -282,6 +286,7 @@ namespace PlutoGE::render
 
     private:
         GraphicsQuality m_graphicsQuality;
+        RenderingSettings m_renderingSettings;
       bool m_immediateTextureUploads = false;
       bool m_sceneEffectsEnabled = true;
       bool m_particleEffectsEnabled = true;

@@ -812,6 +812,12 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "OCCLUSION_CULLING" && tokens.size() >= 2)
+            {
+                manifest.rendering.occlusionCulling = render::ParseOcclusionMode(tokens[1]).value_or(render::OcclusionMode::Off);
+                continue;
+            }
+
             if (tokens[0] == "RUNTIME_RENDER_SCALE" && tokens.size() >= 2)
             {
                 ParseFloat(tokens[1], manifest.runtimeRenderScale);
@@ -1127,6 +1133,7 @@ namespace PlutoGE::assets
                                      : m_manifest.runtimeUpscalerQuality == render::rhi::UpscalerQuality::UltraPerformance ? "UltraPerformance"
                                      : m_manifest.runtimeUpscalerQuality == render::rhi::UpscalerQuality::Dlaa ? "DLAA" : "Quality";
         output << "RUNTIME_UPSCALER_QUALITY\t" << upscalerQuality << '\n';
+        output << "OCCLUSION_CULLING\t" << render::OcclusionModeName(m_manifest.rendering.occlusionCulling) << '\n';
         output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';
         output << "RUNTIME_UPSCALE_SHARPNESS\t" << std::clamp(m_manifest.runtimeUpscaleSharpness, 0.0f, 1.0f) << '\n';
         output << "EDITOR_FONT_SIZE\t" << std::clamp(m_manifest.editorFontSize, 10.0f, 24.0f) << '\n';

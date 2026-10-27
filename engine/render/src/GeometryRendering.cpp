@@ -1,6 +1,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/ShaderGraphCodegen.h"
 #include "PlutoGE/render/ShaderGraphVariants.h"
+#include "GpuDrivenOpaque.h"
 #include <cmath>
 #include <algorithm>
 
@@ -37,6 +38,30 @@ namespace PlutoGE::render
             descriptor.resourceBindings.push_back({BasicRenderer::TerrainParameterSlot, 1, 25,
                 rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment});
         }
+
+        // The colour targets a shading (not depth-only) pipeline writes for `layout`, from the full set the
+        // base descriptor declares.
+        void ApplyGeometryOutputs(rhi::GraphicsPipelineDescriptor &descriptor, GeometryOutputLayout layout)
+        {
+            if (layout < GeometryOutputLayout::Surface)
+            {
+                descriptor.colorFormats = {rhi::Format::R16G16B16A16Float};
+                if (layout == GeometryOutputLayout::ColorMotion) descriptor.colorFormats.push_back(rhi::Format::R32G32Float);
+                return;
+            }
+            const auto outputs = layout == GeometryOutputLayout::Surface || layout == GeometryOutputLayout::SurfaceIndirect ? 5u
+                : layout == GeometryOutputLayout::SurfaceAllIndirect ? 6u
+                : layout == GeometryOutputLayout::SurfaceReflections ? 7u : 8u;
+            descriptor.colorFormats.resize(outputs);
+            if (layout == GeometryOutputLayout::SurfaceIndirect) descriptor.colorFormats[4] = rhi::Format::R16G16B16A16Float;
+        }
+    }
+
+    bool BasicBindlessShaderPackage::Available() const noexcept
+    {
+        const auto present = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
+        return present(vertex) && present(colorVertex) && present(visibility) &&
+               std::ranges::all_of(fragments, present);
     }
 
     void BasicRenderer::EnsureGeometryTargets(GeometryOutputLayout layout)
@@ -74,13 +99,8 @@ namespace PlutoGE::render
             ? DepthResources::Alpha : DepthResources::Full;
     }
 
-    rhi::PipelineHandle BasicRenderer::GeometryPipeline(const BasicDraw &draw, bool instanced,
-        GeometryOutputLayout layout, bool depthOnly, bool prepassed)
+    rhi::CullMode BasicRenderer::GeometryCullMode(const BasicDraw &draw) const
     {
-        // Terrain layers use their own standard-material variant; without its shaders they draw as standard.
-        const bool terrain = draw.terrainLayers && m_terrainShaders.Available();
-        const bool standard = terrain || (!draw.shaderGraphProgram &&
-            (!m_standardFragment.glsl.empty() || !m_standardFragment.spirv.empty()));
         auto cull = draw.outlinePass ? rhi::CullMode::Front : rhi::CullMode::None;
         if (!draw.outlinePass && m_materialCulling && !draw.twoSided && draw.alphaMode < 2)
         {
@@ -98,6 +118,17 @@ namespace PlutoGE::render
                     cull = determinant < 0 ? rhi::CullMode::Front : rhi::CullMode::Back;
             }
         }
+        return cull;
+    }
+
+    rhi::PipelineHandle BasicRenderer::GeometryPipeline(const BasicDraw &draw, bool instanced,
+        GeometryOutputLayout layout, bool depthOnly, bool prepassed)
+    {
+        // Terrain layers use their own standard-material variant; without its shaders they draw as standard.
+        const bool terrain = draw.terrainLayers && m_terrainShaders.Available();
+        const bool standard = terrain || (!draw.shaderGraphProgram &&
+            (!m_standardFragment.glsl.empty() || !m_standardFragment.spirv.empty()));
+        const auto cull = GeometryCullMode(draw);
         const auto depthResources = depthOnly ? GeometryDepthResources(draw, instanced) : DepthResources::Full;
         // Material-free depth shaders evaluate no graph; every other graph
         // pipeline replaces an interpreter fragment entry point.
@@ -147,19 +178,11 @@ namespace PlutoGE::render
         }
         else
         {
+            ApplyGeometryOutputs(descriptor, layout);
             if (layout < GeometryOutputLayout::Surface)
-            {
-                descriptor.colorFormats = {rhi::Format::R16G16B16A16Float};
-                if (layout == GeometryOutputLayout::ColorMotion) descriptor.colorFormats.push_back(rhi::Format::R32G32Float);
                 descriptor.fragmentShader = m_compactFragments[standard ? 1 : 0][static_cast<unsigned>(layout)];
-            }
             else
             {
-                const auto outputs = layout == GeometryOutputLayout::Surface || layout == GeometryOutputLayout::SurfaceIndirect ? 5u
-                    : layout == GeometryOutputLayout::SurfaceAllIndirect ? 6u
-                    : layout == GeometryOutputLayout::SurfaceReflections ? 7u : 8u;
-                descriptor.colorFormats.resize(outputs);
-                if (layout == GeometryOutputLayout::SurfaceIndirect) descriptor.colorFormats[4] = rhi::Format::R16G16B16A16Float;
                 if (standard) descriptor.fragmentShader = m_standardFragment;
                 if (layout == GeometryOutputLayout::SurfaceIndirect) descriptor.fragmentShader = m_indirectFragments[standard ? 1 : 0];
             }
@@ -194,6 +217,44 @@ namespace PlutoGE::render
             graphDraw.shaderGraphProgram = graph;
             (void)GeometryPipeline(graphDraw, instanced, layout, depthOnly, prepassed);
         }
+        return handle;
+    }
+
+    BindlessMaterialFallbacks BasicRenderer::MaterialFallbacks() const
+    {
+        return {m_fallbackTexture.Get(), m_fallbackNormalTexture.Get(), m_fallbackDataTexture.Get(), m_fallbackSampler.Get()};
+    }
+
+    rhi::PipelineHandle BasicRenderer::BindlessGeometryPipeline(const BasicDraw &draw, GeometryOutputLayout layout,
+                                                                bool prepassed)
+    {
+        const auto cull = GeometryCullMode(draw);
+        const unsigned key = static_cast<unsigned>(layout) | (unsigned(cull) << 3) | (unsigned(prepassed) << 5);
+        if (const auto found = m_bindlessGeometryPipelines.find(key); found != m_bindlessGeometryPipelines.end())
+            return found->second.Get();
+        // The standard opaque surface with object and material inputs from GpuDrivenOpaque's tables: no material
+        // uniforms, material texture slots or object uniforms, and the bindless texture table.
+        auto descriptor = m_geometryDescriptors[0];
+        std::erase_if(descriptor.resourceBindings, [](const auto &binding)
+        {
+            return binding.type == rhi::ResourceBindingType::UniformBuffer ? binding.slot == 8 || binding.slot == 16
+                : binding.type == rhi::ResourceBindingType::SampledTexture && (binding.slot >= 9 && binding.slot <= 12 || binding.slot == 26);
+        });
+        descriptor.resourceBindings.push_back({GpuDrivenOpaque::InstancesSlot, 2, 1, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Vertex});
+        descriptor.resourceBindings.push_back({GpuDrivenOpaque::MaterialsSlot, 2, 2, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment});
+        descriptor.bindlessTextures = true;
+        descriptor.cullMode = cull;
+        descriptor.depthWrite = !prepassed;
+        ApplyGeometryOutputs(descriptor, layout);
+        const auto &shaders = m_bindlessShaders;
+        descriptor.vertexShader = layout == GeometryOutputLayout::Color ? shaders.colorVertex : shaders.vertex;
+        descriptor.fragmentShader = layout == GeometryOutputLayout::Color ? shaders.fragments[1]
+            : layout == GeometryOutputLayout::ColorMotion ? shaders.fragments[2]
+            : layout == GeometryOutputLayout::SurfaceIndirect ? shaders.fragments[3] : shaders.fragments[0];
+        descriptor.debugName = "GPU-driven opaque geometry";
+        auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
+        const auto handle = pipeline.Get();
+        m_bindlessGeometryPipelines.emplace(key, std::move(pipeline));
         return handle;
     }
 

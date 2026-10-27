@@ -61,6 +61,138 @@ float smithG1(float cosine, float alphaSquared)
         (1.0 - alphaSquared) * cosine * cosine), 0.000001);
 }
 
+// Samples the GGX distribution of normals visible from the view (VNDF). Unlike sampling the entire NDF, its
+// BRDF/pdf weight is bounded at grazing angles, so a few rays cannot dominate a rough reflection. Everything
+// that depends only on the pixel is prepared once by makeReflectionLobe.
+struct ReflectionLobe
+{
+    float3 tangent, bitangent, normal, view;
+    float alpha;
+    float3 stretchedView, t1, t2;
+
+    // The half vector of stratified sample (xi, phi) in [0, 1) x [0, 2 pi).
+    float3 halfVector(float xi, float phi)
+    {
+        const float diskX = sqrt(xi) * cos(phi);
+        float diskY = sqrt(xi) * sin(phi);
+        const float blend = 0.5 * (1.0 + stretchedView.z);
+        diskY = (1.0 - blend) * sqrt(max(0.0, 1.0 - diskX * diskX)) + blend * diskY;
+        const float3 projectedNormal = diskX * t1 + diskY * t2 +
+            sqrt(max(0.0, 1.0 - diskX * diskX - diskY * diskY)) * stretchedView;
+        const float3 localHalf = normalize(float3(alpha * projectedNormal.xy, max(0.0, projectedNormal.z)));
+        return tangent * localHalf.x + bitangent * localHalf.y + normal * localHalf.z;
+    }
+};
+
+ReflectionLobe makeReflectionLobe(float3 normal, float3 view, float ndotv, float alpha)
+{
+    ReflectionLobe lobe;
+    lobe.normal = normal;
+    lobe.view = view;
+    lobe.alpha = alpha;
+    lobe.tangent = normalize(cross(abs(normal.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0), normal));
+    lobe.bitangent = cross(normal, lobe.tangent);
+    const float3 localView = float3(dot(view, lobe.tangent), dot(view, lobe.bitangent), ndotv);
+    lobe.stretchedView = normalize(float3(alpha * localView.xy, localView.z));
+    const float lensq = dot(lobe.stretchedView.xy, lobe.stretchedView.xy);
+    lobe.t1 = lensq > 0.000001
+        ? float3(-lobe.stretchedView.y, lobe.stretchedView.x, 0.0) / sqrt(lensq) : float3(1, 0, 0);
+    lobe.t2 = cross(lobe.stretchedView, lobe.t1);
+    return lobe;
+}
+
+// Screen position of a ray point; false only when it is behind the eye (off-screen points still project).
+bool projectPoint(float4 clip, out float2 uv)
+{
+    uv = 0.0;
+    if (clip.w <= 0.000001) return false;
+    uv = clip.xy / clip.w;
+    if (pass.flipY != 0) uv.y = -uv.y;
+    uv = uv * 0.5 + 0.5;
+    return true;
+}
+
+// Marches a ray in `steps` samples over [start, start + distance], spaced quadratically, to its first sample
+// behind the depth buffer. Returns the travel bracket [low, high] around that crossing, with the screen position
+// and scene depth at `high`; false when the ray leaves the screen or ends in front of everything.
+bool firstCrossing(float4 clipOrigin, float4 clipRay, float start, float distance, uint steps,
+                   out float low, out float high, out float2 uv, out float sceneDepth)
+{
+    low = 0.0;
+    high = 0.0;
+    uv = 0.0;
+    sceneDepth = 0.0;
+    float previousTravel = 0.0;
+    for (uint i = 0; i < steps; ++i)
+    {
+        const float fraction = (float(i) + 1.0) / float(steps);
+        const float travel = start + distance * fraction * fraction;
+        float projectedDepth;
+        if (!projectRay(clipOrigin + clipRay * travel, uv, projectedDepth)) return false;
+        // Every preceding sample is in front of the scene.
+        if (behindSurface(uv, projectedDepth, sceneDepth))
+        {
+            low = previousTravel;
+            high = travel;
+            return true;
+        }
+        previousTravel = travel;
+    }
+    return false;
+}
+
+// How far a ray from `clipOrigin` along `clipRay` travels before leaving the screen (it stops marching there).
+float screenExit(float4 clipOrigin, float4 clipRay, float reach)
+{
+    // Each screen bound is a linear inequality a + b * t >= 0 in travel t: -w <= x, y <= w and w > 0.
+    const float4 a = float4(clipOrigin.w + clipOrigin.x, clipOrigin.w - clipOrigin.x,
+                            clipOrigin.w + clipOrigin.y, clipOrigin.w - clipOrigin.y);
+    const float4 b = float4(clipRay.w + clipRay.x, clipRay.w - clipRay.x, clipRay.w + clipRay.y, clipRay.w - clipRay.y);
+    float exit = reach;
+    [unroll]
+    for (uint bound = 0; bound < 4; ++bound)
+        if (b[bound] < 0.0) exit = min(exit, max(a[bound], 0.0) / -b[bound]);
+    if (clipRay.w < 0.0) exit = min(exit, max(clipOrigin.w, 0.0) / -clipRay.w);
+    return exit;
+}
+
+// The trace pixels the lobe's outermost stratum spans around its centre ray after `travel`. Negative when a ray
+// point is behind the eye.
+float lobeFootprint(ReflectionLobe lobe, float4 clipOrigin, float4 centreRay, float travel, uint samples)
+{
+    const float2 traceSize = pass.parameters[4].yz;
+    float2 centre;
+    if (!projectPoint(clipOrigin + centreRay * travel, centre))
+        return -1.0;
+    const float outermost = 1.0 - 0.5 / float(samples);
+    float footprint = 0.0;
+    [unroll]
+    for (uint quadrant = 0; quadrant < 4; ++quadrant)
+    {
+        const float3 edgeRay = reflect(-lobe.view, lobe.halfVector(outermost, 1.570796327 * float(quadrant)));
+        float2 edge;
+        if (!projectPoint(clipOrigin + mul(pass.projection, mul(pass.view, float4(edgeRay, 0.0))) * travel, edge))
+            return -1.0;
+        footprint = max(footprint, length((edge - centre) * traceSize));
+    }
+    return isfinite(footprint) ? footprint : -1.0;
+}
+
+// Lobe-adaptive ray count (lane 3.x). A narrow lobe sends every ray across nearly the same depth texels, so its
+// rays repeat one march. This traces about one ray per trace pixel the lobe spans, in whole groups of four. The
+// span grows with travel, so it is measured where the centre ray stops marching: its end or the screen edge.
+// (Measuring at the centre ray's first hit was tried: GGX's outer strata keep mid-roughness lobes wider than
+// sixteen pixels even there, so the extra march only added cost.) Wide lobes keep `samples` rays unchanged, so
+// their result is exact; four rays remain the minimum so sub-pixel hit/miss edges stay antialiased.
+uint lobeRayCount(ReflectionLobe lobe, float4 clipOrigin, float reach, uint samples)
+{
+    if (pass.parameters[3].x <= 0.5 || samples <= 4) return samples;
+    const float4 centreRay = mul(pass.projection, mul(pass.view, float4(reflect(-lobe.view, lobe.halfVector(0.0, 0.0)), 0.0)));
+    const float footprint = lobeFootprint(lobe, clipOrigin, centreRay, screenExit(clipOrigin, centreRay, reach), samples);
+    if (footprint < 0.0) return samples;
+    return clamp((uint(ceil(footprint)) + 3u) & ~3u, 4u, samples);
+}
+
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
@@ -74,7 +206,9 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float stage = pass.parameters[4].x;
 #endif
     const bool traceOnly = stage == 1.0;
-    const bool signedOutput = traceOnly || stage == 3.0;
+    // Stages: 0 full-resolution reference, 1 trace, 3 horizontal filter, 4 vertical filter (all at trace
+    // resolution and writing signed corrections), 2 bilateral upsample and composite at full resolution.
+    const bool signedOutput = traceOnly || stage == 3.0 || stage == 4.0;
     // Choose an actual G-buffer pixel rather than interpolating unrelated
     // depths/normals at the centre of a 2x2 block.
     if (signedOutput)
@@ -97,27 +231,29 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (roughnessFade <= 0.0) return scene;
     const float3 position = reconstructWorldPosition(uv, depth, pass.inverseViewProjection,
                                                      pass.flipY, pass.zeroToOneDepth);
-    if (stage == 2.0 || stage == 3.0)
+    if (stage == 2.0 || stage == 3.0 || stage == 4.0)
     {
         const float2 traceSize = pass.parameters[4].yz;
         // Filtering is centred on trace texels, while geometry uses the
         // exact G-buffer pixel selected by the trace (also for odd extents).
-        const float2 pixel = (stage == 3.0 ? outputUv : uv) * traceSize - 0.5;
+        const bool upsample = stage == 2.0;
+        const float2 pixel = (upsample ? uv : outputUv) * traceSize - 0.5;
         const float2 base = floor(pixel);
         const float2 fraction = frac(pixel);
         float3 sum = 0.0;
         float weightSum = 0.0;
-        // Two separable bilateral passes provide a wide roughness-dependent
-        // footprint at linear cost. Keep signed corrections (including black
+        // Two separable bilateral passes at trace resolution provide a wide roughness-dependent footprint at
+        // linear cost; a 2x2 bilateral upsample then reconstructs full resolution. (Filtering vertically while
+        // upsampling cost four times as many wide-footprint taps.) Keep signed corrections (including black
         // reflections) and reject neighbours across geometry/material edges.
         const bool horizontal = stage == 3.0;
-        const bool roughFilter = roughness > 0.08;
+        const bool roughFilter = !upsample && roughness > 0.08;
         const float sigma = max(0.5, roughness * 8.0 + roughness * roughness * 4.0);
         const int radius = roughFilter ? min(int(ceil(3.0 * sigma)), 16) : 0;
-        const int firstY = horizontal ? 0 : (roughFilter ? -radius : 0);
-        const int lastY = horizontal ? 0 : (roughFilter ? radius : 1);
-        const int firstX = horizontal && roughFilter ? -radius : 0;
-        const int lastX = horizontal ? (roughFilter ? radius : 0) : 1;
+        const int firstY = upsample || horizontal ? 0 : -radius;
+        const int lastY = upsample ? 1 : (horizontal ? 0 : radius);
+        const int firstX = horizontal ? -radius : 0;
+        const int lastX = upsample ? 1 : (horizontal ? radius : 0);
         for (int y = firstY; y <= lastY; ++y)
             for (int x = firstX; x <= lastX; ++x)
             {
@@ -139,14 +275,13 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                     (2.0 * sigma * sigma));
                 const float bilinearX = x == 0 ? 1.0 - fraction.x : fraction.x;
                 const float bilinearY = y == 0 ? 1.0 - fraction.y : fraction.y;
-                const float spatialWeight = horizontal ? (roughFilter ? gaussian : 1.0)
-                    : bilinearX * (roughFilter ? gaussian : bilinearY);
+                const float spatialWeight = upsample ? bilinearX * bilinearY : (roughFilter ? gaussian : 1.0);
                 const float weight = spatialWeight * depthWeight * normalWeight * materialWeight;
                 sum += reflectionTexture.SampleLevel(at, 0.0).rgb * weight;
                 weightSum += weight;
             }
         const float3 correction = sum / max(weightSum, 0.000001);
-        if (horizontal) return float4(correction, 0.0);
+        if (!upsample) return float4(correction, 0.0);
         return float4(max(scene.rgb + roughnessFade * correction, 0.0), scene.a);
     }
     const float3 view = normalize(pass.cameraPosition.xyz - position);
@@ -155,8 +290,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     const float3 f0 = lerp(float3(0.04), albedoTexture.SampleLevel(uv, 0.0).rgb, metallic);
     const float alpha = roughness * roughness;
     const float a2 = alpha * alpha;
-    const float3 tangent = normalize(cross(abs(normal.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0), normal));
-    const float3 bitangent = cross(normal, tangent);
+    const ReflectionLobe lobe = makeReflectionLobe(normal, view, ndotv, alpha);
     const float start = max(pass.parameters[0].w, 0.001);
     // An empty ray interval must preserve the environment exactly. Do not
     // expand a shorter maximum distance to the start offset and invent hits.
@@ -176,18 +310,16 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     // samples. Rejected directions and misses remain in the denominator.
 #if defined(PLUTO_SSR_REDUCED_RAYS)
     // Lane 2.y: rays per pixel, rounded up to whole unrolled groups of four.
-    // With a temporal resolve active (lane 2.w), rotate the stratification
-    // every frame (lane 2.z) so accumulation integrates the whole lobe.
-    const uint samples = clamp((uint(pass.parameters[2].y) + 3u) & ~3u, 4u, 16u);
-    float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
-    if (pass.parameters[2].w > 0.5)
-        sampleRotation = frac(sampleRotation + pass.parameters[2].z * float2(0.618033989, 0.754877666));
+    const uint configuredSamples = clamp((uint(pass.parameters[2].y) + 3u) & ~3u, 4u, 16u);
 #else
-    // The default count stays a compile-time constant: a runtime count
-    // measured 12% slower even at sixteen rays.
-    const uint samples = 16;
-    const float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
+    const uint configuredSamples = 16;
 #endif
+    const uint samples = lobeRayCount(lobe, clipOrigin, start + distance, configuredSamples);
+    // Fewer than sixteen rays with a temporal resolve active (lane 2.w) rotate the stratification every frame
+    // (lane 2.z), so accumulation integrates the whole lobe.
+    float2 sampleRotation = reflectionSampleRotation(floor(uv / pass.inverseResolution));
+    if (samples < 16 && pass.parameters[2].w > 0.5)
+        sampleRotation = frac(sampleRotation + pass.parameters[2].z * float2(0.618033989, 0.754877666));
     float3 reflection = 0.0;
     float3 totalResponse = 0.0;
     float3 coveredResponse = 0.0;
@@ -206,23 +338,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 #endif
         float xi = frac((float(sample) + 0.5) / float(samples) + sampleRotation.x);
         float phi = 6.283185307 * frac(float(sample) * 0.618033989 + sampleRotation.y);
-        // Sample the GGX distribution visible from this view (VNDF).
-        // Unlike sampling the entire NDF, its BRDF/pdf weight is bounded at
-        // grazing angles, avoiding a few rays dominating a rough reflection.
-        const float3 localView = float3(dot(view, tangent), dot(view, bitangent), ndotv);
-        const float3 stretchedView = normalize(float3(alpha * localView.xy, localView.z));
-        const float lensq = dot(stretchedView.xy, stretchedView.xy);
-        const float3 t1 = lensq > 0.000001
-            ? float3(-stretchedView.y, stretchedView.x, 0.0) / sqrt(lensq) : float3(1, 0, 0);
-        const float3 t2 = cross(stretchedView, t1);
-        const float diskX = sqrt(xi) * cos(phi);
-        float diskY = sqrt(xi) * sin(phi);
-        const float blend = 0.5 * (1.0 + stretchedView.z);
-        diskY = (1.0 - blend) * sqrt(max(0.0, 1.0 - diskX * diskX)) + blend * diskY;
-        const float3 projectedNormal = diskX * t1 + diskY * t2 +
-            sqrt(max(0.0, 1.0 - diskX * diskX - diskY * diskY)) * stretchedView;
-        const float3 localHalf = normalize(float3(alpha * projectedNormal.xy, max(0.0, projectedNormal.z)));
-        const float3 halfVector = tangent * localHalf.x + bitangent * localHalf.y + normal * localHalf.z;
+        const float3 halfVector = lobe.halfVector(xi, phi);
         const float vdoth = saturate(dot(view, halfVector));
         const float3 ray = reflect(-view, halfVector);
         const float ndotl = dot(normal, ray);
@@ -236,50 +352,39 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
         totalResponse += response;
         const float4 viewRay = mul(pass.view, float4(ray, 0.0));
         const float4 clipRay = mul(pass.projection, viewRay);
-        float previousTravel = 0.0;
-        for (uint i = 0; i < steps; ++i)
+        float low, high;
+        float2 rayUv;
+        float hitDepth;
+        // The march terminates at its first crossing, whether or not the refined hit is accepted.
+        if (firstCrossing(clipOrigin, clipRay, start, distance, steps, low, high, rayUv, hitDepth))
         {
-            float fraction = (float(i) + 1.0) / float(steps);
-            float travel = start + distance * fraction * fraction;
-            float2 rayUv;
-            float projectedDepth;
-            if (!projectRay(clipOrigin + clipRay * travel, rayUv, projectedDepth)) break;
-            // Every preceding sample is in front: this loop terminates at its
-            // first crossing, regardless of whether the refined hit is accepted.
-            float hitDepth;
-            if (behindSurface(rayUv, projectedDepth, hitDepth))
+            for (uint j = 0; j < min(uint(max(pass.parameters[1].w, 0.0)), 8u); ++j)
             {
-                float low = previousTravel, high = travel;
-                for (uint j = 0; j < min(uint(max(pass.parameters[1].w, 0.0)), 8u); ++j)
+                float middle = (low + high) * 0.5;
+                float2 middleUv;
+                float middleDepth;
+                if (!projectRay(clipOrigin + clipRay * middle, middleUv, middleDepth)) break;
+                float middleSceneDepth;
+                if (behindSurface(middleUv, middleDepth, middleSceneDepth))
                 {
-                    float middle = (low + high) * 0.5;
-                    float2 middleUv;
-                    float middleDepth;
-                    if (!projectRay(clipOrigin + clipRay * middle, middleUv, middleDepth)) break;
-                    float middleSceneDepth;
-                    if (behindSurface(middleUv, middleDepth, middleSceneDepth))
-                    {
-                        high = middle;
-                        rayUv = middleUv;
-                        hitDepth = middleSceneDepth;
-                    }
-                    else low = middle;
+                    high = middle;
+                    rayUv = middleUv;
+                    hitDepth = middleSceneDepth;
                 }
-                // The upper endpoint is always the last accepted crossing.
-                // Reuse its projected UV and depth, including zero refinements
-                // and early projection failure, instead of sampling it again.
-                float rayDepth = -(viewOrigin.z + viewRay.z * high);
-                float delta = depthDelta(rayUv, hitDepth, rayDepth, viewDepthRow, homogeneousRow);
-                float3 hitNormal = decodeNormal(normalTexture.SampleLevel(rayUv, 0.0).xyz);
-                if (delta >= 0.0 && delta <= thickness && dot(ray, hitNormal) < -0.01)
-                {
-                    const float confidence = edgeFade(rayUv, pass.parameters[1].x);
-                    reflection += sceneTexture.SampleLevel(rayUv, 0.0).rgb * response * confidence;
-                    coveredResponse += response * confidence;
-                }
-                break;
+                else low = middle;
             }
-            previousTravel = travel;
+            // The upper endpoint is always the last accepted crossing.
+            // Reuse its projected UV and depth, including zero refinements
+            // and early projection failure, instead of sampling it again.
+            float rayDepth = -(viewOrigin.z + viewRay.z * high);
+            float delta = depthDelta(rayUv, hitDepth, rayDepth, viewDepthRow, homogeneousRow);
+            float3 hitNormal = decodeNormal(normalTexture.SampleLevel(rayUv, 0.0).xyz);
+            if (delta >= 0.0 && delta <= thickness && dot(ray, hitNormal) < -0.01)
+            {
+                const float confidence = edgeFade(rayUv, pass.parameters[1].x);
+                reflection += sceneTexture.SampleLevel(rayUv, 0.0).rgb * response * confidence;
+                coveredResponse += response * confidence;
+            }
         }
     }
 #if defined(PLUTO_SSR_UNROLL_RAYS)

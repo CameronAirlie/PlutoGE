@@ -3703,6 +3703,7 @@ namespace PlutoGE::ui
         float projectRuntimeRenderScale = 1.0f;
         float projectRuntimeUpscaleSharpness = 0.25f;
         render::rhi::UpscalerQuality projectRuntimeUpscalerQuality = render::rhi::UpscalerQuality::Quality;
+        render::RenderingSettings projectRendering;
         float projectEditorFontSize = m_panelManager.GetEditorFontSize();
         fonts::EditorFont projectEditorFont = m_panelManager.GetEditorFont();
         bool shouldOpenProjectSettingsPopup = false;
@@ -3745,6 +3746,7 @@ namespace PlutoGE::ui
             projectRuntimeRenderScale = manifest.runtimeRenderScale;
             projectRuntimeUpscaleSharpness = manifest.runtimeUpscaleSharpness;
             projectRuntimeUpscalerQuality = manifest.runtimeUpscalerQuality;
+            projectRendering = manifest.rendering;
             projectEditorFontSize = manifest.editorFontSize;
             projectEditorFont = fonts::FromName(manifest.editorFont);
         };
@@ -3785,16 +3787,21 @@ namespace PlutoGE::ui
             viewportPanel->SetTemporalUpscalerOptions(viewportUpscaler);
             viewportPanel2->SetTemporalUpscalerOptions(viewportUpscaler);
             core::CpuTrace cpuTrace(m_profiler.IsRecording());
+            // The viewports render with the project's rendering settings, as the runtime does; the profiler can
+            // override occlusion culling for the session.
+            auto renderingSettings = m_project ? m_project->GetManifest().rendering : render::RenderingSettings{};
+            if (m_profiler.occlusionOverride)
+                renderingSettings.occlusionCulling = *m_profiler.occlusionOverride;
             if (m_editorSceneRenderService)
             {
                 m_editorSceneRenderService->SetAmbientProbeDebugEnabled(true);
                 m_editorSceneRenderService->SetGeometryDiagnosticMode(m_profiler.geometryDiagnosticMode);
-                m_editorSceneRenderService->SetOcclusionMode(m_profiler.occlusionMode);
+                m_editorSceneRenderService->SetRenderingSettings(renderingSettings);
             }
             if (m_gameSceneRenderService)
             {
                 m_gameSceneRenderService->SetGeometryDiagnosticMode(m_profiler.geometryDiagnosticMode);
-                m_gameSceneRenderService->SetOcclusionMode(m_profiler.occlusionMode);
+                m_gameSceneRenderService->SetRenderingSettings(renderingSettings);
             }
             core::CpuScope frameScope("EditorLoop");
             auto currentTime = std::chrono::high_resolution_clock::now();
@@ -5052,7 +5059,7 @@ namespace PlutoGE::ui
                     }
                     case ProjectSettingsPage::Rendering:
                     {
-                        widgets::PageTitle("Rendering", "Graphics backend and upscaling. Saved temporal settings apply to the Editor Viewport, Game Viewport and runtime.");
+                        widgets::PageTitle("Rendering", "Graphics backend, upscaling and performance. Saved settings apply to the Editor Viewport, Game Viewport and runtime.");
                         widgets::SectionHeading("Graphics API");
                         widgets::BeginCard("##ApiCard");
                         if (widgets::BeginSettingsTable("##ApiTable"))
@@ -5112,6 +5119,22 @@ namespace PlutoGE::ui
                             ImGui::EndDisabled();
                             if (temporal && projectRuntimeUpscalerQuality == render::rhi::UpscalerQuality::UltraPerformance)
                                 warningText("Ultra Performance is a 3x mode for very high output resolutions. Use Quality or Balanced for docked editor viewports.");
+                            widgets::EndSettingsTable();
+                        }
+                        widgets::EndCard();
+
+                        widgets::SectionHeading("Performance");
+                        widgets::BeginCard("##PerformanceCard");
+                        if (widgets::BeginSettingsTable("##PerformanceTable"))
+                        {
+                            widgets::SettingsRow("Occlusion culling",
+                                "Skips opaque draws hidden behind nearer surfaces. The image is unchanged; it saves GPU time in "
+                                "occluded scenes and costs a little in open ones. Applies to the viewports and the runtime.");
+                            bool occlusionCulling = projectRendering.occlusionCulling == render::OcclusionMode::Cull;
+                            if (widgets::ToggleSwitch("##OcclusionCulling", &occlusionCulling))
+                                projectRendering.occlusionCulling = occlusionCulling ? render::OcclusionMode::Cull : render::OcclusionMode::Off;
+                            if (projectRendering.occlusionCulling == render::OcclusionMode::Measure)
+                                warningText("Saved in Measure mode: hidden draws are counted but still drawn.");
                             widgets::EndSettingsTable();
                         }
                         widgets::EndCard();
@@ -5336,6 +5359,7 @@ namespace PlutoGE::ui
                         manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);
                         manifest.runtimeUpscaleSharpness = std::clamp(projectRuntimeUpscaleSharpness, 0.0f, 1.0f);
                         manifest.runtimeUpscalerQuality = projectRuntimeUpscalerQuality;
+                        manifest.rendering = projectRendering;
                         manifest.editorFontSize = std::clamp(projectEditorFontSize, fonts::kMinSize, fonts::kMaxSize);
                         manifest.editorFont = fonts::Name(projectEditorFont);
                         const std::string configuredScriptAssembly = projectScriptAssemblyBuffer.data();

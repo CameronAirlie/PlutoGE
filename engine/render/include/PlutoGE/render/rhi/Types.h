@@ -80,6 +80,40 @@ namespace PlutoGE::render::rhi
         Always
     };
 
+    // GPU work a pipeline barrier orders, by stage and what it does with memory. Combine with |. A barrier's
+    // `before` scope must include every earlier access the later work conflicts with: writes it reads, and reads
+    // of memory it overwrites.
+    enum class BarrierAccess : std::uint32_t
+    {
+        None = 0,
+        IndirectCommandRead = 1u << 0,
+        VertexInputRead = 1u << 1, // vertex and index buffers
+        VertexShaderRead = 1u << 2,
+        FragmentShaderRead = 1u << 3,
+        FragmentShaderWrite = 1u << 4,
+        ComputeShaderRead = 1u << 5,
+        ComputeShaderWrite = 1u << 6,
+        TransferRead = 1u << 7,
+        TransferWrite = 1u << 8,
+        GraphicsShaders = VertexShaderRead | FragmentShaderRead | FragmentShaderWrite,
+        Graphics = IndirectCommandRead | VertexInputRead | GraphicsShaders,
+        Compute = ComputeShaderRead | ComputeShaderWrite,
+        Transfer = TransferRead | TransferWrite,
+        All = Graphics | Compute | Transfer
+    };
+    [[nodiscard]] constexpr BarrierAccess operator|(BarrierAccess left, BarrierAccess right) noexcept
+    {
+        return static_cast<BarrierAccess>(static_cast<std::uint32_t>(left) | static_cast<std::uint32_t>(right));
+    }
+    [[nodiscard]] constexpr BarrierAccess operator&(BarrierAccess left, BarrierAccess right) noexcept
+    {
+        return static_cast<BarrierAccess>(static_cast<std::uint32_t>(left) & static_cast<std::uint32_t>(right));
+    }
+    [[nodiscard]] constexpr bool HasAny(BarrierAccess value, BarrierAccess mask) noexcept
+    {
+        return (value & mask) != BarrierAccess::None;
+    }
+
     enum class TemporalUpscaler : std::uint8_t
     {
         None,
@@ -136,6 +170,11 @@ namespace PlutoGE::render::rhi
     using TextureHandle = Handle<struct TextureTag>;
     using SamplerHandle = Handle<struct SamplerTag>;
     using PipelineHandle = Handle<struct PipelineTag>;
+
+    // Bindless textures: a device-wide table of sampled textures that shaders index directly (see
+    // IRenderDevice::RegisterBindlessTexture). Shaders declare it as `Sampler2D[]` in this descriptor set.
+    inline constexpr std::uint32_t BindlessTextureSet = 4;
+    inline constexpr std::uint32_t InvalidBindlessIndex = ~std::uint32_t{0};
 
     // Backend-neutral inputs for temporal reconstruction. Matrices are stored
     // row-major so SDK adapters do not depend on the engine's math library.
@@ -290,6 +329,9 @@ namespace PlutoGE::render::rhi
         BlendState blend;
         std::string debugName;
         std::uint32_t clipDistanceCount = 0;
+        // Also binds the device's bindless texture table at BindlessTextureSet. Requires
+        // IRenderDevice::BindlessTextureCapacity() != 0.
+        bool bindlessTextures = false;
     };
 
     struct ComputePipelineDescriptor

@@ -5,6 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 // Multiple copies of mutable CPU input, partial destination updates, arena
@@ -47,3 +48,47 @@ void CheckLargeBufferUploads(Device &device)
     std::cout << "PASS: staged uploads, offsets, CPU source lifetime, arena rollover and in-flight reuse; "
               << recordingMs / frames << " ms CPU recording per 18 MiB\n";
 }
+
+// Consecutive recorded updates share one barrier pair; an update overlapping a queued one starts a new batch, so
+// later writes still win. Inline and staged updates mix in either order.
+template<class Device>
+void CheckBatchedBufferUploads(Device &device)
+{
+    using namespace PlutoGE::render::rhi;
+    constexpr std::size_t smallSize = 256, largeSize = 128 * 1024;
+    Buffer small(device, device.CreateBuffer({smallSize, BufferUsage::Storage, "Batched upload small"}));
+    Buffer large(device, device.CreateBuffer({largeSize, BufferUsage::Storage, "Batched upload large"}));
+    const auto fill = [](std::size_t size, int value) { return std::vector<std::byte>(size, std::byte(value)); };
+    auto &context = device.GetImmediateContext();
+    std::vector<std::byte> smallResult, largeResult;
+    context.BeginFrame();
+    device.UpdateBuffer(small.Get(), 0, fill(64, 1));
+    device.UpdateBuffer(small.Get(), 64, fill(64, 2));
+    device.UpdateBuffer(large.Get(), 0, fill(largeSize, 5));  // staged
+    device.UpdateBuffer(small.Get(), 0, fill(64, 3));         // overlaps the first: a second batch
+    device.UpdateBuffer(large.Get(), 0, fill(64, 6));         // inline after the staged copy
+    const auto readback = [&](BufferHandle buffer, std::vector<std::byte> &result)
+    {
+        if (!context.QueueBufferReadback(buffer, 128, [&](std::span<const std::byte> bytes) { result.assign(bytes.begin(), bytes.end()); }))
+            throw std::runtime_error("Batched upload readback could not be queued");
+    };
+    readback(small.Get(), smallResult);
+    readback(large.Get(), largeResult);
+    context.Submit();
+    const auto stats = device.GetTimingStats();
+    for (int frame = 0; frame < 3; ++frame) { context.BeginFrame(); context.Submit(); }
+    const auto expect = [](const std::vector<std::byte> &bytes, int first, int second, const char *message)
+    {
+        if (bytes.size() != 128 ||
+            !std::all_of(bytes.begin(), bytes.begin() + 64, [=](std::byte value) { return value == std::byte(first); }) ||
+            !std::all_of(bytes.begin() + 64, bytes.end(), [=](std::byte value) { return value == std::byte(second); }))
+            throw std::runtime_error(message);
+    };
+    expect(smallResult, 3, 2, "A batched upload lost the order of overlapping writes");
+    expect(largeResult, 6, 5, "An inline upload did not follow the staged copy it overlaps");
+    if (stats.bufferUploads != 5 || stats.bufferUploadBatches != 2)
+        throw std::runtime_error("Recorded buffer uploads were not batched (" + std::to_string(stats.bufferUploads) +
+                                 " uploads in " + std::to_string(stats.bufferUploadBatches) + " batches)");
+    std::cout << "PASS: 5 buffer uploads recorded in 2 batches, overlapping writes ordered\n";
+}
+

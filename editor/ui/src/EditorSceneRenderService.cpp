@@ -89,6 +89,7 @@ namespace PlutoGE::ui
             if (!renderer->Initialize(*m_device, shaders))
                 throw std::runtime_error("Failed to initialize the editor scene renderer");
             renderer->SetTemporalUpscalerOptions(m_upscalerOptions);
+            renderer->SetRenderingSettings(m_renderingSettings);
             m_sceneRenderer = std::move(renderer);
             std::cout << "Editor scene RHI: " << m_vulkanStatus << "; active backend: "
                       << (m_isVulkan ? "Vulkan" : "OpenGL") << '\n';
@@ -256,6 +257,16 @@ namespace PlutoGE::ui
         ApplyGraphicsQuality();
     }
 
+    void EditorSceneRenderService::SetRenderingSettings(const render::RenderingSettings &settings) noexcept
+    {
+        if (settings == m_renderingSettings)
+            return;
+        m_renderingSettings = settings;
+        if (m_sceneRenderer) m_sceneRenderer->SetRenderingSettings(settings);
+        m_cameraStack.SetRenderingSettings(settings);
+        m_renderTextures.SetRenderingSettings(settings);
+    }
+
     void EditorSceneRenderService::ApplyGraphicsQuality() noexcept
     {
         const auto &quality = GetGraphicsQuality();
@@ -284,7 +295,6 @@ namespace PlutoGE::ui
         auto lighting = lights ? render::BuildSceneLighting(cameraData, scene, *lights)
                                : render::BuildSceneLighting(cameraData, scene);
         lighting.geometryDiagnosticMode = m_geometryDiagnosticMode;
-        lighting.occlusionMode = m_occlusionMode;
 
 
         auto atmosphereEffects = render::BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);

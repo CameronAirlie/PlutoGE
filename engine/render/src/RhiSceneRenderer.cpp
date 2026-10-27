@@ -287,6 +287,7 @@ namespace PlutoGE::render
     {
         BasicLighting effectiveLighting = sourceLighting;
         m_graphicsQuality.Apply(effectiveLighting);
+        m_renderingSettings.Apply(effectiveLighting);
         const auto &lighting = effectiveLighting;
         // A tag-filtered view supplies its own lights; otherwise every scene light applies.
         std::vector<scene::Light *> allSceneLights;

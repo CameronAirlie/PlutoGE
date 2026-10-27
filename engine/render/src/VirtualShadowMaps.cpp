@@ -711,7 +711,9 @@ namespace PlutoGE::render
         RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, {0, 3, 6, 7});
         commands.EndRendering(); commands.EndGpuScope();
         commands.BeginGpuScope("RHI VSM GPU Planning");
-        commands.ShaderMemoryBarrier();
+        using rhi::BarrierAccess;
+        // Planning rewrites page state that earlier page rasterization and planning read.
+        commands.PipelineBarrier(BarrierAccess::Graphics | BarrierAccess::Compute, BarrierAccess::Compute);
         static constexpr std::array planningScopes{
             "RHI VSM Planning / Reset", "RHI VSM Planning / Receiver requests",
             "RHI VSM Planning / Page allocation", "RHI VSM Planning / Caster signatures",
@@ -725,7 +727,9 @@ namespace PlutoGE::render
             else if (pass == 3) commands.Dispatch(m_poolTiles * m_poolTiles, 1, 1);
             else if (pass == 5) commands.Dispatch(static_cast<std::uint32_t>((m_casterCount + 63) / 64 + (m_casterCount == 0)), 1, 1);
             else commands.Dispatch(1, 1, 1);
-            commands.ShaderMemoryBarrier();
+            // The last pass feeds page rasterization (indirect commands, page lists) and receiver shading.
+            commands.PipelineBarrier(BarrierAccess::Compute, pass + 1 < planningScopes.size()
+                ? BarrierAccess::Compute : BarrierAccess::Compute | BarrierAccess::Graphics);
             commands.EndGpuScope();
         }
         commands.EndGpuScope();
@@ -748,10 +752,13 @@ namespace PlutoGE::render
         commands.BindStorageBuffer(4, m_lists.Get());
         m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, m_casterCount, {1, 4, 1, 4});
         commands.EndRendering(); commands.EndGpuScope();
-        commands.ShaderMemoryBarrier();
+        using rhi::BarrierAccess;
+        commands.PipelineBarrier(BarrierAccess::Graphics, BarrierAccess::Compute);
         BindCompute(commands, 6);
         commands.Dispatch((m_poolTiles * m_poolTiles + 63) / 64, 1, 1);
-        commands.ShaderMemoryBarrier();
+        // Published pages feed receiver shading, later planning and the counter readback.
+        commands.PipelineBarrier(BarrierAccess::Compute,
+                                 BarrierAccess::Graphics | BarrierAccess::Compute | BarrierAccess::TransferRead);
         const std::weak_ptr<VirtualShadowStats> weakStats = m_stats;
         const auto frame = m_frame;
         commands.QueueBufferReadback(m_counters.Get(), PLUTO_VSM_COUNTER_COUNT * 4, [weakStats, frame](std::span<const std::byte> bytes)

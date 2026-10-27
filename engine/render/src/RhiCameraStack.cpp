@@ -204,6 +204,7 @@ namespace PlutoGE::render
             const auto lighting = BuildOverlayLighting(view, scene, sharedShadows);
             const auto shadows = view.shadowCommands.empty() ? view.commands : view.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);
+            renderer->SetRenderingSettings(m_renderingSettings);
             if (skinningSource) renderer->ReuseSkinningForFrame(*skinningSource);
             if (sharedShadows) renderer->ReuseDirectionalShadowsForFrame(sharedShadows);
             if (!renderer->Render(width, height, view.cameraData, lighting, view.commands, shadows,
@@ -322,6 +323,7 @@ namespace PlutoGE::render
             // Begin once, append every subsequent overlay and the composite.
             const auto shadowCommands = layer.shadowCommands.empty() ? layer.commands : layer.shadowCommands;
             renderer->SetGraphicsQuality(m_graphicsQuality);
+            renderer->SetRenderingSettings(m_renderingSettings);
             if (!renderer->Render(width, height, layer.cameraData, lighting, layer.commands, shadowCommands,
                                   layer.postProcessEffects, {}, texturePixelReader, PostProcessDebugView::None,
                                   false, scene, layer.lights, {}, false, std::nullopt,

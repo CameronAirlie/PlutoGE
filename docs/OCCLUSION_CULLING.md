@@ -5,12 +5,12 @@
 1. Keep visibility decisions on the GPU and use current-frame depth. CPU readback is diagnostic only.
 2. Isolate depth resources, reverse-Z hierarchy construction, bounds tests, indirect commands, and delayed counters in `OcclusionCulling`.
 3. Integrate only with main-pass single-instance draws. Preserve shadow/GI lists and all motion-history bookkeeping.
-4. Expose Off, Measure, and Cull in the profiler. Default to Off until total scene timings establish a benefit for the scene.
+4. Save Off or Cull per project (`RenderingSettings`), applied to the editor viewports and the runtime. The profiler can override it, including Measure, for a session. Default to Off until total scene timings establish a benefit for the scene.
 5. Validate image parity and rejection counts on visible/hidden geometry, camera changes and jitter, VSM reuse, invalid bounds, partial exposure, instance fallback, masked coverage, and odd viewport sizes.
 
 ## Operation
 
-The profiler's **Occlusion culling** selector controls editor scene rendering:
+**Project Settings > Rendering > Performance > Occlusion culling** is saved in the project manifest (`OCCLUSION_CULLING`) and applies to the Editor Viewport, Game Viewport, camera stacks, render textures and the standalone runtime (`RhiSceneRenderer::SetRenderingSettings`). The profiler's **Occlusion culling** selector overrides it for the current editor session without saving; **Project setting** returns to the saved value. Modes:
 
 - **Off**: no occlusion resources are dispatched.
 - **Measure**: run the same depth/hierarchy/test passes as Cull, but submit all main geometry.
@@ -24,7 +24,7 @@ The hierarchy stores minimum depth for reverse Z. Each level covers 2x2 cells of
 
 An inconclusive coarse depth test retries progressively finer levels, including original depth texels, with a maximum budget of 256 depth reads per draw. Budget exhaustion leaves the draw visible. This can recover hidden objects whose coarse cells overlapped sky outside their actual projected bounds. Diagnostics partition draws into tested, unsupported, invalid-bound, and clipped/offscreen categories; additional counters report tight bounds, refinement attempts, recovered rejections, and budget limits.
 
-Each single-instance draw has a stable indirect slot for the current input span. Instanced, transparent, and outline rendering keeps its existing submission path. No readback controls drawing, and no prior-frame visibility is trusted. Resource lifetime and upload versioning are provided by the RHI.
+Each single-instance draw has a stable indirect slot for the current input span. GPU-driven opaque draws ([renderer modernisation](renderer-modernisation.md)) copy their visibility from these slots on the GPU. Instanced, transparent, and outline rendering keeps its existing submission path. No readback controls drawing, and no prior-frame visibility is trusted. Resource lifetime and upload versioning are provided by the RHI.
 
 ## Limits and follow-up work
 

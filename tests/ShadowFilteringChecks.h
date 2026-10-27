@@ -4,6 +4,7 @@
 #include <array>
 #include <algorithm>
 #include <stdexcept>
+#include <string>
 #include <iostream>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -154,7 +155,10 @@ void CheckShadowFiltering(PlutoGE::render::BasicRenderer &renderer, ReadPixels r
     auto virtualStats = renderer.GetFrameStats().virtualShadows;
     if (!renderer.GetFrameStats().virtualShadowsActive || !virtualStats.gpuCountersAvailable ||
         virtualStats.requested == 0 || virtualStats.cacheHits == 0 || virtualStats.dirty != 0)
-        throw std::runtime_error("GPU virtual shadows did not allocate and retain visible pages");
+        throw std::runtime_error("GPU virtual shadows did not allocate and retain visible pages (active " +
+            std::to_string(renderer.GetFrameStats().virtualShadowsActive) + ", counters " +
+            std::to_string(virtualStats.gpuCountersAvailable) + ", requested " + std::to_string(virtualStats.requested) +
+            ", cache hits " + std::to_string(virtualStats.cacheHits) + ", dirty " + std::to_string(virtualStats.dirty) + ")");
     for (int y = 32; y < 224; ++y)
         if (static_cast<unsigned char>(virtualPixels[(y * 256 + 64) * 4]) > 10 ||
             static_cast<unsigned char>(virtualPixels[(y * 256 + 192) * 4]) < 245)

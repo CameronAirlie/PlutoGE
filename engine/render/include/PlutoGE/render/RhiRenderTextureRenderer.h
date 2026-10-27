@@ -39,6 +39,7 @@ namespace PlutoGE::render
             m_graphicsQuality = quality;
             return true;
         }
+        void SetRenderingSettings(const RenderingSettings &settings) noexcept { m_renderingSettings = settings; }
         RhiRenderTextureRenderer();
         ~RhiRenderTextureRenderer();
         RhiRenderTextureRenderer(const RhiRenderTextureRenderer &) = delete;
@@ -61,6 +62,7 @@ namespace PlutoGE::render
 
     private:
         GraphicsQuality m_graphicsQuality;
+        RenderingSettings m_renderingSettings;
         struct Target
         {
             std::weak_ptr<const void> lifetime;

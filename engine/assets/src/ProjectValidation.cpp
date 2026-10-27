@@ -7,6 +7,7 @@
 #include "PlutoGE/assets/SceneModelInstanceRecord.h"
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -132,6 +133,22 @@ namespace PlutoGE::assets
                 std::error_code ec;
                 if (path.empty() || !std::filesystem::is_regular_file(path, ec))
                     Add("asset.missing", owner, entity, line, "Missing asset: " + reference + (ec ? " (" + ec.message() + ")" : ""));
+            }
+            // An untyped script field (a project without typed asset fields) can only hold a list of assets as one
+            // string, conventionally references joined with '|'. Each element is checked; text that is not a
+            // reference is ignored, as for a single value.
+            void UntypedReferences(std::string_view value, const std::string &owner, std::uint32_t entity, std::size_t line)
+            {
+                for (std::size_t start = 0; start <= value.size();)
+                {
+                    auto end = value.find('|', start);
+                    if (end == std::string_view::npos) end = value.size();
+                    auto element = value.substr(start, end - start);
+                    while (!element.empty() && std::isspace(static_cast<unsigned char>(element.front()))) element.remove_prefix(1);
+                    while (!element.empty() && std::isspace(static_cast<unsigned char>(element.back()))) element.remove_suffix(1);
+                    if (!element.empty()) Reference(std::string(element), owner, entity, line);
+                    start = end + 1;
+                }
             }
             void Variant(std::istream &stream, const std::string &owner)
             {
@@ -294,7 +311,7 @@ namespace PlutoGE::assets
                             Add("script.asset_schema", owner, c.entity, c.line, "Typed managed asset fields require scene format 3.");
                         else for (const auto &property : c.scriptProperties)
                         {
-                            if (!metadata.declared) { Reference(property.value, owner, c.entity, property.line); continue; }
+                            if (!metadata.declared) { UntypedReferences(property.value, owner, c.entity, property.line); continue; }
                             const auto role = metadata.fields.find(property.name);
                             if (role == metadata.fields.end()) continue;
                             for (auto reference : ManagedAssetFieldReferences(role->second, property.value))

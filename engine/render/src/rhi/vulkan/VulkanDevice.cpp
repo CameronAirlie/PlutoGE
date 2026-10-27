@@ -244,9 +244,23 @@ namespace PlutoGE::render::rhi::vulkan
             VmaAllocation allocation = VK_NULL_HANDLE;
             TextureDescriptor descriptor;
             VkImageLayout layout = VK_IMAGE_LAYOUT_UNDEFINED;
+            // Stages that may have accessed the image since its last barrier: the source scope of its next
+            // transition. All commands while unknown.
+            VkPipelineStageFlags accessStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            // Bindless table slots that sample the image. Their reads are not bind-tracked, so its transitions
+            // order against all earlier work and make it readable to every shader stage.
+            std::uint32_t bindlessReferences = 0;
             std::uint32_t mipLevels = 1;
             std::uint32_t arrayLayers = 1;
         };
+
+        // Bindless table size when the device allows it.
+        constexpr std::uint32_t MaxBindlessTextures = 16384;
+
+        // Shader stages that can read or write a bound texture. Bindings outlive pipeline switches, so a binding
+        // made under one pipeline may be used by a graphics or compute pipeline bound later.
+        constexpr VkPipelineStageFlags ShaderStages =
+            VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
         struct SamplerResource
         {
@@ -258,6 +272,9 @@ namespace PlutoGE::render::rhi::vulkan
             VkPipeline pipeline = VK_NULL_HANDLE;
             VkPipelineLayout layout = VK_NULL_HANDLE;
             std::vector<VkDescriptorSetLayout> setLayouts;
+            // Sets allocated per draw from bound resources; setLayouts may append the bindless set after them.
+            std::size_t descriptorSetCount = 0;
+            bool bindlessTextures = false;
             std::vector<bool> populatedSets;
             std::vector<std::vector<GraphicsPipelineDescriptor::ResourceBinding>> bindingsBySet;
             std::vector<std::vector<std::uint32_t>> dynamicUniformSlotsBySet;
@@ -1040,8 +1057,46 @@ namespace PlutoGE::render::rhi::vulkan
 
     struct VulkanDevice::Impl
     {
+        // PLUTO_VULKAN_CONSERVATIVE_BARRIERS=1 orders every barrier after all earlier commands, as before
+        // access tracking, for comparisons.
+        const bool conservativeBarriers = []
+        {
+            const char *setting = std::getenv("PLUTO_VULKAN_CONSERVATIVE_BARRIERS");
+            return setting && std::string_view(setting) == "1";
+        }();
         VkInstance instance = VK_NULL_HANDLE;
         VkSurfaceKHR surface = VK_NULL_HANDLE;
+        // Async compute (ICommandContext::BeginAsyncCompute): a queue of a compute-only family beside the graphics
+        // queue, with a timeline semaphore per queue ordering their submissions. Null without such a family, or
+        // with PLUTO_VULKAN_ASYNC_COMPUTE=0. Submissions share queueMutex.
+        VkQueue asyncQueue = VK_NULL_HANDLE;
+        std::array<std::uint32_t, 2> sharedQueueFamilies{};
+        VkSemaphore graphicsTimeline = VK_NULL_HANDLE, computeTimeline = VK_NULL_HANDLE;
+        std::uint64_t graphicsTimelineValue = 0, computeTimelineValue = 0;
+
+        // Buffers may be used by both queue families; images never reach the async queue.
+        void ShareBuffer(VkBufferCreateInfo &info) const noexcept
+        {
+            if (!asyncQueue)
+                return;
+            info.sharingMode = VK_SHARING_MODE_CONCURRENT;
+            info.queueFamilyIndexCount = static_cast<std::uint32_t>(sharedQueueFamilies.size());
+            info.pQueueFamilyIndices = sharedQueueFamilies.data();
+        }
+
+        // The bindless texture table (BindlessTextureSet): one update-after-bind, partially bound array of combined
+        // image samplers that every opted-in pipeline shares. Guarded by sharedMutex.
+        struct BindlessTable
+        {
+            VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+            VkDescriptorPool pool = VK_NULL_HANDLE;
+            VkDescriptorSet set = VK_NULL_HANDLE;
+            std::uint32_t capacity = 0;
+            std::uint32_t used = 0;                                         // slots below this were issued once
+            std::vector<std::uint32_t> free;
+            std::vector<std::pair<std::uint64_t, std::uint32_t>> retiring;  // (submission to complete, slot)
+            std::vector<TextureHandle> textures;                            // the image each slot samples
+        } bindless;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
         VkDevice device = VK_NULL_HANDLE;
         VkQueue queue = VK_NULL_HANDLE;
@@ -1462,15 +1517,66 @@ namespace PlutoGE::render::rhi::vulkan
         void Transition(VkCommandBuffer command, TextureResource &texture, VkImageLayout next,
                         VkPipelineStageFlags destinationStage, VkAccessFlags destinationAccess)
         {
-            RecordTransition(command, texture, texture.layout, next, destinationStage, destinationAccess);
+            RecordTransition(command, texture, texture.layout, next, SourceStages(texture.accessStages),
+                             destinationStage, destinationAccess);
             texture.layout = next;
+            texture.accessStages = destinationStage;
         }
 
-        // Records a whole-image transition from `previous` without touching the tracked layout (parallel
-        // recorders track layouts themselves).
-        static void RecordTransition(VkCommandBuffer command, const TextureResource &texture, VkImageLayout previous,
-                                     VkImageLayout next, VkPipelineStageFlags destinationStage, VkAccessFlags destinationAccess)
+        void CreateBindlessTable(std::uint32_t capacity)
         {
+            if (capacity == 0)
+                return;
+            VkDescriptorSetLayoutBinding binding{0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, capacity,
+                                                 VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+            const VkDescriptorBindingFlags bindingFlags =
+                VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
+            VkDescriptorSetLayoutBindingFlagsCreateInfo flags{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO};
+            flags.bindingCount = 1;
+            flags.pBindingFlags = &bindingFlags;
+            VkDescriptorSetLayoutCreateInfo layout{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+            layout.pNext = &flags;
+            layout.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+            layout.bindingCount = 1;
+            layout.pBindings = &binding;
+            Check(vkCreateDescriptorSetLayout(device, &layout, nullptr, &bindless.layout), "vkCreateDescriptorSetLayout(bindless)");
+            const VkDescriptorPoolSize size{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, capacity};
+            VkDescriptorPoolCreateInfo pool{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+            pool.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+            pool.maxSets = 1;
+            pool.poolSizeCount = 1;
+            pool.pPoolSizes = &size;
+            Check(vkCreateDescriptorPool(device, &pool, nullptr, &bindless.pool), "vkCreateDescriptorPool(bindless)");
+            VkDescriptorSetAllocateInfo allocation{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+            allocation.descriptorPool = bindless.pool;
+            allocation.descriptorSetCount = 1;
+            allocation.pSetLayouts = &bindless.layout;
+            Check(vkAllocateDescriptorSets(device, &allocation, &bindless.set), "vkAllocateDescriptorSets(bindless)");
+            bindless.capacity = capacity;
+            bindless.textures.resize(capacity);
+        }
+
+        // The source scope of a barrier after accesses in `accessed` stages.
+        [[nodiscard]] VkPipelineStageFlags SourceStages(VkPipelineStageFlags accessed) const noexcept
+        {
+            return conservativeBarriers || accessed == 0 ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT : accessed;
+        }
+
+        // Records a whole-image transition from `previous`, after accesses in `sourceStages`, without touching the
+        // tracked layout (parallel recorders track layouts themselves).
+        static void RecordTransition(VkCommandBuffer command, const TextureResource &texture, VkImageLayout previous,
+                                     VkImageLayout next, VkPipelineStageFlags sourceStages,
+                                     VkPipelineStageFlags destinationStage, VkAccessFlags destinationAccess)
+        {
+            if (texture.bindlessReferences)
+            {
+                sourceStages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                if (next == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+                {
+                    destinationStage |= ShaderStages;
+                    destinationAccess |= VK_ACCESS_SHADER_READ_BIT;
+                }
+            }
             VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
             barrier.dstAccessMask = destinationAccess;
             barrier.oldLayout = previous;
@@ -1485,7 +1591,7 @@ namespace PlutoGE::render::rhi::vulkan
                                                                                   : previous == VK_IMAGE_LAYOUT_GENERAL                  ? VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT
                                                                                   : texture.descriptor.format == Format::D32Float              ? VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
                                                                                                                                                : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            const VkPipelineStageFlags sourceStage = previous == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            const VkPipelineStageFlags sourceStage = previous == VK_IMAGE_LAYOUT_UNDEFINED ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT : sourceStages;
             vkCmdPipelineBarrier(command, sourceStage, destinationStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         }
     };
@@ -1524,6 +1630,37 @@ namespace PlutoGE::render::rhi::vulkan
     class VulkanRecorder;
     namespace
     {
+        struct BarrierScope
+        {
+            VkPipelineStageFlags stages = 0;
+            VkAccessFlags reads = 0, writes = 0;
+        };
+
+        BarrierScope TranslateBarrierAccess(BarrierAccess access)
+        {
+            BarrierScope scope;
+            const auto add = [&](BarrierAccess flag, VkPipelineStageFlags stages, VkAccessFlags reads, VkAccessFlags writes)
+            {
+                if (!HasAny(access, flag))
+                    return;
+                scope.stages |= stages;
+                scope.reads |= reads;
+                scope.writes |= writes;
+            };
+            constexpr VkAccessFlags shaderReads = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_UNIFORM_READ_BIT;
+            add(BarrierAccess::IndirectCommandRead, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT, 0);
+            add(BarrierAccess::VertexInputRead, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+                VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT, 0);
+            add(BarrierAccess::VertexShaderRead, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT, shaderReads, 0);
+            add(BarrierAccess::FragmentShaderRead, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, shaderReads, 0);
+            add(BarrierAccess::FragmentShaderWrite, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, VK_ACCESS_SHADER_WRITE_BIT);
+            add(BarrierAccess::ComputeShaderRead, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, shaderReads, 0);
+            add(BarrierAccess::ComputeShaderWrite, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, VK_ACCESS_SHADER_WRITE_BIT);
+            add(BarrierAccess::TransferRead, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT, 0);
+            add(BarrierAccess::TransferWrite, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT);
+            return scope;
+        }
+
         // The recorder that device calls on this thread record into (buffer uploads); null means the frame context.
         thread_local VulkanRecorder *t_threadRecorder = nullptr;
     }
@@ -1557,6 +1694,7 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::invalid_argument("Invalid Vulkan render attachments");
             if (!m_recording)
                 throw std::logic_error("Vulkan rendering requires an open recording (BeginFrame, or a parallel context)");
+            FlushBufferUploads();
             for (auto *color : m_colors)
                 TransitionImage(*color, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                   VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
@@ -1679,6 +1817,7 @@ namespace PlutoGE::render::rhi::vulkan
                 if (!m_pipeline || m_pipeline->layout != pipeline->layout || m_pipeline->compute != pipeline->compute)
                 {
                     m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+                    m_boundBindlessLayout = VK_NULL_HANDLE;
                     m_boundDynamicOffsetCounts.fill(0);
                     m_boundPipelineLayout = pipeline->layout;
                     m_descriptorBindingsDirty = true;
@@ -1769,8 +1908,7 @@ namespace PlutoGE::render::rhi::vulkan
             if (slot >= MaxResourceSlots || !texture || !texture->descriptor.storage ||
                 mipLevel >= texture->mipLevels)
                 throw std::invalid_argument("Invalid Vulkan storage image binding");
-            RequireImageLayout(*texture, VK_IMAGE_LAYOUT_GENERAL,
-                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            RequireImageLayout(*texture, VK_IMAGE_LAYOUT_GENERAL, ShaderStages,
                                   VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
             if (m_storageImages[slot] != textureHandle || m_storageMipLevels[slot] != mipLevel)
                 MarkDescriptorBindingDirty(ResourceBindingType::StorageImage, slot);
@@ -1847,16 +1985,78 @@ namespace PlutoGE::render::rhi::vulkan
             ++m_stats.indexedDrawCalls;
         }
 
-        // Frame-local, append-only staging keeps CPU writes away from data still
-        // consumed by the GPU. The frame recycles it once its fence completes.
-        void StageBufferUpload(VkBuffer destination, std::size_t offset, std::span<const std::byte> data)
+        [[nodiscard]] bool CanRecordUploads() const noexcept { return m_recording && !m_rendering; }
+
+        // Queues a buffer update recorded outside rendering. Consecutive updates record together, between one
+        // barrier pair, before the next command that could read them (FlushBufferUploads); an update overlapping a
+        // queued one records the queue first, so writes keep their order.
+        void QueueBufferUpload(VkBuffer destination, std::size_t offset, std::span<const std::byte> data)
         {
-            if (!m_recording || m_rendering)
-                throw std::logic_error("Staged buffer uploads require recording outside rendering");
-            const auto staging = m_frameServices.ReserveStaging(data.size());
-            std::memcpy(staging.mapped, data.data(), data.size());
-            const VkBufferCopy copy{staging.offset, offset, data.size()};
-            vkCmdCopyBuffer(CommandBuffer(), staging.buffer, destination, 1, &copy);
+            if (!CanRecordUploads())
+                throw std::logic_error("Recorded buffer uploads require frame recording outside rendering");
+            if (data.empty())
+                return;
+            for (const auto &queued : m_pendingUploads)
+                if (queued.destination == destination && offset < queued.offset + queued.size &&
+                    queued.offset < offset + data.size())
+                {
+                    FlushBufferUploads();
+                    break;
+                }
+            PendingUpload upload{destination, offset, data.size()};
+            // Large inline updates copy megabytes into the driver's command pool and make both recording and
+            // its next reset expensive. Keep small updates inline; stream large payloads through staging, which
+            // is frame-local and append-only so CPU writes never reach data an earlier frame still reads.
+            if (data.size() > MaxInlineUploadBytes)
+            {
+                const auto staging = m_frameServices.ReserveStaging(data.size());
+                std::memcpy(staging.mapped, data.data(), data.size());
+                upload.staging = staging.buffer;
+                upload.source = staging.offset;
+            }
+            else
+            {
+                upload.source = m_pendingUploadBytes.size();
+                m_pendingUploadBytes.insert(m_pendingUploadBytes.end(), data.begin(), data.end());
+            }
+            m_pendingUploads.push_back(upload);
+        }
+
+        // Records queued buffer uploads. Earlier reads and writes of any buffer finish before the copies, which
+        // finish before anything later reads them.
+        void FlushBufferUploads()
+        {
+            if (m_pendingUploads.empty())
+                return;
+            const VkCommandBuffer commandBuffer = CommandBuffer();
+            constexpr VkAccessFlags consumers = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT |
+                VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT |
+                VK_ACCESS_UNIFORM_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+            VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            before.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                 0, 1, &before, 0, nullptr, 0, nullptr);
+            for (const auto &upload : m_pendingUploads)
+            {
+                if (upload.staging)
+                {
+                    const VkBufferCopy copy{upload.source, upload.offset, upload.size};
+                    vkCmdCopyBuffer(commandBuffer, upload.staging, upload.destination, 1, &copy);
+                }
+                else
+                    vkCmdUpdateBuffer(commandBuffer, upload.destination, upload.offset, upload.size,
+                                      m_pendingUploadBytes.data() + upload.source);
+            }
+            VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            after.dstAccessMask = consumers;
+            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                 0, 1, &after, 0, nullptr, 0, nullptr);
+            m_stats.bufferUploads += m_pendingUploads.size();
+            ++m_stats.bufferUploadBatches;
+            m_pendingUploads.clear();
+            m_pendingUploadBytes.clear();
         }
 
         bool QueueBufferReadback(BufferHandle source, std::size_t size, BufferReadbackCallback callback) override
@@ -1865,6 +2065,7 @@ namespace PlutoGE::render::rhi::vulkan
             if (!m_recording || m_rendering || !buffer ||
                 (buffer->usage != BufferUsage::Storage && buffer->usage != BufferUsage::VertexStorage) || size > buffer->size || !size)
                 return false;
+            FlushBufferUploads();
             const VkBuffer destination = m_frameServices.ReserveReadback(size, std::move(callback));
             VkBufferCopy copy{0, 0, size};
             vkCmdCopyBuffer(CommandBuffer(), buffer->buffer, destination, 1, &copy);
@@ -1880,12 +2081,32 @@ namespace PlutoGE::render::rhi::vulkan
         {
             if (m_rendering || !m_pipeline || !m_pipeline->compute)
                 throw std::logic_error("Vulkan compute dispatch requires a compute pipeline outside rendering");
+            FlushBufferUploads();
             PrepareDraw();
             vkCmdDispatch(CommandBuffer(), x, y, z);
             ++m_stats.dispatchCalls;
         }
+        void PipelineBarrier(BarrierAccess before, BarrierAccess after) override
+        {
+            if (m_impl.conservativeBarriers)
+            {
+                ShaderMemoryBarrier();
+                return;
+            }
+            FlushBufferUploads();
+            const auto source = TranslateBarrierAccess(before);
+            const auto destination = TranslateBarrierAccess(after);
+            // Reads need only an execution dependency; writes must also become available to the later accesses.
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = source.writes;
+            barrier.dstAccessMask = source.writes ? destination.reads | destination.writes : 0;
+            vkCmdPipelineBarrier(CommandBuffer(), source.stages ? source.stages : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                 destination.stages ? destination.stages : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0,
+                                 barrier.srcAccessMask ? 1u : 0u, &barrier, 0, nullptr, 0, nullptr);
+        }
         void ShaderMemoryBarrier() override
         {
+            FlushBufferUploads();
             VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
             barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
                                     VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
@@ -1896,6 +2117,7 @@ namespace PlutoGE::render::rhi::vulkan
         }
         void ComputeImageBarrier(std::span<const TextureHandle> images) override
         {
+            FlushBufferUploads();
             std::array<VkImageMemoryBarrier, 16> barriers{};
             while (!images.empty())
             {
@@ -1925,6 +2147,7 @@ namespace PlutoGE::render::rhi::vulkan
             auto *texture = m_impl.textures.Get(textureHandle);
             if (!texture || !texture->descriptor.storage || texture->descriptor.format != Format::R32Uint)
                 throw std::invalid_argument("Vulkan uint clear requires an R32Uint storage image");
+            FlushBufferUploads();
             TransitionImage(*texture, VK_IMAGE_LAYOUT_GENERAL,
                               VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             VkClearColorValue clear{};
@@ -1940,10 +2163,12 @@ namespace PlutoGE::render::rhi::vulkan
                                  0, 1, &barrier, 0, nullptr, 0, nullptr);
         }
 
-        [[nodiscard]] VkCommandBuffer NativeCommandBuffer() const
+        // For commands recorded outside the RHI; queued uploads record first, keeping their order.
+        [[nodiscard]] VkCommandBuffer NativeCommandBuffer()
         {
             if (!m_recording || m_rendering)
                 return VK_NULL_HANDLE;
+            FlushBufferUploads();
             return CommandBuffer();
         }
 
@@ -1952,10 +2177,20 @@ namespace PlutoGE::render::rhi::vulkan
             m_pipeline = nullptr;
             m_boundPipelineLayout = VK_NULL_HANDLE;
             m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+            m_boundBindlessLayout = VK_NULL_HANDLE;
             m_boundDynamicOffsetCounts.fill(0);
             m_lastDescriptorKeyValid.fill(false);
             m_descriptorBindingsDirty = true;
             m_descriptorSetsDirty.fill(true);
+        }
+
+        // A new command buffer continues the recording: slot bindings persist, but the pipeline (rebind it) and
+        // every Vulkan binding must be recorded again.
+        void ForgetCommandBufferState()
+        {
+            InvalidateAfterExternalCommands();
+            m_boundVertexBuffer = {};
+            m_boundIndexBuffer = {};
         }
 
         void BindToCurrentThread() override { t_threadRecorder = this; }
@@ -1973,6 +2208,16 @@ namespace PlutoGE::render::rhi::vulkan
         static constexpr std::size_t MaxResourceSlots = 33;
         static constexpr std::size_t MaxCachedDescriptorSetsPerFrame = 8192;
         static constexpr std::uint32_t MaxTimestampQueries = 256;
+        static constexpr std::size_t MaxInlineUploadBytes = 65536; // vkCmdUpdateBuffer's limit
+        struct PendingUpload
+        {
+            VkBuffer destination = VK_NULL_HANDLE;
+            VkDeviceSize offset = 0, size = 0;
+            VkBuffer staging = VK_NULL_HANDLE; // else the bytes start at `source` in m_pendingUploadBytes
+            VkDeviceSize source = 0;
+        };
+        std::vector<PendingUpload> m_pendingUploads;
+        std::vector<std::byte> m_pendingUploadBytes;
         // Image layouts as this recorder sees them, and transitions recorded into its command buffer.
         virtual VkImageLayout ImageLayout(TextureResource &texture) = 0;
         virtual void TransitionImage(TextureResource &texture, VkImageLayout next,
@@ -1983,19 +2228,15 @@ namespace PlutoGE::render::rhi::vulkan
                                         VkPipelineStageFlags destinationStage, VkAccessFlags destinationAccess) = 0;
         virtual void FinishTimestampScope(VulkanTimestampScope scope) = 0;
 
-        // Shader stages that read a sampled texture bound now: the bound pipeline's, or any stage before one is bound.
-        [[nodiscard]] VkPipelineStageFlags ShaderReadStages() const noexcept
-        {
-            if (!m_pipeline)
-                return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-            return m_pipeline->compute ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-        }
+        // Shader stages that may read a sampled texture bound now (see ShaderStages).
+        [[nodiscard]] static constexpr VkPipelineStageFlags ShaderReadStages() noexcept { return ShaderStages; }
 
         // Forgets every bound pipeline, descriptor set and buffer: a new command buffer starts with none.
         void ResetBindingState()
         {
             m_lastDescriptorKeyValid.fill(false);
             m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+            m_boundBindlessLayout = VK_NULL_HANDLE;
             m_boundDynamicOffsetCounts.fill(0);
             m_boundPipelineLayout = VK_NULL_HANDLE;
             m_descriptorBindingsDirty = true;
@@ -2058,7 +2299,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             if (!m_pipeline || (!m_pipeline->compute && !m_rendering))
                 throw std::logic_error("Vulkan draw requires active rendering and pipeline");
-            const auto setCount = m_pipeline->setLayouts.size();
+            const auto setCount = m_pipeline->descriptorSetCount;
             if (setCount > MaxDescriptorSets || m_pipeline->resourceBindings.size() > MaxDescriptorBindings)
                 throw std::logic_error("Vulkan pipeline exceeds fixed descriptor scratch capacity");
             // Clean draws only rebind changed dynamic offsets; timing them would
@@ -2236,12 +2477,14 @@ namespace PlutoGE::render::rhi::vulkan
                                         static_cast<std::uint32_t>(setIndex), 1, &sets[setIndex],
                                         static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
                 ++m_stats.descriptorBindCalls;
+                ++m_descriptorBindGeneration;
                 m_boundDescriptorSets[setIndex] = sets[setIndex];
                 m_boundDynamicOffsetCounts[setIndex] = offsetCount;
                 std::copy_n(dynamicOffsets.begin() + offsetStart, offsetCount,
                             m_boundDynamicOffsets[setIndex].begin());
             }
             m_boundPipelineLayout = m_pipeline->layout;
+            BindBindlessTextures();
             std::copy_n(sets.begin(), setCount, m_preparedDescriptorSets.begin());
             m_descriptorBindingsDirty = false;
             m_descriptorSetsDirty.fill(false);
@@ -2254,7 +2497,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             std::array<std::uint32_t, MaxDescriptorBindings> dynamicOffsets{};
             std::size_t dynamicOffsetCount = 0;
-            for (std::size_t setIndex = 0; setIndex < m_pipeline->setLayouts.size(); ++setIndex)
+            for (std::size_t setIndex = 0; setIndex < m_pipeline->descriptorSetCount; ++setIndex)
             {
                 const auto offsetStart = dynamicOffsetCount;
                 for (const auto slot : m_pipeline->dynamicUniformSlotsBySet[setIndex])
@@ -2273,12 +2516,28 @@ namespace PlutoGE::render::rhi::vulkan
                                         static_cast<std::uint32_t>(setIndex), 1, &m_preparedDescriptorSets[setIndex],
                                         static_cast<std::uint32_t>(offsetCount), dynamicOffsets.data() + offsetStart);
                 ++m_stats.descriptorBindCalls;
+                ++m_descriptorBindGeneration;
                 m_boundDescriptorSets[setIndex] = m_preparedDescriptorSets[setIndex];
                 m_boundDynamicOffsetCounts[setIndex] = offsetCount;
                 std::copy_n(dynamicOffsets.begin() + offsetStart, offsetCount,
                             m_boundDynamicOffsets[setIndex].begin());
             }
             m_boundPipelineLayout = m_pipeline->layout;
+            BindBindlessTextures();
+        }
+
+        // Binds the bindless table for a pipeline that reads it. Binding any lower set with another layout may
+        // disturb it, so it is rebound whenever the per-draw sets were.
+        void BindBindlessTextures()
+        {
+            if (!m_pipeline->bindlessTextures || (m_boundBindlessLayout == m_pipeline->layout &&
+                                                  m_boundBindlessSetsGeneration == m_descriptorBindGeneration))
+                return;
+            vkCmdBindDescriptorSets(CommandBuffer(), VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline->layout,
+                                    BindlessTextureSet, 1, &m_impl.bindless.set, 0, nullptr);
+            ++m_stats.descriptorBindCalls;
+            m_boundBindlessLayout = m_pipeline->layout;
+            m_boundBindlessSetsGeneration = m_descriptorBindGeneration;
         }
         using DescriptorSetCache = std::unordered_map<DescriptorSetKey, VkDescriptorSet, DescriptorSetKeyHash>;
 
@@ -2291,6 +2550,8 @@ namespace PlutoGE::render::rhi::vulkan
         VkCommandBuffer m_commandBuffer = VK_NULL_HANDLE;
         VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
         PipelineResource *m_pipeline = nullptr;
+        VkPipelineLayout m_boundBindlessLayout = VK_NULL_HANDLE;
+        std::uint64_t m_descriptorBindGeneration = 0, m_boundBindlessSetsGeneration = 0;
         std::vector<TextureResource *> m_colors;
         TextureResource *m_depth = nullptr;
         std::array<BufferHandle, MaxResourceSlots> m_uniformBuffers{};
@@ -2338,6 +2599,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkImageLayout assumed = VK_IMAGE_LAYOUT_UNDEFINED;   // At the segment's start.
             VkImageLayout current = VK_IMAGE_LAYOUT_UNDEFINED;   // At its end.
+            VkPipelineStageFlags stages = 0;                     // Accesses since the segment's last barrier on it.
         };
 
         VulkanSegmentContext(VulkanDevice::Impl &impl, VulkanFrameServices &frame)
@@ -2423,6 +2685,7 @@ namespace PlutoGE::render::rhi::vulkan
                 EndRendering();
             while (!m_activeScopes.empty())
                 EndGpuScope();
+            FlushBufferUploads();
             Check(vkEndCommandBuffer(m_commandBuffer), "vkEndCommandBuffer(segment)");
             m_recording = false;
             UnbindFromCurrentThread();
@@ -2443,7 +2706,7 @@ namespace PlutoGE::render::rhi::vulkan
         VkImageLayout ImageLayout(TextureResource &texture) override
         {
             // Nothing writes tracked layouts while a parallel section records.
-            return m_layouts.try_emplace(&texture, LayoutUse{texture.layout, texture.layout}).first->second.current;
+            return m_layouts.try_emplace(&texture, LayoutUse{texture.layout, texture.layout, 0}).first->second.current;
         }
 
         void TransitionImage(TextureResource &texture, VkImageLayout next,
@@ -2453,12 +2716,16 @@ namespace PlutoGE::render::rhi::vulkan
             if (found == m_layouts.end())
             {
                 // First use: the frame context transitions the image before the segment runs.
-                m_layouts.emplace(&texture, LayoutUse{next, next});
+                m_layouts.emplace(&texture, LayoutUse{next, next, destinationStage});
                 return;
             }
+            // The segment's entry barrier orders accesses before it; only the segment's own count here. A layout
+            // only read so far (ImageLayout) has no recorded stages and stays conservative.
             VulkanDevice::Impl::RecordTransition(CommandBuffer(), texture, found->second.current, next,
-                                                 destinationStage, destinationAccess);
+                                                 m_impl.SourceStages(found->second.stages), destinationStage,
+                                                 destinationAccess);
             found->second.current = next;
+            found->second.stages = destinationStage;
         }
 
         void RequireImageLayout(TextureResource &texture, VkImageLayout layout,
@@ -2466,9 +2733,11 @@ namespace PlutoGE::render::rhi::vulkan
         {
             const auto found = m_layouts.find(&texture);
             if (found == m_layouts.end())
-                m_layouts.emplace(&texture, LayoutUse{layout, layout});
+                m_layouts.emplace(&texture, LayoutUse{layout, layout, destinationStage});
             else if (found->second.current != layout)
                 TransitionImage(texture, layout, destinationStage, destinationAccess);
+            else
+                found->second.stages |= destinationStage;
         }
 
         void FinishTimestampScope(VulkanTimestampScope scope) override { m_scopes.push_back(std::move(scope)); }
@@ -2492,6 +2761,151 @@ namespace PlutoGE::render::rhi::vulkan
 
     // Owns the frame: its command buffer, fence, descriptor pools, staging and timestamp queries, its submission,
     // and the parallel recording sections that execute inside it.
+    // Records async compute (ICommandContext::BeginAsyncCompute) into primary command buffers of the async queue's
+    // family, one frame slot at a time. It binds buffers only, so images never need a layout or ownership change on
+    // this queue, and leaves GPU timestamps to the graphics frame.
+    class VulkanAsyncComputeContext final : public VulkanRecorder
+    {
+    public:
+        VulkanAsyncComputeContext(VulkanDevice::Impl &impl, VulkanFrameServices &frame)
+            : VulkanRecorder(impl, m_ownStats, frame)
+        {
+            for (auto &slot : m_slots)
+            {
+                VkCommandPoolCreateInfo pool{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+                pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+                pool.queueFamilyIndex = m_impl.sharedQueueFamilies[1];
+                Check(vkCreateCommandPool(m_impl.device, &pool, nullptr, &slot.commandPool), "vkCreateCommandPool(async compute)");
+                slot.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(async compute)");
+            }
+        }
+
+        ~VulkanAsyncComputeContext() override
+        {
+            for (auto &slot : m_slots)
+            {
+                if (slot.descriptorPool)
+                    vkDestroyDescriptorPool(m_impl.device, slot.descriptorPool, nullptr);
+                if (slot.commandPool)
+                    vkDestroyCommandPool(m_impl.device, slot.commandPool, nullptr);
+            }
+        }
+
+        VulkanAsyncComputeContext(const VulkanAsyncComputeContext &) = delete;
+        VulkanAsyncComputeContext &operator=(const VulkanAsyncComputeContext &) = delete;
+
+        // Starts recording async work of frame `frameSerial` in frame slot `slot` (whose previous use completed),
+        // to run once graphics timeline value `after` is reached.
+        void Begin(std::size_t slot, std::uint64_t frameSerial, std::uint64_t after)
+        {
+            auto &resources = m_slots[slot];
+            if (resources.frameSerial != frameSerial)
+            {
+                resources.frameSerial = frameSerial;
+                resources.nextCommandBuffer = 0;
+                Check(vkResetCommandPool(m_impl.device, resources.commandPool, 0), "vkResetCommandPool(async compute)");
+                if (resources.descriptorCache.size() >= MaxCachedDescriptorSetsPerFrame)
+                {
+                    Check(vkResetDescriptorPool(m_impl.device, resources.descriptorPool, 0), "vkResetDescriptorPool(async compute)");
+                    resources.descriptorCache.clear();
+                }
+            }
+            if (resources.nextCommandBuffer == resources.commandBuffers.size())
+            {
+                VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                command.commandPool = resources.commandPool;
+                command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                command.commandBufferCount = 1;
+                VkCommandBuffer buffer = VK_NULL_HANDLE;
+                Check(vkAllocateCommandBuffers(m_impl.device, &command, &buffer), "vkAllocateCommandBuffers(async compute)");
+                resources.commandBuffers.push_back(buffer);
+            }
+            m_ownStats = {};
+            m_after = after;
+            ForgetCommandBufferState();
+            m_descriptorSetCache = &resources.descriptorCache;
+            m_descriptorPool = resources.descriptorPool;
+            m_commandBuffer = resources.commandBuffers[resources.nextCommandBuffer++];
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            Check(vkBeginCommandBuffer(m_commandBuffer, &begin), "vkBeginCommandBuffer(async compute)");
+            m_rendering = false;
+            m_recording = true;
+        }
+
+        // Ends and submits the recording. Returns the compute timeline value signalled when it completes.
+        std::uint64_t SubmitRecording()
+        {
+            FlushBufferUploads();
+            Check(vkEndCommandBuffer(m_commandBuffer), "vkEndCommandBuffer(async compute)");
+            m_recording = false;
+            // Uniform contents bound while recording live in the frame's host-written arena.
+            m_impl.FlushUniformArena();
+            const std::uint64_t signal = ++m_impl.computeTimelineValue;
+            const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
+            VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+            timeline.waitSemaphoreValueCount = m_after ? 1u : 0u;
+            timeline.pWaitSemaphoreValues = &m_after;
+            timeline.signalSemaphoreValueCount = 1;
+            timeline.pSignalSemaphoreValues = &signal;
+            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            submit.pNext = &timeline;
+            submit.waitSemaphoreCount = m_after ? 1u : 0u;
+            submit.pWaitSemaphores = &m_impl.graphicsTimeline;
+            submit.pWaitDstStageMask = &waitStage;
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &m_commandBuffer;
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &m_impl.computeTimeline;
+            std::lock_guard queueLock(m_impl.queueMutex);
+            Check(vkQueueSubmit(m_impl.asyncQueue, 1, &submit, VK_NULL_HANDLE), "vkQueueSubmit(async compute)");
+            return signal;
+        }
+
+        [[nodiscard]] const RenderDeviceTimingStats &RecordedStats() const noexcept { return m_ownStats; }
+
+        // Graphics stages do not exist on this queue; the graphics timeline orders work against them.
+        void PipelineBarrier(BarrierAccess before, BarrierAccess after) override
+        {
+            constexpr auto queueAccess = BarrierAccess::Compute | BarrierAccess::Transfer;
+            before = before & queueAccess;
+            after = after & queueAccess;
+            if (before != BarrierAccess::None && after != BarrierAccess::None)
+                VulkanRecorder::PipelineBarrier(before, after);
+        }
+        void BeginGpuScope(std::string_view) override {}
+        void EndGpuScope() override {}
+        void BeginRendering(const RenderingInfo &) override { throw std::logic_error(ImagesUnsupported); }
+        void BindTexture(std::uint32_t, TextureHandle, SamplerHandle) override { throw std::logic_error(ImagesUnsupported); }
+        void BindStorageImage(std::uint32_t, TextureHandle, std::uint32_t) override { throw std::logic_error(ImagesUnsupported); }
+        void ComputeImageBarrier(std::span<const TextureHandle>) override { throw std::logic_error(ImagesUnsupported); }
+        void ClearStorageImageUint(TextureHandle, std::uint32_t) override { throw std::logic_error(ImagesUnsupported); }
+        bool QueueBufferReadback(BufferHandle, std::size_t, BufferReadbackCallback) override { return false; }
+
+    protected:
+        VkImageLayout ImageLayout(TextureResource &) override { throw std::logic_error(ImagesUnsupported); }
+        void TransitionImage(TextureResource &, VkImageLayout, VkPipelineStageFlags, VkAccessFlags) override
+        { throw std::logic_error(ImagesUnsupported); }
+        void RequireImageLayout(TextureResource &, VkImageLayout, VkPipelineStageFlags, VkAccessFlags) override
+        { throw std::logic_error(ImagesUnsupported); }
+        void FinishTimestampScope(VulkanTimestampScope) override {}
+
+    private:
+        static constexpr const char *ImagesUnsupported = "Vulkan async compute records buffers only";
+        struct Slot
+        {
+            VkCommandPool commandPool = VK_NULL_HANDLE;
+            std::vector<VkCommandBuffer> commandBuffers;   // One per async section of the frame.
+            std::size_t nextCommandBuffer = 0;
+            std::uint64_t frameSerial = 0;
+            VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
+            DescriptorSetCache descriptorCache;
+        };
+        std::array<Slot, FrameCount> m_slots;
+        RenderDeviceTimingStats m_ownStats;
+        std::uint64_t m_after = 0;
+    };
+
     class VulkanCommandContext final : private VulkanFrameServices, public VulkanRecorder
     {
     public:
@@ -2517,11 +2931,14 @@ namespace PlutoGE::render::rhi::vulkan
                 queries.queryCount = MaxTimestampQueries;
                 Check(vkCreateQueryPool(m_impl.device, &queries, nullptr, &frame.queryPool), "vkCreateQueryPool(frame)");
             }
+            if (m_impl.asyncQueue)
+                m_async = std::make_unique<VulkanAsyncComputeContext>(m_impl, static_cast<VulkanFrameServices &>(*this));
         }
 
         ~VulkanCommandContext() override
         {
             m_segments.clear();
+            m_async.reset();
             for (auto &frame : m_frames)
             {
                 for (auto &readback : frame.readbacks)
@@ -2571,6 +2988,8 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl.timingStats.drawCalls = 0;
             m_impl.timingStats.indexedDrawCalls = 0;
             m_impl.timingStats.dispatchCalls = 0;
+            m_impl.timingStats.bufferUploads = 0;
+            m_impl.timingStats.bufferUploadBatches = 0;
             m_impl.timingStats.uniformBytesUploaded = 0;
             m_impl.timingStats.persistentUniformBytesUploaded = 0;
             m_impl.timingStats.descriptorCpuMs = 0.0f;
@@ -2602,6 +3021,8 @@ namespace PlutoGE::render::rhi::vulkan
             m_descriptorSetCache = &descriptorCache;
             m_descriptorPool = frame.descriptorPool;
             m_commandBuffer = frame.commandBuffer;
+            frame.nextSplitCommandBuffer = 0;
+            m_pendingWaits.clear();
             VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
             Check(vkBeginCommandBuffer(frame.commandBuffer, &begin), "vkBeginCommandBuffer(frame)");
@@ -2638,6 +3059,7 @@ namespace PlutoGE::render::rhi::vulkan
                 m_descriptorSetCache = nullptr;
             m_lastDescriptorKeyValid.fill(false);
             m_boundDescriptorSets.fill(VK_NULL_HANDLE);
+            m_boundBindlessLayout = VK_NULL_HANDLE;
             // Parallel contexts may be recording on other threads: they reset when they next begin.
             for (auto &segment : m_segments)
                 segment->RequestDescriptorReset();
@@ -2654,33 +3076,31 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::logic_error("Cannot submit during parallel recording");
             if (!m_frameOpen)
                 return;
+            // The frame's fence must cover its async work.
+            if (m_asyncOpen)
+                EndAsyncCompute(BarrierAccess::All);
             auto &frame = m_frames[m_frameIndex];
             while (!m_activeScopes.empty())
                 EndGpuScope();
             if (!m_executable)
             {
-                m_impl.FlushUniformArena();
-                for (auto &upload : frame.uploads)
-                    if (upload.used)
-                        Check(vmaFlushAllocation(m_impl.allocator, upload.allocation, 0, upload.used),
-                              "vmaFlushAllocation(buffer uploads)");
+                if (m_recording)
+                    FlushBufferUploads();
+                FlushHostWrites();
                 if (frame.profilingEnabled)
                 {
-                    vkCmdWriteTimestamp(frame.commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
+                    vkCmdWriteTimestamp(m_commandBuffer, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, frame.queryPool, 1);
                     frame.hasTimestamps = true;
                 }
                 { core::CpuScope scope("Vulkan end command buffer", core::CpuCategory::Rendering);
-                  Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer"); }
+                  Check(vkEndCommandBuffer(m_commandBuffer), "vkEndCommandBuffer"); }
                 m_executable = true;
             }
-            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-            submit.commandBufferCount = 1;
-            submit.pCommandBuffers = &frame.commandBuffer;
             { core::CpuScope scope("Vulkan queue submit", core::CpuCategory::Rendering);
               // Frame setup can allocate and throw before m_recording is set.
               // Leave its fence signalled until work is ready to be queued.
               Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(frame)");
-              Check(m_impl.SubmitWithMemoryRetry(submit, frame.fence), "vkQueueSubmit(frame)"); }
+              SubmitGraphics(m_commandBuffer, frame.fence); }
             frame.submissionSerial = ++m_impl.lastSubmittedSubmission;
             if (!frame.profilingEnabled)
             {
@@ -2723,6 +3143,37 @@ namespace PlutoGE::render::rhi::vulkan
             return m_impl.lastSubmittedSubmission + (m_frameOpen ? 1u : 0u);
         }
 
+        [[nodiscard]] bool SupportsAsyncCompute() const noexcept override { return m_async != nullptr; }
+
+        ICommandContext &BeginAsyncCompute() override
+        {
+            if (!m_async)
+                return *this;
+            if (!m_frameOpen || !m_recording || m_rendering || m_parallel || m_asyncOpen)
+                throw std::logic_error("Vulkan async compute begins in an open frame, outside rendering and parallel recording");
+            // Async work follows everything recorded so far, which is submitted now.
+            const auto fork = SubmitRecordedSegment();
+            m_async->Begin(m_frameIndex, m_frameSerial, fork);
+            m_asyncOpen = true;
+            return *m_async;
+        }
+
+        void EndAsyncCompute(BarrierAccess consumers) override
+        {
+            if (!m_asyncOpen)
+            {
+                ICommandContext::EndAsyncCompute(consumers);
+                return;
+            }
+            m_asyncOpen = false;
+            const auto completed = m_async->SubmitRecording();
+            AddStats(m_async->RecordedStats());
+            // Graphics recorded while it ran need not wait; what follows waits at the consumers' stages.
+            SubmitRecordedSegment();
+            const auto stages = TranslateBarrierAccess(consumers).stages;
+            m_pendingWaits.push_back({m_impl.computeTimeline, completed, stages ? stages : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT});
+        }
+
         [[nodiscard]] std::uint32_t MaxParallelRecordingContexts() const noexcept override { return MaxParallelContexts; }
 
         std::span<ICommandContext *const> BeginParallelRecording(std::uint32_t count) override
@@ -2731,6 +3182,7 @@ namespace PlutoGE::render::rhi::vulkan
                 throw std::logic_error("Parallel recording requires an open Vulkan frame outside rendering");
             if (count == 0 || count > MaxParallelContexts)
                 throw std::invalid_argument("Unsupported Vulkan parallel recording context count");
+            FlushBufferUploads();
             while (m_segments.size() < count)
                 m_segments.push_back(std::make_unique<VulkanSegmentContext>(m_impl, static_cast<VulkanFrameServices &>(*this)));
             m_segmentViews.clear();
@@ -2760,7 +3212,10 @@ namespace PlutoGE::render::rhi::vulkan
                 const VkCommandBuffer commands = segment.RecordedCommands();
                 vkCmdExecuteCommands(CommandBuffer(), 1, &commands);
                 for (const auto &[texture, use] : segment.Layouts())
+                {
                     texture->layout = use.current;
+                    texture->accessStages = use.stages ? use.stages : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+                }
                 AddStats(segment.RecordedStats());
                 for (auto &scope : segment.Scopes())
                     frame.scopes.push_back(std::move(scope));
@@ -2787,6 +3242,8 @@ namespace PlutoGE::render::rhi::vulkan
         {
             if (texture.layout != layout)
                 m_impl.Transition(CommandBuffer(), texture, layout, destinationStage, destinationAccess);
+            else
+                texture.accessStages |= destinationStage;
         }
 
         void FinishTimestampScope(VulkanTimestampScope scope) override { m_frames[m_frameIndex].scopes.push_back(std::move(scope)); }
@@ -2831,6 +3288,7 @@ namespace PlutoGE::render::rhi::vulkan
                 VmaAllocationInfo mapped{};
                 // Reserve before allocating so vector growth cannot leak a Vulkan allocation.
                 frame.uploads.reserve(frame.uploads.size() + 1);
+                m_impl.ShareBuffer(info);
                 Check(vmaCreateBuffer(m_impl.allocator, &info, &allocation, &upload.buffer, &upload.allocation, &mapped),
                       "vmaCreateBuffer(upload arena)");
                 upload.mapped = mapped.pMappedData;
@@ -2857,6 +3315,7 @@ namespace PlutoGE::render::rhi::vulkan
                 allocation.usage = VMA_MEMORY_USAGE_AUTO;
                 allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
                 VmaAllocationInfo mapped{};
+                m_impl.ShareBuffer(info);
                 Check(vmaCreateBuffer(m_impl.allocator, &info, &allocation, &readback.buffer, &readback.allocation, &mapped),
                       "vmaCreateBuffer(diagnostic readback)");
                 readback.mapped = mapped.pMappedData; readback.size = size;
@@ -2893,6 +3352,82 @@ namespace PlutoGE::render::rhi::vulkan
                                  1, &memory, 0, nullptr, static_cast<std::uint32_t>(m_entryBarriers.size()), m_entryBarriers.data());
         }
 
+        // Makes host writes the frame's submitted work reads visible: uniforms and staged uploads.
+        void FlushHostWrites()
+        {
+            auto &frame = m_frames[m_frameIndex];
+            m_impl.FlushUniformArena();
+            for (auto &upload : frame.uploads)
+                if (upload.used)
+                    Check(vmaFlushAllocation(m_impl.allocator, upload.allocation, 0, upload.used),
+                          "vmaFlushAllocation(buffer uploads)");
+        }
+
+        // Submits a frame command buffer to the graphics queue, after the pending async waits. Returns the graphics
+        // timeline value signalled on completion (zero without async compute).
+        std::uint64_t SubmitGraphics(VkCommandBuffer commandBuffer, VkFence fence)
+        {
+            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &commandBuffer;
+            if (!m_impl.asyncQueue)
+            {
+                Check(m_impl.SubmitWithMemoryRetry(submit, fence), "vkQueueSubmit(frame)");
+                return 0;
+            }
+            std::vector<VkSemaphore> waitSemaphores;
+            std::vector<std::uint64_t> waitValues;
+            std::vector<VkPipelineStageFlags> waitStages;
+            for (const auto &wait : m_pendingWaits)
+            {
+                waitSemaphores.push_back(wait.semaphore);
+                waitValues.push_back(wait.value);
+                waitStages.push_back(wait.stages);
+            }
+            m_pendingWaits.clear();
+            const std::uint64_t signal = ++m_impl.graphicsTimelineValue;
+            VkTimelineSemaphoreSubmitInfo timeline{VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO};
+            timeline.waitSemaphoreValueCount = static_cast<std::uint32_t>(waitValues.size());
+            timeline.pWaitSemaphoreValues = waitValues.data();
+            timeline.signalSemaphoreValueCount = 1;
+            timeline.pSignalSemaphoreValues = &signal;
+            submit.pNext = &timeline;
+            submit.waitSemaphoreCount = static_cast<std::uint32_t>(waitSemaphores.size());
+            submit.pWaitSemaphores = waitSemaphores.data();
+            submit.pWaitDstStageMask = waitStages.data();
+            submit.signalSemaphoreCount = 1;
+            submit.pSignalSemaphores = &m_impl.graphicsTimeline;
+            Check(m_impl.SubmitWithMemoryRetry(submit, fence), "vkQueueSubmit(frame)");
+            return signal;
+        }
+
+        // Submits what the frame recorded so far and continues it in a new command buffer. Returns the graphics
+        // timeline value signalled when the submitted part completes.
+        std::uint64_t SubmitRecordedSegment()
+        {
+            auto &frame = m_frames[m_frameIndex];
+            FlushBufferUploads();
+            FlushHostWrites();
+            Check(vkEndCommandBuffer(m_commandBuffer), "vkEndCommandBuffer(frame segment)");
+            const auto signal = SubmitGraphics(m_commandBuffer, VK_NULL_HANDLE);
+            if (frame.nextSplitCommandBuffer == frame.splitCommandBuffers.size())
+            {
+                VkCommandBufferAllocateInfo command{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                command.commandPool = frame.commandPool;
+                command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                command.commandBufferCount = 1;
+                VkCommandBuffer buffer = VK_NULL_HANDLE;
+                Check(vkAllocateCommandBuffers(m_impl.device, &command, &buffer), "vkAllocateCommandBuffers(frame segment)");
+                frame.splitCommandBuffers.push_back(buffer);
+            }
+            m_commandBuffer = frame.splitCommandBuffers[frame.nextSplitCommandBuffer++];
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            Check(vkBeginCommandBuffer(m_commandBuffer, &begin), "vkBeginCommandBuffer(frame segment)");
+            ForgetCommandBufferState();
+            return signal;
+        }
+
         void AddStats(const RenderDeviceTimingStats &recorded)
         {
             m_stats.descriptorAllocationCalls += recorded.descriptorAllocationCalls;
@@ -2902,6 +3437,8 @@ namespace PlutoGE::render::rhi::vulkan
             m_stats.drawCalls += recorded.drawCalls;
             m_stats.indexedDrawCalls += recorded.indexedDrawCalls;
             m_stats.dispatchCalls += recorded.dispatchCalls;
+            m_stats.bufferUploads += recorded.bufferUploads;
+            m_stats.bufferUploadBatches += recorded.bufferUploadBatches;
             m_stats.descriptorCpuMs += recorded.descriptorCpuMs;
         }
 
@@ -2909,6 +3446,9 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkCommandPool commandPool = VK_NULL_HANDLE;
             VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+            // Where recording continues after a submission splits the frame (async compute fork and join).
+            std::vector<VkCommandBuffer> splitCommandBuffers;
+            std::size_t nextSplitCommandBuffer = 0;
             VkDescriptorPool descriptorPool = VK_NULL_HANDLE;
             VkFence fence = VK_NULL_HANDLE;
             VkQueryPool queryPool = VK_NULL_HANDLE;
@@ -2969,6 +3509,16 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<DescriptorSetCache, FrameCount> m_descriptorSetCaches;
         std::array<bool, FrameCount> m_descriptorPoolResetPending{};
         bool m_executable = false;
+        // Async compute: its recorder, whether a section is open, and the waits the next graphics submission makes.
+        std::unique_ptr<VulkanAsyncComputeContext> m_async;
+        bool m_asyncOpen = false;
+        struct PendingWait
+        {
+            VkSemaphore semaphore = VK_NULL_HANDLE;
+            std::uint64_t value = 0;
+            VkPipelineStageFlags stages = 0;
+        };
+        std::vector<PendingWait> m_pendingWaits;
         bool m_frameOpen = false;   // Between BeginFrame and Submit (m_recording is off during parallel sections).
         std::uint64_t m_frameSerial = 0;
         bool m_parallel = false;
@@ -3552,7 +4102,20 @@ namespace PlutoGE::render::rhi::vulkan
         m_impl->deviceName = properties.deviceName;
         m_impl->timestampPeriodNs = properties.limits.timestampPeriod;
         const float priority = 1.0f;
-        std::array<VkDeviceQueueCreateInfo, 2> queues{};
+        // A compute-only family runs async compute beside graphics.
+        std::optional<std::uint32_t> asyncFamily;
+        if (const char *setting = std::getenv("PLUTO_VULKAN_ASYNC_COMPUTE"); !setting || std::string_view(setting) != "0")
+        {
+            std::uint32_t familyCount = 0;
+            vkGetPhysicalDeviceQueueFamilyProperties(m_impl->physicalDevice, &familyCount, nullptr);
+            std::vector<VkQueueFamilyProperties> families(familyCount);
+            vkGetPhysicalDeviceQueueFamilyProperties(m_impl->physicalDevice, &familyCount, families.data());
+            for (std::uint32_t family = 0; family < familyCount && !asyncFamily; ++family)
+                if ((families[family].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(families[family].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
+                    families[family].queueCount > 0)
+                    asyncFamily = family;
+        }
+        std::array<VkDeviceQueueCreateInfo, 3> queues{};
         queues[0] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
         queues[0].queueFamilyIndex = m_impl->queueFamily;
         queues[0].queueCount = 1;
@@ -3565,6 +4128,14 @@ namespace PlutoGE::render::rhi::vulkan
             queues[1].queueCount = 1;
             queues[1].pQueuePriorities = &priority;
             queueCount = 2;
+        }
+        if (asyncFamily)
+        {
+            queues[queueCount] = {VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
+            queues[queueCount].queueFamilyIndex = *asyncFamily;
+            queues[queueCount].queueCount = 1;
+            queues[queueCount].pQueuePriorities = &priority;
+            ++queueCount;
         }
 #if PLUTO_HAS_STREAMLINE
         const bool enableStreamlineForAdapter = m_impl->streamline->SupportsAdapter(m_impl->physicalDevice);
@@ -3594,6 +4165,10 @@ namespace PlutoGE::render::rhi::vulkan
 #endif
         requested13.dynamicRendering = VK_TRUE;
         VkPhysicalDeviceVulkan12Features supported12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
+        VkPhysicalDeviceVulkan12Properties properties12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES};
+        VkPhysicalDeviceProperties2 properties2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+        properties2.pNext = &properties12;
+        vkGetPhysicalDeviceProperties2(m_impl->physicalDevice, &properties2);
         VkPhysicalDeviceVulkan13Features supported13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
         supported12.pNext = &supported13;
         VkPhysicalDeviceFeatures2 supported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
@@ -3620,6 +4195,25 @@ namespace PlutoGE::render::rhi::vulkan
 #endif
         if (!requested13.dynamicRendering)
             throw std::runtime_error("The selected Vulkan device does not support dynamic rendering");
+        // Bindless textures need a runtime, partially bound, update-after-bind sampled-image array indexed
+        // non-uniformly. Without all of it pipelines bind textures to slots.
+        const bool bindlessSupported = supported12.runtimeDescriptorArray && supported12.descriptorBindingPartiallyBound &&
+            supported12.descriptorBindingSampledImageUpdateAfterBind && supported12.shaderSampledImageArrayNonUniformIndexing;
+        // Async compute orders its submissions with timeline semaphores.
+        if (asyncFamily && !supported12.timelineSemaphore)
+        {
+            asyncFamily.reset();
+            --queueCount;
+        }
+        if (asyncFamily)
+            requested12.timelineSemaphore = VK_TRUE;
+        if (bindlessSupported)
+        {
+            requested12.runtimeDescriptorArray = VK_TRUE;
+            requested12.descriptorBindingPartiallyBound = VK_TRUE;
+            requested12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+            requested12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        }
         requested12.pNext = &requested13;
         VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         deviceInfo.pNext = &requested12;
@@ -3640,6 +4234,17 @@ namespace PlutoGE::render::rhi::vulkan
 #endif
         vkGetDeviceQueue(m_impl->device, m_impl->queueFamily, 0, &m_impl->queue);
         vkGetDeviceQueue(m_impl->device, m_impl->presentQueueFamily, 0, &m_impl->presentQueue);
+        if (asyncFamily)
+        {
+            vkGetDeviceQueue(m_impl->device, *asyncFamily, 0, &m_impl->asyncQueue);
+            m_impl->sharedQueueFamilies = {m_impl->queueFamily, *asyncFamily};
+            VkSemaphoreTypeCreateInfo timeline{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
+            timeline.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE;
+            VkSemaphoreCreateInfo semaphore{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+            semaphore.pNext = &timeline;
+            Check(vkCreateSemaphore(m_impl->device, &semaphore, nullptr, &m_impl->graphicsTimeline), "vkCreateSemaphore(graphics timeline)");
+            Check(vkCreateSemaphore(m_impl->device, &semaphore, nullptr, &m_impl->computeTimeline), "vkCreateSemaphore(compute timeline)");
+        }
         VmaVulkanFunctions functions{};
         functions.vkGetInstanceProcAddr = vkGetInstanceProcAddr;
         functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
@@ -3651,6 +4256,10 @@ namespace PlutoGE::render::rhi::vulkan
         allocator.device = m_impl->device;
         allocator.pVulkanFunctions = &functions;
         Check(vmaCreateAllocator(&allocator, &m_impl->allocator), "vmaCreateAllocator");
+        if (bindlessSupported)
+            m_impl->CreateBindlessTable(std::min({MaxBindlessTextures,
+                properties12.maxDescriptorSetUpdateAfterBindSampledImages,
+                properties12.maxPerStageDescriptorUpdateAfterBindSampledImages}));
         m_impl->uniformAlignment = std::max<VkDeviceSize>(properties.limits.minUniformBufferOffsetAlignment, 1);
         for (auto &arena : m_impl->uniformArenas)
         {
@@ -3662,6 +4271,7 @@ namespace PlutoGE::render::rhi::vulkan
             uniformAllocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                                       VMA_ALLOCATION_CREATE_MAPPED_BIT;
             VmaAllocationInfo allocationInfo{};
+            m_impl->ShareBuffer(uniformBuffer);
             Check(vmaCreateBuffer(m_impl->allocator, &uniformBuffer, &uniformAllocation,
                                   &arena.buffer, &arena.allocation, &allocationInfo),
                   "vmaCreateBuffer(uniform arena)");
@@ -3727,6 +4337,14 @@ namespace PlutoGE::render::rhi::vulkan
                 vmaDestroyBuffer(m_impl->allocator, arena.buffer, arena.allocation);
         if (m_impl->descriptorPool)
             vkDestroyDescriptorPool(m_impl->device, m_impl->descriptorPool, nullptr);
+        if (m_impl->bindless.pool)
+            vkDestroyDescriptorPool(m_impl->device, m_impl->bindless.pool, nullptr);
+        if (m_impl->graphicsTimeline)
+            vkDestroySemaphore(m_impl->device, m_impl->graphicsTimeline, nullptr);
+        if (m_impl->computeTimeline)
+            vkDestroySemaphore(m_impl->device, m_impl->computeTimeline, nullptr);
+        if (m_impl->bindless.layout)
+            vkDestroyDescriptorSetLayout(m_impl->device, m_impl->bindless.layout, nullptr);
         if (m_impl->commandPool)
             vkDestroyCommandPool(m_impl->device, m_impl->commandPool, nullptr);
         if (m_impl->allocator)
@@ -3784,6 +4402,7 @@ namespace PlutoGE::render::rhi::vulkan
             VmaAllocationInfo allocationInfo{};
             VkBuffer *buffer = &resource.buffer;
             VmaAllocation *memory = &resource.allocation;
+            m_impl->ShareBuffer(info);
             Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, buffer, memory, &allocationInfo), "vmaCreateBuffer");
             if (!data.empty() && !deviceUpload)
             {
@@ -4196,6 +4815,23 @@ namespace PlutoGE::render::rhi::vulkan
             resource.setLayouts[set] = m_impl->layoutCache.AcquireSetLayout(m_impl->device, bindingsBySet[set],
                                                                             "vkCreateDescriptorSetLayout");
         }
+        resource.descriptorSetCount = resource.setLayouts.size();
+        if (descriptor.bindlessTextures)
+        {
+            if (!m_impl->bindless.set)
+                throw std::invalid_argument("Vulkan pipeline '" + descriptor.debugName + "' requires bindless textures");
+            if (resource.descriptorSetCount > BindlessTextureSet)
+                throw std::invalid_argument("Bindless pipelines keep their sets below BindlessTextureSet");
+            // Sets between the per-draw ones and the table stay empty.
+            while (resource.setLayouts.size() < BindlessTextureSet)
+                resource.setLayouts.push_back(m_impl->layoutCache.AcquireSetLayout(m_impl->device, {}, "vkCreateDescriptorSetLayout"));
+            resource.descriptorSetCount = resource.setLayouts.size();
+            resource.setLayouts.push_back(m_impl->bindless.layout);
+            resource.bindingsBySet.resize(resource.descriptorSetCount);
+            resource.dynamicUniformSlotsBySet.resize(resource.descriptorSetCount);
+            resource.populatedSets.resize(resource.descriptorSetCount);
+            resource.bindlessTextures = true;
+        }
         resource.layout = m_impl->layoutCache.AcquirePipelineLayout(m_impl->device, resource.setLayouts,
                                                                     "vkCreatePipelineLayout");
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
@@ -4331,6 +4967,7 @@ namespace PlutoGE::render::rhi::vulkan
             resource.setLayouts[set] = m_impl->layoutCache.AcquireSetLayout(m_impl->device, nativeBindings[set],
                                                                             "vkCreateDescriptorSetLayout(compute)");
         }
+        resource.descriptorSetCount = resource.setLayouts.size();
         resource.layout = m_impl->layoutCache.AcquirePipelineLayout(m_impl->device, resource.setLayouts,
                                                                     "vkCreatePipelineLayout(compute)");
         VkShaderModuleCreateInfo moduleInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
@@ -4360,6 +4997,62 @@ namespace PlutoGE::render::rhi::vulkan
     std::uint64_t VulkanDevice::CompletedSubmission() const noexcept
     {
         return std::atomic_ref(m_impl->completedSubmission).load(std::memory_order_acquire);
+    }
+
+    std::uint32_t VulkanDevice::BindlessTextureCapacity() const noexcept { return m_impl->bindless.capacity; }
+
+    std::uint32_t VulkanDevice::RegisterBindlessTexture(TextureHandle textureHandle, SamplerHandle samplerHandle)
+    {
+        std::lock_guard lock(m_impl->sharedMutex);
+        auto &table = m_impl->bindless;
+        auto *texture = m_impl->textures.Get(textureHandle);
+        auto *sampler = m_impl->samplers.Get(samplerHandle);
+        // Only images that stay shader-readable qualify: nothing transitions them on a bindless read.
+        if (!table.set || !texture || !sampler || texture->descriptor.usage != TextureUsage::Sampled ||
+            texture->descriptor.storage || texture->layout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+            return InvalidBindlessIndex;
+        const auto completed = std::atomic_ref(m_impl->completedSubmission).load(std::memory_order_acquire);
+        std::erase_if(table.retiring, [&](const auto &retiring)
+        {
+            if (retiring.first > completed)
+                return false;
+            table.free.push_back(retiring.second);
+            return true;
+        });
+        std::uint32_t index = InvalidBindlessIndex;
+        if (!table.free.empty())
+        {
+            index = table.free.back();
+            table.free.pop_back();
+        }
+        else if (table.used < table.capacity)
+            index = table.used++;
+        else
+            return InvalidBindlessIndex;
+        const VkDescriptorImageInfo image{sampler->sampler, texture->view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        write.dstSet = table.set;
+        write.dstArrayElement = index;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        write.pImageInfo = &image;
+        vkUpdateDescriptorSets(m_impl->device, 1, &write, 0, nullptr);
+        ++texture->bindlessReferences;
+        table.textures[index] = textureHandle;
+        return index;
+    }
+
+    void VulkanDevice::ReleaseBindlessTexture(std::uint32_t index)
+    {
+        std::lock_guard lock(m_impl->sharedMutex);
+        auto &table = m_impl->bindless;
+        if (index >= table.used)
+            return;
+        if (auto *texture = m_impl->textures.Get(table.textures[index]); texture && texture->bindlessReferences)
+            --texture->bindlessReferences;
+        table.textures[index] = {};
+        // Frames recorded so far may still sample the slot.
+        table.retiring.emplace_back(m_impl->context ? m_impl->context->RetirementSubmission() : 0, index);
     }
 
     void VulkanDevice::SetRecordingThread(std::thread::id thread)
@@ -4426,34 +5119,13 @@ namespace PlutoGE::render::rhi::vulkan
         std::lock_guard lock(m_impl->sharedMutex);
         if (resource->usage == BufferUsage::Storage || resource->usage == BufferUsage::VertexStorage ||
             ((resource->usage == BufferUsage::Vertex || resource->usage == BufferUsage::Index) &&
-             m_impl->context->ThreadRecorder().NativeCommandBuffer()))
+             m_impl->context->ThreadRecorder().CanRecordUploads()))
         {
-            // Recorded into the context bound on this thread (a parallel one), else the frame's.
-            auto &recorder = m_impl->context->ThreadRecorder();
-            const auto commandBuffer = recorder.NativeCommandBuffer();
-            if (!commandBuffer || offset % 4 || data.size() % 4)
-                throw std::logic_error("Recorded buffer uploads require frame recording outside rendering and four-byte alignment");
-            // vkCmdUpdateBuffer snapshots its source into the command stream;
-            // never overwrite host-visible data still read by an earlier frame.
-            VkMemoryBarrier before{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            before.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
-                                   VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
-            before.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                 0, 1, &before, 0, nullptr, 0, nullptr);
-            // Large inline updates copy megabytes into the driver's command pool
-            // and make both recording and its next reset expensive. Keep small
-            // updates inline; stream large vertex/storage payloads through copies.
-            if (data.size() > 65536)
-                recorder.StageBufferUpload(resource->buffer, offset, data);
-            else if (!data.empty())
-                vkCmdUpdateBuffer(commandBuffer, resource->buffer, offset, data.size(), data.data());
-            VkMemoryBarrier after{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-            after.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            after.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_INDIRECT_COMMAND_READ_BIT |
-                                  VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_INDEX_READ_BIT;
-            vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-                                 0, 1, &after, 0, nullptr, 0, nullptr);
+            // Recorded into the context bound on this thread (a parallel one), else the frame's. GPU copies keep
+            // the update ordered with earlier and later GPU reads of the buffer.
+            if (offset % 4 || data.size() % 4)
+                throw std::logic_error("Recorded buffer uploads require four-byte alignment");
+            m_impl->context->ThreadRecorder().QueueBufferUpload(resource->buffer, offset, data);
             return;
         }
         const auto allocation = resource->allocation;
@@ -4498,6 +5170,8 @@ namespace PlutoGE::render::rhi::vulkan
             }
         if (auto r = m_impl->textures.Remove(h))
         {
+            if (r->bindlessReferences)
+                std::ranges::replace(m_impl->bindless.textures, h, TextureHandle{});
             m_impl->context->InvalidateDescriptorCaches();
             const auto retireAfter = m_impl->context->RetirementSubmission();
             m_impl->deferredTextures.push_back({retireAfter, std::move(*r)});
@@ -4734,6 +5408,7 @@ namespace PlutoGE::render::rhi::vulkan
         allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
         VkBuffer buffer{};
         VmaAllocation memory{};
+        m_impl->ShareBuffer(info);
         Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
         ScopeExit releaseReadback([&] { vmaDestroyBuffer(m_impl->allocator, buffer, memory); });
         const auto previousLayout = texture->layout;
@@ -4765,6 +5440,7 @@ namespace PlutoGE::render::rhi::vulkan
         allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
         VkBuffer buffer{};
         VmaAllocation memory{};
+        m_impl->ShareBuffer(info);
         Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &buffer, &memory, nullptr), "vmaCreateBuffer(readback)");
         ScopeExit releaseReadback([&] { vmaDestroyBuffer(m_impl->allocator, buffer, memory); });
         const auto previousLayout = texture->layout;
@@ -4858,6 +5534,7 @@ namespace PlutoGE::render::rhi::vulkan
             allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
                                VMA_ALLOCATION_CREATE_MAPPED_BIT;
             VmaAllocationInfo allocationInfo{};
+            m_impl->ShareBuffer(info);
             Check(vmaCreateBuffer(m_impl->allocator, &info, &allocation, &slot.buffer,
                                   &slot.allocation, &allocationInfo),
                   "vmaCreateBuffer(buffered readback)");

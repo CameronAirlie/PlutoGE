@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -106,7 +107,8 @@ namespace PlutoGE::ui
         [[nodiscard]] std::string BuildFrameMetricsReport(const EditorProfileFrame &frame, bool allTraceSamples = false) const;
         [[nodiscard]] std::string BuildCaptureMetricsReport() const;
         render::GeometryDiagnosticMode geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
-        render::OcclusionMode occlusionMode = render::OcclusionMode::Off;
+        // Replaces the project's occlusion culling setting in the viewports while set (a session diagnostic).
+        std::optional<render::OcclusionMode> occlusionOverride;
 
         void AddFrameSample(float frameTimeMs);
         void SetLatestFrameTimingStats(const EditorFrameTimingStats &timingStats);

@@ -30,6 +30,8 @@
 #include "ShaderGraphVariantChecks.h"
 #include "ShadowFilteringChecks.h"
 #include "OpaqueShadowBatchingChecks.h"
+#include "LightClusterChecks.h"
+#include "GpuDrivenOpaqueChecks.h"
 #include "SkinningRenderingChecks.h"
 #include "GpuSkinningChecks.h"
 #include "BufferUploadChecks.h"
@@ -83,6 +85,7 @@ int main(int argc, char **argv)
         shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
         shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
         shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
+        shaders.ssrStages[4] = {{.spirv = ReadSpirv("SSRFilterVertical.vertex.spv")}, {.spirv = ReadSpirv("SSRFilterVertical.fragment.spv")}};
         shaders.ssrStages[3] = {{.spirv = ReadSpirv("SSRTraceReduced.vertex.spv")}, {.spirv = ReadSpirv("SSRTraceReduced.fragment.spv")}};
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
@@ -103,6 +106,14 @@ int main(int argc, char **argv)
         shaders.occlusion.fragment.spirv = ReadSpirv("OcclusionDepth.fragment.spv");
         shaders.occlusion.reduce.spirv = ReadSpirv("OcclusionReduce.compute.spv");
         shaders.occlusion.test.spirv = ReadSpirv("OcclusionTest.compute.spv");
+        shaders.lightClusterCulling.spirv = ReadSpirv("LightClusterCulling.compute.spv");
+        shaders.bindless.vertex.spirv = ReadSpirv("BasicLitBindless.vertex.spv");
+        shaders.bindless.colorVertex.spirv = ReadSpirv("BasicLitBindlessColor.vertex.spv");
+        shaders.bindless.fragments[0].spirv = ReadSpirv("BasicLitBindless.fragment.spv");
+        shaders.bindless.fragments[1].spirv = ReadSpirv("BasicLitBindlessColor.fragment.spv");
+        shaders.bindless.fragments[2].spirv = ReadSpirv("BasicLitBindlessColorMotion.fragment.spv");
+        shaders.bindless.fragments[3].spirv = ReadSpirv("BasicLitBindlessIndirect.fragment.spv");
+        shaders.bindless.visibility.spirv = ReadSpirv("GpuDrivenVisibility.compute.spv");
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].spirv = ReadSpirv((std::string(vsmCompute[index]) + ".compute.spv").c_str());
@@ -366,6 +377,7 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--buffer-uploads")
         {
             CheckLargeBufferUploads(device);
+            CheckBatchedBufferUploads(device);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--decals-only")
@@ -463,7 +475,16 @@ int main(int argc, char **argv)
                 {
                     return device.ReadTextureRgba8(texture);
                 });
+                CheckSsrAdaptiveRays(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             }
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssr-adaptive-performance")
+        {
+            // The capture-sized trace (1690 x 934 output) with project settings, per floor roughness.
+            renderer.Resize(1690, 934);
+            CheckSsrAdaptiveRays(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); },
+                                 &device);
             return 0;
         }
         if (argc > 1 && (std::string_view(argv[1]) == "--ssr-performance" ||
@@ -503,6 +524,13 @@ int main(int argc, char **argv)
             CheckOpaqueShadowBatching(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
+        CheckLightClusters(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); },
+                           device.GetImmediateContext().SupportsAsyncCompute());
+        if (argc > 1 && std::string_view(argv[1]) == "--light-clusters")
+            return 0;
+        CheckGpuDrivenOpaque(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--gpu-driven")
+            return 0;
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 
@@ -647,12 +675,18 @@ int main(int argc, char **argv)
                       << stats.uniformBytesUploaded << ", descriptor binds " << stats.descriptorBindCalls << "\n";
             return 0;
         }
+        // Per-object shadow uploads are shared by every cascade. Opaque batches upload per cascade
+        // instead and are covered by OpaqueShadowBatchingChecks.
+        renderer.SetOpaqueShadowBatchingEnabled(false);
         renderer.Render(projection * view, neutralLighting, draws);
         const auto &frameStats = renderer.GetFrameStats();
         if (frameStats.geometryDraws != draws.size() || frameStats.geometryInstances != 3 ||
             frameStats.shadowCandidates != draws.size() || frameStats.shadowObjectUploads > 3)
         {
-            std::cerr << "BasicRenderer reported inconsistent recorded-work statistics\n";
+            std::cerr << "BasicRenderer reported inconsistent recorded-work statistics: geometry draws "
+                      << frameStats.geometryDraws << "/" << draws.size() << ", instances "
+                      << frameStats.geometryInstances << "/3, shadow candidates " << frameStats.shadowCandidates
+                      << ", shadow object uploads " << frameStats.shadowObjectUploads << "\n";
             return 12;
         }
         const auto deviceStats = device.GetTimingStats();
@@ -671,6 +705,7 @@ int main(int argc, char **argv)
             std::cerr << "BasicRenderer did not reuse unchanged directional shadow cascades\n";
             return 14;
         }
+        renderer.SetOpaqueShadowBatchingEnabled(true);
         auto movedDraws = draws;
         movedDraws[1].model[3][0] += 0.125f;
         renderer.Render(projection * view, neutralLighting, movedDraws);
@@ -879,7 +914,9 @@ int main(int argc, char **argv)
 
         // Shared submesh uniforms must reduce uploads without changing pixels.
         // Different UV scales are an equivalent reference for untextured draws
-        // but force separate material allocations.
+        // but force separate material allocations. These are bound-path material
+        // uniforms; GPU-driven draws keep materials in a storage table instead.
+        renderer.SetGpuDrivenOpaqueEnabled(false);
         auto sharedLighting = neutralLighting;
         sharedLighting.shadowsEnabled = false;
         std::vector<BasicDraw> sharedDraws(32, BasicDraw{.mesh = &cube});
@@ -898,6 +935,7 @@ int main(int argc, char **argv)
             std::cerr << "Shared material uniforms did not preserve rendering and reduce uploads\n";
             return 19;
         }
+        renderer.SetGpuDrivenOpaqueEnabled(true);
         // Reuse must not overwrite earlier draws or retain last frame's values.
         std::array coloredDraws{
             BasicDraw{.mesh = &cube, .model = (*cubeInstances)[0], .baseColor = {1, 0, 0, 1}},

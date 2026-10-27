@@ -152,6 +152,9 @@ namespace PlutoGE::render
             compatibleDepth = m_depth.Get();
         }
         commands.BeginGpuScope("RHI Occlusion Hierarchy");
+        // The chain rewrites the hierarchy and indirect commands the previous test and indirect draws read.
+        commands.PipelineBarrier(BarrierAccess::IndirectCommandRead | BarrierAccess::ComputeShaderRead,
+                                 BarrierAccess::ComputeShaderWrite);
         commands.BindPipeline(m_reducePipeline.Get());
         commands.BindTexture(1, compatibleDepth, m_sampler.Get());
         commands.BindStorageBuffer(2, m_hierarchy.Get());
@@ -164,7 +167,7 @@ namespace PlutoGE::render
             parameters.destination = parameters.levels[level];
             bindParameters();
             commands.Dispatch((parameters.destination.x + 7) / 8, (parameters.destination.y + 7) / 8, 1);
-            commands.ShaderMemoryBarrier();
+            commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite, BarrierAccess::Compute);
             parameters.source = parameters.destination;
         }
         commands.EndGpuScope();
@@ -173,7 +176,9 @@ namespace PlutoGE::render
         parameters.source = {width, height, 0, 0};
         bindParameters();
         commands.Dispatch((static_cast<std::uint32_t>(draws.size()) + 63) / 64, 1, 1);
-        commands.ShaderMemoryBarrier();
+        // Consumers: the culled indirect draws and the counter readback.
+        commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite,
+                                 BarrierAccess::IndirectCommandRead | BarrierAccess::TransferRead);
         commands.EndGpuScope();
         const auto frame = ++m_frame;
         const std::weak_ptr<OcclusionStats> stats = m_stats;

@@ -52,4 +52,8 @@ cbuffer CameraParameters : register(b0, space0)
     float4 probeAtlasParameters;
     AmbientProbeVolumeParameters probeVolumes[PLUTO_AMBIENT_PROBE_VOLUMES];
     float4 geometryParameters;
+    // Clustered local lights (LightClusters.slang): the culling projection, and first-slice depth, slices per
+    // log-depth unit, farthest light reach, enabled.
+    column_major float4x4 lightClusterProjection;
+    float4 lightClusterDepth;
 };

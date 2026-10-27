@@ -52,6 +52,9 @@ namespace PlutoGE::render
     class GeometryArena;
     class CascadedShadowLayers;
     class PointShadowLayers;
+    class LightClusterGrid;
+    class GpuDrivenOpaque;
+    struct BindlessMaterialFallbacks;
 
     enum class BasicPostProcessEffectType : std::uint8_t
     {
@@ -231,6 +234,17 @@ namespace PlutoGE::render
         }
     };
 
+    // GPU-driven opaque draws (BasicLitBindless.slang, GpuDrivenOpaque): the vertex stage for every geometry layout
+    // but Color, and Color's; fragments for Surface and wider layouts, Color, ColorMotion and SurfaceIndirect; and
+    // the pass copying occlusion results into the multi-draw commands. Without them every draw binds its material.
+    struct BasicBindlessShaderPackage
+    {
+        rhi::GraphicsPipelineDescriptor::ShaderCode vertex, colorVertex;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 4> fragments;
+        rhi::ComputePipelineDescriptor::ShaderCode visibility;
+        [[nodiscard]] bool Available() const noexcept;
+    };
+
     struct BasicSelectionOutline
     {
         glm::vec4 color{1.0f, 0.4f, 0.0f, 1.0f};
@@ -254,6 +268,7 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> coverageFragments;
         std::array<BasicPostProcessShaderPackage, 2> opaqueDepth;
         BasicTerrainShaderPackage terrain;
+        BasicBindlessShaderPackage bindless;
         // Optional per-graph specialisations of fragment, compactFragments[0]
         // and coverageFragments[0]. Null keeps graphs interpreted.
         std::shared_ptr<ShaderGraphVariantCache> graphVariants;
@@ -262,8 +277,9 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
-        // Trace, vertical resolve, horizontal filter, and the trace for fewer than 16 rays per pixel.
-        std::array<BasicPostProcessShaderPackage, 4> ssrStages;
+        // Trace, upsample and composite, horizontal filter, the trace for fewer than 16 rays per pixel, and the
+        // vertical filter. The filters and traces run at trace resolution.
+        std::array<BasicPostProcessShaderPackage, 5> ssrStages;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -272,6 +288,8 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage shadowDepthSeed;
         VirtualShadowShaders virtualShadows;
         OcclusionShaders occlusion;
+        // Clustered local-light culling (LightClusterCulling.slang). Without it every light is evaluated.
+        rhi::ComputePipelineDescriptor::ShaderCode lightClusterCulling;
         BasicPostProcessShaderPackage displayOutput;
         // Optional editor selection outline composited over the display output.
         BasicPostProcessShaderPackage selectionOutline;
@@ -620,6 +638,14 @@ namespace PlutoGE::render
         VirtualShadowStats virtualShadows;
         OcclusionStats occlusion;
         bool occlusionActive = false;
+        // Local lights shading culled through the cluster grid; zero when every fragment evaluated every light.
+        std::size_t clusteredLocalLights = 0;
+        // Light-cluster culling dispatches; unchanged views and lights reuse the previous masks.
+        std::uint32_t lightClusterUpdates = 0;
+        // Opaque draws submitted through GPU-driven multi-draw indirect calls, those calls, and live bindless materials.
+        std::size_t gpuDrivenDraws = 0, gpuDrivenBatches = 0, gpuDrivenMaterials = 0;
+        // Frame-graph sections run on the async compute queue (zero when its work ran inline or none was needed).
+        std::uint32_t asyncComputeSections = 0;
         bool virtualShadowsActive = false;
         std::string directionalShadowStatus = "Disabled";
         std::size_t shadowObjectUploads = 0;
@@ -713,6 +739,12 @@ namespace PlutoGE::render
         // Single objects read their constants from a per-frame stream indexed by first instance (devices that
         // support it). The output is identical; switching it off is for comparisons and debugging.
         void SetObjectStreamingEnabled(bool enabled) noexcept { m_objectStreaming = enabled; }
+        // Local lights are culled per view cluster before shading. The image is identical; switching it off
+        // evaluates every light per fragment, for comparisons.
+        void SetClusteredLightingEnabled(bool enabled) noexcept { m_clusteredLighting = enabled; }
+        // Standard opaque draws read bindless materials and draw through multi-draw indirect calls (Vulkan with
+        // bindless textures). The image is identical; switching it off binds each draw's material, for comparisons.
+        void SetGpuDrivenOpaqueEnabled(bool enabled) noexcept { m_gpuDrivenOpaqueEnabled = enabled; }
         // Rigid meshes created afterwards share geometry arena buffers (Vulkan), so shadow-page draws of different
         // meshes batch into one indirect draw. The output is identical; switching it off is for comparisons.
         void SetGeometryArenaEnabled(bool enabled);
@@ -789,6 +821,13 @@ namespace PlutoGE::render
                                      std::span<const ShadowGeometryCluster> shadowClusters);
         [[nodiscard]] rhi::PipelineHandle GeometryPipeline(const BasicDraw &draw, bool instanced,
             GeometryOutputLayout layout, bool depthOnly, bool prepassed);
+        // The face culling a surface draw uses: material culling with the model's handedness, or none.
+        [[nodiscard]] rhi::CullMode GeometryCullMode(const BasicDraw &draw) const;
+        // The GPU-driven (bindless) standard opaque pipeline matching GeometryPipeline for a shading draw.
+        [[nodiscard]] rhi::PipelineHandle BindlessGeometryPipeline(const BasicDraw &draw, GeometryOutputLayout layout,
+                                                                   bool prepassed);
+        // The fallback maps and sampler bound-path materials use, for bindless materials.
+        [[nodiscard]] BindlessMaterialFallbacks MaterialFallbacks() const;
         // Binds a terrain draw's weight maps, layer arrays and layer parameters (terrain pipelines only).
         void BindTerrainLayers(rhi::ICommandContext &commands, const BasicTerrainLayers &terrain);
         void EnsureGeometryTargets(GeometryOutputLayout layout);
@@ -816,6 +855,10 @@ namespace PlutoGE::render
             { return std::hash<std::uint64_t>{}(key.graphStructure ^ (std::uint64_t(key.state) << 48)); }
         };
         std::unordered_map<GeometryPipelineKey, rhi::GraphicsPipeline, GeometryPipelineKeyHash> m_geometryPipelines;
+        BasicBindlessShaderPackage m_bindlessShaders;
+        std::unordered_map<unsigned, rhi::GraphicsPipeline> m_bindlessGeometryPipelines;
+        std::unique_ptr<GpuDrivenOpaque> m_gpuDriven;
+        bool m_gpuDrivenOpaqueEnabled = true;
         std::shared_ptr<ShaderGraphVariantCache> m_graphVariants;
         [[nodiscard]] rhi::TextureHandle RenderFusedColor(rhi::TextureHandle source,
             std::span<const BasicPostProcessEffect> effects, rhi::ICommandContext &commands,
@@ -848,6 +891,8 @@ namespace PlutoGE::render
         std::unique_ptr<VirtualShadowMaps> m_virtualShadows;
         VirtualShadowReceivers m_directionalShadowReceivers, m_reusedShadowReceivers;
         std::unique_ptr<OcclusionCulling> m_occlusion;
+        std::unique_ptr<LightClusterGrid> m_lightClusters;
+        bool m_clusteredLighting = true;
         std::unique_ptr<RhiGpuSkinning> m_gpuSkinning;
         std::unique_ptr<DeferredProbeIrradiance> m_deferredProbeIrradiance;
         std::unique_ptr<BackgroundMotion> m_backgroundMotion;
@@ -866,7 +911,7 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
         rhi::GraphicsPipeline m_glassColorCopyPipeline, m_glassDepthCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
-        std::array<rhi::GraphicsPipeline, 4> m_ssrStagePipelines;
+        std::array<rhi::GraphicsPipeline, 5> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};

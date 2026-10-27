@@ -14,6 +14,12 @@ For automated local ambient lighting and sparse reflection captures, see
 For the sky at night (moon phases, moonlight handoff and stars), see
 [night sky rendering](NIGHT_SKY.md).
 
+For clustered local lights, scoped Vulkan synchronisation, bindless GPU-driven
+opaque draws and the frame graph with async compute, and their switches, see
+[renderer modernisation](renderer-modernisation.md).
+Screen-space reflection costs and the **Adaptive Rays** setting are described in
+[SSR adaptive rays and filtering](ssr-adaptive-rays-and-filter.md).
+
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
 Vulkan scene rendering uses `RhiSceneRenderer`/`BasicRenderer`; the engine also
 retains its legacy OpenGL render-pass pipeline. A feature in that legacy pipeline

@@ -523,6 +523,25 @@ namespace PlutoGE::render::rhi::opengl
                             GL_SHADER_STORAGE_BARRIER_BIT | GL_COMMAND_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT |
                             GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
         }
+        void PipelineBarrier(BarrierAccess before, BarrierAccess after) override
+        {
+            // OpenGL orders reads before later writes and keeps transfers coherent; only shader stores need a
+            // barrier, naming how the later work consumes them.
+            if (!HasAny(before, BarrierAccess::FragmentShaderWrite | BarrierAccess::ComputeShaderWrite))
+                return;
+            GLbitfield bits = 0;
+            if (HasAny(after, BarrierAccess::IndirectCommandRead))
+                bits |= GL_COMMAND_BARRIER_BIT;
+            if (HasAny(after, BarrierAccess::VertexInputRead))
+                bits |= GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT | GL_ELEMENT_ARRAY_BARRIER_BIT;
+            if (HasAny(after, BarrierAccess::GraphicsShaders | BarrierAccess::Compute))
+                bits |= GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                        GL_TEXTURE_FETCH_BARRIER_BIT | GL_UNIFORM_BARRIER_BIT;
+            if (HasAny(after, BarrierAccess::Transfer))
+                bits |= GL_BUFFER_UPDATE_BARRIER_BIT | GL_TEXTURE_UPDATE_BARRIER_BIT | GL_PIXEL_BUFFER_BARRIER_BIT;
+            if (bits)
+                glMemoryBarrier(bits);
+        }
         void ComputeImageBarrier(std::span<const TextureHandle> images) override
         {
             if (!images.empty())

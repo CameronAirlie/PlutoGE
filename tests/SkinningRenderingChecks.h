@@ -206,10 +206,10 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
     for (const float x : {0.0f, .8f, 0.0f})
     {
         poseA[0] = glm::translate(glm::mat4(1), glm::vec3(x, 0, 0));
-        light.occlusionMode = OcclusionMode::Off;
+        renderer.SetRenderingSettings({.occlusionCulling = OcclusionMode::Off});
         require(renderer.Render(128,128,camera,light,occlusionCommands,{}), "Animated occlusion reference failed");
         const auto reference = readPixels(renderer.GetColorTexture());
-        light.occlusionMode = OcclusionMode::Cull;
+        renderer.SetRenderingSettings({.occlusionCulling = OcclusionMode::Cull});
         for (int frame = 0; frame < 5; ++frame)
         {
             require(renderer.Render(128,128,camera,light,occlusionCommands,{}), "Animated occlusion render failed");
@@ -223,7 +223,7 @@ void CheckSkinningRendering(Device &device, const PlutoGE::render::BasicRenderer
         // Adjacent material-compatible submeshes are merged into one draw.
         require(stats.occlusion.rejected == (x == 0 ? 1u : 0u), "Animated bounds did not track current pose visibility");
     }
-    light.occlusionMode = OcclusionMode::Off;
+    renderer.SetRenderingSettings({});
     // A coarse LOD deforms only the layout prefix it reads. Returning to LOD0
     // must deform the remaining slots although the pose has not changed.
     if (gpu)

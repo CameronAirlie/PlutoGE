@@ -22,6 +22,7 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(30, 0)]] Sampler2D iblAtlas3 : register(t30, space0);
 
 #include "SceneLightingParameters.slang"
+#include "LightClusters.slang"
 
 struct VertexInput
 {
@@ -46,6 +47,9 @@ struct VertexOutput
     float outlineWidth : TEXCOORD6;
     float2 uv2 : TEXCOORD7;
     nointerpolation float2 probeDebug : TEXCOORD8;
+#ifdef PLUTO_BINDLESS_MATERIAL
+    nointerpolation uint materialIndex : TEXCOORD9;
+#endif
 };
 
 struct FragmentOutput
@@ -153,6 +157,9 @@ cbuffer InstancedObjectParameters : register(b0, space3)
     InstanceObjectParameters instances[64];
 };
 
+#ifdef PLUTO_BINDLESS_MATERIAL
+#include "BindlessMaterials.slang"
+#else
 [[vk::binding(0, 1)]]
 cbuffer MaterialParameters : register(b0, space1)
 {
@@ -192,6 +199,7 @@ Sampler2D normalTexture : register(t2, space1);
 Sampler2D metallicTexture : register(t3, space1);
 [[vk::binding(4, 1)]]
 Sampler2D roughnessTexture : register(t4, space1);
+#endif
 [[vk::binding(5, 1)]]
 Sampler2D directionalShadowTexture : register(t5, space1);
 [[vk::binding(6, 1)]]
@@ -988,11 +996,13 @@ float4 graphWorldPosition(float4x4 transform, float3 position, float3 normal, fl
     return world;
 }
 
-[shader("vertex")]
-VertexOutput vertexMain(VertexInput input)
+// The vertex transform every lit entry point shares; they differ only in where object parameters come from.
+[ForceInline]
+VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, float4x4 objectPreviousModel,
+                                    float4 debugParameters)
 {
     VertexOutput output;
-    const float4 worldPosition = graphWorldPosition(model,input.position,input.normal,input.uv,shaderGraphFrame.x,objectDebugParameters.y);
+    const float4 worldPosition = graphWorldPosition(objectModel,input.position,input.normal,input.uv,shaderGraphFrame.x,debugParameters.y);
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -1003,16 +1013,22 @@ VertexOutput vertexMain(VertexInput input)
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, graphWorldPosition(previousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,objectDebugParameters.y));
-    output.objectDebug = objectDebugParameters.x;
-    output.probeDebug = objectDebugParameters.zw;
-    output.outlineWidth = objectDebugParameters.y;
-    output.worldNormal = normalize(mul((float3x3)model, input.normal));
+    output.previousClip = mul(previousViewProjection, graphWorldPosition(objectPreviousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,debugParameters.y));
+    output.objectDebug = debugParameters.x;
+    output.probeDebug = debugParameters.zw;
+    output.outlineWidth = debugParameters.y;
+    output.worldNormal = normalize(mul((float3x3)objectModel, input.normal));
     output.uv = input.uv;
     output.uv2 = input.uv2;
     output.worldPosition = worldPosition.xyz;
-    output.worldTangent = float4(normalize(mul((float3x3)model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
+    output.worldTangent = float4(normalize(mul((float3x3)objectModel, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     return output;
+}
+
+[shader("vertex")]
+VertexOutput vertexMain(VertexInput input)
+{
+    return transformSurfaceVertex(input, model, previousModel, objectDebugParameters);
 }
 
 [shader("vertex")]
@@ -1020,30 +1036,30 @@ VertexOutput vertexMain(VertexInput input)
 // index avoids requiring SPIR-V's BaseInstance capability on affected drivers.
 VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
-    VertexOutput output;
     const InstanceObjectParameters instance = instances[instanceId];
-    const float4 worldPosition = graphWorldPosition(instance.model,input.position,input.normal,input.uv,shaderGraphFrame.x,instance.debugParameters.y);
-    float3 localTangent = input.tangent.xyz;
-    if (dot(localTangent, localTangent) < 0.000001)
-    {
-        const float3 tangentAxis = abs(input.normal.y) < 0.999 ? float3(0.0, 1.0, 0.0) : float3(1.0, 0.0, 0.0);
-        localTangent = normalize(cross(tangentAxis, input.normal));
-    }
-    output.position = mul(viewProjection, worldPosition);
-    output.position.xy += temporalClipOffset.xy * output.position.w;
-    output.currentClip = mul(motionViewProjection, worldPosition);
-    const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, graphWorldPosition(instance.previousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,instance.debugParameters.y));
-    output.objectDebug = instance.debugParameters.x;
-    output.probeDebug = instance.debugParameters.zw;
-    output.outlineWidth = instance.debugParameters.y;
-    output.worldNormal = normalize(mul((float3x3)instance.model, input.normal));
-    output.uv = input.uv;
-    output.uv2 = input.uv2;
-    output.worldPosition = worldPosition.xyz;
-    output.worldTangent = float4(normalize(mul((float3x3)instance.model, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
+    return transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
+}
+
+#ifdef PLUTO_BINDLESS_MATERIAL
+// Multi-draw commands select their instance record with firstInstance, which the Vulkan instance index includes.
+[shader("vertex")]
+VertexOutput bindlessVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
+{
+    const BindlessInstance instance = bindlessInstances[instanceId];
+    VertexOutput output = transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
+    output.materialIndex = instance.material.x;
     return output;
 }
+
+[shader("vertex")]
+VertexOutput bindlessColorVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
+{
+    VertexOutput output = bindlessVertexMain(input, instanceId);
+    output.previousClip = 0;
+    output.currentClip = 0;
+    return output;
+}
+#endif
 
 // Evaluate derivatives while all fragment/helper lanes are active. Implicit
 // texture LOD inside the branched material helpers can reveal primitive edges
@@ -1056,6 +1072,10 @@ struct SurfaceDerivatives
 [ForceInline]
 SurfaceDerivatives surfaceDerivatives(VertexOutput input)
 {
+#ifdef PLUTO_BINDLESS_MATERIAL
+    // Every fragment entry evaluates derivatives first, so the material is in place before anything reads it.
+    loadBindlessMaterial(input.materialIndex);
+#endif
     SurfaceDerivatives result;
     result.uvDx = ddx(input.uv) * uvScale;
     result.uvDy = ddy(input.uv) * uvScale;
@@ -1198,7 +1218,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     float3 pointReceiverNormal = cross(pointWorldDx, pointWorldDy);
     float pointNormalLength = dot(pointReceiverNormal, pointReceiverNormal);
     pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
-    for (uint light = 0; light < uint(pointParameters.x) && (transparentPass || pointParameters.w != 6.0); ++light)
+    LocalLightIterator localLightIterator = localLights(input.worldPosition);
+    uint light;
+    while ((transparentPass || pointParameters.w != 6.0) && localLightIterator.next(light))
     {
         const float3 offset = pointPositionRange[light].xyz - input.worldPosition;
         const float distance = length(offset);

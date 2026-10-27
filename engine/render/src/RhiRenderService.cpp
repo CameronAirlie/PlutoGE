@@ -20,6 +20,15 @@ namespace PlutoGE::render
         return true;
     }
 
+    void RhiRenderService::SetRenderingSettings(const RenderingSettings &settings)
+    {
+        (void)WaitForFrame();
+        m_renderingSettings = settings;
+        if (m_sceneRenderer) m_sceneRenderer->SetRenderingSettings(settings);
+        m_cameraStack.SetRenderingSettings(settings);
+        m_renderTextures.SetRenderingSettings(settings);
+    }
+
     bool RhiRenderService::Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain)
     {
         Shutdown();
@@ -155,6 +164,7 @@ namespace PlutoGE::render
                 return false;
             sceneRenderer->SetTemporalUpscalerOptions(m_upscalerOptions);
             sceneRenderer->SetGraphicsQuality(m_graphicsQuality);
+            sceneRenderer->SetRenderingSettings(m_renderingSettings);
             m_sceneRenderer = std::move(sceneRenderer);
         }
         const bool runtimeUi = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI();

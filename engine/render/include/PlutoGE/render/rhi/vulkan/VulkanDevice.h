@@ -25,6 +25,7 @@ namespace PlutoGE::render::rhi::vulkan
     class VulkanRecorder;
     class VulkanCommandContext;
     class VulkanSegmentContext;
+    class VulkanAsyncComputeContext;
     class VulkanSwapchain;
 
     // Initial off-screen Vulkan implementation. Submission is deliberately
@@ -66,6 +67,9 @@ namespace PlutoGE::render::rhi::vulkan
         void SetRecordingThread(std::thread::id thread) override;
         [[nodiscard]] std::uint64_t PendingSubmission() const noexcept override;
         [[nodiscard]] std::uint64_t CompletedSubmission() const noexcept override;
+        [[nodiscard]] std::uint32_t BindlessTextureCapacity() const noexcept override;
+        [[nodiscard]] std::uint32_t RegisterBindlessTexture(TextureHandle texture, SamplerHandle sampler) override;
+        void ReleaseBindlessTexture(std::uint32_t index) override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.
         [[nodiscard]] std::vector<std::byte> ReadTextureRgba8(TextureHandle texture);
@@ -86,6 +90,7 @@ namespace PlutoGE::render::rhi::vulkan
         friend class VulkanRecorder;
         friend class VulkanCommandContext;
         friend class VulkanSegmentContext;
+        friend class VulkanAsyncComputeContext;
         friend class VulkanSwapchain;
         struct Impl;
         std::unique_ptr<Impl> m_impl;

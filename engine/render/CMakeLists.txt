@@ -24,6 +24,9 @@ add_library(PlutoGERender
     src/GeometryRendering.cpp
     src/VirtualShadowMaps.cpp
     src/OcclusionCulling.cpp
+    src/LightClusterGrid.cpp
+    src/GpuDrivenOpaque.cpp
+    src/RenderGraph.cpp
     src/ParallelRecording.cpp
     src/GeometryArena.cpp
     src/SceneEnvironment.cpp
@@ -146,6 +149,9 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TerrainLayers.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightClusters.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BindlessMaterials.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowTent.slang"
@@ -175,6 +181,9 @@ if (PLUTO_SLANGC_EXECUTABLE)
         set(vct_dependencies)
         if (MODULE MATCHES "^VCT")
             set(vct_dependencies ${PLUTO_VCT_SHARED_SHADERS})
+        endif()
+        if (MODULE MATCHES "^LightCluster")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h")
         endif()
         if (MODULE MATCHES "^SSAO")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang")
@@ -263,6 +272,11 @@ if (PLUTO_SLANGC_EXECUTABLE)
         pluto_add_slang_graphics_shader(${material}ColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain colorMotionMain)
         pluto_add_slang_graphics_shader(${material}Coverage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain coverageMain)
     endforeach()
+    # Bindless standard materials for GPU-driven opaque draws; one module per geometry output layout family.
+    pluto_add_slang_graphics_shader(BasicLitBindless "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitBindless.slang" bindlessVertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(BasicLitBindlessColor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitBindless.slang" bindlessColorVertexMain colorMain)
+    pluto_add_slang_graphics_shader(BasicLitBindlessColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitBindless.slang" bindlessVertexMain colorMotionMain)
+    pluto_add_slang_graphics_shader(BasicLitBindlessIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitBindless.slang" bindlessVertexMain indirectMain)
     pluto_add_slang_graphics_shader(GeometryDepth "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GeometryDepth.slang" depthVertexMain depthFragmentMain)
     pluto_add_slang_graphics_shader(GeometryDepthInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GeometryDepth.slang" depthInstancedVertexMain depthFragmentMain)
     pluto_add_slang_graphics_shader(Glass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Glass.slang" vertexMain transparentMain)
@@ -280,6 +294,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(VSMPageRigid "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRigid.slang" pageVertex pageFragment "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang")
     pluto_add_slang_graphics_shader(VSMPageBatch "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowBatch.slang" pageVertex pageFragment "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowRaster.slang")
     pluto_add_slang_graphics_shader(OcclusionDepth "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OcclusionDepth.slang" vertexMain fragmentMain)
+    pluto_add_slang_compute_shader(GpuDrivenVisibility "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GpuDrivenVisibility.slang" visibilityMain)
+    pluto_add_slang_compute_shader(LightClusterCulling "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightClusterCulling.slang" cullMain)
     pluto_add_slang_compute_shader(OcclusionReduce "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Occlusion.slang" reduceMain)
     pluto_add_slang_compute_shader(OcclusionTest "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Occlusion.slang" testMain)
     pluto_add_slang_compute_shader(GpuSkinning "${CMAKE_CURRENT_SOURCE_DIR}/shaders/GpuSkinning.slang" computeMain)
@@ -324,6 +340,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSRTraceReduced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRTraceReduced.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRResolve.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRFilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRFilter.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
+    pluto_add_slang_graphics_shader(SSRFilterVertical "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRFilterVertical.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
     if(BUILD_TESTING)
@@ -361,11 +378,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
     # per-graph generated code (ShaderGraphVariantCache), so the package
     # carries its sources in the layout their relative includes expect.
     file(GLOB PLUTO_RHI_SHADER_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.slang")
-    set(PLUTO_RHI_SHADER_SOURCE_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/PhysicalSkyLayout.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/PostProcessLayout.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/VirtualShadowConfig.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
+    # Headers shared with shaders are named *Config.h or *Layout.h.
+    file(GLOB PLUTO_RHI_SHADER_SOURCE_HEADERS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/*Config.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/*Layout.h")
     set(PLUTO_RHI_SHADER_SOURCE_STAMP "${PLUTO_RHI_SHADER_OUTPUT_DIR}/source/.stamp")
     add_custom_command(
         OUTPUT "${PLUTO_RHI_SHADER_SOURCE_STAMP}"

@@ -23,6 +23,12 @@ endif()
 string(REPLACE "[[unroll]]" "" shader_source "${shader_source}")
 string(REPLACE "[[dont_unroll]]" "" shader_source "${shader_source}")
 string(REPLACE "#extension GL_EXT_control_flow_attributes : require" "" shader_source "${shader_source}")
+# Slang can request EXT_samplerless_texture_functions for texelFetch/textureSize
+# on combined samplers, which core GLSL already provides. Only separate texture
+# objects (uniform textureND) need it, and desktop OpenGL lacks those.
+if (NOT shader_source MATCHES "uniform[ \t]+[iu]?texture[123C]")
+    string(REPLACE "#extension GL_EXT_samplerless_texture_functions : require" "" shader_source "${shader_source}")
+endif()
 # Some OpenGL drivers do not propagate Slang's global row-major default into
 # matrices nested in uniform structs. Declare it on each block so their layout
 # matches the generated row-vector operations and our column-major CPU data.

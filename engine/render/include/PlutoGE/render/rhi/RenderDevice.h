@@ -34,6 +34,9 @@ namespace PlutoGE::render::rhi
         std::uint64_t indexedDrawCalls = 0;
         std::uint64_t dispatchCalls = 0;
         std::uint64_t uniformBytesUploaded = 0;
+        // Recorded buffer updates, and the batches (one barrier pair each) they were recorded in.
+        std::uint64_t bufferUploads = 0;
+        std::uint64_t bufferUploadBatches = 0;
         std::uint64_t persistentUniformBytesUploaded = 0;
         // Descriptor set preparation for draws with changed bindings; clean draws are untimed.
         float descriptorCpuMs = 0.0f;
@@ -132,8 +135,17 @@ namespace PlutoGE::render::rhi
         }
         [[nodiscard]] virtual bool SupportsFirstInstance() const noexcept { return false; }
         virtual void Dispatch(std::uint32_t, std::uint32_t, std::uint32_t) {}
-        // Makes prior shader writes visible to subsequent shader reads/writes.
+        // Makes prior shader writes visible to subsequent shader reads/writes, ordering all work on both sides.
         virtual void ShaderMemoryBarrier() {}
+        // Orders `before` work recorded so far against `after` work recorded later and makes the former's writes
+        // visible to the latter (buffers, and images that keep their layout). Narrower than ShaderMemoryBarrier,
+        // which backends without scoped barriers use instead.
+        virtual void PipelineBarrier(BarrierAccess before, BarrierAccess after)
+        {
+            (void)before;
+            (void)after;
+            ShaderMemoryBarrier();
+        }
         // Publish compute image writes to subsequent compute/fragment accesses.
         // Images retain their layout; independent destinations can be batched.
         // Backends without resource-scoped barriers may use the broad fallback.
@@ -154,6 +166,15 @@ namespace PlutoGE::render::rhi
             throw std::logic_error("Parallel recording is unsupported by this command context");
         }
         virtual void EndParallelRecording() {}
+        // Async compute. With a compute queue beside graphics, BeginAsyncCompute returns a context whose work runs
+        // on it: after everything recorded here before the call, concurrently with what is recorded here until
+        // EndAsyncCompute, and before the `consumers` stages of everything recorded here after that. The async
+        // context records compute dispatches with buffer bindings and barriers only, and must not touch buffers
+        // this context uses while it is open. Without such a queue BeginAsyncCompute returns this context, so the
+        // same commands run inline and EndAsyncCompute is a barrier.
+        [[nodiscard]] virtual bool SupportsAsyncCompute() const noexcept { return false; }
+        virtual ICommandContext &BeginAsyncCompute() { return *this; }
+        virtual void EndAsyncCompute(BarrierAccess consumers) { PipelineBarrier(BarrierAccess::Compute, consumers); }
         // Device calls made on the calling thread that record commands (buffer
         // uploads) go into this context until it is unbound. Parallel contexts need
         // this; a context recorded on the device's own thread does not.
@@ -237,6 +258,13 @@ namespace PlutoGE::render::rhi
             return false;
         }
         virtual void ReleaseTemporalUpscalerContext(std::uint64_t) {}
+        // Bindless textures. Zero capacity means the device has no table and pipelines must bind textures to
+        // slots. A registration takes one table slot and returns its index (InvalidBindlessIndex when the table is
+        // full or the texture is not an initialized, sampled-only texture). Release every slot before destroying its
+        // texture; the device reuses a released slot only after work submitted while it was registered completes.
+        [[nodiscard]] virtual std::uint32_t BindlessTextureCapacity() const noexcept { return 0; }
+        [[nodiscard]] virtual std::uint32_t RegisterBindlessTexture(TextureHandle, SamplerHandle) { return InvalidBindlessIndex; }
+        virtual void ReleaseBindlessTexture(std::uint32_t) {}
         // Render threads. A device that supports one lets a single thread record, submit and present frames while
         // others keep using it: SetRecordingThread names that thread (an empty id clears it). Meanwhile buffer and
         // texture updates and resource destruction requested from other threads wait, and the next frame to begin

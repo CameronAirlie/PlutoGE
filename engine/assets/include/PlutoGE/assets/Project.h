@@ -4,6 +4,7 @@
 #include "PlutoGE/assets/AssetType.h"
 #include "PlutoGE/render/LoadingScreenStyle.h"
 #include "PlutoGE/render/GraphicsQualityPresets.h"
+#include "PlutoGE/render/RenderingSettings.h"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -89,6 +90,8 @@ namespace PlutoGE::assets
         ProjectServerSettings server;
         render::LoadingScreenStyle loadingScreen;
         render::GraphicsQualityPresets graphicsQualityPresets;
+        // Applied to the editor viewports and the runtime alike.
+        render::RenderingSettings rendering;
         std::string scriptAssembly;
         std::string windowTitle = "PlutoGE Runtime";
         int windowWidth = 1280;

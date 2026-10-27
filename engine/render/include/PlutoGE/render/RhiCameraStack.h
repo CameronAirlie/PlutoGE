@@ -31,6 +31,7 @@ namespace PlutoGE::render
             m_graphicsQuality = quality;
             return true;
         }
+        void SetRenderingSettings(const RenderingSettings &settings) noexcept { m_renderingSettings = settings; }
         RhiCameraStackCompositor();
         ~RhiCameraStackCompositor();
         RhiCameraStackCompositor(const RhiCameraStackCompositor &) = delete;
@@ -56,6 +57,7 @@ namespace PlutoGE::render
 
     private:
         GraphicsQuality m_graphicsQuality;
+        RenderingSettings m_renderingSettings;
         RhiSceneRenderer *AcquireOverlayRenderer(std::size_t index);
         bool EnsureCompositePipeline();
         bool EnsureTemporalCompositePipelines();

@@ -41,6 +41,17 @@ int main() try
         catch (const std::invalid_argument &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Unsupported geometry diagnostic accepted");
     }
+    if (options.quality) throw std::runtime_error("Quality override applied by default");
+    const std::array quality{"game.plutoproject", "results.csv", "--frozen-render", "--quality=low"};
+    if (ProjectBenchmarkOptions::Parse(quality).quality != render::GraphicsPreset::Low)
+        throw std::runtime_error("Quality option lost");
+    for (const auto *bad : {"--quality=", "--quality=Low", "--quality=epic"})
+    {
+        bool rejected = false;
+        try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Invalid quality accepted");
+    }
     const std::array capture{"game.plutoproject", "results.csv", "--capture=out/frame.png"};
     if (ProjectBenchmarkOptions::Parse(capture).capture != std::filesystem::path("out/frame.png"))
         throw std::runtime_error("Capture path lost");

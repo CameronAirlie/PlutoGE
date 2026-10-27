@@ -452,6 +452,8 @@ int RunRuntime(int argc, char **argv)
         engine.GetRenderer().SetVSyncEnabled(config.vSync);
     if (projectBenchmark && engine.GetRenderDevice())
         engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
+    if (projectBenchmark && projectBenchmark->quality)
+        engine.GetRhiRenderService().SetGraphicsQuality(engine.GetRhiRenderService().GetGraphicsPreset(*projectBenchmark->quality));
 
     if (!(projectBenchmark && projectBenchmark->frozenRender) && !project->GetManifest().scriptAssembly.empty())
     {

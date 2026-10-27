@@ -364,6 +364,24 @@ float4 gatherConventionalShadowCascade(int cascade, float2 uv)
     return directionalShadowTexture3.GatherRed(uv);
 }
 
+// Bilinear visibility of one gathered 2x2 texel block at `uv`.
+float compareGatheredShadowTexels(float4 depths, float2 baseTexel, float2 fraction, float2 texelSize,
+                                  float2 uv, float receiverDepth, float2 receiverPlaneGradient)
+{
+    float visibility = 0.0;
+    [unroll] for (int y = 0; y < 2; ++y)
+        [unroll] for (int x = 0; x < 2; ++x)
+        {
+            // Gather order: (0,1), (1,1), (1,0), (0,0).
+            const int component = y == 0 ? 3 - x : x;
+            const float2 sampleUv = (baseTexel + float2(x, y) + 0.5) * texelSize;
+            const float2 weight = lerp(1.0 - fraction, fraction, float2(x, y));
+            const float depth = receiverDepth + dot(receiverPlaneGradient, sampleUv - uv);
+            visibility += weight.x * weight.y * (depth <= depths[component] ? 1.0 : 0.0);
+        }
+    return visibility;
+}
+
 // Interpolate visibility, never depth. Sampling texel centres works with the
 // existing point sampler on both backends, without a comparison-sampler ABI.
 float compareShadowCascadeBilinear(int cascade, float2 uv, float receiverDepth,
@@ -378,21 +396,8 @@ float compareShadowCascadeBilinear(int cascade, float2 uv, float receiverDepth,
     // the footprint centre to avoid gather selection at texel boundaries.
     if (pointParameters.w != 3.0 && all(baseTexel >= 0.0) &&
         all((baseTexel + 1.5) * texelSize < 1.0))
-    {
-        const float4 depths = gatherConventionalShadowCascade(cascade, (baseTexel + 1.0) * texelSize);
-        float visibility = 0.0;
-        [unroll] for (int y = 0; y < 2; ++y)
-            [unroll] for (int x = 0; x < 2; ++x)
-            {
-                // Gather order: (0,1), (1,1), (1,0), (0,0).
-                const int component = y == 0 ? 3 - x : x;
-                const float2 sampleUv = (baseTexel + float2(x, y) + 0.5) * texelSize;
-                const float2 weight = lerp(1.0 - fraction, fraction, float2(x, y));
-                const float depth = receiverDepth + dot(receiverPlaneGradient, sampleUv - uv);
-                visibility += weight.x * weight.y * (depth <= depths[component] ? 1.0 : 0.0);
-            }
-        return visibility;
-    }
+        return compareGatheredShadowTexels(gatherConventionalShadowCascade(cascade, (baseTexel + 1.0) * texelSize),
+                                           baseTexel, fraction, texelSize, uv, receiverDepth, receiverPlaneGradient);
     float visibility = 0.0;
     for (int y = 0; y < 2; ++y)
         for (int x = 0; x < 2; ++x)
@@ -453,39 +458,82 @@ float2 pointShadowUv(uint face, float3 ray)
     if (pointParameters.y > 0.5) uv.y = 1.0 - uv.y;
     return uv;
 }
+// Receiver-plane depth at one point-shadow texel centre: intersect the texel's
+// ray with the receiver plane and project it. Comparing against the plane at
+// the actual sampled texel, not the fragment's depth, remains valid across
+// perspective cube faces and avoids slope-dependent self-shadowing on side
+// faces. Returns false where the plane is edge-on or behind the light (lit).
+bool pointShadowPlaneDepth(uint row, uint face, float2 uv, float3 lightPosition, float3 receiverNormal,
+                           float planeDistance, float2 depthTransform, out float depth)
+{
+    depth = 0.0;
+    const float3 ray = pointShadowRay(face, uv);
+    const float denominator = dot(receiverNormal, ray);
+    if (abs(denominator) < 1.e-6 || planeDistance / denominator <= 0) return false;
+    const float4 clip = mul(pointShadowMatrices[row * 6 + face], float4(lightPosition + ray * (planeDistance / denominator), 1));
+    depth = (clip.z / clip.w) * depthTransform.x + depthTransform.y;
+    return true;
+}
+
+// One tap of the general filter. Texels past the face edge re-project onto
+// the cube face that owns their ray.
+float pointShadowReprojectedTap(uint row, uint face, float2 texel, float resolution, float3 lightPosition,
+                                float3 receiverNormal, float planeDistance, float2 depthTransform)
+{
+    const float3 tapRay = pointShadowRay(face, texel / resolution);
+    const uint tapFace = pointShadowFace(tapRay);
+    float2 tapUv = pointShadowUv(tapFace, tapRay);
+    tapUv = (clamp(floor(tapUv * resolution), 0.0, resolution - 1.0) + 0.5) / resolution;
+    float planeDepth;
+    if (!pointShadowPlaneDepth(row, tapFace, tapUv, lightPosition, receiverNormal, planeDistance, depthTransform, planeDepth))
+        return 1.0;
+    const float depth = pointShadowAtlas.SampleLevel((tapUv + float2(tapFace, row)) / float2(6, 4), 0).r;
+    // Only floating-point/raster precision bias remains necessary.
+    return planeDepth - 0.000001 <= depth ? 1.0 : 0.0;
+}
+
 float evaluatePointShadow(uint row, float3 lightPosition, float3 world, float3 receiverNormal, float2 depthTransform)
 {
     float3 ray = world - lightPosition;
     if (dot(ray, ray) < 1.e-12) return 1.0;
-    uint face = pointShadowFace(ray);
-    float2 uv = pointShadowUv(face, ray);
-    float resolution = pointParameters.z;
-    float2 center = floor(uv * resolution) + 0.5;
-    float planeDistance = dot(receiverNormal, ray);
+    const uint face = pointShadowFace(ray);
+    const float resolution = pointParameters.z;
+    const float2 center = floor(pointShadowUv(face, ray) * resolution) + 0.5;
+    const float planeDistance = dot(receiverNormal, ray);
+    // Within one face, the cube projection is a perspective projection from
+    // the light, which maps the receiver plane to a plane: its depth is affine
+    // in the face's texel coordinates, as is the texel ray. When the whole
+    // 3x3 footprint lies inside the face, solve both exactly at the centre
+    // texel and one neighbour per axis and evaluate each tap with a
+    // multiply-add. The nine atlas reads are then independent and branch-free.
+    float depth0, depthX, depthY;
+    if (all(center > 1.0) && all(center < resolution - 1.0) &&
+        pointShadowPlaneDepth(row, face, center / resolution, lightPosition, receiverNormal, planeDistance, depthTransform, depth0) &&
+        pointShadowPlaneDepth(row, face, (center + float2(1.0, 0.0)) / resolution, lightPosition, receiverNormal, planeDistance, depthTransform, depthX) &&
+        pointShadowPlaneDepth(row, face, (center + float2(0.0, 1.0)) / resolution, lightPosition, receiverNormal, planeDistance, depthTransform, depthY))
+    {
+        const float3 centerRay = pointShadowRay(face, center / resolution);
+        const float3 denominators = float3(dot(receiverNormal, centerRay),
+            dot(receiverNormal, pointShadowRay(face, (center + float2(1.0, 0.0)) / resolution) - centerRay),
+            dot(receiverNormal, pointShadowRay(face, (center + float2(0.0, 1.0)) / resolution) - centerRay));
+        const float2 depthGradient = float2(depthX - depth0, depthY - depth0);
+        float visibility = 0;
+        [unroll] for (int y = -1; y <= 1; ++y)
+            [unroll] for (int x = -1; x <= 1; ++x)
+            {
+                const float depth = pointShadowAtlas.SampleLevel(((center + float2(x, y)) / resolution + float2(face, row)) / float2(6, 4), 0).r;
+                // The plane can still turn edge-on between the solved texels.
+                const float denominator = denominators.x + x * denominators.y + y * denominators.z;
+                const bool facing = abs(denominator) >= 1.e-6 && planeDistance / denominator > 0;
+                visibility += !facing || depth0 + dot(depthGradient, float2(x, y)) - 0.000001 <= depth ? 1.0 / 9.0 : 0.0;
+            }
+        return visibility;
+    }
     float visibility = 0;
     for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
-        {
-            float3 tapRay = pointShadowRay(face, (center + float2(x,y)) / resolution);
-            uint tapFace = pointShadowFace(tapRay);
-            float2 tapUv = pointShadowUv(tapFace, tapRay);
-            tapUv = (clamp(floor(tapUv * resolution), 0.0, resolution - 1.0) + 0.5) / resolution;
-            tapRay = pointShadowRay(tapFace, tapUv);
-            // Compare against the plane at the actual sampled texel, not the
-            // fragment's depth. This remains valid across perspective cube
-            // faces and avoids slope-dependent self-shadowing on side faces.
-            float denominator = dot(receiverNormal, tapRay);
-            if (abs(denominator) < 1.e-6 || planeDistance / denominator <= 0)
-            {
-                visibility += 1.0 / 9.0;
-                continue;
-            }
-            float3 tapWorld = lightPosition + tapRay * (planeDistance / denominator);
-            float4 clip = mul(pointShadowMatrices[row * 6 + tapFace], float4(tapWorld, 1));
-            float depth = pointShadowAtlas.SampleLevel((tapUv + float2(tapFace,row)) / float2(6,4), 0).r;
-            // Only floating-point/raster precision bias remains necessary.
-            visibility += (clip.z / clip.w) * depthTransform.x + depthTransform.y - 0.000001 <= depth ? 1.0 / 9.0 : 0.0;
-        }
+            visibility += pointShadowReprojectedTap(row, face, center + float2(x, y), resolution, lightPosition,
+                                                    receiverNormal, planeDistance, depthTransform) / 9.0;
     return visibility;
 }
 
@@ -655,6 +703,66 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
     return lerp(visibility, nextVisibility, blend);
 }
 
+// Bilinear taps per axis that can carry tent weight: a tent of half-width
+// `support` covers at most ceil(2 * support) texels, paired into one tap each.
+int shadowTentTapCount(float support)
+{
+    return (int(ceil(2.0 * support)) + 1) / 2;
+}
+
+// Taps per axis of the unrolled resident filter: softness up to 2 (the
+// default is 1.5). A fixed count measured faster than specialising per count.
+static const int ResidentShadowTentTaps = 3;
+
+// The separable tent of evaluateShadowCascade over a footprint whose every
+// bilinear tap is resident in `shadowMap`. The fixed tap count unrolls the
+// loop, so each tap is one independent gather without per-tap cascade or
+// edge branches. Taps past the tent add zero weight.
+float filterResidentShadowTent(Sampler2D shadowMap, float2 firstTexel, float2 position, float support,
+                               float2 texelSize, float2 shadowUv, float receiverDepth, float2 receiverPlaneGradient)
+{
+    float visibility = 0.0;
+    float totalWeight = 0.0;
+    [unroll] for (int y = 0; y < ResidentShadowTentTaps; ++y)
+    {
+        const float row = firstTexel.y + float(y * 2);
+        const float2 wy = max(support - abs(float2(row, row + 1.0) - position.y), 0.0);
+        const float weightY = wy.x + wy.y;
+        [unroll] for (int x = 0; x < ResidentShadowTentTaps; ++x)
+        {
+            const float column = firstTexel.x + float(x * 2);
+            const float2 wx = max(support - abs(float2(column, column + 1.0) - position.x), 0.0);
+            const float weightX = wx.x + wx.y;
+            const float2 offset = float2(weightX > 0.0 ? wx.y / weightX : 0.0, weightY > 0.0 ? wy.y / weightY : 0.0);
+            const float2 sampleUv = (float2(column, row) + offset + 0.5) * texelSize;
+            const float2 texelPosition = sampleUv / texelSize - 0.5;
+            const float2 baseTexel = floor(texelPosition);
+            const float weight = weightX * weightY;
+            visibility += weight * compareGatheredShadowTexels(shadowMap.GatherRed((baseTexel + 1.0) * texelSize),
+                baseTexel, frac(texelPosition), texelSize, sampleUv,
+                receiverDepth + dot(receiverPlaneGradient, sampleUv - shadowUv), receiverPlaneGradient);
+            totalWeight += weight;
+        }
+    }
+    return visibility / max(totalWeight, 0.000001);
+}
+
+float filterResidentShadowCascade(int cascade, float2 firstTexel, float2 position, float support,
+                                  float2 texelSize, float2 shadowUv, float receiverDepth, float2 receiverPlaneGradient)
+{
+    if (cascade == 0)
+        return filterResidentShadowTent(directionalShadowTexture, firstTexel, position, support,
+                                        texelSize, shadowUv, receiverDepth, receiverPlaneGradient);
+    if (cascade == 1)
+        return filterResidentShadowTent(directionalShadowTexture1, firstTexel, position, support,
+                                        texelSize, shadowUv, receiverDepth, receiverPlaneGradient);
+    if (cascade == 2)
+        return filterResidentShadowTent(directionalShadowTexture2, firstTexel, position, support,
+                                        texelSize, shadowUv, receiverDepth, receiverPlaneGradient);
+    return filterResidentShadowTent(directionalShadowTexture3, firstTexel, position, support,
+                                    texelSize, shadowUv, receiverDepth, receiverPlaneGradient);
+}
+
 float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, float3 worldDy, float depthBias)
 {
     const float4 lightClip = mul(shadowMatrices[cascade], float4(worldPosition, 1.0));
@@ -684,6 +792,14 @@ float evaluateShadowCascade(int cascade, float3 worldPosition, float3 worldDx, f
     float2 receiverPlaneGradient = computeReceiverPlaneDepthGradient(shadowDx, shadowDy) * shadowDepthScale;
     if (shadowFlipY != 0)
         receiverPlaneGradient.y = -receiverPlaneGradient.y;
+    // Away from the map edges every tap gathers from one map. Hard shadows
+    // (one tap) and wider tents keep the general loop. Keep one texel of
+    // margin so rounding in a tap's texel address cannot reach the edge.
+    const int taps = shadowTentTapCount(support);
+    if (taps > 1 && taps <= ResidentShadowTentTaps && pointParameters.w != 3.0 && all(firstTexel >= 1.0) &&
+        all((firstTexel + 2.0 * ResidentShadowTentTaps + 1.5) * texelSize < 1.0))
+        return filterResidentShadowCascade(cascade, firstTexel, position, support, texelSize, shadowUv,
+                                           receiverDepth, receiverPlaneGradient);
     float visibility = 0.0;
     float totalWeight = 0.0;
     // Integrate a separable tent over consecutive texels. Pair adjacent weights
@@ -1087,7 +1203,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float3 brdf = (1.0 - f) * (1.0 - materialMetallic) * sampledColor.rgb / PI +
             distributionPoint * geometryView * geometryPoint * f / max(4.0 * ndotv * nl, 0.0001);
         float visibility = 1.0;
-        if (pointSettings[light].x >= 0.0)
+        // Standard lighting scales by nl, so surfaces facing away from the
+        // light need no shadow lookup. Custom graph lighting receives visibility.
+        if (pointSettings[light].x >= 0.0 && (customLighting || nl > 0.0))
         {
             const uint row = uint(pointSettings[light].x);
             visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal, pointSettings[light].yz);

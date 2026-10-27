@@ -1,10 +1,15 @@
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/UIShapeComponent.h"
 #include "PlutoGE/scene/ui/UIStyleCatalog.h"
 #include "PlutoGE/scene/ui/UITheme.h"
+#include "PlutoGE/scene/ui/UIThemeAssets.h"
 #include "PlutoGE/scene/ui/UIThemeFormat.h"
 #include "PlutoGE/scene/ui/UIThemeResolver.h"
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -186,6 +191,39 @@ namespace
         Require(mentions("unknown component 'NoSuchComponent'"), "Unknown components are reported");
     }
 
+    // Exported games read themes from a mounted content pack, not loose files.
+    void TestPackedThemeAsset()
+    {
+        namespace fs = std::filesystem;
+        const auto root = fs::temp_directory_path() /
+                          ("pluto-theme-pack-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        struct Cleanup
+        {
+            fs::path root;
+            ~Cleanup()
+            {
+                PlutoGE::content::UnmountAll();
+                UIThemeAssets::Get().SetPathResolver({});
+                std::error_code error;
+                fs::remove_all(root, error);
+            }
+        } cleanup{root};
+
+        fs::create_directories(root / "source");
+        std::ofstream(root / "source" / "Packed.plutotheme") << ".Panel { UIShapeComponent.Color = 0,0,0,1 }\n";
+        std::string error;
+        Require(PlutoGE::content::WritePack(root / "source", root / "theme.plutopack", {}, &error), error);
+        fs::remove_all(root / "source");
+        const auto mount = root / "mounted";
+        Require(PlutoGE::content::Mount(root / "theme.plutopack", mount, &error), error);
+
+        UIThemeAssets::Get().SetPathResolver([&](std::string_view reference) { return mount / reference; });
+        const auto &entry = UIThemeAssets::Get().Load("Packed.plutotheme");
+        Require(entry.theme != nullptr, "A theme in a mounted pack must load: " +
+                                            (entry.errors.empty() ? std::string() : entry.errors.front()));
+        Require(entry.theme->FindStyle("Panel") != nullptr, "The packed theme must keep its styles");
+    }
+
     void TestCatalog()
     {
         const auto &catalog = UIStyleCatalog::Get();
@@ -213,6 +251,7 @@ int main()
         TestModelEditing();
         TestFormat();
         TestResolution();
+        TestPackedThemeAsset();
         TestCatalog();
     }
     catch (const std::exception &error)

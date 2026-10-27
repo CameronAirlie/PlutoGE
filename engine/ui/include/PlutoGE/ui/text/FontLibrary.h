@@ -20,6 +20,8 @@ namespace PlutoGE::ui
     {
     public:
         using PathResolver = std::function<std::filesystem::path(const std::string &reference)>;
+        // Returns a file's bytes, empty when it cannot be read.
+        using FileReader = std::function<std::vector<std::byte>(const std::filesystem::path &path)>;
 
         static FontLibrary &Get();
 
@@ -29,6 +31,8 @@ namespace PlutoGE::ui
         FontLibrary &operator=(const FontLibrary &) = delete;
 
         void SetPathResolver(PathResolver resolver) { m_resolver = std::move(resolver); }
+        // Replaces plain file reads, e.g. so fonts load from content packs.
+        void SetFileReader(FileReader reader) { m_reader = std::move(reader); }
         // Directories searched for the bundled default font before system fonts.
         void AddFontSearchDirectory(std::filesystem::path directory);
 
@@ -54,6 +58,7 @@ namespace PlutoGE::ui
 
         FT_LibraryRec_ *m_library = nullptr;
         PathResolver m_resolver;
+        FileReader m_reader;
         std::vector<std::filesystem::path> m_searchDirectories;
         std::unordered_map<std::string, std::unique_ptr<FontFace>> m_faces; // null entries record failures
         std::string m_defaultReference;

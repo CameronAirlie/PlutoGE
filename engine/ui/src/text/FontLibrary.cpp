@@ -130,7 +130,7 @@ namespace PlutoGE::ui
         if (const auto found = m_faces.find(key); found != m_faces.end())
             return found->second.get();
         std::unique_ptr<FontFace> face;
-        auto data = ReadFile(path);
+        auto data = m_reader ? m_reader(path) : ReadFile(path);
         if (data.empty())
             m_lastError = "Could not read font file " + path.string();
         else

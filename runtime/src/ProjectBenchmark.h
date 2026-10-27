@@ -1,9 +1,11 @@
 #pragma once
 #include "PlutoGE/render/GeometryDiagnostics.h"
+#include "PlutoGE/render/GraphicsQuality.h"
 #include <charconv>
 #include <array>
 #include <algorithm>
 #include <map>
+#include <optional>
 #include <vector>
 #include <filesystem>
 #include <fstream>
@@ -51,13 +53,17 @@ namespace PlutoGE
         bool serialRender = false;
         // Geometry shading diagnostic applied to every measured frame.
         render::GeometryDiagnosticMode geometryDiagnostic = render::GeometryDiagnosticMode::None;
+        // Project graphics tier applied before the scene loads. Frozen captures run
+        // no scripts, so without it they render the scene's authored quality.
+        std::optional<render::GraphicsPreset> quality;
         static constexpr float FixedDelta = 1.0f / 60.0f;
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 8) // project, output, two counts and four switches
+            if (args.size() < 2 || args.size() > 9) // project, output, two counts and five switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
-                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render]");
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] "
+                                            "[--quality=low|medium|high|ultra]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
             {
@@ -74,6 +80,7 @@ namespace PlutoGE
                 const std::string_view value(args[i]);
                 constexpr std::string_view diagnosticPrefix = "--geometry-diagnostic=";
                 constexpr std::string_view capturePrefix = "--capture=";
+                constexpr std::string_view qualityPrefix = "--quality=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
@@ -82,6 +89,16 @@ namespace PlutoGE
                     result.capture = std::filesystem::path(value.substr(capturePrefix.size()));
                     if (result.capture.extension() != ".png")
                         throw std::invalid_argument("Benchmark capture must have a .png extension");
+                }
+                else if (value.starts_with(qualityPrefix) && !result.quality)
+                {
+                    constexpr std::array tiers{std::pair{"low", render::GraphicsPreset::Low}, std::pair{"medium", render::GraphicsPreset::Medium},
+                                               std::pair{"high", render::GraphicsPreset::High}, std::pair{"ultra", render::GraphicsPreset::Ultra}};
+                    const auto tier = std::find_if(tiers.begin(), tiers.end(),
+                        [&](const auto &entry) { return value.substr(qualityPrefix.size()) == entry.first; });
+                    if (tier == tiers.end())
+                        throw std::invalid_argument("Unknown benchmark quality: " + std::string(value));
+                    result.quality = tier->second;
                 }
                 else if (value == "--scalar-shadows" && !diagnosticSet)
                     result.geometryDiagnostic = render::GeometryDiagnosticMode::ReferenceDirectionalShadows;

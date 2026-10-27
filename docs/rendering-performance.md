@@ -11,6 +11,7 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 ```
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
                [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
+               [--quality=low|medium|high|ultra]
 ```
 
 * Frames record on the render thread unless `--serial-render` is given (see [frame-pipeline.md](frame-pipeline.md));
@@ -28,6 +29,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 * `--geometry-diagnostic` applies one shading diagnostic to every measured
   frame and requires `--frozen-render`. `--scalar-shadows` remains an alias
   for `scalar-shadows`.
+* `--quality` applies a project graphics tier before the scene loads. Frozen
+  renders run no scripts, so without it they use the scene's authored quality
+  rather than whatever tier a game's settings would select.
 * `--capture` writes the last presented frame as an upright PNG (Vulkan only).
   Frozen renders are deterministic, so two captures of one mode match exactly
   and any difference between modes is real.
@@ -178,6 +182,9 @@ discrete GPUs, where host-visible vertex data crosses PCIe.
 | VCT GI | 3.19 | 2.52 |
 | TAA | 1.9 | 1.67 |
 | Scene GPU frame | 17.7 | 15.5 |
+
+A third pass, aimed at integrated GPUs, is in
+[igpu-lighting-performance-pass.md](igpu-lighting-performance-pass.md).
 
 ## Next candidates
 

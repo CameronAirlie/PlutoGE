@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/ui/text/FontLibrary.h"
 
@@ -62,7 +63,17 @@ namespace PlutoGE::scene
     {
         static const bool configured = []
         {
-            ui::FontLibrary::Get().SetPathResolver([](const std::string &reference) { return ResolveUIAssetPath(reference); });
+            auto &fonts = ui::FontLibrary::Get();
+            fonts.SetPathResolver([](const std::string &reference) { return ResolveUIAssetPath(reference); });
+            // Exported games keep project fonts in the content pack.
+            fonts.SetFileReader([](const std::filesystem::path &path)
+            {
+                std::string bytes;
+                if (!content::ReadFile(path, bytes))
+                    return std::vector<std::byte>{};
+                const auto *data = reinterpret_cast<const std::byte *>(bytes.data());
+                return std::vector<std::byte>(data, data + bytes.size());
+            });
             return true;
         }();
         (void)configured;

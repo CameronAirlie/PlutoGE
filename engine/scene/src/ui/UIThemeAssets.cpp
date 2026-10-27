@@ -2,11 +2,10 @@
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/ui/UIThemeFormat.h"
 
 #include <algorithm>
-#include <fstream>
-#include <sstream>
 
 namespace PlutoGE::scene
 {
@@ -49,9 +48,13 @@ namespace PlutoGE::scene
             path = m_resolver(reference);
         else
             path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference);
+        // Through the content layer: exported games read themes from the content pack.
         std::error_code error;
-        const auto writeTime = std::filesystem::last_write_time(path, error);
-        if (error)
+        const auto writeTime = content::LastWriteTime(path, error);
+        if (!error && !force && cached.entry.theme && writeTime == cached.writeTime)
+            return;
+        std::string text;
+        if (error || !content::ReadFile(path, text))
         {
             if (cached.entry.theme || force)
             {
@@ -60,14 +63,9 @@ namespace PlutoGE::scene
             }
             return;
         }
-        if (!force && cached.entry.theme && writeTime == cached.writeTime)
-            return;
 
-        std::ifstream file(path, std::ios::binary);
-        std::stringstream text;
-        text << file.rdbuf();
         Entry entry;
-        entry.theme = std::make_shared<UITheme>(ParseUITheme(text.str(), &entry.errors));
+        entry.theme = std::make_shared<UITheme>(ParseUITheme(text, &entry.errors));
         for (auto &message : entry.errors)
             message = std::filesystem::path(reference).filename().string() + ": " + message;
         cached.entry = std::move(entry);

@@ -101,33 +101,18 @@ float3 convolvePhysicalSkySpecular(float3 reflection, float roughness)
 }
 
 #ifdef PLUTO_SKY_QUADRATURE_TEXTURE
-float3 sampleSkySpecularTexel(int face, int2 texel, int size)
-{
-    if (any(texel < 0) || any(texel >= size)) {
-        // Bilinear taps crossing a cube edge belong to the neighbouring face,
-        // rather than a clamped edge texel or an unrelated roughness band.
-        float2 uv;
-        environmentCubeCoordinate(environmentCubeDirection(face, (float2(texel) + 0.5) / float(size)), face, uv);
-        texel = clamp(int2(floor(uv * float(size))), int2(0), int2(size - 1));
-    }
-    const int2 coordinate = int2(2 * PLUTO_SKY_FACE_SIZE - 2 * size, face * size) + texel;
-    return skyQuadratureTexture.Load(int3(coordinate, 0)).rgb;
-}
-
+// One bilinear read of a roughness level. Taps past a face edge land in the
+// face's gutter, which SkyQuadrature fills with the neighbouring face's
+// texels, so this needs a linear clamp-to-edge sampler but no edge handling.
 float3 sampleSkySpecularLevel(float3 direction, float level)
 {
     float2 faceUv;
     int face;
     environmentCubeCoordinate(direction, face, faceUv);
-    const int size = PLUTO_SKY_FACE_SIZE >> uint(level);
-    const float2 texel = faceUv * float(size) - 0.5;
-    const int2 lo = int2(floor(texel));
-    const int2 hi = int2(ceil(texel));
-    const float2 f = frac(texel);
-    return lerp(lerp(sampleSkySpecularTexel(face, lo, size),
-                     sampleSkySpecularTexel(face, int2(hi.x, lo.y), size), f.x),
-                lerp(sampleSkySpecularTexel(face, int2(lo.x, hi.y), size),
-                     sampleSkySpecularTexel(face, hi, size), f.x), f.y);
+    const uint index = uint(level);
+    const float2 texel = float2(PLUTO_SKY_LEVEL_X(index), face * PLUTO_SKY_TILE_SIZE(index)) + PLUTO_SKY_GUTTER +
+                         faceUv * float(PLUTO_SKY_LEVEL_SIZE(index));
+    return skyQuadratureTexture.SampleLevel(texel / float2(PLUTO_SKY_ATLAS_WIDTH, PLUTO_SKY_ATLAS_HEIGHT), 0.0).rgb;
 }
 #endif
 

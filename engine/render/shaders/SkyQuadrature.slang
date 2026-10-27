@@ -18,13 +18,21 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target0
         return float4(samplePhysicalSkyEnvironment(skyQuadratureDirections[pixel.x], 0.0), 1.0);
     }
     for (uint level = 0; level <= PLUTO_SKY_MAX_LEVEL; ++level) {
-        const uint size = PLUTO_SKY_FACE_SIZE >> level;
-        const uint start = 2 * PLUTO_SKY_FACE_SIZE - 2 * size;
-        if (pixel.x < start || pixel.x >= start + size) continue;
-        const uint face = pixel.y / size;
+        const int size = PLUTO_SKY_LEVEL_SIZE(level);
+        const uint start = PLUTO_SKY_LEVEL_X(level);
+        const uint tile = PLUTO_SKY_TILE_SIZE(level);
+        if (pixel.x < start || pixel.x >= start + tile) continue;
+        int face = int(pixel.y / tile);
         if (face >= 6) return 0.0;
-        const float2 uv = (float2(pixel.x - start, pixel.y % size) + 0.5) / float(size);
-        const float3 direction = environmentCubeDirection(int(face), uv);
+        int2 texel = int2(pixel.x - start, pixel.y % tile) - PLUTO_SKY_GUTTER;
+        if (any(texel < 0) || any(texel >= size)) {
+            // A gutter texel stores the texel a bilinear tap past this edge
+            // belongs to: the neighbouring face's, not a clamped edge texel.
+            float2 uv;
+            environmentCubeCoordinate(environmentCubeDirection(face, (float2(texel) + 0.5) / float(size)), face, uv);
+            texel = clamp(int2(floor(uv * float(size))), int2(0), int2(size - 1));
+        }
+        const float3 direction = environmentCubeDirection(face, (float2(texel) + 0.5) / float(size));
         return float4(convolvePhysicalSkySpecular(direction, float(level) / PLUTO_SKY_MAX_LEVEL), 1.0);
     }
     return 0.0;

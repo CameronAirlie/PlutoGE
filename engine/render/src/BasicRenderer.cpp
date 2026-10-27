@@ -656,10 +656,13 @@ namespace PlutoGE::render
             m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
             if (!shaders.skyQuadrature.fragment.glsl.empty() || !shaders.skyQuadrature.fragment.spirv.empty())
             {
+                // Surfaces filter the specular levels with hardware bilinear
+                // reads, which every backend supports for this format.
+                constexpr auto skyAtlasFormat = rhi::Format::R16G16B16A16Float;
                 rhi::GraphicsPipelineDescriptor sky;
                 sky.vertexShader = shaders.skyQuadrature.vertex;
                 sky.fragmentShader = shaders.skyQuadrature.fragment;
-                sky.colorFormats = {rhi::Format::R32G32B32A32Float};
+                sky.colorFormats = {skyAtlasFormat};
                 sky.depthTest = sky.depthWrite = false;
                 sky.resourceBindings = {{0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment}};
                 sky.debugName = "Physical sky fixed quadrature";
@@ -667,7 +670,7 @@ namespace PlutoGE::render
                 m_skyQuadratureBuffer = rhi::Buffer(device, device.CreateBuffer(
                     {sizeof(m_skyEnvironmentParameters), rhi::BufferUsage::Uniform, "Physical sky quadrature parameters"}));
                 m_skyQuadratureTexture = rhi::Texture(device, device.CreateTexture(
-                    {PLUTO_SKY_ATLAS_WIDTH, PLUTO_SKY_ATLAS_HEIGHT, rhi::Format::R32G32B32A32Float, rhi::TextureUsage::ColorAttachment, "Physical sky lighting atlas", true}));
+                    {PLUTO_SKY_ATLAS_WIDTH, PLUTO_SKY_ATLAS_HEIGHT, skyAtlasFormat, rhi::TextureUsage::ColorAttachment, "Physical sky lighting atlas", true}));
             }
             auto instancedDescriptor = descriptor;
             instancedDescriptor.vertexShader = shaders.instancedVertex;
@@ -3172,7 +3175,7 @@ namespace PlutoGE::render
                     }
                     if (!geometryResourcesBound || !skyTextureBound)
                     {
-                        commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                        commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
                         skyTextureBound = true;
                     }
                     for (unsigned i = 0; i < 4; ++i)
@@ -3274,7 +3277,7 @@ namespace PlutoGE::render
             commands.BeginGpuScope(geometryScopeName);
             // Transition shadow outputs before entering dynamic rendering.
             commands.BindPipeline(m_pipeline.Get());
-            commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+            commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
             for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
                 commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
             if (receiverShadows)

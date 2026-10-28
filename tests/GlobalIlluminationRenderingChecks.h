@@ -263,6 +263,58 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
         Require(cascaded < 0.95 * single, "DDGI cascades did not extend the volume beyond the finest cascade");
     }
 
+    // Reflection occlusion: a glossy metal floor reflects the physical sky wherever SSR has no hit. Under a roof the
+    // probes see no sky along the reflection, so the sky reflection must give way to the probes' dimmer light; on open
+    // ground they see the sky and the reflection must stay. Both sides compare DDGI with and without occlusion, so
+    // its diffuse lighting cancels.
+    double roofedReflection = 0.0, openReflection = 0.0;
+    {
+        scene.lighting.ambientIntensity = 0.0f;
+        scene.lighting.physicalSkyEnabled = true;
+        scene.lighting.physicalSkyExposure = 1.0f;
+        scene.lighting.physicalSkyParameters[0] = glm::vec4(glm::normalize(glm::vec3(0.5f, 0.6f, 0.3f)), 1);
+        scene.lighting.physicalSkyParameters[1] = {1, 0.98f, 0.95f, 0.65f};
+        scene.lighting.physicalSkyParameters[2] = {0.55f, 0.65f, 0.95f, 0.65f};
+        scene.lighting.physicalSkyParameters[3] = {0.012f, 0.015f, 0.02f, 1};
+        scene.lighting.physicalSkyParameters[4] = {8, 0.27f, 0.035f, 0};
+        scene.lighting.physicalSkyParameters[5] = {0.8f, 0.26f, 0, 0};
+        auto mirrorFloor = greyFloor;
+        mirrorFloor.baseColor = {0.9f, 0.9f, 0.9f, 1.0f};
+        mirrorFloor.metallic = 1.0f;
+        mirrorFloor.roughness = 0.15f;
+        // The camera looks under the roof from beside it, so the reflections it sees point up into the roof.
+        scene.Look({0, 0.6f, 4.5f}, {0, 0.2f, -1.0f});
+        const auto reflectionRatio = [&](std::span<const BasicDraw> draws)
+        {
+            auto unoccluded = settings, occluded = settings;
+            unoccluded.reflectionOcclusion = 0.0f;
+            occluded.reflectionOcclusion = 1.0f;
+            const auto withoutPacket = EncodeDdgiPacket(unoccluded, &unoccluded);
+            const auto withPacket = EncodeDdgiPacket(occluded, &occluded);
+            const auto without = scene.Render(draws, std::span(&withoutPacket, 1), ConvergenceFrames);
+            const auto with = scene.Render(draws, std::span(&withPacket, 1), ConvergenceFrames);
+            const auto means = LitMeans(without, with);
+            return means[1] / means[0];
+        };
+        const std::array roofedMirror{mirrorFloor, roof};
+        roofedReflection = reflectionRatio(roofedMirror);
+        if (roofedReflection >= 0.85) std::cerr << "DDGI roofed reflection ratio: " << roofedReflection << '\n';
+        Require(roofedReflection < 0.85, "DDGI did not occlude the sky reflected under a roof");
+        const std::array openMirror{mirrorFloor};
+        openReflection = reflectionRatio(openMirror);
+        if (openReflection <= 0.93) std::cerr << "DDGI open reflection ratio: " << openReflection << '\n';
+        Require(openReflection > 0.93, "DDGI occluded the sky reflected by open ground");
+
+        for (const int view : {PLUTO_DDGI_VIEW_SKY_VISIBILITY, PLUTO_DDGI_VIEW_REFLECTIONS})
+        {
+            settings.debugView = view;
+            ddgi = EncodeDdgiPacket(settings, &settings);
+            (void)scene.Render(roofedMirror, std::span(&ddgi, 1), 2);
+        }
+        scene.lighting.physicalSkyEnabled = false;
+        scene.lighting.ambientIntensity = 1.0f;
+    }
+
     for (const int view : {PLUTO_DDGI_VIEW_IRRADIANCE, PLUTO_DDGI_VIEW_INDIRECT, PLUTO_DDGI_VIEW_PROBES})
     {
         settings.debugView = view;
@@ -270,7 +322,8 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
         (void)scene.Render(roofScene, std::span(&ddgi, 1), 2);
     }
     std::cout << "DDGI bounce light (" << bled << " pixels), open ambient ratio " << openRatio
-              << ", roofed ambient ratio " << roofRatio << " and debug views passed\n";
+              << ", roofed ambient ratio " << roofRatio << ", reflection ratio roofed " << roofedReflection
+              << " / open " << openReflection << " and debug views passed\n";
 }
 
 // Steady-state GPU timings of SSGI and of DDGI at each quality level, in a lit room with an emissive panel. Stage

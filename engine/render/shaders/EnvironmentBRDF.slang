@@ -1,4 +1,7 @@
 // Shared split-sum response for filtered sky and captured environments.
+#ifndef PLUTO_ENVIRONMENT_BRDF
+#define PLUTO_ENVIRONMENT_BRDF
+
 float3 iblSpecularResponse(float3 f0, float roughness, float ndotv)
 {
     // Split-sum GGX environment BRDF, paired with the GGX capture convolution.
@@ -9,3 +12,4 @@ float3 iblSpecularResponse(float3 f0, float roughness, float ndotv)
     return max(f0 * ab.x + ab.y, 0.0);
 }
 
+#endif

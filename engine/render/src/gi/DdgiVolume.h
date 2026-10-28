@@ -28,12 +28,13 @@ namespace PlutoGE::render
         glm::vec4 bias{0.0f};
         glm::vec4 state{0.0f};
         glm::vec4 apply{0.0f};
+        glm::vec4 reflection{0.0f};
         glm::uvec4 atlas{0u};
         glm::vec4 sky{0.0f};
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
         glm::vec4 physicalSkySettings{0.0f};
     };
-    static_assert(sizeof(DdgiGpuParameters) == 16 * (13 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT));
+    static_assert(sizeof(DdgiGpuParameters) == 16 * (14 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT));
 
     // What rays that leave the scene see: the physical sky, or the flat ambient term without it. Matches the
     // environment the geometry pass lights surfaces with, so an unoccluded volume reproduces that lighting.
@@ -52,7 +53,8 @@ namespace PlutoGE::render
     //           cascade (DdgiProbeScheduler, DdgiGridSettings::CascadeBudget), has the ray source trace them all in one
     //           dispatch, then relocates and classifies them and blends their rays into the shared irradiance and
     //           visibility atlases (DDGIProbeUpdate.slang).
-    //   Apply   replaces the diffuse ambient light of every lit opaque pixel with the volume's (DDGIApply.slang).
+    //   Apply   replaces the diffuse ambient light of every lit opaque pixel with the volume's, and occludes the sky
+    //           reflected where the probes see no sky (DDGIApply.slang, DDGIReflection.slang).
     //
     // Depends only on the RHI, the screen-space infrastructure and IDdgiRaySource.
     class DdgiVolume
@@ -76,8 +78,9 @@ namespace PlutoGE::render
         // Records this frame's probe update outside rendering. Probes keep their history while `rays` is not ready.
         void Update(rhi::ICommandContext &commands, const DdgiSettings &settings, const DdgiEnvironment &environment,
                     glm::vec3 cameraPosition, IDdgiRaySource &rays);
-        // Replaces the ambient diffuse light in `lighting` with the volume's, outside rendering. Returns the relit
-        // colour and indirect term (owned by the volume until the next Apply), or `lighting` before any Update.
+        // Replaces the ambient diffuse light in `lighting` with the volume's and occludes the sky share of its
+        // environment reflection (when `lighting` has one), outside rendering. Returns the relit colour, indirect term
+        // and environment reflection (owned by the volume until the next Apply), or `lighting` before any Update.
         [[nodiscard]] ScreenSpaceLighting Apply(rhi::ICommandContext &commands, const ScreenSpaceView &view,
                                                 const ScreenSpaceLighting &lighting);
 
@@ -99,7 +102,7 @@ namespace PlutoGE::render
         ScreenSpaceUniforms m_volumeUniforms, m_screenUniforms;
         rhi::Texture m_irradiance, m_distance, m_states, m_rays;
         rhi::Buffer m_probeList;
-        ScreenSpaceTarget m_color, m_indirect;
+        ScreenSpaceTarget m_color, m_indirect, m_environmentSpecular;
         DdgiGridSettings m_grid;
         std::vector<DdgiProbeGrid> m_cascades;
         std::vector<DdgiProbeScheduler> m_schedulers;

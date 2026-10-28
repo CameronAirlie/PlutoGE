@@ -75,6 +75,7 @@ namespace PlutoGE::render
             {"Probe Classification", PostProcessParameterType::Bool, Bool(s.classification)},
             {"Multiple Bounces", PostProcessParameterType::Bool, Bool(s.multipleBounces)},
             {"Brightness Clamp", PostProcessParameterType::Float, std::to_string(s.brightnessClamp)},
+            {"Reflection Occlusion", PostProcessParameterType::Float, std::to_string(s.reflectionOcclusion)},
             {"Voxel Resolution", PostProcessParameterType::Enum, s.voxels.resolution == 128 ? "1" : "0", {"64", "128"}},
             {"Voxel Cascades", PostProcessParameterType::Int, std::to_string(s.voxels.cascades)},
             {"Voxel Volume Size", PostProcessParameterType::Float, std::to_string(s.voxels.volumeSize)},
@@ -84,7 +85,7 @@ namespace PlutoGE::render
             {"Secondary Bounce", PostProcessParameterType::Float, std::to_string(s.voxels.secondaryBounce)},
             {"Voxelization Budget", PostProcessParameterType::Int, std::to_string(s.voxels.commandBudget)},
             {"Debug View", PostProcessParameterType::Enum, std::to_string(s.debugView),
-             {"None", "Irradiance", "Indirect Lighting", "Probes"}},
+             {"None", "Irradiance", "Indirect Lighting", "Probes", "Sky Visibility", "Reflections"}},
             {"Probe Debug Radius", PostProcessParameterType::Float, std::to_string(s.probeRadius)},
         };
     }
@@ -120,6 +121,8 @@ namespace PlutoGE::render
             else if (p.name == "Probe Classification") s.classification = ParseBool(p.value);
             else if (p.name == "Multiple Bounces") s.multipleBounces = ParseBool(p.value);
             else if (p.name == "Brightness Clamp") s.brightnessClamp = ParseFloat(p.value, s.brightnessClamp);
+            else if (p.name == "Reflection Occlusion")
+                s.reflectionOcclusion = ParseFloat(p.value, s.reflectionOcclusion);
             else if (p.name == "Voxel Resolution") s.voxels.resolution = ParseInt(p.value, 0) == 1 ? 128 : 64;
             else if (p.name == "Voxel Cascades") s.voxels.cascades = ParseInt(p.value, s.voxels.cascades);
             else if (p.name == "Voxel Volume Size") s.voxels.volumeSize = ParseFloat(p.value, s.voxels.volumeSize);
@@ -155,6 +158,9 @@ namespace PlutoGE::render
             "Rays march the voxel scene. With Voxel Cone Traced GI on the same camera, its voxel settings apply; use one "
             "or the other for diffuse bounce, not both.",
             "Relights opaque lit surfaces; transparent and unlit ones keep their ambient light.",
+            m_settings.reflectionOcclusion > 0.0f
+                ? "Sky reflections fade where the probes see no sky, so interiors reflect their surroundings."
+                : "Reflection Occlusion is off: surfaces reflect the sky wherever SSR finds no hit.",
         };
     }
 }

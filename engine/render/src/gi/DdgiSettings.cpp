@@ -40,7 +40,8 @@ namespace PlutoGE::render
         result.viewBias = std::clamp(Finite(viewBias, 0.3f), 0.0f, 1.0f);
         result.minFrontfaceDistance = std::clamp(Finite(minFrontfaceDistance, 0.2f), 0.0f, 0.45f);
         result.brightnessClamp = std::clamp(Finite(brightnessClamp, 32.0f), 0.1f, 10000.0f);
-        result.debugView = std::clamp(debugView, PLUTO_DDGI_VIEW_NONE, PLUTO_DDGI_VIEW_PROBES);
+        result.reflectionOcclusion = std::clamp(Finite(reflectionOcclusion, 1.0f), 0.0f, 1.0f);
+        result.debugView = std::clamp(debugView, PLUTO_DDGI_VIEW_NONE, PLUTO_DDGI_VIEW_REFLECTIONS);
         result.probeRadius = std::clamp(Finite(probeRadius, 0.15f), 0.02f, 0.45f);
         result.voxels.resolution = voxels.resolution > 64 ? 128 : 64;
         result.voxels.cascades = std::clamp(voxels.cascades, 1, 3);
@@ -70,11 +71,16 @@ namespace PlutoGE::render
         return ApplyDdgiQuality(settings, quality) == settings;
     }
 
+    bool DdgiViewReplacesImage(int debugView)
+    {
+        return debugView != PLUTO_DDGI_VIEW_NONE && debugView != PLUTO_DDGI_VIEW_PROBES;
+    }
+
     // Lanes: 0 = probe counts, spacing; 1 = intensity, hysteresis, normal bias, view bias; 2 = probes per frame,
     // relocation, classification, debug view; 3 = voxel resolution, cascades, volume size, update speed; 4 = inject
     // local lights, local light bounce, secondary bounce, voxelization command budget; 5.xy = debug probe radius,
     // brightness clamp (5.zw carry the camera's clip planes); 6.x = minimum frontface distance, 6.y = multiple
-    // bounces, 6.z = probe cascades. Quality is the number of blended rays per probe.
+    // bounces, 6.z = probe cascades, 6.w = reflection occlusion. Quality is the number of blended rays per probe.
     BasicPostProcessEffect EncodeDdgiPacket(const DdgiSettings &input, const void *historyOwner)
     {
         const auto settings = input.Sanitized();
@@ -94,6 +100,7 @@ namespace PlutoGE::render
         packet.parameters[6].x = settings.minFrontfaceDistance;
         packet.parameters[6].y = settings.multipleBounces ? 1.0f : 0.0f;
         packet.parameters[6].z = static_cast<float>(settings.grid.cascades);
+        packet.parameters[6].w = settings.reflectionOcclusion;
         return packet;
     }
 
@@ -125,6 +132,7 @@ namespace PlutoGE::render
         settings.minFrontfaceDistance = lanes[6].x;
         settings.multipleBounces = lanes[6].y > 0.5f;
         settings.grid.cascades = static_cast<int>(std::lround(lanes[6].z));
+        settings.reflectionOcclusion = lanes[6].w;
         return settings.Sanitized();
     }
 }

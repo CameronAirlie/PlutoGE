@@ -51,11 +51,10 @@ namespace PlutoGE::render
     {
         std::atomic_uint64_t g_nextUpscalerContextId{1};
 
-        // DDGI's irradiance and indirect-lighting views replace the image; its probe view draws over the scene.
+        // DDGI's lighting and reflection views replace the image; its probe view draws over the scene.
         bool IsDdgiTerminalView(const BasicPostProcessEffect &effect)
         {
-            const auto view = DecodeDdgiPacket(effect).debugView;
-            return view == PLUTO_DDGI_VIEW_IRRADIANCE || view == PLUTO_DDGI_VIEW_INDIRECT;
+            return DdgiViewReplacesImage(DecodeDdgiPacket(effect).debugView);
         }
 
         float Halton(std::uint64_t index, std::uint32_t base)

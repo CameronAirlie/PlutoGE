@@ -20,8 +20,6 @@
 #include "DDGICommon.slang"
 #include "PhysicalSkyEnvironment.slang"
 
-#define PLUTO_DDGI_MISS_DISTANCE 10000.0
-
 // The voxel scene: up to three nested cascades sharing six directional radiance atlases (VCT's layout: premultiplied
 // radiance in rgb, opacity in a, cascades stacked along z, directional mips).
 [[vk::binding(4, 0)]] cbuffer VoxelSceneParameters : register(b4, space0)

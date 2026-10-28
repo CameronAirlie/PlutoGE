@@ -4088,6 +4088,8 @@ namespace PlutoGE::render
         // Ambient lighting as the geometry pass left it; DDGI and SSGI replace it in turn and SSAO attenuates the result.
         m_lightingColor = m_outputColor;
         m_lightingIndirect = m_indirectTarget ? m_indirectTarget.Get() : rhi::TextureHandle{};
+        m_lightingEnvironmentSpecular = geometryLayout == GeometryOutputLayout::SurfaceReflections && m_environmentSpecularTarget
+                                            ? m_environmentSpecularTarget.Get() : rhi::TextureHandle{};
         // DDGI and SSGI also read this frame's albedo and material, which only these layouts write with the indirect term.
         m_ambientRelightingTargets = geometryLayout == GeometryOutputLayout::SurfaceAllIndirect ||
                                      geometryLayout == GeometryOutputLayout::SurfaceReflections;
@@ -5439,7 +5441,7 @@ namespace PlutoGE::render
         view.material = target(m_materialTarget);
         view.albedo = target(m_albedoTarget);
         view.motion = target(m_motionTarget);
-        view.environmentSpecular = m_environmentSpecularTarget.Get();
+        view.environmentSpecular = m_lightingEnvironmentSpecular ? m_lightingEnvironmentSpecular : m_environmentSpecularTarget.Get();
         view.linearSampler = m_screenSampler.Get();
         view.pointSampler = m_shadowSampler.Get();
         view.width = width;
@@ -5586,9 +5588,11 @@ namespace PlutoGE::render
         m_frameStats.ddgiProbesReset = stats.probesReset;
         m_frameStats.ddgiRaysScheduled = stats.raysScheduled;
         m_frameStats.ddgiFramesPerSweep = stats.framesPerSweep;
-        const auto lit = m_ddgi->Apply(commands, MakeScreenSpaceView(m_width, m_height), {source, m_lightingIndirect});
+        const auto lit = m_ddgi->Apply(commands, MakeScreenSpaceView(m_width, m_height),
+                                       {source, m_lightingIndirect, m_lightingEnvironmentSpecular});
         m_lightingColor = lit.color;
         m_lightingIndirect = lit.indirect;
+        m_lightingEnvironmentSpecular = lit.environmentSpecular;
         return lit.color;
     }
 

@@ -1396,6 +1396,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const float3 gridDiffuse = gridIrradiance.rgb * diffuseResponse;
     float3 ambient = 0.0;
     float3 environmentSpecular = 0.0;
+    // The share of environmentSpecular that reflects the sky rather than captures.
+    float skySpecularShare = 0.0;
     if (captureCoverage < 1.0)
     {
         const bool skyLighting = physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0);
@@ -1406,8 +1408,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         else
             ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
         if (skyLighting)
+        {
             environmentSpecular = samplePhysicalSkySpecular(reflect(-viewDirection, normal), materialRoughness) *
                                   iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z;
+            skySpecularShare = 1.0 - captureCoverage;
+        }
     }
     if (captureWeightSum > 0)
     {
@@ -1495,8 +1500,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
 #endif
     if (shaderGraph.header.y != 0) output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
     // Diffuse AO must not alter the replaceable specular fallback used by SSR.
-    // Specular visibility requires its own directional occlusion model.
-    output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, 1.0);
+    // Specular visibility requires its own directional occlusion model: DDGI's
+    // reflection occlusion (DDGIReflection.slang) scales the sky share in alpha.
+    output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, skySpecularShare);
     // Alpha 1 marks a surface lit by diffuse ambient light, which DDGI and SSGI may replace (unlit and glass are 0).
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 1.0);
     // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.

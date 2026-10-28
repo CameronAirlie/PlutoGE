@@ -38,7 +38,9 @@
                               // w multiple-bounce gain (hits reflect the volume's irradiance)
     float4 ddgiApply;         // x intensity, y debug view, z debug probe radius (spacing units), w probes to reset
                               // after the listed ones (negative: every probe)
-    uint4 ddgiAtlas;          // xy irradiance atlas size, zw distance atlas size
+    float4 ddgiReflection;    // x reflection occlusion strength (0: off), y minimum sine of the visibility lookup's
+                              // elevation above the receiver's tangent plane, z sky visibility lobe exponent
+    uint4 ddgiAtlas;         // xy irradiance atlas size, zw distance atlas size
     float4 ddgiSky;           // x physical sky enabled, y flat ambient radiance
     float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
@@ -86,6 +88,10 @@ int2 ddgiTile(uint storageIndex)
     const uint perRow = uint(ddgiCounts.w);
     return int2(int(storageIndex % perRow), int(storageIndex / perRow));
 }
+
+// A traced ray that left the scene (IDdgiRaySource reports PLUTO_DDGI_MISS_DISTANCE; half of it is still far beyond
+// any distance a ray source traces, and survives the ray buffer's half precision).
+bool ddgiIsMiss(float hitDistance) { return hitDistance >= PLUTO_DDGI_MISS_DISTANCE * 0.5; }
 
 // Probe state: xyz relocation offset in spacing units, w PLUTO_DDGI_PROBE_* flags.
 uint ddgiFlags(float4 state) { return uint(state.w + 0.5); }
@@ -154,69 +160,111 @@ float3 ddgiRayDirection(uint ray)
                   dot(ddgiRotation[2].xyz, direction));
 }
 
-// Irradiance at a surface (cosine-weighted mean radiance) from one cascade's eight surrounding probes, weighted
-// trilinearly, by a smooth backface term and by Chebyshev visibility from the probes' distance moments. `coverage`
-// falls from one to zero over the cascade's outermost cell and is zero where no surrounding probe has data.
 #ifdef PLUTO_DDGI_SAMPLING
+// The cell of a cascade's probe grid that holds a surface lookup, offset off the surface by the biases.
+struct DdgiCell
+{
+    float3 biasedPosition;
+    // The biased position in grid coordinates, and the grid coordinate of the cell's lowest corner.
+    float3 local;
+    int3 base;
+};
+
+// False when the biased lookup lies outside the cascade.
+bool ddgiCell(uint cascade, float3 position, float3 normal, float3 viewDirection, out DdgiCell cell)
+{
+    const float spacing = ddgiSpacing(cascade);
+    cell.biasedPosition = position + normal * max(ddgiBias.x * spacing, ddgiBias.z) +
+                          viewDirection * (ddgiBias.y * spacing);
+    cell.local = (cell.biasedPosition - ddgiCascadeOrigins[cascade].xyz) / spacing;
+    cell.base = clamp(int3(floor(cell.local)), int3(0), ddgiCounts.xyz - 2);
+    return all(cell.local >= 0.0) && all(cell.local <= float3(ddgiCounts.xyz - 1));
+}
+
+// Falls from one to zero over the cascade's outermost cell, so its edge does not show as a seam.
+float ddgiCellCoverage(DdgiCell cell)
+{
+    const float3 edge = min(cell.local, float3(ddgiCounts.xyz - 1) - cell.local);
+    return saturate(min(min(edge.x, edge.y), edge.z));
+}
+
+// The weight of corner probe `corner` (0-7) of `cell` for a surface at `position` facing `normal`: trilinear, a
+// smooth backface term and Chebyshev visibility from the probe's distance moments. Zero for probes without data;
+// `storage` returns the probe's global index.
+float ddgiCornerWeight(uint cascade, DdgiCell cell, int corner, float3 position, float3 normal, out uint storage)
+{
+    const int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
+    const int3 gridCoordinate = cell.base + offset;
+    storage = ddgiStorageIndex(cascade, ddgiStorageCoordinate(cascade, gridCoordinate));
+    const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
+    if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE | PLUTO_DDGI_PROBE_FRESH))
+        return 0.0;
+    const float3 probePosition = ddgiProbePosition(cascade, gridCoordinate, state);
+    const float3 alpha = saturate(cell.local - float3(cell.base));
+    const float3 trilinear3 = lerp(1.0 - alpha, alpha, float3(offset));
+    const float trilinear = max(0.001, trilinear3.x * trilinear3.y * trilinear3.z);
+    // Smooth backface: probes behind the surface contribute little but never exactly zero.
+    const float3 toProbe = normalize(probePosition - position);
+    const float wrap = (dot(toProbe, normal) + 1.0) * 0.5;
+    float weight = wrap * wrap + 0.2;
+    // Chebyshev visibility from the biased point.
+    const float3 probeToPoint = cell.biasedPosition - probePosition;
+    const float distance = length(probeToPoint);
+    const float2 moments = distanceAtlas.SampleLevel(
+        ddgiAtlasUv(storage, probeToPoint / max(distance, 0.0001), PLUTO_DDGI_DISTANCE_INTERIOR,
+                    PLUTO_DDGI_DISTANCE_TILE, float2(ddgiAtlas.zw)), 0.0).rg;
+    if (distance > moments.x)
+    {
+        const float variance = abs(moments.y - moments.x * moments.x);
+        const float excess = distance - moments.x;
+        float chebyshev = variance / (variance + excess * excess);
+        chebyshev = chebyshev * chebyshev * chebyshev;
+        weight *= max(chebyshev, 0.05);
+    }
+    weight = max(weight, 0.000001);
+    // Crush tiny weights so a probe seen only through leaks cannot tint the result.
+    const float crush = 0.2;
+    if (weight < crush)
+        weight *= weight * weight / (crush * crush);
+    return weight * trilinear;
+}
+
+// A probe's cosine-weighted mean radiance arriving from around `direction`.
+float3 ddgiProbeIrradiance(uint storage, float3 direction)
+{
+    return irradianceAtlas.SampleLevel(ddgiAtlasUv(storage, direction, PLUTO_DDGI_IRRADIANCE_INTERIOR,
+                                                   PLUTO_DDGI_IRRADIANCE_TILE, float2(ddgiAtlas.xy)), 0.0).rgb;
+}
+
+// The share of a probe's rays around `direction` that reached the sky.
+float ddgiProbeSkyVisibility(uint storage, float3 direction)
+{
+    return distanceAtlas.SampleLevel(ddgiAtlasUv(storage, direction, PLUTO_DDGI_DISTANCE_INTERIOR,
+                                                 PLUTO_DDGI_DISTANCE_TILE, float2(ddgiAtlas.zw)), 0.0).b;
+}
+
+// Irradiance at a surface (cosine-weighted mean radiance) from one cascade's eight surrounding probes. `coverage`
+// falls from one to zero over the cascade's outermost cell and is zero where no surrounding probe has data.
 float3 ddgiCascadeIrradiance(uint cascade, float3 position, float3 normal, float3 viewDirection, out float coverage)
 {
     coverage = 0.0;
-    const float spacing = ddgiSpacing(cascade);
-    const float3 biasedPosition = position + normal * max(ddgiBias.x * spacing, ddgiBias.z) +
-                                  viewDirection * (ddgiBias.y * spacing);
-    const float3 local = (biasedPosition - ddgiCascadeOrigins[cascade].xyz) / spacing;
-    const float3 last = float3(ddgiCounts.xyz - 1);
-    if (any(local < 0.0) || any(local > last))
+    DdgiCell cell;
+    if (!ddgiCell(cascade, position, normal, viewDirection, cell))
         return 0.0;
-    const int3 base = clamp(int3(floor(local)), int3(0), ddgiCounts.xyz - 2);
-    const float3 alpha = saturate(local - float3(base));
     float3 irradiance = 0.0;
     float weightSum = 0.0;
     [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
     {
-        const int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
-        const int3 gridCoordinate = base + offset;
-        const uint storage = ddgiStorageIndex(cascade, ddgiStorageCoordinate(cascade, gridCoordinate));
-        const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
-        if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE | PLUTO_DDGI_PROBE_FRESH))
+        uint storage;
+        const float weight = ddgiCornerWeight(cascade, cell, corner, position, normal, storage);
+        if (weight <= 0.0)
             continue;
-        const float3 probePosition = ddgiProbePosition(cascade, gridCoordinate, state);
-        const float3 trilinear3 = lerp(1.0 - alpha, alpha, float3(offset));
-        const float trilinear = max(0.001, trilinear3.x * trilinear3.y * trilinear3.z);
-        // Smooth backface: probes behind the surface contribute little but never exactly zero.
-        const float3 toProbe = normalize(probePosition - position);
-        const float wrap = (dot(toProbe, normal) + 1.0) * 0.5;
-        float weight = wrap * wrap + 0.2;
-        // Chebyshev visibility from the biased point.
-        const float3 probeToPoint = biasedPosition - probePosition;
-        const float distance = length(probeToPoint);
-        const float2 moments = distanceAtlas.SampleLevel(
-            ddgiAtlasUv(storage, probeToPoint / max(distance, 0.0001), PLUTO_DDGI_DISTANCE_INTERIOR,
-                        PLUTO_DDGI_DISTANCE_TILE, float2(ddgiAtlas.zw)), 0.0).rg;
-        if (distance > moments.x)
-        {
-            const float variance = abs(moments.y - moments.x * moments.x);
-            const float excess = distance - moments.x;
-            float chebyshev = variance / (variance + excess * excess);
-            chebyshev = chebyshev * chebyshev * chebyshev;
-            weight *= max(chebyshev, 0.05);
-        }
-        weight = max(weight, 0.000001);
-        // Crush tiny weights so a probe seen only through leaks cannot tint the result.
-        const float crush = 0.2;
-        if (weight < crush)
-            weight *= weight * weight / (crush * crush);
-        weight *= trilinear;
-        irradiance += weight * irradianceAtlas.SampleLevel(
-            ddgiAtlasUv(storage, normal, PLUTO_DDGI_IRRADIANCE_INTERIOR, PLUTO_DDGI_IRRADIANCE_TILE,
-                        float2(ddgiAtlas.xy)), 0.0).rgb;
+        irradiance += weight * ddgiProbeIrradiance(storage, normal);
         weightSum += weight;
     }
     if (weightSum <= 0.0)
         return 0.0;
-    // Fade over the outermost cell so the cascade's edge does not show as a seam.
-    const float3 edge = min(local, last - local);
-    coverage = saturate(min(min(edge.x, edge.y), edge.z));
+    coverage = ddgiCellCoverage(cell);
     return irradiance / weightSum;
 }
 
@@ -235,6 +283,91 @@ float3 ddgiIrradiance(float3 position, float3 normal, float3 viewDirection, out 
     }
     coverage = 1.0 - remaining;
     return coverage > 0.0 ? irradiance / coverage : 0.0;
+}
+
+// Irradiance plus what reflection occlusion (DDGIReflection.slang) reads along a second direction, gathered with the
+// same probe weights. Diffuse-only lookups (multiple-bounce hits) use ddgiIrradiance and pay nothing for it.
+struct DdgiSample
+{
+    // Cosine-weighted mean radiance arriving at the surface along its normal.
+    float3 irradiance;
+    // The same quantity along the reflection lookup direction: the low-frequency light of the surroundings there.
+    float3 radiance;
+    // Share of the probes' rays along the reflection lookup direction that reached the sky.
+    float skyVisibility;
+};
+
+DdgiSample ddgiZeroSample()
+{
+    DdgiSample result;
+    result.irradiance = 0.0;
+    result.radiance = 0.0;
+    result.skyVisibility = 0.0;
+    return result;
+}
+
+// A sample with `irradiance` and nothing known along the reflection: no light, nothing occluding the sky.
+DdgiSample ddgiIrradianceOnly(float3 irradiance)
+{
+    DdgiSample result = ddgiZeroSample();
+    result.irradiance = irradiance;
+    result.skyVisibility = 1.0;
+    return result;
+}
+
+// accumulated + value * weight, field by field.
+DdgiSample ddgiAccumulate(DdgiSample accumulated, DdgiSample value, float weight)
+{
+    accumulated.irradiance += value.irradiance * weight;
+    accumulated.radiance += value.radiance * weight;
+    accumulated.skyVisibility += value.skyVisibility * weight;
+    return accumulated;
+}
+
+// ddgiCascadeIrradiance, also reading each probe along `reflection`.
+DdgiSample ddgiCascadeSample(uint cascade, float3 position, float3 normal, float3 viewDirection, float3 reflection,
+                             out float coverage)
+{
+    coverage = 0.0;
+    DdgiCell cell;
+    if (!ddgiCell(cascade, position, normal, viewDirection, cell))
+        return ddgiZeroSample();
+    DdgiSample result = ddgiZeroSample();
+    float weightSum = 0.0;
+    [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
+    {
+        uint storage;
+        const float weight = ddgiCornerWeight(cascade, cell, corner, position, normal, storage);
+        if (weight <= 0.0)
+            continue;
+        DdgiSample probe;
+        probe.irradiance = ddgiProbeIrradiance(storage, normal);
+        probe.radiance = ddgiProbeIrradiance(storage, reflection);
+        probe.skyVisibility = ddgiProbeSkyVisibility(storage, reflection);
+        result = ddgiAccumulate(result, probe, weight);
+        weightSum += weight;
+    }
+    if (weightSum <= 0.0)
+        return ddgiZeroSample();
+    coverage = ddgiCellCoverage(cell);
+    return ddgiAccumulate(ddgiZeroSample(), result, 1.0 / weightSum);
+}
+
+// ddgiIrradiance, also reading the probes along `reflection`.
+DdgiSample ddgiSample(float3 position, float3 normal, float3 viewDirection, float3 reflection, out float coverage)
+{
+    DdgiSample result = ddgiZeroSample();
+    float remaining = 1.0;
+    for (uint cascade = 0; cascade < ddgiCascades() && remaining > 0.001; ++cascade)
+    {
+        float cascadeCoverage;
+        const DdgiSample cascadeSample = ddgiCascadeSample(cascade, position, normal, viewDirection, reflection,
+                                                           cascadeCoverage);
+        result = ddgiAccumulate(result, cascadeSample, cascadeCoverage * remaining);
+        remaining *= 1.0 - cascadeCoverage;
+    }
+    coverage = 1.0 - remaining;
+    return coverage > 0.0 ? ddgiAccumulate(ddgiZeroSample(), result, 1.0 / coverage) : ddgiZeroSample();
 }
 #endif
 

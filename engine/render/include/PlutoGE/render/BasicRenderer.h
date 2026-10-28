@@ -194,8 +194,10 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Material |
                    BasicPostProcessInput::Albedo | BasicPostProcessInput::Motion | BasicPostProcessInput::Indirect;
         case BasicPostProcessEffectType::DDGI:
+            // The environment reflection, whose sky share DDGI occludes.
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Material |
-                   BasicPostProcessInput::Albedo | BasicPostProcessInput::Indirect;
+                   BasicPostProcessInput::Albedo | BasicPostProcessInput::Indirect |
+                   BasicPostProcessInput::EnvironmentSpecular;
         case BasicPostProcessEffectType::VCTGI:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::SSR:
@@ -982,9 +984,10 @@ namespace PlutoGE::render
         std::unique_ptr<DdgiVolume> m_ddgi;
         std::unique_ptr<VoxelDdgiRaySource> m_ddgiRays;
         const void *m_ddgiOwner = nullptr;
-        // This frame's scene colour and the diffuse ambient light it holds, as DDGI and SSGI leave them; SSAO
-        // attenuates that indirect term. Starts as the geometry pass's colour and indirect targets.
-        rhi::TextureHandle m_lightingColor, m_lightingIndirect;
+        // This frame's scene colour and the ambient light it holds, as DDGI and SSGI leave them; SSAO attenuates
+        // that indirect term and SSR replaces the environment reflection where it finds hits. Starts as the geometry
+        // pass's colour, indirect and environment specular targets.
+        rhi::TextureHandle m_lightingColor, m_lightingIndirect, m_lightingEnvironmentSpecular;
         bool m_ambientRelightingTargets = false;
         // The voxel scene this frame's effects share, and the frame it was last advanced.
         std::optional<VoxelSceneSettings> m_frameVoxelScene;

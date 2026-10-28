@@ -14,7 +14,9 @@ namespace PlutoGE::render
         rhi::BufferHandle volumeParameters;
         rhi::BufferHandle probeList;
         // Storage image: texel (ray, list slot) receives radiance (rgb) and the signed hit distance (a), as
-        // DDGIVoxelTrace.slang documents. Rays of inactive probes beyond the fixed ones are left unwritten.
+        // DDGIVoxelTrace.slang documents. A ray that sees the sky reports PLUTO_DDGI_MISS_DISTANCE, which the
+        // volume's reflection occlusion counts as sky visibility. Rays of inactive probes beyond the fixed ones are
+        // left unwritten.
         rhi::TextureHandle rays;
         rhi::TextureHandle probeStates;
         // The volume's irradiance and visibility from its last update, for shading hits with the light the volume

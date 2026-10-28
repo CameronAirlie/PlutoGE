@@ -27,6 +27,7 @@ namespace PlutoGE::render
     };
 
     // The camera, G-buffer and frame state a screen-space pass reads, captured once per frame by the renderer.
+    // `environmentSpecular` is the environment reflection the scene colour currently holds (ScreenSpaceLighting).
     struct ScreenSpaceView
     {
         rhi::TextureHandle depth, normal, material, albedo, motion, environmentSpecular;
@@ -49,12 +50,14 @@ namespace PlutoGE::render
         const ScreenSpaceView &view, std::uint32_t quality,
         const std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> &lanes);
 
-    // Scene colour and the diffuse ambient light it contains: the geometry pass's indirect target, or what a global
-    // illumination pass replaced it with. Passes that relight ambient light (DDGI, SSGI) read and return both, so the
-    // next one, and SSAO, always see the indirect term the colour actually holds.
+    // Scene colour and the ambient light it contains: the geometry pass's indirect target (diffuse) and environment
+    // specular target (reflections, alpha their sky share), or what a global illumination pass replaced them with.
+    // Passes that relight ambient light (DDGI, SSGI) read and return them, passing on terms they leave unchanged, so
+    // the next one, SSAO and SSR always see the terms the colour actually holds. `environmentSpecular` is empty when
+    // the geometry pass did not write it.
     struct ScreenSpaceLighting
     {
-        rhi::TextureHandle color, indirect;
+        rhi::TextureHandle color, indirect, environmentSpecular;
     };
 
     // Uniform buffers hold one value per frame, so every draw or dispatch in a frame takes its own buffer. Buffers

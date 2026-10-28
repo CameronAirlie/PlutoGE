@@ -142,7 +142,7 @@ namespace PlutoGE::render
                              {AlbedoSlot, view.albedo}, {IndirectSlot, lighting.indirect}},
                             sampler);
         commands.EndGpuScope();
-        return {m_color.Get(), m_indirect.Get()};
+        return {m_color.Get(), m_indirect.Get(), lighting.environmentSpecular};
     }
 
     void ScreenSpaceGlobalIllumination::ReleaseTargets() noexcept

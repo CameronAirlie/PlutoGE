@@ -15,9 +15,16 @@ namespace PlutoGE::render
         // DDGIApply.slang bindings.
         constexpr std::uint32_t ScreenSlot = 1, DepthSlot = 2, NormalSlot = 3, AlbedoSlot = 4, MaterialSlot = 5,
                                 SceneSlot = 6, IndirectSlot = 7, StateTextureSlot = 8, IrradianceTextureSlot = 9,
-                                DistanceTextureSlot = 10;
+                                DistanceTextureSlot = 10, EnvironmentSpecularSlot = 11;
         // Sharpness of the visibility moments' cosine lobe (RTXGI's default).
         constexpr float DistanceExponent = 50.0f;
+        // Sharpness of the sky visibility lobe (half power at about 17 degrees): wide enough to hold a few rays per
+        // update, narrow enough to tell a window from the wall beside it.
+        constexpr float SkyVisibilityExponent = 16.0f;
+        // Reflection visibility is read at least this far above the receiver's tangent plane (sine of about 24
+        // degrees), clearing the sky visibility lobe's half-power width and a texel, so probes do not see the
+        // receiver's own surface as an occluder.
+        constexpr float ReflectionMinimumElevation = 0.4f;
 
         rhi::Texture CreateDataTexture(rhi::IRenderDevice &device, glm::uvec2 size, const char *name)
         {
@@ -62,7 +69,8 @@ namespace PlutoGE::render
                 descriptor.resourceBindings.push_back(
                     {slot, 0, slot, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics});
             for (const auto slot : {DepthSlot, NormalSlot, AlbedoSlot, MaterialSlot, SceneSlot, IndirectSlot,
-                                    StateTextureSlot, IrradianceTextureSlot, DistanceTextureSlot})
+                                    StateTextureSlot, IrradianceTextureSlot, DistanceTextureSlot,
+                                    EnvironmentSpecularSlot})
                 descriptor.resourceBindings.push_back(
                     {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics});
             return rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
@@ -78,7 +86,8 @@ namespace PlutoGE::render
         m_state = CreateUpdatePipeline(device, shaders.state, "DDGI probe relocation and classification");
         m_blendIrradiance = CreateUpdatePipeline(device, shaders.blendIrradiance, "DDGI irradiance blend");
         m_blendDistance = CreateUpdatePipeline(device, shaders.blendDistance, "DDGI visibility blend");
-        m_apply = CreateScreenPipeline(device, shaders.apply, {DataFormat, DataFormat}, "DDGI apply");
+        // Scene colour, indirect term and environment reflection.
+        m_apply = CreateScreenPipeline(device, shaders.apply, {DataFormat, DataFormat, DataFormat}, "DDGI apply");
         if (HasShader(shaders.probes))
             m_probes = CreateScreenPipeline(device, shaders.probes, {DataFormat}, "DDGI probe spheres");
         m_pointSampler = rhi::Sampler(device, device.CreateSampler({false, false, "DDGI point sampler"}));
@@ -146,6 +155,8 @@ namespace PlutoGE::render
                             m_settings.minFrontfaceDistance, m_settings.multipleBounces ? 1.0f : 0.0f};
         parameters.apply = {m_settings.intensity, static_cast<float>(m_settings.debugView), m_settings.probeRadius,
                             resetProbes};
+        parameters.reflection = {m_settings.reflectionOcclusion, ReflectionMinimumElevation, SkyVisibilityExponent,
+                                 0.0f};
         parameters.atlas = {tiles * glm::uvec2(PLUTO_DDGI_IRRADIANCE_TILE), tiles * glm::uvec2(PLUTO_DDGI_DISTANCE_TILE)};
         // Without the physical sky the geometry pass lights a surface with albedo * ambient, which is irradiance
         // pi * ambient in this volume's convention (cosine-weighted mean radiance times albedo / pi).
@@ -284,7 +295,17 @@ namespace PlutoGE::render
         auto indirectOutput = output;
         indirectOutput.debugName = "DDGI indirect";
         m_indirect.Ensure(*m_device, indirectOutput);
-        const auto volume = m_volumeUniforms.Push(BuildParameters(0, 0.0f));
+        auto environmentOutput = output;
+        environmentOutput.debugName = "DDGI environment specular";
+        m_environmentSpecular.Ensure(*m_device, environmentOutput);
+        auto parameters = BuildParameters(0, 0.0f);
+        // Without the geometry pass's environment reflection there is nothing to occlude; the indirect term stands
+        // in for the unread binding.
+        const bool reflections = static_cast<bool>(lighting.environmentSpecular);
+        if (!reflections)
+            parameters.reflection.x = 0.0f;
+        const auto environmentSpecular = reflections ? lighting.environmentSpecular : lighting.indirect;
+        const auto volume = m_volumeUniforms.Push(parameters);
         const auto screen = m_screenUniforms.Push(MakeScreenSpaceParameters(view, 0, {}));
         const auto bindApply = [&](const rhi::GraphicsPipeline &pipeline)
         {
@@ -300,11 +321,12 @@ namespace PlutoGE::render
             commands.BindTexture(StateTextureSlot, m_states.Get(), m_pointSampler.Get());
             commands.BindTexture(IrradianceTextureSlot, m_irradiance.Get(), m_linearSampler.Get());
             commands.BindTexture(DistanceTextureSlot, m_distance.Get(), m_linearSampler.Get());
+            commands.BindTexture(EnvironmentSpecularSlot, environmentSpecular, m_pointSampler.Get());
         };
 
         commands.BeginGpuScope("RHI DDGI / Apply");
         rhi::RenderingInfo info;
-        info.colorAttachments = {m_color.Get(), m_indirect.Get()};
+        info.colorAttachments = {m_color.Get(), m_indirect.Get(), m_environmentSpecular.Get()};
         info.width = view.width;
         info.height = view.height;
         info.clearColor = info.clearDepth = false;
@@ -324,13 +346,14 @@ namespace PlutoGE::render
             commands.EndRendering();
             commands.EndGpuScope();
         }
-        return {m_color.Get(), m_indirect.Get()};
+        return {m_color.Get(), m_indirect.Get(), reflections ? m_environmentSpecular.Get() : rhi::TextureHandle{}};
     }
 
     void DdgiVolume::ReleaseTargets() noexcept
     {
         m_color.Reset();
         m_indirect.Reset();
+        m_environmentSpecular.Reset();
     }
 
     void DdgiVolume::ReleaseResources() noexcept

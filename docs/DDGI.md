@@ -3,8 +3,9 @@
 **Dynamic Diffuse GI (Probes)** lights opaque surfaces with a grid of irradiance probes that follows the camera and
 updates continuously from the scene. Unlike [ambient probe grids](ambient-probe-grids.md) nothing is baked: moving
 lights, opening doors and changing emissive materials change the bounce light within a few frames. Unlike voxel cone
-traced GI, the sky is occluded too, so interiors darken without manual volumes. It works on Vulkan and OpenGL RHI;
-the legacy OpenGL renderer skips it.
+traced GI, the sky is occluded too, so interiors darken without manual volumes. The probes also occlude the sky in
+reflections: where SSR finds no hit, glossy surfaces indoors reflect the probes' light instead of a sky they cannot
+see. It works on Vulkan and OpenGL RHI; the legacy OpenGL renderer skips it.
 
 ## Using it
 
@@ -42,6 +43,10 @@ Other controls:
   scene's single **Secondary Bounce** is not gathered, since it would count that bounce twice.
 - **Brightness Clamp** limits the luminance one ray gathers from the scene, so small, bright emitters do not flicker
   through single rays. Sky light is never clamped.
+- **Reflection Occlusion** (default 1) is how much of the sky reflection the probes may remove where they see no sky
+  along the reflection, replacing it with their own light from that direction. At 0, surfaces reflect the sky
+  wherever SSR finds no hit, as without DDGI. Reflection captures are never occluded: only the sky's share of a
+  surface's environment reflection changes. See [Reflection occlusion](#reflection-occlusion).
 - **Voxel** settings (**Resolution**, **Cascades**, **Volume Size**, **Update Speed**, **Inject Local Lights**,
   **Local Light Bounce**, **Secondary Bounce**, **Voxelization Budget**) configure the voxel scene the rays march.
   They mean what they do for [voxel cone traced GI](vct-world-cache.md). When the camera also has **Voxel Cone
@@ -49,7 +54,8 @@ Other controls:
 - **Debug View**: **Irradiance** shows the probe lighting alone. **Indirect Lighting** shows the diffuse light the
   surfaces receive. **Probes** draws each probe as a sphere shaded with its irradiance, depth-tested against the scene;
   inactive probes are dark red and probes waiting for their first update purple. **Probe Debug Radius** sizes the
-  spheres.
+  spheres. **Sky Visibility** shows how much sky the probes see along each pixel's reflection (white: open sky,
+  black: fully occluded). **Reflections** shows the environment reflection after occlusion, which SSR falls back to.
 
 Use DDGI *or* voxel cone traced GI for diffuse bounce, not both: both add bounce light. [SSGI](SSGI.md) combines
 well with DDGI, adding contact-scale bounce on top of it. Project Settings > Quality > Global illumination turns DDGI
@@ -70,19 +76,45 @@ The frame runs in this order: geometry pass, DDGI, SSGI, SSAO.
 3. **Tracing.** A ray source fills a buffer of (radiance, hit distance) per ray (`IDdgiRaySource`). The current
    source, `VoxelDdgiRaySource`, marches near-ray cones through the VCT voxel cascades (voxelized, relit, with one
    secondary bounce). Transmission that leaves the scene picks up the physical sky (or the flat ambient term), exactly
-   as the geometry pass lights surfaces. With **Multiple Bounces**, a hit adds the voxel's albedo times the
-   volume's irradiance at the hit point from the previous update. Each probe traces 16 fixed rays for relocation and classification, plus
-   **Rays Per Probe** spherical-Fibonacci rays rotated randomly at every update.
+   as the geometry pass lights surfaces, and the ray reports `PLUTO_DDGI_MISS_DISTANCE`. With **Multiple Bounces**, a
+   hit adds the voxel's albedo times the volume's irradiance at the hit point from the previous update. Each probe
+   traces 16 fixed rays for relocation and classification, plus **Rays Per Probe** spherical-Fibonacci rays rotated
+   randomly at every update.
 4. **Probe update** (`DDGIProbeUpdate.slang`). Relocation and classification use the fixed rays. Rays are then blended
-   into two octahedral atlases per probe: 6 x 6 texels of irradiance and 14 x 14 texels of hit distance and squared
-   distance, both with a one-texel border. Changes beyond twice the ray noise (doubling or halving a probe's
-   luminance, above 0.1) converge at half the hysteresis.
+   into two octahedral atlases per probe: 6 x 6 texels of irradiance and 14 x 14 texels of hit distance, squared
+   distance and sky visibility (the share of rays that missed), both with a one-texel border. Changes beyond twice the
+   ray noise (doubling or halving a probe's luminance, above 0.1) converge at half the hysteresis. Sky visibility uses
+   a wider lobe than the distances (cosine to the 16th, half power at about 17 degrees): a distance texel's lobe holds
+   about one ray per update, too few to estimate a share from.
 5. **Apply** (`DDGIApply.slang`). Each opaque lit pixel interpolates its eight surrounding probes, weighted by
    trilinear position, a smooth backface term and Chebyshev visibility. The result *replaces* the diffuse ambient the
    geometry pass wrote: sky, reflection-capture or baked-grid irradiance times the surface's diffuse response. It fades
    out over the grid's outermost cell. Unlit, glass and transparent surfaces keep their own ambient light.
    A pixel uses the finest cascade that contains it and blends into the next one out over that cascade's outermost
-   cell; biases scale with each cascade's spacing.
+   cell; biases scale with each cascade's spacing. The same pass occludes the pixel's environment reflection (below)
+   and writes the result where SSR reads its miss fallback.
+
+### Reflection occlusion
+
+Where SSR finds no hit (off screen, behind the camera, hidden), surfaces fall back to the environment reflection the
+geometry pass wrote: the physical sky, or reflection captures where they cover the surface. Nothing checks whether
+the sky is visible, so without DDGI glossy floors indoors reflect it. The probes already know: their rays that leave
+the scene reach the sky.
+
+The geometry pass writes the environment reflection with its sky share in alpha (one minus reflection-capture
+coverage). `DDGIApply.slang` then, per pixel (`DDGIReflection.slang`):
+
+1. Reads probe sky visibility and probe light along the reflection, with the same eight probes and weights as the
+   diffuse lookup. The lookup direction leans towards the normal for rough surfaces (GGX's dominant direction) and
+   stays at least about 24 degrees above the surface, since the probes see the surface itself just below its
+   tangent plane and that surface cannot occlude its own reflection.
+2. Replaces `occlusion = Reflection Occlusion x sky share x coverage x (1 - visibility)` of the reflection with the
+   probes' light times the surface's split-sum specular response, adjusting the scene colour by the difference.
+3. Writes the new reflection as the environment specular target that SSR, later in the frame, uses for misses, so
+   SSR's own hits still replace exactly what the colour holds.
+
+The geometry pass writes that target whenever DDGI is on (as for SSR). Sky visibility needs no extra atlas: it
+uses the visibility atlas's spare channel.
 
 Irradiance uses the renderer's existing ambient convention (cosine-weighted mean radiance times
 `albedo (1 - F)(1 - metallic) / pi`). An unoccluded scene therefore looks as it does without DDGI: the GPU check
@@ -93,14 +125,16 @@ pass omits.
 
 `DdgiVolume` depends only on `IDdgiRaySource`. A hardware ray-query source would implement `Trace` with the same
 bindings and output (see `DDGIVoxelTrace.slang`): negative distances for rays that start inside geometry, and
-`SurfaceTolerance()` near zero. Scheduling, blending, relocation, classification, sampling and the editor need no
+`SurfaceTolerance()` near zero, and `PLUTO_DDGI_MISS_DISTANCE` (`DdgiConfig.h`) for rays that see the sky, which
+reflection occlusion counts. Scheduling, blending, relocation, classification, sampling and the editor need no
 changes.
 
 ## Cost
 
 Memory is listed in the inspector: about 52 MiB for Medium's three cascades (atlases, probe states, ray buffer), plus
-the voxel scene
-when VCT GI does not already allocate it. The [profiler](PROFILER.md) shows the GPU stages as **RHI DDGI / Probe
+the voxel scene when VCT GI does not already allocate it. Screen-sized targets come on top: Apply's three outputs and,
+when SSR does not already request it, the geometry pass's environment specular target (8 bytes per pixel each, about
+16 MiB at 1920 x 1080). The [profiler](PROFILER.md) shows the GPU stages as **RHI DDGI / Probe
 update** (reset, trace, relocate and classify, blend), **RHI DDGI / Apply** and **RHI Voxel Scene**.
 `BasicRendererFrameStats` counts probes traced and reset, rays scheduled and frames per sweep.
 
@@ -108,7 +142,15 @@ See [the measurements](#measurements) below.
 
 ## Limitations
 
-- Diffuse only; specular reflections still come from SSR and reflection captures.
+- Reflections only lose sky the probes cannot see; their sharp detail still comes from SSR and reflection captures.
+  What replaces the sky is the probes' irradiance along the reflection: low frequency, so a mirror floor indoors
+  shows soft room colour where SSR misses rather than a sharp image, and that irradiance includes whatever sky its
+  wide lobe sees. A radiance atlas of hits only, or ray-traced radiance, would sharpen and separate it
+  (`DDGIReflection.slang` lists the approximations). Where captures and sky blend, occlusion scales the whole
+  reflection rather than its sky part alone.
+- With Reflection Occlusion on, interior reflections where SSR misses carry the probes' update noise at specular
+  gain instead of the noise-free sky term. Under TAA it is not visible (the project stack below flickers less with
+  occlusion on); without TAA it shows as grain of about half an 8-bit level.
 - Detail is bounded by the voxel size (0.75 units for Medium's 48-unit, 64-voxel finest cascade). Thin walls can leak,
   and small emitters contribute through the voxels' coverage.
 - Coverage is the widest cascade around the camera (about 400 units at the defaults); beyond it, surfaces keep the
@@ -123,13 +165,18 @@ emissive panel; figures are the mean of 192 frames after 96 warm-up frames:
 
 | Effect | Total | Trace | Relocate, classify and blend | Apply |
 | --- | --- | --- | --- | --- |
-| DDGI Low | 0.62-0.63 ms | 0.41 ms | 0.01 ms | 0.20 ms |
-| DDGI Medium | 0.97-0.98 ms | 0.75-0.77 ms | 0.02 ms | 0.20 ms |
-| DDGI High | 2.28-2.30 ms | 2.06-2.07 ms | 0.02 ms | 0.20 ms |
-| SSGI defaults | 0.60-0.61 ms | 0.42-0.43 ms | 0.09 ms denoise | 0.07 ms composite |
+| DDGI Low | 0.71-0.80 ms | 0.40-0.47 ms | 0.02 ms | 0.30-0.31 ms |
+| DDGI Medium | 1.06 ms | 0.73-0.74 ms | 0.02 ms | 0.30 ms |
+| DDGI High | 2.33 ms | 1.99-2.00 ms | 0.03 ms | 0.31 ms |
+| SSGI defaults | 0.61-0.63 ms | 0.43-0.44 ms | 0.09 ms denoise | 0.07 ms composite |
 
-Two runs, three cascades and multiple bounces. The GPU's clocks varied by about 1.5x between sessions, so compare the
-rows with each other rather than with other measurements.
+Two runs, three cascades, multiple bounces and reflection occlusion. Reflection occlusion costs about 0.1 ms of
+Apply: the same session measured 0.19-0.20 ms without it, and no change to Trace. The GPU's clocks varied by about
+1.5x between sessions, so compare the rows with each other rather than with other measurements.
+
+In the Testing project's Sponza arcade (`--ddgi-scene ... preset=project://Managed/main.plutopostprocess full=1`, with
+SSR, TAA and auto exposure), the mean second temporal difference of the final image was 0.32 with Reflection
+Occlusion at 0 and 0.24 at 1: occlusion removes the sky sheen indoors without adding visible flicker.
 
 The voxel scene costs nothing measurable here because nothing in the room changes. Moving geometry or lights adds
 VCT's progressive voxelization and relighting work (see [VCT world cache](vct-world-cache.md)). Tracing dominates, so
@@ -138,9 +185,11 @@ VCT's progressive voxelization and relighting work (see [VCT world cache](vct-wo
 ## Validation
 
 - `PlutoGEDdgiProbeGridTests`: storage addressing, scrolling, scheduling, settings sanitising, quality levels,
-  packet round trips and the effect's parameter handling.
+  packet round trips, the effect's parameter handling, and that DDGI requests the environment reflection.
 - `PlutoGEVulkanDdgiTests`, `PlutoGEOpenGLDdgiTests`: bounce light from an emitter, open-ground brightness (0.85 to
-  1.05 of flat ambient), sky occlusion under a roof (below 0.9), and every debug view. It also checks identical
+  1.05 of flat ambient), sky occlusion under a roof (below 0.9), and every debug view. Reflection occlusion under the
+  physical sky: a glossy metal floor under a roof must lose its sky reflection (below 0.85 of the image without
+  occlusion; 0.74 measured) and on open ground keep it (above 0.93; 0.99 measured). It also checks identical
   bounce light with the grid straddling the world origin and wholly on its positive side, with partial updates. An
   integer `%` on negative cell indices once made surfaces left of or below the origin read other probes' data.
 - `PlutoGEEngineGraphicsApiTests --ddgi-scene <project> <scene> <output> <frames> [eye target]` captures a project scene

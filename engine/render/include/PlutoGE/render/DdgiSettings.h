@@ -41,6 +41,9 @@ namespace PlutoGE::render
         bool multipleBounces = true;
         // Maximum luminance one ray's voxel-scene radiance contributes (sky light is never clamped).
         float brightnessClamp = 32.0f;
+        // How much of the sky reflection the probes may remove where they see no sky, replacing it with their light
+        // (0 leaves environment reflections as the geometry pass wrote them, 1 follows probe visibility fully).
+        float reflectionOcclusion = 1.0f;
         // PLUTO_DDGI_VIEW_* (DdgiConfig.h).
         int debugView = 0;
         float probeRadius = 0.15f;
@@ -57,4 +60,6 @@ namespace PlutoGE::render
     [[nodiscard]] DdgiSettings ApplyDdgiQuality(DdgiSettings base, DdgiQuality quality);
     // True when the quality-controlled values of `settings` are exactly those of `quality`.
     [[nodiscard]] bool MatchesDdgiQuality(const DdgiSettings &settings, DdgiQuality quality);
+    // True for debug views that replace the image rather than drawing over it (every view but None and Probes).
+    [[nodiscard]] bool DdgiViewReplacesImage(int debugView);
 }

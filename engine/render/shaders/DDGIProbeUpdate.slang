@@ -7,8 +7,8 @@
 //   blendIrradianceMain  one group per listed probe: cosine-weighted mean radiance per octahedral texel, blended into
 //                        history. Border texels compute the interior texel they mirror, so bilinear lookups stay
 //                        within the tile without a second pass.
-//   blendDistanceMain    the same for the visibility moments (mean and mean square hit distance); it also clears the
-//                        probe's fresh flag once both atlases hold data.
+//   blendDistanceMain    the same for the visibility moments (mean and mean square hit distance) and the share of rays
+//                        that reached the sky; it also clears the probe's fresh flag once both atlases hold data.
 #include "DDGICommon.slang"
 
 [[vk::binding(1, 0)]] StructuredBuffer<uint> probeList : register(t1, space0);
@@ -183,17 +183,27 @@ void blendDistanceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID,
     const float3 direction = ddgiTexelDirection(source - 1, PLUTO_DDGI_DISTANCE_INTERIOR);
     float2 moments = 0.0;
     float weightSum = 0.0;
+    // Sky visibility for reflection occlusion (DDGIReflection.slang) uses a wider lobe than the moments: a texel's
+    // sharp lobe holds about one ray per update, too few to estimate a share from.
+    float sky = 0.0, skyWeightSum = 0.0;
     for (uint ray = ddgiRays.x; ray < ddgiRays.w; ++ray)
     {
-        const float weight = pow(max(dot(direction, sharedDirections[ray]), 0.0), ddgiBlend.z);
+        const float cosine = max(dot(direction, sharedDirections[ray]), 0.0);
+        const float weight = pow(cosine, ddgiBlend.z);
         const float distance = min(abs(sharedRays[ray].a), range);
         moments += float2(distance, distance * distance) * weight;
         weightSum += weight;
+        const float skyWeight = pow(cosine, ddgiReflection.z);
+        // Rays starting inside geometry see no sky.
+        sky += ddgiIsMiss(sharedRays[ray].a) ? skyWeight : 0.0;
+        skyWeightSum += skyWeight;
     }
     const int2 texel = tile * PLUTO_DDGI_DISTANCE_TILE + int2(local.xy);
-    const float2 current = weightSum > 1e-12 ? moments / weightSum : float2(range, range * range);
+    const float2 currentMoments = weightSum > 1e-12 ? moments / weightSum : float2(range, range * range);
+    // Without rays in the lobe nothing is known to occlude the sky.
+    const float3 current = float3(currentMoments, skyWeightSum > 1e-12 ? sky / skyWeightSum : 1.0);
     distanceAtlas[texel] = float4(ddgiHasFlag(state, PLUTO_DDGI_PROBE_FRESH)
-        ? current : lerp(current, distanceAtlas[texel].rg, ddgiBlend.x), 0.0, 1.0);
+        ? current : lerp(current, distanceAtlas[texel].rgb, ddgiBlend.x), 1.0);
     // Both atlases now hold this probe's data (the irradiance blend ran before this dispatch). Every thread read the
     // state before loadRays' barrier, so clearing the flag here cannot race with those reads.
     if (threadIndex == 0)

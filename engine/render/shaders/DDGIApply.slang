@@ -2,9 +2,11 @@
 //
 //   applyMain          full resolution. Replaces the diffuse ambient the geometry pass wrote (the indirect target:
 //                      sky, capture or baked-probe irradiance times the surface's diffuse response) with the probe
-//                      volume's, writing the relit scene colour and the new indirect term that later passes (SSGI,
-//                      SSAO) build on. Pixels whose indirect alpha is zero (unlit or glass) keep their lighting, and the
-//                      replacement fades out over the volume's outermost cell.
+//                      volume's, and occludes the sky share of its environment reflection where the probes see no sky
+//                      (DDGIReflection.slang). Writes the relit scene colour, the new indirect term that later passes
+//                      (SSGI, SSAO) build on and the new environment reflection SSR falls back to. Pixels whose
+//                      indirect alpha is zero (unlit or glass) keep their lighting, and the replacement fades out over
+//                      the volume's outermost cell.
 //   probeVertexMain /  the "Probes" debug view: a camera-facing impostor per probe, ray-traced to a sphere shaded with
 //   probeFragmentMain  the probe's irradiance, depth tested against the scene. Inactive probes are dark red, probes
 //                      still waiting for their first update purple.
@@ -25,9 +27,12 @@
 [[vk::binding(8, 0)]] Sampler2D probeStateTexture : register(t8, space0);
 [[vk::binding(9, 0)]] Sampler2D irradianceAtlas : register(t9, space0);
 [[vk::binding(10, 0)]] Sampler2D distanceAtlas : register(t10, space0);
+// rgb the environment reflection in the scene colour, a its sky share (BasicLit.slang).
+[[vk::binding(11, 0)]] Sampler2D environmentSpecularTexture : register(t11, space0);
 
 #define PLUTO_DDGI_SAMPLING
 #include "DDGICommon.slang"
+#include "DDGIReflection.slang"
 
 float3 worldAt(int2 pixel, float depth)
 {
@@ -41,6 +46,7 @@ struct ApplyOutput
 {
     float4 color : SV_Target0;
     float4 indirect : SV_Target1;
+    float4 environmentSpecular : SV_Target2;
 };
 
 [shader("fragment")]
@@ -50,8 +56,10 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
     ApplyOutput output;
     output.color = sceneTexture.Load(int3(pixel, 0));
     output.indirect = indirectTexture.Load(int3(pixel, 0));
+    output.environmentSpecular = environmentSpecularTexture.Load(int3(pixel, 0));
     const uint view = uint(ddgiApply.y);
-    const bool diagnostic = view == PLUTO_DDGI_VIEW_IRRADIANCE || view == PLUTO_DDGI_VIEW_INDIRECT;
+    // Every view except the probes' replaces the image.
+    const bool diagnostic = view != PLUTO_DDGI_VIEW_NONE && view != PLUTO_DDGI_VIEW_PROBES;
     const float depth = depthTexture.Load(int3(pixel, 0)).r;
     if (depth <= 0.000001 || output.indirect.a < 0.5)
     {
@@ -61,19 +69,44 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
     const float3 position = worldAt(pixel, depth);
     const float3 normal = decodeNormal(normalTexture.Load(int3(pixel, 0)).xyz);
     const float3 viewDirection = normalize(pass.cameraPosition.xyz - position);
+    const float3 albedo = albedoTexture.Load(int3(pixel, 0)).rgb;
+    const float2 metallicRoughness = saturate(materialTexture.Load(int3(pixel, 0)).xy);
     float coverage;
-    const float3 irradiance = ddgiIrradiance(position, normal, viewDirection, coverage);
-    const float2 metallicRoughness = materialTexture.Load(int3(pixel, 0)).xy;
-    const float3 response = ambientDiffuseResponse(albedoTexture.Load(int3(pixel, 0)).rgb, saturate(metallicRoughness.x),
-                                                   saturate(metallicRoughness.y), normal, viewDirection);
-    const float3 replaced = lerp(output.indirect.rgb, irradiance * response * ddgiApply.x, coverage);
+    DdgiSample probes;
+    if (ddgiReflectionOcclusionEnabled() || view == PLUTO_DDGI_VIEW_SKY_VISIBILITY)
+        probes = ddgiSample(position, normal, viewDirection,
+                            ddgiReflectionLookup(reflect(-viewDirection, normal), normal, metallicRoughness.y),
+                            coverage);
+    else
+        probes = ddgiIrradianceOnly(ddgiIrradiance(position, normal, viewDirection, coverage));
+
+    const float3 response = ambientDiffuseResponse(albedo, metallicRoughness.x, metallicRoughness.y, normal,
+                                                   viewDirection);
+    const float3 replaced = lerp(output.indirect.rgb, probes.irradiance * response * ddgiApply.x, coverage);
+    float3 specular = output.environmentSpecular.rgb;
+    float occlusion = 0.0;
+    if (ddgiReflectionOcclusionEnabled())
+    {
+        // The geometry pass's split-sum response (BasicLit.slang).
+        const float ndotv = max(saturate(dot(normal, viewDirection)), 0.0001);
+        const float3 f0 = lerp(float3(0.04), albedo, metallicRoughness.x);
+        specular = ddgiOccludeEnvironmentSpecular(output.environmentSpecular, probes, coverage,
+                                                  iblSpecularResponse(f0, metallicRoughness.y, ndotv), occlusion);
+    }
     if (view == PLUTO_DDGI_VIEW_IRRADIANCE)
-        output.color = float4(irradiance * coverage, 1.0);
+        output.color = float4(probes.irradiance * coverage, 1.0);
     else if (view == PLUTO_DDGI_VIEW_INDIRECT)
         output.color = float4(replaced, 1.0);
+    else if (view == PLUTO_DDGI_VIEW_SKY_VISIBILITY)
+        output.color = float4(float3(lerp(1.0, probes.skyVisibility, coverage)), 1.0);
+    else if (view == PLUTO_DDGI_VIEW_REFLECTIONS)
+        output.color = float4(specular, 1.0);
     else
-        output.color.rgb = max(output.color.rgb + replaced - output.indirect.rgb, 0.0);
+        output.color.rgb = max(output.color.rgb + replaced - output.indirect.rgb + specular -
+                               output.environmentSpecular.rgb, 0.0);
     output.indirect.rgb = replaced;
+    // The sky share left (as a share of the original reflection), so a later pass occludes only what remains.
+    output.environmentSpecular = float4(specular, saturate(output.environmentSpecular.a - occlusion));
     return output;
 }
 

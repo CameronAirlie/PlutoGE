@@ -127,6 +127,7 @@ namespace
         settings.voxels.injectLocalLights = false;
         settings.relocation = false;
         settings.intensity = 1.5f;
+        settings.reflectionOcclusion = 0.25f;
         const auto decoded = DecodeDdgiPacket(EncodeDdgiPacket(settings, &settings));
         Check(decoded == settings.Sanitized(), "packet round trip");
         for (std::size_t level = 0; level < DdgiQualityNames.size(); ++level)
@@ -159,6 +160,20 @@ namespace
         Check(loaded.GetSettings() == effect.GetSettings(), "parameters must restore the same settings");
         Check(loaded.GetParameters().front().value == "4", "custom quality label");
 
+        // Reflection occlusion is not quality-controlled: changing it keeps the quality level.
+        DDGIEffect occluded;
+        auto occlusionParameters = occluded.GetParameters();
+        bool listed = false;
+        for (auto &parameter : occlusionParameters)
+            if (parameter.name == "Reflection Occlusion")
+            {
+                parameter.value = "0.5";
+                listed = true;
+            }
+        occluded.ApplyParameters(occlusionParameters);
+        Check(listed && occluded.GetSettings().reflectionOcclusion == 0.5f &&
+                  occluded.GetQuality() == DdgiQuality::Medium, "reflection occlusion parameter");
+
         const auto packet = AdaptPostProcessEffect(effect);
         Check(packet && packet->type == BasicPostProcessEffectType::DDGI && packet->historyOwner == &effect &&
                   DecodeDdgiPacket(*packet) == effect.GetSettings(), "adapter");
@@ -169,6 +184,13 @@ namespace
         Check(HasInput(InputsFor(BasicPostProcessEffectType::DDGI), BasicPostProcessInput::Indirect) &&
                   HasInput(InputsFor(BasicPostProcessEffectType::SSGI), BasicPostProcessInput::Indirect),
               "GI effects need the indirect target");
+        // DDGI occludes the sky share of the geometry pass's environment reflection.
+        Check(HasInput(InputsFor(BasicPostProcessEffectType::DDGI), BasicPostProcessInput::EnvironmentSpecular),
+              "DDGI needs the environment reflection");
+        Check(DdgiViewReplacesImage(PLUTO_DDGI_VIEW_SKY_VISIBILITY) && DdgiViewReplacesImage(PLUTO_DDGI_VIEW_REFLECTIONS) &&
+                  DdgiViewReplacesImage(PLUTO_DDGI_VIEW_IRRADIANCE) && !DdgiViewReplacesImage(PLUTO_DDGI_VIEW_PROBES) &&
+                  !DdgiViewReplacesImage(PLUTO_DDGI_VIEW_NONE),
+              "debug views that replace the image");
         Check(!GraphicsQuality::FromPreset(GraphicsPreset::Low).Allows(BasicPostProcessEffectType::DDGI),
               "quality gating");
     }

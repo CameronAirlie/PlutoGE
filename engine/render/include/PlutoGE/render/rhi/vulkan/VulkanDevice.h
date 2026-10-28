@@ -22,6 +22,28 @@ namespace PlutoGE::render::rhi::vulkan
         std::uint32_t imageCount = 0;
     };
 
+    // A swapchain presented together with a host swapchain (detached editor
+    // windows). Presenting several windowed swapchains in separate calls makes
+    // drivers serialise each present against vblank; one submission and one
+    // vkQueuePresentKHR for every window does not.
+    struct VulkanJoinedPresentation
+    {
+        VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+        std::uint32_t imageIndex = 0;
+        VkSemaphore acquired = VK_NULL_HANDLE; // Waited at colour attachment output.
+        VkSemaphore rendered = VK_NULL_HANDLE; // Signalled by the host submission, waited by present.
+        VkResult result = VK_SUCCESS;          // This swapchain's present result.
+    };
+
+    struct VulkanJoinedPresenter
+    {
+        // Records joined images into the host presentation command buffer after
+        // its overlay, appending one entry per acquired image.
+        std::function<void(VkCommandBuffer, std::vector<VulkanJoinedPresentation> &)> record;
+        // Receives the recorded entries with their results after presentation.
+        std::function<void(const std::vector<VulkanJoinedPresentation> &)> presented;
+    };
+
     class VulkanRecorder;
     class VulkanCommandContext;
     class VulkanSegmentContext;
@@ -81,6 +103,8 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] std::optional<VulkanEditorContext> GetEditorContext(const ISwapchain &swapchain) const noexcept;
         [[nodiscard]] VkImageView GetTextureImageView(TextureHandle texture) const noexcept;
         void PrepareTextureForEditorSampling(void *nativeCommandContext, TextureHandle texture);
+        // Returns false when the swapchain does not belong to this device.
+        bool SetJoinedPresenter(ISwapchain &swapchain, VulkanJoinedPresenter presenter);
 
     private:
         TextureHandle CreateTextureArray(const TextureDescriptor &descriptor, std::span<const std::byte> data);

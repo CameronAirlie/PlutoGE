@@ -12,9 +12,11 @@
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <algorithm>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 namespace PlutoGE::ui
@@ -77,6 +79,29 @@ namespace PlutoGE::ui
                 if (forwarding.destroy) platformIO.Platform_DestroyWindow = forwarding.destroy;
             }
             forwarding = {};
+        }
+
+        // Detached windows on Vulkan use FIFO with enough images that a
+        // non-blocking acquire usually succeeds. They refresh at display rate
+        // and never hold back the editor loop, whatever its vsync setting.
+        constexpr std::uint32_t kDetachedViewportImageCount = 3;
+
+        class VulkanEditorCompositor;
+
+        // ImGui renderer hooks are plain function pointers, so the compositor
+        // that joins detached viewports to the host present is found here.
+        struct JoinedViewportHooks
+        {
+            VulkanEditorCompositor *owner = nullptr;
+            void (*create)(ImGuiViewport *) = nullptr;
+            void (*render)(ImGuiViewport *, void *) = nullptr;
+            void (*swap)(ImGuiViewport *, void *) = nullptr;
+        };
+
+        JoinedViewportHooks &JoinedHooks()
+        {
+            static JoinedViewportHooks hooks;
+            return hooks;
         }
 
         class OpenGlEditorCompositor final : public IEditorCompositor
@@ -310,8 +335,10 @@ namespace PlutoGE::ui
                 init.QueueFamily = context->queueFamily;
                 init.Queue = context->queue;
                 init.DescriptorPoolSize = 1024;
-                init.MinImageCount = 2;
-                init.ImageCount = context->imageCount;
+                // MinImageCount only sizes detached viewport swapchains. ImageCount
+                // sizes ImGui's per-viewport buffer rings and must be at least that.
+                init.MinImageCount = kDetachedViewportImageCount;
+                init.ImageCount = std::max(context->imageCount, kDetachedViewportImageCount);
                 init.UseDynamicRendering = true;
                 init.PipelineInfoMain.PipelineRenderingCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
                 init.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
@@ -334,6 +361,7 @@ namespace PlutoGE::ui
                     for (const auto &entry : m_textures)
                         if (entry.inUse)
                             m_device->PrepareTextureForEditorSampling(commandContext, entry.texture); });
+                InstallJoinedViewports();
                 InstallViewportDropForwarding(window);
                 return true;
             }
@@ -346,7 +374,9 @@ namespace PlutoGE::ui
                 {
                     m_swapchain->SetOverlayPreparation({});
                     m_swapchain->SetOverlayRecorder({});
+                    m_device->SetJoinedPresenter(*m_swapchain, {});
                 }
+                RemoveJoinedViewports();
                 for (const auto &entry : m_textures)
                     if (entry.inUse && entry.descriptorSet)
                         ImGui_ImplVulkan_RemoveTexture(entry.descriptorSet);
@@ -381,6 +411,11 @@ namespace PlutoGE::ui
             void RenderPlatformWindows(bool updateWindows) override
             {
                 if (updateWindows) ImGui::UpdatePlatformWindows();
+                // Join only while the host swapchain is presenting. When it skips
+                // frames (minimised, out of date) ImGui presents each window itself.
+                m_joinViewports = m_hostPresented;
+                m_hostPresented = false;
+                m_joinedViewports.clear();
                 ImGui::RenderPlatformWindowsDefault();
             }
 
@@ -459,6 +494,200 @@ namespace PlutoGE::ui
             }
 
         private:
+            void InstallJoinedViewports()
+            {
+                auto &hooks = JoinedHooks();
+                auto &platformIO = ImGui::GetPlatformIO();
+                if (!platformIO.Renderer_CreateWindow || !platformIO.Renderer_RenderWindow ||
+                    !platformIO.Renderer_SwapBuffers)
+                    return;
+                hooks = {this, platformIO.Renderer_CreateWindow, platformIO.Renderer_RenderWindow,
+                         platformIO.Renderer_SwapBuffers};
+                platformIO.Renderer_CreateWindow = [](ImGuiViewport *viewport)
+                {
+                    auto &state = JoinedHooks();
+                    state.create(viewport);
+                    if (state.owner) state.owner->UseFifoPresentation(viewport);
+                };
+                platformIO.Renderer_RenderWindow = [](ImGuiViewport *viewport, void *argument)
+                {
+                    auto &state = JoinedHooks();
+                    if (!state.owner || !state.owner->JoinViewport(viewport))
+                        state.render(viewport, argument);
+                };
+                platformIO.Renderer_SwapBuffers = [](ImGuiViewport *viewport, void *argument)
+                {
+                    auto &state = JoinedHooks();
+                    if (!state.owner || !state.owner->IsJoined(viewport))
+                        state.swap(viewport, argument);
+                };
+                m_device->SetJoinedPresenter(*m_swapchain, {
+                    [this](VkCommandBuffer commandBuffer, std::vector<render::rhi::vulkan::VulkanJoinedPresentation> &joined)
+                    { RecordJoinedViewports(commandBuffer, joined); },
+                    [this](const std::vector<render::rhi::vulkan::VulkanJoinedPresentation> &joined)
+                    { OnJoinedViewportsPresented(joined); }});
+            }
+
+            // Call before the Vulkan backend shuts down.
+            void RemoveJoinedViewports()
+            {
+                auto &hooks = JoinedHooks();
+                if (hooks.owner == this && ImGui::GetCurrentContext())
+                {
+                    auto &platformIO = ImGui::GetPlatformIO();
+                    platformIO.Renderer_CreateWindow = hooks.create;
+                    platformIO.Renderer_RenderWindow = hooks.render;
+                    platformIO.Renderer_SwapBuffers = hooks.swap;
+                }
+                if (hooks.owner == this)
+                    hooks = {};
+                m_joinedViewports.clear();
+                m_presentedViewports.clear();
+                m_rebuildViewports.clear();
+            }
+
+            void ResizeViewportSwapchain(ImGuiViewport *viewport, ImGui_ImplVulkanH_Window &window)
+            {
+                ImGui_ImplVulkanH_CreateOrResizeWindow(m_context.instance, m_context.physicalDevice, m_context.device,
+                                                       &window, m_context.queueFamily, nullptr,
+                                                       static_cast<int>(viewport->Size.x),
+                                                       static_cast<int>(viewport->Size.y),
+                                                       kDetachedViewportImageCount, 0);
+            }
+
+            // The backend prefers MAILBOX/IMMEDIATE, which still blocks once per
+            // vblank per window on drivers without MAILBOX. FIFO plus a
+            // non-blocking acquire never waits.
+            void UseFifoPresentation(ImGuiViewport *viewport)
+            {
+                auto *window = ImGui_ImplVulkanH_GetWindowDataFromViewport(viewport);
+                if (!window || !window->Swapchain || window->PresentMode == VK_PRESENT_MODE_FIFO_KHR)
+                    return;
+                window->PresentMode = VK_PRESENT_MODE_FIFO_KHR;
+                ResizeViewportSwapchain(viewport, *window);
+            }
+
+            // Renderer_RenderWindow: defers the viewport to the host present.
+            // Returns false to leave it to the backend's own render and swap.
+            bool JoinViewport(ImGuiViewport *viewport)
+            {
+                auto *window = ImGui_ImplVulkanH_GetWindowDataFromViewport(viewport);
+                // The host pipeline renders joined windows, so formats must match.
+                if (!m_joinViewports || !window || !window->Swapchain ||
+                    window->SurfaceFormat.format != m_context.swapchainFormat)
+                    return false;
+                if (m_rebuildViewports.erase(viewport->ID))
+                    ResizeViewportSwapchain(viewport, *window);
+                m_joinedViewports.push_back(viewport->ID);
+                return true;
+            }
+
+            [[nodiscard]] bool IsJoined(const ImGuiViewport *viewport) const
+            {
+                return std::ranges::find(m_joinedViewports, viewport->ID) != m_joinedViewports.end();
+            }
+
+            void RecordJoinedViewports(VkCommandBuffer commandBuffer,
+                                       std::vector<render::rhi::vulkan::VulkanJoinedPresentation> &joined)
+            {
+                m_hostPresented = true;
+                m_presentedViewports.clear();
+                if (m_joinedViewports.empty() || !ImGui::GetCurrentContext())
+                    return;
+                for (const ImGuiID id : m_joinedViewports)
+                {
+                    ImGuiViewport *viewport = ImGui::FindViewportByID(id);
+                    auto *window = viewport ? ImGui_ImplVulkanH_GetWindowDataFromViewport(viewport) : nullptr;
+                    // NewFrame clears DrawData, so a stale entry is skipped here.
+                    if (!window || !window->Swapchain || !viewport->DrawData || !viewport->DrawData->Valid)
+                        continue;
+                    auto &semaphores = window->FrameSemaphores[window->SemaphoreIndex];
+                    std::uint32_t image = 0;
+                    const VkResult acquired = vkAcquireNextImageKHR(m_context.device, window->Swapchain, 0,
+                                                                    semaphores.ImageAcquiredSemaphore,
+                                                                    VK_NULL_HANDLE, &image);
+                    // No free image means the window is still showing queued
+                    // frames. Skip it this frame rather than wait.
+                    if (acquired == VK_NOT_READY || acquired == VK_TIMEOUT)
+                        continue;
+                    if (acquired != VK_SUCCESS && acquired != VK_SUBOPTIMAL_KHR)
+                    {
+                        m_rebuildViewports.insert(id);
+                        continue;
+                    }
+                    if (acquired == VK_SUBOPTIMAL_KHR)
+                        m_rebuildViewports.insert(id);
+                    window->FrameIndex = image;
+                    const auto &frame = window->Frames[image];
+
+                    VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                    barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                    barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                    barrier.image = frame.Backbuffer;
+                    barrier.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr,
+                                         1, &barrier);
+                    VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+                    color.imageView = frame.BackbufferView;
+                    color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                    color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                    color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+                    color.clearValue.color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+                    VkRenderingInfo rendering{VK_STRUCTURE_TYPE_RENDERING_INFO};
+                    rendering.renderArea.extent = {static_cast<std::uint32_t>(window->Width),
+                                                   static_cast<std::uint32_t>(window->Height)};
+                    rendering.layerCount = 1;
+                    rendering.colorAttachmentCount = 1;
+                    rendering.pColorAttachments = &color;
+                    vkCmdBeginRendering(commandBuffer, &rendering);
+                    ImGui_ImplVulkan_RenderDrawData(viewport->DrawData, commandBuffer);
+                    vkCmdEndRendering(commandBuffer);
+
+                    barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+                    barrier.dstAccessMask = 0;
+                    barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                    barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+                    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1,
+                                         &barrier);
+                    joined.push_back({window->Swapchain, image, semaphores.ImageAcquiredSemaphore,
+                                      semaphores.RenderCompleteSemaphore});
+                    m_presentedViewports.push_back(id);
+                }
+                m_joinedViewports.clear();
+            }
+
+            void OnJoinedViewportsPresented(const std::vector<render::rhi::vulkan::VulkanJoinedPresentation> &joined)
+            {
+                for (std::size_t index = 0; index < joined.size() && index < m_presentedViewports.size(); ++index)
+                {
+                    const ImGuiID id = m_presentedViewports[index];
+                    const VkResult result = joined[index].result;
+                    if (result != VK_SUCCESS)
+                        m_rebuildViewports.insert(id);
+                    // A rebuild recreates the semaphore ring, so only advance it
+                    // after a present that consumed this set.
+                    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+                        continue;
+                    ImGuiViewport *viewport = ImGui::FindViewportByID(id);
+                    if (auto *window = viewport ? ImGui_ImplVulkanH_GetWindowDataFromViewport(viewport) : nullptr)
+                        window->SemaphoreIndex = (window->SemaphoreIndex + 1) % window->SemaphoreCount;
+                }
+                m_presentedViewports.clear();
+            }
+
+            // Viewports deferred to the host present this frame, and those it
+            // recorded, in the order of its joined entries.
+            std::vector<ImGuiID> m_joinedViewports;
+            std::vector<ImGuiID> m_presentedViewports;
+            std::unordered_set<ImGuiID> m_rebuildViewports;
+            bool m_joinViewports = false;
+            bool m_hostPresented = true;
+
             struct RetiredDescriptors
             {
                 VkFence fence = VK_NULL_HANDLE;

@@ -3610,6 +3610,11 @@ namespace PlutoGE::render::rhi::vulkan
             m_overlayPreparation = std::move(recorder);
         }
 
+        void SetJoinedPresenter(VulkanJoinedPresenter presenter)
+        {
+            m_joinedPresenter = std::move(presenter);
+        }
+
         [[nodiscard]] VkFormat GetNativeFormat() const noexcept { return m_nativeFormat; }
         [[nodiscard]] std::uint32_t GetImageCount() const noexcept { return static_cast<std::uint32_t>(m_images.size()); }
 
@@ -3768,19 +3773,38 @@ namespace PlutoGE::render::rhi::vulkan
                 vkCmdPipelineBarrier(frame.commandBuffer, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                                      VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &destination);
             }
+            // Joined swapchains share this submission and present call; see
+            // VulkanJoinedPresentation.
+            m_joined.clear();
+            if (m_joinedPresenter.record)
+                m_joinedPresenter.record(frame.commandBuffer, m_joined);
             Check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer(presentation)");
             timing.presentRecordMs = elapsedMs(recordStart, Clock::now());
 
             const auto submitStart = Clock::now();
-            const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            m_waitSemaphores.assign(1, frame.imageAvailable);
+            m_waitStages.assign(1, VK_PIPELINE_STAGE_TRANSFER_BIT);
+            m_presentWaits.assign(1, renderFinished);
+            m_presentSwapchains.assign(1, m_swapchain);
+            m_presentImages.assign(1, imageIndex);
+            for (const auto &joined : m_joined)
+            {
+                m_waitSemaphores.push_back(joined.acquired);
+                m_waitStages.push_back(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                m_presentWaits.push_back(joined.rendered);
+                m_presentSwapchains.push_back(joined.swapchain);
+                m_presentImages.push_back(joined.imageIndex);
+            }
+            m_presentResults.assign(m_presentSwapchains.size(), VK_SUCCESS);
             VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-            submit.waitSemaphoreCount = 1;
-            submit.pWaitSemaphores = &frame.imageAvailable;
-            submit.pWaitDstStageMask = &waitStage;
+            submit.waitSemaphoreCount = static_cast<std::uint32_t>(m_waitSemaphores.size());
+            submit.pWaitSemaphores = m_waitSemaphores.data();
+            submit.pWaitDstStageMask = m_waitStages.data();
             submit.commandBufferCount = 1;
             submit.pCommandBuffers = &frame.commandBuffer;
-            submit.signalSemaphoreCount = 1;
-            submit.pSignalSemaphores = &renderFinished;
+            // The host's renderFinished is first, as present expects.
+            submit.signalSemaphoreCount = static_cast<std::uint32_t>(m_presentWaits.size());
+            submit.pSignalSemaphores = m_presentWaits.data();
             Check(vkResetFences(m_impl.device, 1, &frame.fence), "vkResetFences(presentation)");
             Check(m_impl.SubmitWithMemoryRetry(submit, frame.fence), "vkQueueSubmit(presentation)");
             frame.pending = true;
@@ -3789,11 +3813,12 @@ namespace PlutoGE::render::rhi::vulkan
             timing.presentSubmitMs = elapsedMs(submitStart, Clock::now());
 
             VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
-            present.waitSemaphoreCount = 1;
-            present.pWaitSemaphores = &renderFinished;
-            present.swapchainCount = 1;
-            present.pSwapchains = &m_swapchain;
-            present.pImageIndices = &imageIndex;
+            present.waitSemaphoreCount = static_cast<std::uint32_t>(m_presentWaits.size());
+            present.pWaitSemaphores = m_presentWaits.data();
+            present.swapchainCount = static_cast<std::uint32_t>(m_presentSwapchains.size());
+            present.pSwapchains = m_presentSwapchains.data();
+            present.pImageIndices = m_presentImages.data();
+            present.pResults = m_presentResults.data();
             const auto presentStart = Clock::now();
             VkResult result;
             {
@@ -3801,6 +3826,18 @@ namespace PlutoGE::render::rhi::vulkan
                 result = vkQueuePresentKHR(m_impl.presentQueue, &present);
             }
             timing.presentQueueMs = elapsedMs(presentStart, Clock::now());
+            if (!m_joined.empty())
+            {
+                // The call reports the worst result of any swapchain. A joined
+                // window going out of date must not recreate the host swapchain.
+                if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR || result == VK_ERROR_OUT_OF_DATE_KHR ||
+                    result == VK_ERROR_SURFACE_LOST_KHR)
+                    result = m_presentResults[0];
+                for (std::size_t index = 0; index < m_joined.size(); ++index)
+                    m_joined[index].result = m_presentResults[index + 1];
+                if (m_joinedPresenter.presented)
+                    m_joinedPresenter.presented(m_joined);
+            }
             m_presented[imageIndex] = true;
             if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)
             {
@@ -3997,6 +4034,15 @@ namespace PlutoGE::render::rhi::vulkan
         VkFormat m_nativeFormat = VK_FORMAT_UNDEFINED;
         OverlayRecorder m_overlayRecorder;
         OverlayRecorder m_overlayPreparation;
+        VulkanJoinedPresenter m_joinedPresenter;
+        // Per-present scratch, kept to avoid reallocating every frame.
+        std::vector<VulkanJoinedPresentation> m_joined;
+        std::vector<VkSemaphore> m_waitSemaphores;
+        std::vector<VkPipelineStageFlags> m_waitStages;
+        std::vector<VkSemaphore> m_presentWaits;
+        std::vector<VkSwapchainKHR> m_presentSwapchains;
+        std::vector<std::uint32_t> m_presentImages;
+        std::vector<VkResult> m_presentResults;
         std::vector<bool> m_presented;
         Format m_format = Format::R8G8B8A8Srgb;
         std::uint32_t m_width = 0;
@@ -5375,6 +5421,15 @@ namespace PlutoGE::render::rhi::vulkan
         return VulkanEditorContext{
             m_impl->instance, m_impl->physicalDevice, m_impl->device, m_impl->queueFamily, m_impl->queue,
             vulkanSwapchain->GetNativeFormat(), vulkanSwapchain->GetImageCount()};
+    }
+
+    bool VulkanDevice::SetJoinedPresenter(ISwapchain &swapchain, VulkanJoinedPresenter presenter)
+    {
+        auto *vulkanSwapchain = dynamic_cast<VulkanSwapchain *>(&swapchain);
+        if (!vulkanSwapchain)
+            return false;
+        vulkanSwapchain->SetJoinedPresenter(std::move(presenter));
+        return true;
     }
 
     VkImageView VulkanDevice::GetTextureImageView(TextureHandle texture) const noexcept

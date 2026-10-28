@@ -83,6 +83,7 @@ namespace PlutoGE::render
             {
             case BasicPostProcessEffectType::SSAO: return ambientOcclusion;
             case BasicPostProcessEffectType::SSGI:
+            case BasicPostProcessEffectType::DDGI:
             case BasicPostProcessEffectType::VCTGI: return globalIllumination;
             case BasicPostProcessEffectType::SSR: return reflections;
             case BasicPostProcessEffectType::VolumetricFog:

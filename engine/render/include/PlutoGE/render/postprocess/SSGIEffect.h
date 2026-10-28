@@ -25,19 +25,24 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Screen Space Global Illumination"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        std::vector<std::string> GetSummary() const override;
         RenderTarget *GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height);
         bool OutputsIndirectOnly() const { return m_outputMode != 0; }
+        // The RHI renderers trace min(sampleCount, 4) rays per pixel, use min(blurRadius, 3) edge-aware denoise
+        // passes and ignore stepSize, depthPhi and normalPhi, which only the legacy OpenGL path reads.
         struct Settings
         {
             float intensity, rayDistance, stepSize, thickness, depthPhi, normalPhi;
             int sampleCount, stepCount, blurRadius;
             bool halfResolution, indirectOnly;
+            float temporalBlend, historyDepthThreshold, historyNormalThreshold;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
             return {m_intensity, m_rayDistance, m_stepSize, m_thickness, m_depthPhi,
                     m_normalPhi, m_sampleCount, m_stepCount, m_blurRadius,
-                    m_halfResolution, m_outputMode != 0};
+                    m_halfResolution, m_outputMode != 0, m_temporalBlend,
+                    m_historyDepthThreshold, m_historyNormalThreshold};
         }
 
     private:
@@ -56,8 +61,8 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataRenderTargets;
         glm::mat4 m_previousView = glm::mat4(1.0f);
         glm::mat4 m_previousViewProjection = glm::mat4(1.0f);
-        float m_intensity = 1.35f;
-        float m_rayDistance = 7.5f;
+        float m_intensity = 1.0f;
+        float m_rayDistance = 4.0f;
         float m_stepSize = 0.08f;
         float m_thickness = 0.45f;
         float m_depthPhi = 20.0f;
@@ -65,8 +70,8 @@ namespace PlutoGE::render
         float m_temporalBlend = 0.88f;
         float m_historyDepthThreshold = 0.03f;
         float m_historyNormalThreshold = 0.9f;
-        int m_sampleCount = 6;
-        int m_stepCount = 10;
+        int m_sampleCount = 2;
+        int m_stepCount = 16;
         int m_blurRadius = 2;
         int m_outputMode = 0;
         int m_internalWidth = 0;

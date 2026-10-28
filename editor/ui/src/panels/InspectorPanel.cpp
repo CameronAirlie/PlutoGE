@@ -2211,6 +2211,63 @@ namespace PlutoGE::ui
                 ImGui::TreePop();
             }
         }
+
+        // An effect's parameters, edited through the generic property editors, followed by its read-only summary
+        // (cost, memory, caveats). Changed parameters are applied to the effect.
+        void RenderPostProcessEffectParameters(render::IPostProcessEffect &effect)
+        {
+            auto parameters = effect.GetParameters();
+            bool parametersChanged = false;
+            for (auto &parameter : parameters)
+            {
+                scene::Property property{
+                    .name = parameter.name,
+                    .type = scene::PropertyType::String,
+                    .value = parameter.value,
+                    .enumOptions = parameter.enumOptions,
+                };
+
+                switch (parameter.type)
+                {
+                case render::PostProcessParameterType::Float:
+                    property.type = scene::PropertyType::Float;
+                    break;
+                case render::PostProcessParameterType::Int:
+                    property.type = scene::PropertyType::Int;
+                    break;
+                case render::PostProcessParameterType::Bool:
+                    property.type = scene::PropertyType::Bool;
+                    break;
+                case render::PostProcessParameterType::Enum:
+                    property.type = scene::PropertyType::Enum;
+                    break;
+                case render::PostProcessParameterType::Color:
+                    property.type = scene::PropertyType::Color;
+                    break;
+                case render::PostProcessParameterType::String:
+                default:
+                    property.type = scene::PropertyType::String;
+                    break;
+                }
+
+                parametersChanged |= ui::RenderPropertyEditor(property);
+                parameter.value = property.value;
+                parameter.enumOptions = property.enumOptions;
+            }
+
+            if (parametersChanged)
+            {
+                effect.ApplyParameters(parameters);
+            }
+            const auto summary = effect.GetSummary();
+            if (summary.empty())
+                return;
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            for (const auto &line : summary)
+                ImGui::TextWrapped("%s", line.c_str());
+            ImGui::PopStyleColor();
+        }
     }
 
     void InspectorPanel::RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const
@@ -2335,49 +2392,7 @@ namespace PlutoGE::ui
                     break;
                 }
 
-                auto parameters = effect->GetParameters();
-                bool parametersChanged = false;
-                for (auto &parameter : parameters)
-                {
-                    scene::Property property{
-                        .name = parameter.name,
-                        .type = scene::PropertyType::String,
-                        .value = parameter.value,
-                        .enumOptions = parameter.enumOptions,
-                    };
-
-                    switch (parameter.type)
-                    {
-                    case render::PostProcessParameterType::Float:
-                        property.type = scene::PropertyType::Float;
-                        break;
-                    case render::PostProcessParameterType::Int:
-                        property.type = scene::PropertyType::Int;
-                        break;
-                    case render::PostProcessParameterType::Bool:
-                        property.type = scene::PropertyType::Bool;
-                        break;
-                    case render::PostProcessParameterType::Enum:
-                        property.type = scene::PropertyType::Enum;
-                        break;
-                    case render::PostProcessParameterType::Color:
-                        property.type = scene::PropertyType::Color;
-                        break;
-                    case render::PostProcessParameterType::String:
-                    default:
-                        property.type = scene::PropertyType::String;
-                        break;
-                    }
-
-                    parametersChanged |= RenderPropertyEditor(property);
-                    parameter.value = property.value;
-                    parameter.enumOptions = property.enumOptions;
-                }
-
-                if (parametersChanged)
-                {
-                    effect->ApplyParameters(parameters);
-                }
+                RenderPostProcessEffectParameters(*effect);
 
                 ImGui::TreePop();
             }
@@ -2570,49 +2585,7 @@ namespace PlutoGE::ui
                     break;
                 }
 
-                auto parameters = effect->GetParameters();
-                bool parametersChanged = false;
-                for (auto &parameter : parameters)
-                {
-                    scene::Property property{
-                        .name = parameter.name,
-                        .type = scene::PropertyType::String,
-                        .value = parameter.value,
-                        .enumOptions = parameter.enumOptions,
-                    };
-
-                    switch (parameter.type)
-                    {
-                    case render::PostProcessParameterType::Float:
-                        property.type = scene::PropertyType::Float;
-                        break;
-                    case render::PostProcessParameterType::Int:
-                        property.type = scene::PropertyType::Int;
-                        break;
-                    case render::PostProcessParameterType::Bool:
-                        property.type = scene::PropertyType::Bool;
-                        break;
-                    case render::PostProcessParameterType::Enum:
-                        property.type = scene::PropertyType::Enum;
-                        break;
-                    case render::PostProcessParameterType::Color:
-                        property.type = scene::PropertyType::Color;
-                        break;
-                    case render::PostProcessParameterType::String:
-                    default:
-                        property.type = scene::PropertyType::String;
-                        break;
-                    }
-
-                    parametersChanged |= RenderPropertyEditor(property);
-                    parameter.value = property.value;
-                    parameter.enumOptions = property.enumOptions;
-                }
-
-                if (parametersChanged)
-                {
-                    effect->ApplyParameters(parameters);
-                }
+                RenderPostProcessEffectParameters(*effect);
 
                 ImGui::TreePop();
             }

@@ -11,6 +11,7 @@
 #include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
+#include "PlutoGE/render/postprocess/DDGIEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -104,6 +105,9 @@ namespace PlutoGE::scene
 
         auto &ssgiEffect = EmplacePostProcessEffect<render::SSGIEffect>();
         ssgiEffect.SetEnabled(false);
+
+        auto &ddgiEffect = EmplacePostProcessEffect<render::DDGIEffect>();
+        ddgiEffect.SetEnabled(false);
 
         auto &lpvEffect = EmplacePostProcessEffect<render::LPVEffect>();
         lpvEffect.SetEnabled(false);

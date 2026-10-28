@@ -4,6 +4,8 @@
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
 #include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
+#include "PlutoGE/render/DdgiPacket.h"
+#include "PlutoGE/render/postprocess/DDGIEffect.h"
 #include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
@@ -202,12 +204,16 @@ namespace PlutoGE::render
             {
                 const auto settings = typed.GetSettings();
                 BasicPostProcessEffect result{BasicPostProcessEffectType::SSGI};
-                result.quality = static_cast<std::uint32_t>(settings.sampleCount);
+                // Lanes as BasicRenderer::RenderSsgi reads them; lane 1.z (the debug view) also marks the
+                // indirect-only output as a terminal diagnostic.
+                result.quality = static_cast<std::uint32_t>(std::max(settings.stepCount, 1));
                 result.parameters[0] = {settings.intensity, settings.rayDistance,
-                                        settings.stepSize, settings.thickness};
-                result.parameters[1] = {static_cast<float>(settings.stepCount),
-                                        static_cast<float>(settings.blurRadius),
-                                        settings.indirectOnly ? 1.0f : 0.0f, 0.0f};
+                                        settings.thickness, settings.temporalBlend};
+                result.parameters[1] = {static_cast<float>(std::clamp(settings.sampleCount, 1, 4)),
+                                        static_cast<float>(std::clamp(settings.blurRadius, 0, 3)),
+                                        settings.indirectOnly ? 1.0f : 0.0f,
+                                        settings.halfResolution ? 1.0f : 0.0f};
+                result.parameters[2] = {settings.historyDepthThreshold, settings.historyNormalThreshold, 0.0f, 0.0f};
                 return result;
             });
         }
@@ -291,6 +297,12 @@ namespace PlutoGE::render
             });
         }
 
+        std::optional<BasicPostProcessEffect> AdaptDdgi(const IPostProcessEffect &effect)
+        {
+            return AdaptTyped<DDGIEffect>(effect, [](const DDGIEffect &typed)
+            { return EncodeDdgiPacket(typed.GetSettings(), &typed); });
+        }
+
         constexpr std::array kAdapters{
             AdapterRegistration{"ToneMapping", AdaptToneMapping},
             AdapterRegistration{"GammaCorrection", AdaptGammaCorrection},
@@ -310,6 +322,7 @@ namespace PlutoGE::render
             AdapterRegistration{"VolumetricFog", AdaptVolumetricFog},
             AdapterRegistration{"SceneComposite", AdaptSceneComposite},
             AdapterRegistration{"VCTGI", AdaptVctgi},
+            AdapterRegistration{"DDGI", AdaptDdgi},
         };
     }
 

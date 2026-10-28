@@ -25,7 +25,11 @@
 #include "DeferredProbeIrradiance.h"
 #include "TemporalReconstructionPasses.h"
 #include "screenspace/ScreenSpaceAmbientOcclusion.h"
+#include "screenspace/ScreenSpaceGlobalIllumination.h"
 #include "screenspace/ScreenSpaceReflections.h"
+#include "gi/DdgiVolume.h"
+#include "gi/VoxelDdgiRaySource.h"
+#include "PlutoGE/render/DdgiPacket.h"
 #include "CloudNoiseVolume.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PostProcessParameterBlock.h"
@@ -63,7 +67,7 @@ namespace PlutoGE::render
             "RHI Tone Mapping", "RHI Gamma Correction", "RHI FXAA", "RHI Color Grading", "RHI Chromatic Aberration",
             "RHI Bloom", "RHI Lens Flare", "RHI Motion Blur", "RHI Depth of Field", "RHI Auto Exposure",
             "RHI TAA", "RHI SSAO", "RHI SSGI", "RHI SSR", "RHI Volumetric Fog", "RHI Physical Sky",
-            "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI", "RHI Ocean"};
+            "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI", "RHI Ocean", "RHI DDGI"};
 
         // std140 mirror of TerrainLayers.slang's TerrainLayerParameters.
         struct alignas(16) BasicTerrainLayerParameters
@@ -1013,12 +1017,15 @@ namespace PlutoGE::render
                 "Auto exposure post process", "Temporal anti-aliasing post process",
                 "Screen-space ambient occlusion", "Screen-space global illumination",
                 "Screen-space reflections", "Volumetric fog", "Physical sky",
-                "Volumetric clouds", "Scene composite", "Voxel cone traced global illumination"};
+                "Volumetric clouds", "Scene composite", "Voxel cone traced global illumination", "Ocean",
+                "Dynamic diffuse global illumination"};
             for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
             {
-                // SSAO and SSR are screen-space passes with their own pipelines (src/screenspace).
-                if (index == static_cast<std::size_t>(BasicPostProcessEffectType::SSAO) ||
-                    index == static_cast<std::size_t>(BasicPostProcessEffectType::SSR)) continue;
+                // SSAO, SSGI and SSR are screen-space passes with their own pipelines (src/screenspace), and DDGI a
+                // probe volume (src/gi).
+                const auto type = static_cast<BasicPostProcessEffectType>(index);
+                if (type == BasicPostProcessEffectType::SSAO || type == BasicPostProcessEffectType::SSR ||
+                    type == BasicPostProcessEffectType::SSGI || type == BasicPostProcessEffectType::DDGI) continue;
                 if ((shaders.postProcess[index].vertex.glsl.empty() && shaders.postProcess[index].vertex.spirv.empty()) ||
                     (shaders.postProcess[index].fragment.glsl.empty() && shaders.postProcess[index].fragment.spirv.empty()))
                     continue;
@@ -1306,6 +1313,20 @@ namespace PlutoGE::render
             auto reflections = std::make_unique<ScreenSpaceReflections>();
             if (reflections->Initialize(device, reflectionShaders))
                 m_reflections = std::move(reflections);
+            auto globalIllumination = std::make_unique<ScreenSpaceGlobalIllumination>();
+            if (globalIllumination->Initialize(device, {shaders.ssgiTrace, fullscreen(shaders.ssgiFilter),
+                                                        fullscreen(shaders.ssgiTemporal), fullscreen(shaders.ssgiComposite)}))
+                m_globalIllumination = std::move(globalIllumination);
+            auto ddgi = std::make_unique<DdgiVolume>();
+            auto ddgiRays = std::make_unique<VoxelDdgiRaySource>();
+            if (ddgiRays->Initialize(device, shaders.ddgi.trace) &&
+                ddgi->Initialize(device, {shaders.ddgi.reset, shaders.ddgi.state, shaders.ddgi.blendIrradiance,
+                                          shaders.ddgi.blendDistance, fullscreen(shaders.ddgi.apply),
+                                          fullscreen(shaders.ddgi.probes)}))
+            {
+                m_ddgi = std::move(ddgi);
+                m_ddgiRays = std::move(ddgiRays);
+            }
             auto upscalerSharpening = std::make_unique<UpscalerSharpening>();
             if (upscalerSharpening->Initialize(device, {shaders.upscalerSharpening.vertex, shaders.upscalerSharpening.fragment}))
                 m_upscalerSharpening = std::move(upscalerSharpening);
@@ -1455,6 +1476,9 @@ namespace PlutoGE::render
         m_cloudNoise.reset();
         m_ambientOcclusion.reset();
         m_reflections.reset();
+        m_globalIllumination.reset();
+        m_ddgi.reset();
+        m_ddgiRays.reset();
         for (auto &guide : m_screenSpaceGuides)
             guide.reset();
         m_geometrySweepFrame = 0;
@@ -1789,6 +1813,9 @@ namespace PlutoGE::render
             if (guide) guide->ReleaseTargets();
         if (m_ambientOcclusion) m_ambientOcclusion->ReleaseTargets();
         if (m_reflections) m_reflections->ReleaseTargets();
+        if (m_globalIllumination) m_globalIllumination->ReleaseTargets();
+        // Probe data is independent of the viewport and survives resizing.
+        if (m_ddgi) m_ddgi->ReleaseTargets();
         m_depthTarget = std::move(newDepth);
         if (needsTemporalOutput)
             m_temporalUpscalerOutput = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -4058,6 +4085,18 @@ namespace PlutoGE::render
             renderTransparency();
             renderParticles(true);
         };
+        // Ambient lighting as the geometry pass left it; DDGI and SSGI replace it in turn and SSAO attenuates the result.
+        m_lightingColor = m_outputColor;
+        m_lightingIndirect = m_indirectTarget ? m_indirectTarget.Get() : rhi::TextureHandle{};
+        // DDGI and SSGI also read this frame's albedo and material, which only these layouts write with the indirect term.
+        m_ambientRelightingTargets = geometryLayout == GeometryOutputLayout::SurfaceAllIndirect ||
+                                     geometryLayout == GeometryOutputLayout::SurfaceReflections;
+        // VCT GI configures the voxel scene when present; otherwise DDGI's own voxel settings do.
+        m_frameVoxelScene.reset();
+        for (const auto type : {BasicPostProcessEffectType::VCTGI, BasicPostProcessEffectType::DDGI})
+            if (const auto source = std::ranges::find(postProcessEffects, type, &BasicPostProcessEffect::type);
+                !m_frameVoxelScene && source != postProcessEffects.end())
+                m_frameVoxelScene = VoxelSceneFor(*source);
         bool compositionPending = static_cast<bool>(beforeTemporalResolve);
         const auto composeCameras = [&]()
         {
@@ -4123,6 +4162,16 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::SSR)
             {
                 m_outputColor = RenderSsr(m_outputColor, effect, temporalClipOffset.z > 0.5f, commands);
+                continue;
+            }
+            if (effect.type == BasicPostProcessEffectType::DDGI)
+            {
+                m_outputColor = RenderDdgi(m_outputColor, effect, lighting, giDraws.empty() ? draws : giDraws, commands);
+                continue;
+            }
+            if (effect.type == BasicPostProcessEffectType::SSGI)
+            {
+                m_outputColor = RenderSsgi(m_outputColor, effect, commands);
                 continue;
             }
             if (effect.type == BasicPostProcessEffectType::VCTGI)
@@ -4742,28 +4791,67 @@ namespace PlutoGE::render
         }
     }
 
-    rhi::TextureHandle BasicRenderer::RenderVctgi(rhi::TextureHandle source,
-                                                  const BasicPostProcessEffect &effect,
-                                                  const BasicLighting &lighting,
-                                                  std::span<const BasicDraw> draws,
-                                                  rhi::ICommandContext &commands)
+    BasicRenderer::VoxelSceneSettings BasicRenderer::VoxelSceneFor(const BasicPostProcessEffect &effect) const
     {
-        if (!source || !m_vctVoxelizationPipeline || !m_vctResolvePipeline ||
-            !m_vctDirectionalMipPipeline || !m_vctBouncePipeline || !m_vctRelightPipeline ||
-            std::ranges::any_of(m_vctPostProcessPipelines, [](const auto &pipeline) { return !pipeline; }))
-            return source;
-        const auto resolution = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].x, 32.0f, 128.0f));
-        const bool useCache = effect.parameters[4].x > 0.5f && bool(m_vctProbePipeline);
+        VoxelSceneSettings settings;
+        settings.owner = effect.historyOwner;
+        if (effect.type == BasicPostProcessEffectType::DDGI)
+        {
+            const auto ddgi = DecodeDdgiPacket(effect);
+            const auto &voxels = ddgi.voxels;
+            settings.resolution = static_cast<std::uint32_t>(voxels.resolution);
+            settings.cascades = static_cast<std::uint32_t>(voxels.cascades);
+            settings.volumeSize = voxels.volumeSize;
+            settings.updateSpeed = VctUpdateSpeed(voxels.updateSpeed);
+            settings.commandBudget = static_cast<std::uint32_t>(voxels.commandBudget);
+            settings.injectLocalLights = voxels.injectLocalLights;
+            settings.localLightBounce = voxels.localLightBounce;
+            // DDGI's own bounces replace the voxel scene's secondary bounce, which would count that bounce twice.
+            settings.secondaryBounce = ddgi.multipleBounces ? 0.0f : voxels.secondaryBounce;
+            return settings;
+        }
+        // VCT GI lanes (RhiPostProcessAdapter): 0.x volume size, 2.x resolution, 2.y cascades, 2.w refresh interval,
+        // 3.w voxelization command budget, 4.x world cache, 4.y cache size, 4.w local light injection, 5.x local
+        // light bounce minus one, 5.y secondary bounce, 5.z update speed minus one.
+        settings.resolution = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].x, 32.0f, 128.0f));
+        settings.cascades = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
+        settings.volumeSize = effect.parameters[0].x;
+        settings.updateSpeed = VctUpdateSpeed(1.0f + effect.parameters[5].z);
+        // Strength changes reuse the original injection and cached unit bounce.
+        settings.updateInterval = VctUpdateInterval(static_cast<std::uint32_t>(
+            std::clamp(effect.parameters[2].w, 1.0f, 1024.0f)), settings.updateSpeed);
+        settings.commandBudget = static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f));
+        settings.worldCache = effect.parameters[4].x > 0.5f && bool(m_vctProbePipeline);
+        settings.cacheSize = effect.parameters[4].y;
+        settings.injectLocalLights = effect.parameters[4].w > 0.5f;
+        settings.localLightBounce = std::clamp(1.0f + effect.parameters[5].x, 0.0f, 16.0f);
+        settings.secondaryBounce = std::clamp(effect.parameters[5].y, 0.0f, 1.0f);
+        return settings;
+    }
+
+    std::uint32_t BasicRenderer::UpdateVoxelScene(const VoxelSceneSettings &settings, const BasicLighting &lighting,
+                                                  std::span<const BasicDraw> draws, rhi::ICommandContext &commands)
+    {
+        if (!m_vctVoxelizationPipeline || !m_vctResolvePipeline || !m_vctDirectionalMipPipeline ||
+            !m_vctBouncePipeline || !m_vctRelightPipeline)
+            return 0;
+        // VCT GI and DDGI share one field per frame; the first to ask advances it.
+        if (m_voxelSceneFrame == m_frameIndex)
+            return m_voxelSceneCascades;
+        m_voxelSceneFrame = m_frameIndex;
+        const ScopedGpuTiming voxelTiming(commands, "RHI Voxel Scene");
+        const auto resolution = settings.resolution;
+        const bool useCache = settings.worldCache;
         // Keep local voxel detail when enabling the cache. Reserve the last
         // slot for its stationary source, adding a slot when capacity permits.
-        const auto requestedCascades = static_cast<std::uint32_t>(std::clamp(effect.parameters[2].y, 1.0f, 3.0f));
-        const auto cascadeCount = std::min(requestedCascades + (useCache ? 1u : 0u), 3u);
-        const glm::vec4 cacheConfiguration(useCache ? 1.0f : 0.0f, effect.parameters[4].y, effect.parameters[0].x, effect.parameters[2].y);
+        const auto cascadeCount = std::min(settings.cascades + (useCache ? 1u : 0u), 3u);
+        const glm::vec4 cacheConfiguration(useCache ? 1.0f : 0.0f, settings.cacheSize, settings.volumeSize,
+                                           static_cast<float>(settings.cascades));
         if (resolution != m_vctResolution || cascadeCount != m_vctCascadeCount ||
-            cacheConfiguration != m_vctCacheConfiguration || effect.historyOwner != m_vctHistoryOwner)
+            cacheConfiguration != m_vctCacheConfiguration || settings.owner != m_vctHistoryOwner)
         {
             ResetVctResources();
-            m_vctCacheConfiguration = cacheConfiguration; m_vctHistoryOwner = effect.historyOwner;
+            m_vctCacheConfiguration = cacheConfiguration; m_vctHistoryOwner = settings.owner;
             m_vctResolution = resolution;
             m_vctCascadeCount = cascadeCount;
             for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
@@ -4812,46 +4900,17 @@ namespace PlutoGE::render
                      .usage = rhi::TextureUsage::Sampled, .debugName = "VCT stationary probes",
                      .sampled = true, .depth = 96, .storage = true}));
         }
-        const auto traceDivisor = effect.parameters[3].x != 0.0f ? 1u :
-            static_cast<std::uint32_t>(std::clamp(effect.parameters[2].z, 1.0f, 4.0f));
-        const auto traceWidth = std::max(1u, (m_width + traceDivisor - 1) / traceDivisor);
-        const auto traceHeight = std::max(1u, (m_height + traceDivisor - 1) / traceDivisor);
-        if (traceWidth != m_vctTraceWidth || traceHeight != m_vctTraceHeight)
-        {
-            for (auto &target : m_vctTraceTargets) target.Reset(); m_vctHistoryValid = false;
-            m_vctTraceWidth = traceWidth; m_vctTraceHeight = traceHeight;
-        }
-        if (!m_vctTraceTargets[0])
-        {
-            m_vctCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {m_width, m_height, rhi::Format::R16G16B16A16Float,
-                 rhi::TextureUsage::ColorAttachment, "VCT scene composite", true}));
-            // Checkerboard halves of the trace grid, each compacted to half width.
-            for (std::size_t parity = 0; parity < m_vctTraceTargets.size(); ++parity)
-                m_vctTraceTargets[parity] = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {(traceWidth + 1) / 2, traceHeight, rhi::Format::R16G16B16A16Float,
-                     rhi::TextureUsage::ColorAttachment, parity == 0 ? "VCT cone trace (even)" : "VCT cone trace (odd)", true}));
-            for (std::size_t index = 0; index < 2; ++index)
-            {
-                m_vctHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {m_width, m_height, rhi::Format::R16G16B16A16Float,
-                     rhi::TextureUsage::ColorAttachment, "VCT temporal history", true}));
-                m_vctMetadataTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {m_width, m_height, rhi::Format::R16G16B16A16Float,
-                     rhi::TextureUsage::ColorAttachment, "VCT metadata history", true}));
-            }
-        }
         m_vctBufferCursor = 0;
         if (m_vctReactiveFrames) --m_vctReactiveFrames;
-        const float baseSize = std::max(effect.parameters[0].x, 4.0f);
+        const float baseSize = std::max(settings.volumeSize, 4.0f);
         if (useCache && m_vctCacheOriginSize.w == 0.0f)
         {
-            const float size = std::max(std::clamp(effect.parameters[4].y, 16.0f, 4096.0f), baseSize * std::pow(3.0f, std::clamp(effect.parameters[2].y, 1.0f, 3.0f) - 1.0f));
+            const float size = std::max(std::clamp(settings.cacheSize, 16.0f, 4096.0f), baseSize * std::pow(3.0f, static_cast<float>(settings.cascades) - 1.0f));
             const float snap = size / 16.0f;
             m_vctCacheOriginSize = glm::vec4(glm::floor(lighting.cameraPosition / snap) * snap - glm::vec3(size * 0.5f), size);
         }
-        const float localLightBounce = std::clamp(1.0f + effect.parameters[5].x, 0.0f, 16.0f);
-        const float secondaryBounce = std::clamp(effect.parameters[5].y, 0.0f, 1.0f);
+        const float localLightBounce = settings.localLightBounce;
+        const float secondaryBounce = settings.secondaryBounce;
         auto contentSignature = VctContentSignature(draws, lighting);
         // Progressive jobs borrow meshes from the current scene. Validate their
         // identities using only live draws before touching any queued pointer.
@@ -4860,10 +4919,9 @@ namespace PlutoGE::render
         for (const auto &draw : draws)
             if (draw.mesh && draw.contributesToGi && draw.surfaceType != 1 && draw.alphaMode != 2)
                 liveMeshes.emplace(draw.mesh, draw.mesh->GetRevision());
-        const float updateSpeed = VctUpdateSpeed(1.0f + effect.parameters[5].z);
+        const float updateSpeed = settings.updateSpeed;
         // Strength changes reuse the original injection and cached unit bounce.
-        const auto updateInterval = VctUpdateInterval(static_cast<std::uint32_t>(
-            std::clamp(effect.parameters[2].w, 1.0f, 1024.0f)), updateSpeed);
+        const auto updateInterval = settings.updateInterval;
         std::size_t rebuildIndex = cascadeCount;
         for (std::uint32_t index = 0; index < cascadeCount; ++index)
         {
@@ -4893,7 +4951,7 @@ namespace PlutoGE::render
             const bool intervalElapsed = !cascade.valid ||
                 m_frameIndex - cascade.lastUpdateFrame >= updateInterval;
             auto currentLighting = VctRelevantLighting(lighting, desired, size, localLightBounce);
-            const bool injectLocal = effect.parameters[4].w > 0.5f;
+            const bool injectLocal = settings.injectLocalLights;
             const auto lightSignature = VctLightingSignature(currentLighting, injectLocal);
             const auto directionalSignature = VctLightingSignature(currentLighting, false);
             const bool geometryChanged = !cascade.geometryReady || cascade.size != size ||
@@ -4942,7 +5000,7 @@ namespace PlutoGE::render
                     else cascade.pendingDraws.push_back(draw);
                 }
                 cascade.pendingLighting = std::move(currentLighting);
-                cascade.pendingInjectLocalLights = effect.parameters[4].w > 0.5f;
+                cascade.pendingInjectLocalLights = settings.injectLocalLights;
                 cascade.pendingSecondaryBounce = secondaryBounce;
                 cascade.secondaryPass = false;
                 cascade.secondaryDirty = true;
@@ -4974,7 +5032,7 @@ namespace PlutoGE::render
         // Share bounded work across all stages/cascades serviced this frame.
         std::uint32_t remainingIndices = VctUpdateBudget(65536, updateSpeed) * 3;
         std::uint32_t remainingCommands = 2 * VctUpdateBudget(
-            static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed);
+            settings.commandBudget, updateSpeed);
         const auto bounceSliceBudget = VctBounceSlices(resolution, updateSpeed);
         const auto workSteps = static_cast<std::uint32_t>(std::ceil(std::max(1.0f, updateSpeed)));
         for (std::uint32_t step = 0; step < workSteps; ++step)
@@ -5035,7 +5093,7 @@ namespace PlutoGE::render
                 commands.BeginRendering(shadow); commands.BindPipeline(m_shadowPipeline.Get());
                 commands.BindUniformBuffer(0, cameraBuffer.Get());
                 const ShadowFrustum shadowFrustum(cascade.pendingShadowMatrix);
-                const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed));
+                const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(settings.commandBudget, updateSpeed));
                 std::size_t submitted = 0;
                 while (cascade.nextShadowDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
                 {
@@ -5099,7 +5157,7 @@ namespace PlutoGE::render
                     commands.BindStorageImage(0, cascade.surfaceRecord.Get());
                     for (std::size_t channel = 0; channel < 4; ++channel)
                         commands.BindStorageImage(static_cast<std::uint32_t>(4 + channel), cascade.accumulation[channel].Get());
-                    const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(static_cast<std::uint32_t>(std::clamp(effect.parameters[3].w, 1.0f, 256.0f)), updateSpeed));
+                    const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(settings.commandBudget, updateSpeed));
                     std::size_t submitted = 0;
                     while (cascade.nextDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)
                     {
@@ -5202,6 +5260,53 @@ namespace PlutoGE::render
         if (useCache && completedSecondary + 1 == cascadeCount) m_vctProbeSchedule.Refresh();
         std::uint32_t availableCascades = 0;
         while (availableCascades < cascadeCount && m_vctCascades[availableCascades].valid) ++availableCascades;
+        m_voxelSceneCascades = availableCascades;
+        return availableCascades;
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderVctgi(rhi::TextureHandle source,
+                                                  const BasicPostProcessEffect &effect,
+                                                  const BasicLighting &lighting,
+                                                  std::span<const BasicDraw> draws,
+                                                  rhi::ICommandContext &commands)
+    {
+        if (!source || std::ranges::any_of(m_vctPostProcessPipelines, [](const auto &pipeline) { return !pipeline; }))
+            return source;
+        const auto settings = VoxelSceneFor(effect);
+        const auto availableCascades = UpdateVoxelScene(settings, lighting, draws, commands);
+        const auto resolution = m_vctResolution;
+        const auto cascadeCount = m_vctCascadeCount;
+        const bool useCache = settings.worldCache;
+        const float updateSpeed = settings.updateSpeed;
+        const auto traceDivisor = effect.parameters[3].x != 0.0f ? 1u :
+            static_cast<std::uint32_t>(std::clamp(effect.parameters[2].z, 1.0f, 4.0f));
+        const auto traceWidth = std::max(1u, (m_width + traceDivisor - 1) / traceDivisor);
+        const auto traceHeight = std::max(1u, (m_height + traceDivisor - 1) / traceDivisor);
+        if (traceWidth != m_vctTraceWidth || traceHeight != m_vctTraceHeight)
+        {
+            for (auto &target : m_vctTraceTargets) target.Reset(); m_vctHistoryValid = false;
+            m_vctTraceWidth = traceWidth; m_vctTraceHeight = traceHeight;
+        }
+        if (!m_vctTraceTargets[0])
+        {
+            m_vctCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
+                {m_width, m_height, rhi::Format::R16G16B16A16Float,
+                 rhi::TextureUsage::ColorAttachment, "VCT scene composite", true}));
+            // Checkerboard halves of the trace grid, each compacted to half width.
+            for (std::size_t parity = 0; parity < m_vctTraceTargets.size(); ++parity)
+                m_vctTraceTargets[parity] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {(traceWidth + 1) / 2, traceHeight, rhi::Format::R16G16B16A16Float,
+                     rhi::TextureUsage::ColorAttachment, parity == 0 ? "VCT cone trace (even)" : "VCT cone trace (odd)", true}));
+            for (std::size_t index = 0; index < 2; ++index)
+            {
+                m_vctHistoryTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R16G16B16A16Float,
+                     rhi::TextureUsage::ColorAttachment, "VCT temporal history", true}));
+                m_vctMetadataTargets[index] = rhi::Texture(*m_device, m_device->CreateTexture(
+                    {m_width, m_height, rhi::Format::R16G16B16A16Float,
+                     rhi::TextureUsage::ColorAttachment, "VCT metadata history", true}));
+            }
+        }
         if (availableCascades == 0 || (useCache && availableCascades < cascadeCount)) return source;
         if (useCache && availableCascades == cascadeCount)
         {
@@ -5319,6 +5424,7 @@ namespace PlutoGE::render
         m_taaHistoryValid = false;
         if (m_ambientOcclusion) m_ambientOcclusion->InvalidateHistory();
         if (m_reflections) m_reflections->InvalidateHistory();
+        if (m_globalIllumination) m_globalIllumination->InvalidateHistory();
         for (auto &guide : m_screenSpaceGuides)
             if (guide) guide->InvalidateHistory();
     }
@@ -5372,7 +5478,7 @@ namespace PlutoGE::render
         if (!m_ambientOcclusion || !guide)
             return source;
         return m_ambientOcclusion->Record(commands, MakeScreenSpaceView(m_width, m_height), settings,
-                                          {source, m_indirectTarget.Get(), m_colorTarget.Get()}, *guide);
+                                          {source, m_lightingIndirect, m_lightingColor}, *guide);
     }
 
     ScreenSpaceGuide *BasicRenderer::PrepareScreenSpaceGuide(std::uint32_t divisor, std::uint32_t width,
@@ -5407,6 +5513,83 @@ namespace PlutoGE::render
             : nullptr;
         return m_reflections->Record(commands, MakeScreenSpaceView(m_postProcessWidth, m_postProcessHeight), settings,
                                      source, guide);
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderSsgi(rhi::TextureHandle source,
+                                                 const BasicPostProcessEffect &effect,
+                                                 rhi::ICommandContext &commands)
+    {
+        if (!m_globalIllumination || !source || !m_lightingIndirect || !m_ambientRelightingTargets)
+            return source;
+        // Effect lanes (RhiPostProcessAdapter): 0 intensity, ray distance, thickness, temporal blend; 1 rays per
+        // pixel, denoise passes, debug view, half resolution; 2 history depth and normal thresholds. Quality is the
+        // march step count.
+        const ScreenSpaceGlobalIllumination::Settings settings{
+            .intensity = effect.parameters[0].x, .rayDistance = effect.parameters[0].y,
+            .thickness = effect.parameters[0].z, .historyWeight = effect.parameters[0].w,
+            .historyDepthThreshold = effect.parameters[2].x, .historyNormalThreshold = effect.parameters[2].y,
+            .rays = static_cast<std::uint32_t>(std::max(effect.parameters[1].x, 1.0f)), .steps = effect.quality,
+            .denoisePasses = static_cast<std::uint32_t>(std::max(effect.parameters[1].y, 0.0f)),
+            .debugView = static_cast<std::uint32_t>(std::max(effect.parameters[1].z, 0.0f)),
+            .halfResolution = effect.parameters[1].w > 0.5f};
+        auto *guide = PrepareScreenSpaceGuide(ScreenSpaceGlobalIllumination::GuideDivisor(settings), m_width, m_height,
+                                              commands);
+        if (!guide)
+            return source;
+        const auto lit = m_globalIllumination->Record(commands, MakeScreenSpaceView(m_width, m_height), settings,
+                                                      {source, m_lightingIndirect}, *guide);
+        m_lightingColor = lit.color;
+        m_lightingIndirect = lit.indirect;
+        return lit.color;
+    }
+
+    rhi::TextureHandle BasicRenderer::RenderDdgi(rhi::TextureHandle source,
+                                                 const BasicPostProcessEffect &effect,
+                                                 const BasicLighting &lighting,
+                                                 std::span<const BasicDraw> draws,
+                                                 rhi::ICommandContext &commands)
+    {
+        if (!m_ddgi || !m_ddgiRays || !source || !m_lightingIndirect || !m_ambientRelightingTargets)
+            return source;
+        // Probe history belongs to one effect (one camera's scene); another owner starts from scratch.
+        if (effect.historyOwner != m_ddgiOwner)
+        {
+            m_ddgi->InvalidateHistory();
+            m_ddgiOwner = effect.historyOwner;
+        }
+        DdgiVoxelScene scene;
+        if (m_frameVoxelScene)
+        {
+            scene.validCascades = UpdateVoxelScene(*m_frameVoxelScene, lighting, draws, commands);
+            for (std::size_t direction = 0; direction < scene.atlases.size(); ++direction)
+                scene.atlases[direction] = m_vctRadianceAtlases[direction].Get();
+            for (std::uint32_t cascade = 0; cascade < scene.validCascades; ++cascade)
+            {
+                scene.cascades[cascade] = glm::vec4(m_vctCascades[cascade].origin, m_vctCascades[cascade].size);
+                scene.surfaceRecords[cascade] = m_vctCascades[cascade].surfaceRecord.Get();
+            }
+            scene.atlasCascades = m_vctCascadeCount;
+            scene.resolution = m_vctResolution;
+            scene.sampler = m_vctVolumeSampler.Get();
+        }
+        m_ddgiRays->SetScene(scene);
+        const DdgiEnvironment environment{.physicalSky = lighting.physicalSkyEnabled,
+                                          .skyParameters = lighting.physicalSkyParameters,
+                                          .skyExposure = lighting.physicalSkyExposure,
+                                          .ambientIntensity = lighting.ambientIntensity};
+        {
+            const ScopedGpuTiming updateTiming(commands, "RHI DDGI / Probe update");
+            m_ddgi->Update(commands, DecodeDdgiPacket(effect), environment, lighting.cameraPosition, *m_ddgiRays);
+        }
+        const auto &stats = m_ddgi->FrameStats();
+        m_frameStats.ddgiProbesTraced = stats.probesTraced;
+        m_frameStats.ddgiProbesReset = stats.probesReset;
+        m_frameStats.ddgiRaysScheduled = stats.raysScheduled;
+        m_frameStats.ddgiFramesPerSweep = stats.framesPerSweep;
+        const auto lit = m_ddgi->Apply(commands, MakeScreenSpaceView(m_width, m_height), {source, m_lightingIndirect});
+        m_lightingColor = lit.color;
+        m_lightingIndirect = lit.indirect;
+        return lit.color;
     }
 
     rhi::TextureHandle BasicRenderer::RenderBloom(rhi::TextureHandle source,

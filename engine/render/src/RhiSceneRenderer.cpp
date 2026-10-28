@@ -25,6 +25,8 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "RhiDrawPreparationCache.h"
 #include "PlutoGE/render/VctSceneSelection.h"
+#include "PlutoGE/render/DdgiConfig.h"
+#include "PlutoGE/render/DdgiPacket.h"
 #include "RhiSkinning.h"
 #include "RhiGpuSkinning.h"
 #include "SkinningLodLayout.h"
@@ -48,6 +50,13 @@ namespace PlutoGE::render
     namespace
     {
         std::atomic_uint64_t g_nextUpscalerContextId{1};
+
+        // DDGI's irradiance and indirect-lighting views replace the image; its probe view draws over the scene.
+        bool IsDdgiTerminalView(const BasicPostProcessEffect &effect)
+        {
+            const auto view = DecodeDdgiPacket(effect).debugView;
+            return view == PLUTO_DDGI_VIEW_IRRADIANCE || view == PLUTO_DDGI_VIEW_INDIRECT;
+        }
 
         float Halton(std::uint64_t index, std::uint32_t base)
         {
@@ -1559,13 +1568,16 @@ namespace PlutoGE::render
         const auto terminalDiagnostic = std::find_if(basicEffects.begin(), basicEffects.end(), [](const auto &effect)
                                                      { return (effect.type == BasicPostProcessEffectType::SSAO && effect.parameters[1].y > 0.5f) ||
                                                               (effect.type == BasicPostProcessEffectType::SSGI && effect.parameters[1].z > 0.5f) ||
+                                                              (effect.type == BasicPostProcessEffectType::DDGI && IsDdgiTerminalView(effect)) ||
                                                               (effect.type == BasicPostProcessEffectType::VCTGI &&
                                                                (effect.parameters[3].z > 0.5f || effect.parameters[3].x > 0.5f)) ||
                                                               (effect.type == BasicPostProcessEffectType::SceneComposite && effect.quality != 0u); });
         if (terminalDiagnostic != basicEffects.end())
         {
-            const bool displayIndirect = terminalDiagnostic->type == BasicPostProcessEffectType::VCTGI &&
-                terminalDiagnostic->parameters[3].z > 0.5f && terminalDiagnostic->parameters[3].x == 0.0f;
+            const bool displayIndirect = (terminalDiagnostic->type == BasicPostProcessEffectType::VCTGI &&
+                terminalDiagnostic->parameters[3].z > 0.5f && terminalDiagnostic->parameters[3].x == 0.0f) ||
+                terminalDiagnostic->type == BasicPostProcessEffectType::SSGI ||
+                terminalDiagnostic->type == BasicPostProcessEffectType::DDGI;
             basicEffects.erase(terminalDiagnostic + 1, basicEffects.end());
             if (displayIndirect)
             {
@@ -1673,7 +1685,8 @@ namespace PlutoGE::render
         core::CpuScope recordingPreparationScope("Recording preparation", core::CpuCategory::Rendering);
         m_timingStats.sceneSetupMs = millisecondsBetween(translationEnd, setupEnd);
         auto &giDraws = preparation.gi.draws;
-        if (std::ranges::any_of(basicEffects, [](const auto &effect) { return effect.type == BasicPostProcessEffectType::VCTGI; }))
+        if (std::ranges::any_of(basicEffects, [](const auto &effect)
+            { return effect.type == BasicPostProcessEffectType::VCTGI || effect.type == BasicPostProcessEffectType::DDGI; }))
         {
             // shadowCommands is the frontend's unculled scene list. GI needs
             // its materials and non-shadow-casting surfaces as well.

@@ -42,6 +42,11 @@ add_library(PlutoGERender
     src/screenspace/ScreenSpaceGuide.cpp
     src/screenspace/ScreenSpaceAmbientOcclusion.cpp
     src/screenspace/ScreenSpaceReflections.cpp
+    src/screenspace/ScreenSpaceGlobalIllumination.cpp
+    src/gi/DdgiProbeGrid.cpp
+    src/gi/DdgiSettings.cpp
+    src/gi/DdgiVolume.cpp
+    src/gi/VoxelDdgiRaySource.cpp
     src/CloudNoiseVolume.cpp
     src/CloudOcclusion.cpp
     src/SkinningLodLayout.cpp
@@ -90,6 +95,7 @@ add_library(PlutoGERender
     src/postprocess/ToneMappingEffect.cpp
     src/postprocess/SSAOEffect.cpp
     src/postprocess/SSGIEffect.cpp
+    src/postprocess/DDGIEffect.cpp
     src/postprocess/SSREffect.cpp
     src/postprocess/RSMEffect.cpp
     src/postprocess/VoxelConeTracingEffect.cpp
@@ -140,6 +146,12 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^SSR")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang")
         endif()
+        if (MODULE MATCHES "^SSGI")
+            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang")
+        endif()
+        if (MODULE MATCHES "^DDGI")
+            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
+        endif()
         if (MODULE MATCHES "^SSAO")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizonSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang")
         endif()
@@ -188,6 +200,12 @@ if (PLUTO_SLANGC_EXECUTABLE)
         endif()
         if (MODULE MATCHES "^LightCluster")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h")
+        endif()
+        if (MODULE MATCHES "^SSGI")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang")
+        endif()
+        if (MODULE MATCHES "^DDGI")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
         endif()
         if (MODULE MATCHES "^SSR|^ScreenSpace")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuide.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang")
@@ -339,7 +357,17 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSAO "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSAOResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain resolveMain)
     pluto_add_slang_graphics_shader(SSAOHorizon "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizon.slang" vertexMain fragmentMain)
-    pluto_add_slang_graphics_shader(SSGI "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain fragmentMain)
+    pluto_add_slang_compute_shader(SSGITrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" traceMain)
+    pluto_add_slang_graphics_shader(SSGIFilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain filterMain)
+    pluto_add_slang_graphics_shader(SSGITemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain temporalMain)
+    pluto_add_slang_graphics_shader(SSGIComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain compositeMain)
+    pluto_add_slang_compute_shader(DDGIVoxelTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIVoxelTrace.slang" traceMain)
+    pluto_add_slang_compute_shader(DDGIProbeReset "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIProbeUpdate.slang" resetMain)
+    pluto_add_slang_compute_shader(DDGIProbeState "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIProbeUpdate.slang" stateMain)
+    pluto_add_slang_compute_shader(DDGIBlendIrradiance "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIProbeUpdate.slang" blendIrradianceMain)
+    pluto_add_slang_compute_shader(DDGIBlendDistance "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIProbeUpdate.slang" blendDistanceMain)
+    pluto_add_slang_graphics_shader(DDGIApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIApply.slang" vertexMain applyMain)
+    pluto_add_slang_graphics_shader(DDGIProbes "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIApply.slang" probeVertexMain probeFragmentMain)
     pluto_add_slang_graphics_shader(SSR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSRTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRTrace.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRTraceReduced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRTraceReduced.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")

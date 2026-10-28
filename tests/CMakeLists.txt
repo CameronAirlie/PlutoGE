@@ -109,6 +109,10 @@ add_executable(PlutoGERhiPostProcessAdapterTests RhiPostProcessAdapterTests.cpp)
 pluto_link_engine(PlutoGERhiPostProcessAdapterTests)
 add_test(NAME PlutoGERhiPostProcessAdapterTests COMMAND PlutoGERhiPostProcessAdapterTests)
 
+add_executable(PlutoGEDdgiProbeGridTests DdgiProbeGridTests.cpp)
+pluto_link_engine(PlutoGEDdgiProbeGridTests)
+add_test(NAME PlutoGEDdgiProbeGridTests COMMAND PlutoGEDdgiProbeGridTests)
+
 add_executable(PlutoGEPostProcessGraphTests PostProcessGraphTests.cpp)
 target_link_libraries(PlutoGEPostProcessGraphTests PRIVATE PlutoGE::Render)
 add_test(NAME PlutoGEPostProcessGraphTests COMMAND PlutoGEPostProcessGraphTests)
@@ -1117,6 +1121,10 @@ add_test(NAME PlutoGEHeadlessServerTests COMMAND PlutoGEHeadlessServerTests)
 
 add_test(NAME PlutoGEVulkanSsaoTests COMMAND PlutoGEVulkanRhiTests --ssao-only)
 add_test(NAME PlutoGEOpenGLSsaoTests COMMAND PlutoGEOpenGLRhiTests --ssao-only)
+add_test(NAME PlutoGEVulkanSsgiTests COMMAND PlutoGEVulkanRhiTests --ssgi-only)
+add_test(NAME PlutoGEOpenGLSsgiTests COMMAND PlutoGEOpenGLRhiTests --ssgi-only)
+add_test(NAME PlutoGEVulkanDdgiTests COMMAND PlutoGEVulkanRhiTests --ddgi-only)
+add_test(NAME PlutoGEOpenGLDdgiTests COMMAND PlutoGEOpenGLRhiTests --ddgi-only)
 
 add_executable(PlutoGEGraphicsQualityProjectTests GraphicsQualityProjectTests.cpp)
 pluto_link_engine(PlutoGEGraphicsQualityProjectTests)

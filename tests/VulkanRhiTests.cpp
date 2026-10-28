@@ -41,6 +41,7 @@
 #include "TemporalMotionRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
+#include "GlobalIlluminationRenderingChecks.h"
 #include "VctPublicationChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
 #include "VsmOnlyRenderingChecks.h"
@@ -138,7 +139,21 @@ int main(int argc, char **argv)
             shader.fragment.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str());
         };
         loadPostProcess(BasicPostProcessEffectType::TAA, "TAA");
-        loadPostProcess(BasicPostProcessEffectType::SSGI, "SSGI");
+        const auto fullscreen = [&](const char *module) -> BasicPostProcessShaderPackage
+        {
+            return {{.spirv = ReadSpirv((std::string(module) + ".vertex.spv").c_str())},
+                    {.spirv = ReadSpirv((std::string(module) + ".fragment.spv").c_str())}};
+        };
+        shaders.ssgiTrace.spirv = ReadSpirv("SSGITrace.compute.spv");
+        shaders.ssgiFilter = fullscreen("SSGIFilter");
+        shaders.ssgiTemporal = fullscreen("SSGITemporal");
+        shaders.ssgiComposite = fullscreen("SSGIComposite");
+        shaders.ddgi = {.trace = {.spirv = ReadSpirv("DDGIVoxelTrace.compute.spv")},
+                        .reset = {.spirv = ReadSpirv("DDGIProbeReset.compute.spv")},
+                        .state = {.spirv = ReadSpirv("DDGIProbeState.compute.spv")},
+                        .blendIrradiance = {.spirv = ReadSpirv("DDGIBlendIrradiance.compute.spv")},
+                        .blendDistance = {.spirv = ReadSpirv("DDGIBlendDistance.compute.spv")},
+                        .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes")};
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         loadPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
@@ -256,6 +271,21 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--ssao-only")
         {
             CheckSsaoRendering(renderer,device);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssgi-only")
+        {
+            CheckSsgiRendering(renderer, device);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--gi-performance")
+        {
+            CheckGlobalIlluminationPerformance(renderer, device, {1920, 1080});
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")
+        {
+            CheckDdgiRendering(renderer, device);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ssao-performance")

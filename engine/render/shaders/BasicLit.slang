@@ -1497,7 +1497,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Diffuse AO must not alter the replaceable specular fallback used by SSR.
     // Specular visibility requires its own directional occlusion model.
     output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, 1.0);
-    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 0.0);
+    // Alpha 1 marks a surface lit by diffuse ambient light, which DDGI and SSGI may replace (unlit and glass are 0).
+    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 1.0);
     // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
     output.normal = float4(normal * 0.5 + 0.5, gridDeferred && shaderGraph.header.y == 0 && !glass ? 0.0 : 1.0);
     output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);

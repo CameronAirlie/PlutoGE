@@ -99,6 +99,16 @@ namespace PlutoGE::render
         result.ssrComposite = {Load("SSRComposite", "vertex"), Load("SSRComposite", "fragment")};
         result.screenSpaceGuide = Load("ScreenSpaceGuide", "compute");
         result.screenSpaceGuideHierarchy = Load("ScreenSpaceGuideHierarchy", "compute");
+        result.ssgiTrace = Load("SSGITrace", "compute");
+        result.ssgiFilter = {Load("SSGIFilter", "vertex"), Load("SSGIFilter", "fragment")};
+        result.ssgiTemporal = {Load("SSGITemporal", "vertex"), Load("SSGITemporal", "fragment")};
+        result.ssgiComposite = {Load("SSGIComposite", "vertex"), Load("SSGIComposite", "fragment")};
+        result.ddgi = {.trace = Load("DDGIVoxelTrace", "compute"), .reset = Load("DDGIProbeReset", "compute"),
+                       .state = Load("DDGIProbeState", "compute"),
+                       .blendIrradiance = Load("DDGIBlendIrradiance", "compute"),
+                       .blendDistance = Load("DDGIBlendDistance", "compute"),
+                       .apply = {Load("DDGIApply", "vertex"), Load("DDGIApply", "fragment")},
+                       .probes = {Load("DDGIProbes", "vertex"), Load("DDGIProbes", "fragment")}};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {
@@ -114,7 +124,6 @@ namespace PlutoGE::render
         addPostProcess(BasicPostProcessEffectType::DepthOfField, "DepthOfField");
         addPostProcess(BasicPostProcessEffectType::TAA, "TAA");
         addPostProcess(BasicPostProcessEffectType::SSAO, "SSAO");
-        addPostProcess(BasicPostProcessEffectType::SSGI, "SSGI");
         addPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         addPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         addPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");

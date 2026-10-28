@@ -4,6 +4,7 @@
 #include "PlutoGE/render/postprocess/BloomEffect.h"
 #include "PlutoGE/render/postprocess/ColorGradingEffect.h"
 #include "PlutoGE/render/postprocess/ChromaticAberrationEffect.h"
+#include "PlutoGE/render/postprocess/DDGIEffect.h"
 #include "PlutoGE/render/postprocess/DepthOfFieldEffect.h"
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
@@ -35,6 +36,7 @@ namespace PlutoGE::render
             "SSR",
             "LPV",
             "RSM",
+            "DDGI",
             "VCTGI",
             "VolumetricFog",
             "AutoExposure",
@@ -96,6 +98,11 @@ namespace PlutoGE::render
         if (typeName == "VCTGI")
         {
             return std::make_unique<VoxelConeTracingEffect>();
+        }
+
+        if (typeName == "DDGI")
+        {
+            return std::make_unique<DDGIEffect>();
         }
 
         if (typeName == "VolumetricFog")

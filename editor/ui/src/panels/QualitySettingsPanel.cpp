@@ -53,7 +53,7 @@ namespace PlutoGE::ui
         ImGui::SeparatorText("Allowed scene effects");
         ImGui::TextWrapped("Checked keeps an effect if the scene enables it. Unchecked skips the listed effect group. Effect strengths and sample counts remain scene-authored.");
         changed |= Effect("Ambient occlusion", quality.ambientOcclusion, "Allows SSAO.");
-        changed |= Effect("Global illumination", quality.globalIllumination, "Allows SSGI and voxel cone tracing GI.");
+        changed |= Effect("Global illumination", quality.globalIllumination, "Allows SSGI, DDGI probes and voxel cone tracing GI.");
         changed |= Effect("Screen-space reflections", quality.reflections, "Allows SSR; material environment reflections remain available.");
         changed |= Effect("Volumetrics", quality.volumetrics, "Allows volumetric fog and volumetric clouds.");
         changed |= Effect("Bloom and lens flare", quality.bloom, "Allows bloom and lens flare.");

@@ -25,6 +25,15 @@ namespace PlutoGE::render
 
     SSGIEffect::~SSGIEffect() = default;
 
+    std::vector<std::string> SSGIEffect::GetSummary() const
+    {
+        return {
+            "Rays that miss, or leave the screen, keep the ambient light already there (sky, probes or DDGI).",
+            "Vulkan/OpenGL RHI: Samples is rays per pixel (up to 4), Blur Radius the denoise passes (up to 3); "
+            "Step Size, Depth Weight and Normal Weight apply to the legacy OpenGL renderer only.",
+        };
+    }
+
     std::vector<PostProcessParameter> SSGIEffect::GetParameters() const
     {
         return {

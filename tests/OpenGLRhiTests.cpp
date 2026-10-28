@@ -35,6 +35,7 @@
 #include "VsmOnlyRenderingChecks.h"
 #include "VsmMembershipChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
+#include "GlobalIlluminationRenderingChecks.h"
 #include "VctPublicationChecks.h"
 
 #include <array>
@@ -229,7 +230,21 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             shader.fragment.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str());
         };
         loadPostProcess(render::BasicPostProcessEffectType::TAA, "TAA");
-        loadPostProcess(render::BasicPostProcessEffectType::SSGI, "SSGI");
+        const auto fullscreen = [&](const char *module) -> render::BasicPostProcessShaderPackage
+        {
+            return {{.glsl = ReadText((std::string(module) + ".vertex.glsl").c_str())},
+                    {.glsl = ReadText((std::string(module) + ".fragment.glsl").c_str())}};
+        };
+        shaders.ssgiTrace.glsl = ReadText("SSGITrace.compute.glsl");
+        shaders.ssgiFilter = fullscreen("SSGIFilter");
+        shaders.ssgiTemporal = fullscreen("SSGITemporal");
+        shaders.ssgiComposite = fullscreen("SSGIComposite");
+        shaders.ddgi = {.trace = {.glsl = ReadText("DDGIVoxelTrace.compute.glsl")},
+                        .reset = {.glsl = ReadText("DDGIProbeReset.compute.glsl")},
+                        .state = {.glsl = ReadText("DDGIProbeState.compute.glsl")},
+                        .blendIrradiance = {.glsl = ReadText("DDGIBlendIrradiance.compute.glsl")},
+                        .blendDistance = {.glsl = ReadText("DDGIBlendDistance.compute.glsl")},
+                        .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes")};
         loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         shaders.volumetricTrace[0].vertex.glsl = ReadText("VolumetricFogTrace.vertex.glsl");
@@ -324,6 +339,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             CheckSsaoRendering(basicRenderer,device);
             return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssgi-only")
+        {
+            CheckSsgiRendering(basicRenderer, device);
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")
+        {
+            CheckDdgiRendering(basicRenderer, device);
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
         {

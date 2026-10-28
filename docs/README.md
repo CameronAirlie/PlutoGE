@@ -46,6 +46,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Surface marks | [Decals](decals.md) |
 | Directional shadows | [Virtual shadow maps](virtual-shadow-maps.md), [defaults and compatibility](VSM_DEFAULT.md) |
 | Local lights and shadows | [Physical lights](physical-local-lights.md), [point shadow filtering](point-shadow-filtering.md) |
+| Dynamic global illumination | [DDGI probes](DDGI.md), [screen-space GI](SSGI.md) |
 | Voxel global illumination | [World cache](vct-world-cache.md), [secondary bounce](vct-secondary-bounce.md) |
 | Water | [Ocean waves, foam, ripples and caustics](OCEAN_WATER_EFFECTS.md) |
 | Stylized rendering | [Toon shaders](ToonShaders.md), [outlines](OutlineShaders.md) |

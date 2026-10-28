@@ -63,6 +63,9 @@ namespace PlutoGE::render
         virtual std::string GetDisplayName() const { return GetTypeName(); }
         virtual std::vector<PostProcessParameter> GetParameters() const { return {}; }
         virtual void SetParameters(const std::vector<PostProcessParameter> &parameters) {}
+        // Read-only facts editors show beneath the parameters, such as the cost and memory the current settings
+        // imply, or caveats. Not serialized.
+        virtual std::vector<std::string> GetSummary() const { return {}; }
 
         // Route external configuration changes through this wrapper so render
         // passes can detect them without rebuilding and serializing every

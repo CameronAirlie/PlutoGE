@@ -39,13 +39,12 @@ namespace PlutoGE::render
         m_name = std::move(name);
     }
 
-    rhi::BufferHandle ScreenSpaceUniforms::Push(const BasicPostProcessParameters &parameters)
+    rhi::BufferHandle ScreenSpaceUniforms::PushBytes(std::span<const std::byte> bytes)
     {
         if (m_next == m_buffers.size())
-            m_buffers.emplace_back(*m_device, m_device->CreateBuffer(
-                {sizeof(BasicPostProcessParameters), rhi::BufferUsage::Uniform, m_name}));
+            m_buffers.emplace_back(*m_device, m_device->CreateBuffer({bytes.size(), rhi::BufferUsage::Uniform, m_name}));
         auto &buffer = m_buffers[m_next++];
-        m_device->UpdateBuffer(buffer.Get(), 0, std::as_bytes(std::span(&parameters, 1)));
+        m_device->UpdateBuffer(buffer.Get(), 0, bytes);
         return buffer.Get();
     }
 
@@ -75,10 +74,20 @@ namespace PlutoGE::render
         rhi::IRenderDevice &device, const ScreenSpaceFullscreenShader &shader,
         std::initializer_list<std::uint32_t> textureSlots, rhi::Format colorFormat, const char *debugName)
     {
+        return CreateScreenSpacePipeline(device, shader, textureSlots, {colorFormat}, debugName);
+    }
+
+    rhi::GraphicsPipeline CreateScreenSpacePipeline(
+        rhi::IRenderDevice &device, const ScreenSpaceFullscreenShader &shader,
+        std::initializer_list<std::uint32_t> textureSlots, std::initializer_list<rhi::Format> colorFormats,
+        const char *debugName)
+    {
         rhi::GraphicsPipelineDescriptor descriptor;
         descriptor.vertexShader = shader.vertex;
         descriptor.fragmentShader = shader.fragment;
-        descriptor.colorFormat = colorFormat;
+        descriptor.colorFormat = *colorFormats.begin();
+        if (colorFormats.size() > 1)
+            descriptor.colorFormats = colorFormats;
         descriptor.depthFormat = rhi::Format::Undefined;
         descriptor.cullMode = rhi::CullMode::None;
         descriptor.depthTest = false;
@@ -116,8 +125,16 @@ namespace PlutoGE::render
                              std::uint32_t height, rhi::PipelineHandle pipeline, rhi::BufferHandle uniforms,
                              std::initializer_list<ScreenSpaceTextureBinding> textures, rhi::SamplerHandle sampler)
     {
+        DrawScreenSpacePass(commands, {target}, width, height, pipeline, uniforms, textures, sampler);
+    }
+
+    void DrawScreenSpacePass(rhi::ICommandContext &commands, std::initializer_list<rhi::TextureHandle> targets,
+                             std::uint32_t width, std::uint32_t height, rhi::PipelineHandle pipeline,
+                             rhi::BufferHandle uniforms, std::initializer_list<ScreenSpaceTextureBinding> textures,
+                             rhi::SamplerHandle sampler)
+    {
         rhi::RenderingInfo info;
-        info.colorAttachments = {target};
+        info.colorAttachments = targets;
         info.width = width;
         info.height = height;
         info.clearColor = info.clearDepth = false;

@@ -42,6 +42,9 @@ namespace PlutoGE::render
     class ScreenSpaceGuide;
     class ScreenSpaceAmbientOcclusion;
     class ScreenSpaceReflections;
+    class ScreenSpaceGlobalIllumination;
+    class DdgiVolume;
+    class VoxelDdgiRaySource;
     struct ScreenSpaceView;
     struct RhiGpuSkinningSource;
     struct RhiGpuSkinningState;
@@ -82,6 +85,7 @@ namespace PlutoGE::render
         SceneComposite,
         VCTGI,
         Ocean,
+        DDGI,
         Count,
     };
 
@@ -108,6 +112,8 @@ namespace PlutoGE::render
 
     enum class BasicPostProcessStage : std::uint8_t
     {
+        // Replaces the geometry pass's ambient diffuse light; screen-space GI and AO build on the result.
+        ProbeLighting,
         LightingComposite,
         AmbientOcclusion,
         ScreenSpaceAtmosphere,
@@ -124,6 +130,8 @@ namespace PlutoGE::render
     {
         switch (type)
         {
+        case BasicPostProcessEffectType::DDGI:
+            return BasicPostProcessStage::ProbeLighting;
         case BasicPostProcessEffectType::SSGI:
         case BasicPostProcessEffectType::SceneComposite:
         case BasicPostProcessEffectType::VCTGI:
@@ -183,6 +191,11 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion |
                    BasicPostProcessInput::Indirect;
         case BasicPostProcessEffectType::SSGI:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Material |
+                   BasicPostProcessInput::Albedo | BasicPostProcessInput::Motion | BasicPostProcessInput::Indirect;
+        case BasicPostProcessEffectType::DDGI:
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Material |
+                   BasicPostProcessInput::Albedo | BasicPostProcessInput::Indirect;
         case BasicPostProcessEffectType::VCTGI:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::SSR:
@@ -248,6 +261,15 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 4> fragments;
         rhi::ComputePipelineDescriptor::ShaderCode visibility;
         [[nodiscard]] bool Available() const noexcept;
+    };
+
+    // Dynamic diffuse GI (src/gi): the voxel ray source's trace, the probe update stages (DDGIProbeUpdate.slang), the
+    // screen-space apply and the debug view's probe impostors (DDGIApply.slang). Without them DDGI leaves frames as
+    // they are.
+    struct BasicDdgiShaderPackage
+    {
+        rhi::ComputePipelineDescriptor::ShaderCode trace, reset, state, blendIrradiance, blendDistance;
+        BasicPostProcessShaderPackage apply, probes;
     };
 
     struct BasicSelectionOutline
@@ -325,6 +347,10 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage fusedColor;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 2> vctPostProcess; // cone trace, temporal resolve
+        // Screen-space GI (SSGI.slang): trace (compute), edge-aware filter, temporal accumulation and composite.
+        rhi::ComputePipelineDescriptor::ShaderCode ssgiTrace;
+        BasicPostProcessShaderPackage ssgiFilter, ssgiTemporal, ssgiComposite;
+        BasicDdgiShaderPackage ddgi;
         rhi::ComputePipelineDescriptor::ShaderCode skinning;
     };
 
@@ -630,6 +656,9 @@ namespace PlutoGE::render
         std::uint32_t vctGeometryBuilds = 0, vctRelightDispatches = 0, vctPublications = 0;
         std::uint64_t vctPublishedVoxels = 0;
         std::uint32_t vctSecondarySlices = 0, vctSecondaryPublications = 0;
+        // DDGI probes traced and reset this frame, the rays scheduled for them (inactive probes trace fewer), and the
+        // frames one sweep of the whole volume takes.
+        std::uint32_t ddgiProbesTraced = 0, ddgiProbesReset = 0, ddgiRaysScheduled = 0, ddgiFramesPerSweep = 0;
         std::size_t geometryDepthDraws = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
@@ -896,11 +925,36 @@ namespace PlutoGE::render
                                                    const BasicPostProcessEffect &effect,
                                                    bool temporalResolve,
                                                    rhi::ICommandContext &commands);
+        [[nodiscard]] rhi::TextureHandle RenderSsgi(rhi::TextureHandle source,
+                                                    const BasicPostProcessEffect &effect,
+                                                    rhi::ICommandContext &commands);
+        [[nodiscard]] rhi::TextureHandle RenderDdgi(rhi::TextureHandle source,
+                                                    const BasicPostProcessEffect &effect,
+                                                    const BasicLighting &lighting,
+                                                    std::span<const BasicDraw> draws,
+                                                    rhi::ICommandContext &commands);
         [[nodiscard]] rhi::TextureHandle RenderVctgi(rhi::TextureHandle source,
                                                      const BasicPostProcessEffect &effect,
                                                      const BasicLighting &lighting,
                                                      std::span<const BasicDraw> draws,
                                                      rhi::ICommandContext &commands);
+        // The voxel scene (VCT's progressively voxelized, relit and bounced cascades) that VCT GI cone-traces and DDGI
+        // probes ray-march. One effect configures it per frame: VCT GI when present, otherwise DDGI.
+        struct VoxelSceneSettings
+        {
+            std::uint32_t resolution = 64, cascades = 2, updateInterval = 1, commandBudget = 8;
+            float volumeSize = 48.0f, updateSpeed = 1.0f, localLightBounce = 1.0f, secondaryBounce = 1.0f;
+            // Reserves the last cascade for VCT's stationary world-cache source.
+            bool worldCache = false;
+            float cacheSize = 432.0f;
+            bool injectLocalLights = false;
+            const void *owner = nullptr;
+        };
+        [[nodiscard]] VoxelSceneSettings VoxelSceneFor(const BasicPostProcessEffect &effect) const;
+        // Advances the voxel scene at most once per frame; returns how many cascades, finest first, hold a published
+        // field. Records its own GPU scopes.
+        std::uint32_t UpdateVoxelScene(const VoxelSceneSettings &settings, const BasicLighting &lighting,
+                                       std::span<const BasicDraw> draws, rhi::ICommandContext &commands);
         [[nodiscard]] rhi::Buffer &AcquireVctBuffer(std::size_t index);
         void ResetVctResources();
         [[nodiscard]] rhi::Buffer &AcquirePostProcessBuffer(std::size_t index);
@@ -924,6 +978,18 @@ namespace PlutoGE::render
         std::array<std::unique_ptr<ScreenSpaceGuide>, 2> m_screenSpaceGuides;
         std::unique_ptr<ScreenSpaceAmbientOcclusion> m_ambientOcclusion;
         std::unique_ptr<ScreenSpaceReflections> m_reflections;
+        std::unique_ptr<ScreenSpaceGlobalIllumination> m_globalIllumination;
+        std::unique_ptr<DdgiVolume> m_ddgi;
+        std::unique_ptr<VoxelDdgiRaySource> m_ddgiRays;
+        const void *m_ddgiOwner = nullptr;
+        // This frame's scene colour and the diffuse ambient light it holds, as DDGI and SSGI leave them; SSAO
+        // attenuates that indirect term. Starts as the geometry pass's colour and indirect targets.
+        rhi::TextureHandle m_lightingColor, m_lightingIndirect;
+        bool m_ambientRelightingTargets = false;
+        // The voxel scene this frame's effects share, and the frame it was last advanced.
+        std::optional<VoxelSceneSettings> m_frameVoxelScene;
+        std::uint64_t m_voxelSceneFrame = ~0ull;
+        std::uint32_t m_voxelSceneCascades = 0;
         // This frame's SSAO hierarchy falloff per guide divisor; zero when no SSAO uses that guide.
         std::array<float, 2> m_screenSpaceHierarchyFalloff{};
         std::vector<RhiGpuSkinningDispatch> m_gpuSkinningDispatches;

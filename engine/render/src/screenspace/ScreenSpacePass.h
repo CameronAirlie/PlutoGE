@@ -9,6 +9,7 @@
 #include <array>
 #include <cstdint>
 #include <initializer_list>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,14 +49,27 @@ namespace PlutoGE::render
         const ScreenSpaceView &view, std::uint32_t quality,
         const std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> &lanes);
 
+    // Scene colour and the diffuse ambient light it contains: the geometry pass's indirect target, or what a global
+    // illumination pass replaced it with. Passes that relight ambient light (DDGI, SSGI) read and return both, so the
+    // next one, and SSAO, always see the indirect term the colour actually holds.
+    struct ScreenSpaceLighting
+    {
+        rhi::TextureHandle color, indirect;
+    };
+
     // Uniform buffers hold one value per frame, so every draw or dispatch in a frame takes its own buffer. Buffers
-    // are created on demand and reused from frame to frame.
+    // are created on demand and reused from frame to frame. An instance pushes values of a single type.
     class ScreenSpaceUniforms
     {
     public:
         void Initialize(rhi::IRenderDevice &device, std::string name);
         void BeginFrame() noexcept { m_next = 0; }
-        [[nodiscard]] rhi::BufferHandle Push(const BasicPostProcessParameters &parameters);
+        template <class Value>
+        [[nodiscard]] rhi::BufferHandle Push(const Value &value)
+        {
+            return PushBytes(std::as_bytes(std::span(&value, 1)));
+        }
+        [[nodiscard]] rhi::BufferHandle PushBytes(std::span<const std::byte> bytes);
         void Reset() noexcept;
 
     private:
@@ -85,6 +99,11 @@ namespace PlutoGE::render
     [[nodiscard]] rhi::GraphicsPipeline CreateScreenSpacePipeline(
         rhi::IRenderDevice &device, const ScreenSpaceFullscreenShader &shader,
         std::initializer_list<std::uint32_t> textureSlots, rhi::Format colorFormat, const char *debugName);
+    // The same, writing one target per format.
+    [[nodiscard]] rhi::GraphicsPipeline CreateScreenSpacePipeline(
+        rhi::IRenderDevice &device, const ScreenSpaceFullscreenShader &shader,
+        std::initializer_list<std::uint32_t> textureSlots, std::initializer_list<rhi::Format> colorFormats,
+        const char *debugName);
 
     struct ScreenSpaceComputeBindings
     {
@@ -100,4 +119,9 @@ namespace PlutoGE::render
     void DrawScreenSpacePass(rhi::ICommandContext &commands, rhi::TextureHandle target, std::uint32_t width,
                              std::uint32_t height, rhi::PipelineHandle pipeline, rhi::BufferHandle uniforms,
                              std::initializer_list<ScreenSpaceTextureBinding> textures, rhi::SamplerHandle sampler);
+    // The same into several targets of one extent.
+    void DrawScreenSpacePass(rhi::ICommandContext &commands, std::initializer_list<rhi::TextureHandle> targets,
+                             std::uint32_t width, std::uint32_t height, rhi::PipelineHandle pipeline,
+                             rhi::BufferHandle uniforms, std::initializer_list<ScreenSpaceTextureBinding> textures,
+                             rhi::SamplerHandle sampler);
 }

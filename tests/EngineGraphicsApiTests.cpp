@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
+#include "PlutoGE/render/postprocess/DDGIEffect.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 #include <filesystem>
 #include <fstream>
@@ -115,7 +116,9 @@ int main(int argc, char **argv)
     const bool bistroBenchmark = argc >= 6 && std::string_view(argv[1]) == "--bistro-benchmark";
     const bool bistroSaved = bistroBenchmark || (argc >= 6 && std::string_view(argv[1]) == "--bistro-saved-scene");
     const bool bistroCapture = bistroSaved || (argc >= 6 && std::string_view(argv[1]) == "--bistro-scene");
-    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || projectCapture || motionCapture || vsmCapture || bistroCapture))
+    // DDGI on a project scene: captures without DDGI, with it, and its irradiance and probe views.
+    const bool ddgiCapture = argc >= 6 && std::string_view(argv[1]) == "--ddgi-scene";
+    if (argc >= 6 && (std::string_view(argv[1]) == "--vct-scene" || projectCapture || motionCapture || vsmCapture || bistroCapture || ddgiCapture))
     {
         engine.GetAssetManager().SetProjectContext(argv[2]);
         std::string error;
@@ -161,6 +164,7 @@ int main(int argc, char **argv)
         CaptureSwapchain output; output.extentWidth=320; output.extentHeight=180;
         render::RhiRenderService service;
         if (vsmCapture) { output.extentWidth = 1603; output.extentHeight = 672; }
+        if (ddgiCapture) { output.extentWidth = 640; output.extentHeight = 360; }
         if (!service.Initialize(device, output)) return 31;
         glm::vec3 eye(-7,2,3), target(-7,2,-5);
         if (argc >= 12)
@@ -224,6 +228,36 @@ int main(int argc, char **argv)
             lighting.directionalIntensity = 1.0f;
         }
         std::filesystem::create_directories(argv[4]);
+        if (ddgiCapture)
+        {
+            camera.projection = glm::perspective(glm::radians(70.0f), 640.0f / 360.0f, 1000.0f, .1f);
+            render::RhiSceneRenderer::TexturePixelReader textures = [](const render::Texture &texture) {
+                const auto pixels = std::as_bytes(texture.GetRgba8Pixels());
+                return std::vector<std::byte>(pixels.begin(), pixels.end());
+            };
+            render::DDGIEffect ddgi;
+            const auto save = [&](const char *name) {
+                const auto pixels = device.ReadTextureRgba8(output.texture);
+                std::ofstream file(std::filesystem::path(argv[4]) / (std::string(name) + ".ppm"), std::ios::binary);
+                file << "P6\n" << output.extentWidth << ' ' << output.extentHeight << "\n255\n";
+                for (std::size_t i = 0; i < pixels.size(); i += 4) file.write(reinterpret_cast<const char *>(pixels.data() + i), 3);
+            };
+            const auto run = [&](std::vector<render::IPostProcessEffect *> stack, int count, const char *name) {
+                for (int frame = 0; frame < count; ++frame)
+                    if (!service.RenderSceneAndPresent(camera, lighting, commands, textures, scene.get(), stack)) return false;
+                save(name);
+                return true;
+            };
+            const int frames = std::stoi(argv[5]);
+            if (!run({&tone, &gamma}, 4, "off")) return 32;
+            if (!run({&ddgi, &tone, &gamma}, frames, "ddgi")) return 32;
+            for (const auto &[view, name] : {std::pair{"1", "irradiance"}, std::pair{"2", "indirect"}, std::pair{"3", "probes"}})
+            {
+                ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, view}});
+                if (!run({&ddgi, &tone, &gamma}, 2, name)) return 32;
+            }
+            service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
+        }
         render::RhiSceneRenderer::TexturePixelReader readPixels;
         if (bistroCapture || projectCapture) readPixels = [](const render::Texture &texture) {
             const auto pixels = std::as_bytes(texture.GetRgba8Pixels());

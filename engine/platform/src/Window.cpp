@@ -177,6 +177,13 @@ namespace PlutoGE::platform
         ApplyEmbeddedWindowIcon(static_cast<GLFWwindow *>(m_window));
 #endif
 
+        if (m_config.customTitleBar && CustomWindowFrame::IsSupported())
+        {
+            m_customFrame = std::make_unique<CustomWindowFrame>();
+            if (!m_customFrame->Attach(m_window))
+                m_customFrame.reset();
+        }
+
         if (m_config.clientApi == WindowClientApi::OpenGL)
             glfwMakeContextCurrent(m_window);
         glfwSetWindowUserPointer(m_window, this);
@@ -411,6 +418,7 @@ namespace PlutoGE::platform
     {
         StopGamepadVibration();
         std::erase_if(DropForwarding(), [this](const auto &entry) { return entry.second == this; });
+        m_customFrame.reset();
         if (m_window)
         {
             glfwDestroyWindow(m_window);
@@ -476,6 +484,12 @@ namespace PlutoGE::platform
         {
             glfwSetWindowAttrib(m_window, GLFW_DECORATED, GLFW_TRUE);
             glfwSetWindowMonitor(m_window, nullptr, m_windowedX, m_windowedY, m_windowedWidth, m_windowedHeight, GLFW_DONT_CARE);
+            // GLFW sizes the restored frame for a system caption.
+            if (m_customFrame && m_customFrame->IsActive())
+            {
+                m_customFrame->SetClientPosition(m_windowedX, m_windowedY);
+                m_customFrame->SetClientSize(m_windowedWidth, m_windowedHeight);
+            }
             if (m_windowedMaximized) glfwMaximizeWindow(m_window);
         }
         m_config.fullscreen = fullscreen;
@@ -530,7 +544,10 @@ namespace PlutoGE::platform
             return true;
         }
         if (glfwGetWindowAttrib(m_window, GLFW_MAXIMIZED)) glfwRestoreWindow(m_window);
-        glfwSetWindowSize(m_window, width, height);
+        if (m_customFrame && m_customFrame->IsActive())
+            m_customFrame->SetClientSize(width, height);
+        else
+            glfwSetWindowSize(m_window, width, height);
         const auto actual = GetWindowedSize();
         return actual.width == width && actual.height == height;
     }

@@ -4,10 +4,14 @@
 #include <functional>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <memory>
 #include <vector>
+#include "PlutoGE/ui/DetachedWindowHosts.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorFonts.h"
+#include "PlutoGE/ui/EditorTitleBar.h"
+#include "PlutoGE/ui/EditorWindowChrome.h"
 
 namespace PlutoGE::platform
 {
@@ -80,6 +84,9 @@ namespace PlutoGE::ui
         void SetEditorFont(fonts::EditorFont font);
         [[nodiscard]] fonts::EditorFont GetEditorFont() const { return m_editorFont; }
 
+        // The main window's title bar, which hosts the main menu.
+        [[nodiscard]] EditorTitleBar &GetTitleBar() { return m_titleBar; }
+
         [[nodiscard]] const PanelManagerTimingStats &GetTimingStats() const { return m_timingStats; }
         [[nodiscard]] EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor);
         void UpdateTexture(EditorTextureHandle texture, const EditorTextureDescriptor &descriptor);
@@ -87,6 +94,8 @@ namespace PlutoGE::ui
         [[nodiscard]] std::uint64_t GetImGuiTextureId(EditorTextureHandle texture) const noexcept;
 
     private:
+        [[nodiscard]] Panel *FindPanel(std::string_view name) const;
+
         std::vector<Panel *> m_panels;
         platform::Window *m_window = nullptr;
         PanelManagerTimingStats m_timingStats;
@@ -99,6 +108,10 @@ namespace PlutoGE::ui
         std::filesystem::path m_layoutPath;
         bool m_applyDefaultLayout = false;
         bool m_layoutLoadPending = false;
+        bool m_panelsUpdated = false;
         std::unique_ptr<IEditorCompositor> m_compositor;
+        EditorWindowChrome m_windowChrome;
+        EditorTitleBar m_titleBar{m_windowChrome};
+        DetachedWindowHosts m_detachedHosts;
     };
 }

@@ -18,11 +18,6 @@ namespace PlutoGE::ui::PlayModeToolbar
             Stop,
         };
 
-        ImVec4 Mix(const ImVec4 &a, const ImVec4 &b, float t)
-        {
-            return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
-        }
-
         void DrawGlyph(ImDrawList &draw, Glyph glyph, ImVec2 center, float size, ImU32 color)
         {
             const float h = size * 0.5f;
@@ -86,16 +81,6 @@ namespace PlutoGE::ui::PlayModeToolbar
         return std::nullopt;
     }
 
-    int PushMenuBarTint(PlayState state)
-    {
-        const auto accent = GetAccent(state);
-        if (!accent)
-            return 0;
-        const ImVec4 base = ImGui::GetStyleColorVec4(ImGuiCol_MenuBarBg);
-        ImGui::PushStyleColor(ImGuiCol_MenuBarBg, Mix(base, ImVec4(accent->x, accent->y, accent->z, base.w), 0.28f));
-        return 1;
-    }
-
     PlayModeToolbarActions Draw(PlayState state, bool canPlay)
     {
         PlayModeToolbarActions actions;
@@ -109,6 +94,7 @@ namespace PlutoGE::ui::PlayModeToolbar
         const float centered = (ImGui::GetWindowWidth() - groupWidth) * 0.5f;
         ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), centered));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(spacing, 0.0f));
+        ImGui::BeginGroup();
 
         if (GlyphButton("##PlayModePlay", Glyph::Play, buttonSize, canPlay || running,
                         state == PlayState::Playing ? GetAccent(state) : std::nullopt,
@@ -127,6 +113,7 @@ namespace PlutoGE::ui::PlayModeToolbar
         if (GlyphButton("##PlayModeStop", Glyph::Stop, buttonSize, running, std::nullopt, "Stop (Shift+F5)"))
             actions.stop = true;
 
+        ImGui::EndGroup();
         ImGui::PopStyleVar();
         ImGui::SameLine();
         return actions;

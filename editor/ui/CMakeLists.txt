@@ -38,6 +38,10 @@ add_library(PlutoGEEditorUI
     src/AssetReferenceSearchPanel.cpp
     src/EditorProfiler.cpp
     src/EditorCompositor.cpp
+    src/EditorWindowChrome.cpp
+    src/EditorTitleBar.cpp
+    src/DetachedWindowHosts.cpp
+    src/WindowCaption.cpp
     src/EditorViewportOverlay.cpp
     src/EditorLoadingPresenter.cpp
     src/AssetReferencePicker.cpp

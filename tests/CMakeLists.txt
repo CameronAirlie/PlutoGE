@@ -122,6 +122,10 @@ target_link_libraries(PlutoGEWindowClientApiTests PRIVATE PlutoGE::Platform)
 add_test(NAME PlutoGEWindowClientApiTests COMMAND PlutoGEWindowClientApiTests)
 add_test(NAME PlutoGEWindowResizeTests COMMAND PlutoGEWindowClientApiTests --resize-only)
 
+add_executable(PlutoGECustomWindowFrameTests CustomWindowFrameTests.cpp)
+target_link_libraries(PlutoGECustomWindowFrameTests PRIVATE PlutoGE::Platform)
+add_test(NAME PlutoGECustomWindowFrameTests COMMAND PlutoGECustomWindowFrameTests)
+
 add_executable(PlutoGEEngineGraphicsApiTests EngineGraphicsApiTests.cpp)
 target_link_libraries(PlutoGEEngineGraphicsApiTests PRIVATE PlutoGE::Core)
 

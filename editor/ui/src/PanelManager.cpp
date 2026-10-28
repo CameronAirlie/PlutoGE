@@ -22,10 +22,21 @@
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <utility>
 
 namespace PlutoGE::ui
 {
-    PanelManager::PanelManager() = default;
+    PanelManager::PanelManager()
+        : m_detachedHosts(m_windowChrome,
+                          {.isPanel = [this](std::string_view name) { return FindPanel(name) != nullptr; },
+                           .closePanel = [this](std::string_view name)
+                           {
+                               if (auto *panel = FindPanel(name))
+                                   panel->SetOpen(false);
+                           }})
+    {
+    }
+
     PanelManager::~PanelManager() = default;
 
     namespace
@@ -100,6 +111,8 @@ namespace PlutoGE::ui
         }
 
         LoadEditorThemeSettings();
+        m_windowChrome.Install(*window);
+        m_detachedHosts.RegisterSettingsHandler();
 
         return true;
     }
@@ -112,6 +125,8 @@ namespace PlutoGE::ui
         }
 
         SaveLayout();
+        // Native frames unhook before the compositor shuts the platform backend down.
+        m_windowChrome.Uninstall();
         if (m_compositor)
             m_compositor->Shutdown();
         m_compositor.reset();
@@ -158,6 +173,12 @@ namespace PlutoGE::ui
         m_panels.push_back(panel);
     }
 
+    Panel *PanelManager::FindPanel(std::string_view name) const
+    {
+        const auto found = std::ranges::find_if(m_panels, [name](const Panel *panel) { return panel->GetName() == name; });
+        return found != m_panels.end() ? *found : nullptr;
+    }
+
     void PanelManager::UpdatePanels()
     {
         std::vector<PanelUpdateTiming> completedTimings;
@@ -179,6 +200,7 @@ namespace PlutoGE::ui
         // previous completed frame while this frame's measurements are collected.
         m_timingStats.panelUpdatesTotalMs = totalMs;
         m_timingStats.panelUpdates = std::move(completedTimings);
+        m_panelsUpdated = true;
     }
 
     void PanelManager::OnProjectChanged()
@@ -247,6 +269,7 @@ namespace PlutoGE::ui
 
         if (m_layoutLoadPending)
             LoadLayout();
+        m_windowChrome.SyncAppearance();
         m_compositor->BeginFrame();
         { core::CpuScope scope("ImGui core new frame", core::CpuCategory::UI); ImGui::NewFrame(); }
         ImGuizmo::BeginFrame();
@@ -254,8 +277,11 @@ namespace PlutoGE::ui
         if (workspace && m_applyDefaultLayout)
         {
             BuildDefaultEditorLayout(dockspaceId);
+            m_detachedHosts.DockAllInto(dockspaceId);
             m_applyDefaultLayout = false;
         }
+        if (workspace)
+            m_detachedHosts.Submit(dockspaceId);
         m_timingStats.beginPanelUpdateMs = DurationMs(beginPanelUpdateStart, std::chrono::high_resolution_clock::now());
     }
 
@@ -270,6 +296,10 @@ namespace PlutoGE::ui
     void PanelManager::EndPanelUpdate()
     {
         const auto endPanelUpdateStart = std::chrono::high_resolution_clock::now();
+        // Hosts judge emptiness from panel submissions, so skip frames without them (e.g. build progress).
+        if (std::exchange(m_panelsUpdated, false))
+            m_detachedHosts.Update();
+        m_titleBar.Finish();
         const auto imguiRenderStart = std::chrono::high_resolution_clock::now();
         ImGui::Render();
         m_compositor->RenderDrawData(ImGui::GetDrawData());

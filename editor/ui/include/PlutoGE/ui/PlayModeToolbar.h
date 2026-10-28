@@ -23,17 +23,14 @@ namespace PlutoGE::ui
     };
 
     // Play-mode controls and the cues that make play mode hard to miss: a tinted
-    // menu bar, centred Play/Pause/Step/Stop buttons and a framed game viewport.
+    // title bar, centred Play/Pause/Step/Stop buttons and a framed game viewport.
     namespace PlayModeToolbar
     {
         // Accent for Playing (green) and Paused (amber); Editing has none.
         [[nodiscard]] std::optional<ImVec4> GetAccent(PlayState state);
 
-        // Pushes a tinted ImGuiCol_MenuBarBg while playing or paused. Pass the
-        // returned count to ImGui::PopStyleColor after BeginMainMenuBar.
-        [[nodiscard]] int PushMenuBarTint(PlayState state);
-
-        // Centred buttons drawn on the current menu bar, after its menus.
+        // Centred buttons drawn on the current menu bar, after its menus. They
+        // form one group, so the last item rect afterwards covers them all.
         PlayModeToolbarActions Draw(PlayState state, bool canPlay);
 
         // Outline plus a PLAYING / PAUSED badge drawn over a viewport image.

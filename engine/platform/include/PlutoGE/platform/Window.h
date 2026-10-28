@@ -4,7 +4,9 @@
 #include <filesystem>
 #include <functional>
 #include <array>
+#include <memory>
 #include <vector>
+#include "PlutoGE/platform/CustomWindowFrame.h"
 #include "PlutoGE/platform/InputState.h"
 
 struct GLFWwindow;
@@ -28,6 +30,9 @@ namespace PlutoGE::platform
         bool resizable = true;
         bool visible = true;
         bool fullscreen = false;
+        // The application draws the title bar through GetCustomFrame(). Ignored
+        // where CustomWindowFrame is unsupported, leaving the system caption.
+        bool customTitleBar = false;
         WindowClientApi clientApi = WindowClientApi::OpenGL;
         std::function<void(int, int)> resizeCallback = nullptr;
     };
@@ -60,6 +65,8 @@ namespace PlutoGE::platform
         [[nodiscard]] WindowExtents GetExtents() const;
         [[nodiscard]] void *GetWindow() const;
         [[nodiscard]] WindowClientApi GetClientApi() const { return m_config.clientApi; }
+        // Null unless WindowConfig::customTitleBar was requested and attached.
+        [[nodiscard]] CustomWindowFrame *GetCustomFrame() const { return m_customFrame.get(); }
         [[nodiscard]] InputState &GetInputState() { return m_inputState; }
         [[nodiscard]] bool IsCursorLocked() const;
         [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }
@@ -100,6 +107,7 @@ namespace PlutoGE::platform
         InputState m_inputState;
         std::vector<std::filesystem::path> m_droppedPaths;
         GLFWwindow *m_window = nullptr;
+        std::unique_ptr<CustomWindowFrame> m_customFrame;
         int m_clientWidth = 0;
         int m_clientHeight = 0;
         bool m_resizePending = false;

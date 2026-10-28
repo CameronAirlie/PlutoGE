@@ -7,6 +7,7 @@ target_link_libraries(PlutoGEContent PRIVATE zlibstatic)
 target_compile_features(PlutoGEContent PUBLIC cxx_std_20)
 
 add_library(PlutoGEPlatform
+    src/CustomWindowFrame.cpp
     src/Window.cpp
 )
 
@@ -18,6 +19,10 @@ target_link_libraries(PlutoGEPlatform PUBLIC
     PlutoGE::glfw
     PlutoGE::glad
 )
+
+if (WIN32)
+    target_link_libraries(PlutoGEPlatform PRIVATE comctl32 dwmapi)
+endif()
 
 target_include_directories(PlutoGEPlatform PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include

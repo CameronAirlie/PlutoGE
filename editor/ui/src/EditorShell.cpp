@@ -2274,12 +2274,14 @@ namespace PlutoGE::ui
             windowTitle += " - ";
             windowTitle += m_project->GetManifest().name;
         }
-        if (m_sceneDirty || m_projectDirty)
+        const bool modified = m_sceneDirty || m_projectDirty;
+        if (modified)
         {
             windowTitle += " *";
         }
 
         m_engine.GetWindow().SetTitle(windowTitle);
+        m_panelManager.GetTitleBar().SetDocumentTitle(m_project ? m_project->GetManifest().name : std::string{}, modified);
     }
 
     void EditorShell::ResetSelection()
@@ -3418,6 +3420,7 @@ namespace PlutoGE::ui
                 .resizable = true,
                 .visible = visible,
                 .fullscreen = false,
+                .customTitleBar = true,
             }};
         config.vSync = false;
         config.isEditorHost = true;
@@ -4311,11 +4314,10 @@ namespace PlutoGE::ui
                 runBake(settings);
             }
 
-            // Toolbar menu, tinted while playing so play mode is hard to miss.
-            const int menuBarTint = PlayModeToolbar::PushMenuBarTint(GetPlayState());
-            const bool menuBarOpen = ImGui::BeginMainMenuBar();
-            ImGui::PopStyleColor(menuBarTint);
-            if (menuBarOpen)
+            // Title bar and main menu, tinted while playing so play mode is hard to miss.
+            auto &titleBar = m_panelManager.GetTitleBar();
+            titleBar.SetTint(PlayModeToolbar::GetAccent(GetPlayState()));
+            if (titleBar.BeginMenuBar())
             {
                 if (ConsumeMaterialEditorOpenRequest())
                 {
@@ -4836,27 +4838,11 @@ namespace PlutoGE::ui
                     ImGui::EndMenu();
                 }
 
+                titleBar.EndMenus();
                 ApplyPlayModeActions(PlayModeToolbar::Draw(GetPlayState(), m_scene != nullptr));
-
-                // Status sits right-aligned and is shortened to the free space; the full text is in the tooltip.
-                if (!m_statusMessage.empty())
-                {
-                    const float available = ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2.0f;
-                    std::string shown = m_statusMessage;
-                    if (ImGui::CalcTextSize(shown.c_str()).x > available)
-                    {
-                        const float ellipsisWidth = ImGui::CalcTextSize("...").x;
-                        while (!shown.empty() && ImGui::CalcTextSize(shown.c_str()).x + ellipsisWidth > available) shown.pop_back();
-                        shown += "...";
-                    }
-                    if (available > ImGui::CalcTextSize("...").x)
-                    {
-                        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + available - ImGui::CalcTextSize(shown.c_str()).x);
-                        ImGui::TextDisabled("%s", shown.c_str());
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m_statusMessage.c_str());
-                    }
-                }
-                ImGui::EndMainMenuBar();
+                titleBar.AddInteractiveItem();
+                titleBar.Status(m_statusMessage);
+                titleBar.EndMenuBar();
             }
             if (!m_engine.IsRuntimeRunning() && (m_assetReconciliation.valid() || m_assetReconciliationRequested || !m_pendingModelImports.empty() ||
                 (m_modelImportTask && m_modelImportTask->GetState() != assetimport::ModelImportTaskState::Ready)))

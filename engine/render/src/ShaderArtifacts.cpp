@@ -93,6 +93,12 @@ namespace PlutoGE::render
         result.ssrStages[2] = {Load("SSRFilter", "vertex"), Load("SSRFilter", "fragment")};
         result.ssrStages[3] = {Load("SSRTraceReduced", "vertex"), Load("SSRTraceReduced", "fragment")};
         result.ssrStages[4] = {Load("SSRFilterVertical", "vertex"), Load("SSRFilterVertical", "fragment")};
+        result.ssrTrace = Load("SSRStochasticTrace", "compute");
+        result.ssrReuse = {Load("SSRReuse", "vertex"), Load("SSRReuse", "fragment")};
+        result.ssrTemporal = {Load("SSRTemporal", "vertex"), Load("SSRTemporal", "fragment")};
+        result.ssrComposite = {Load("SSRComposite", "vertex"), Load("SSRComposite", "fragment")};
+        result.screenSpaceGuide = Load("ScreenSpaceGuide", "compute");
+        result.screenSpaceGuideHierarchy = Load("ScreenSpaceGuideHierarchy", "compute");
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {
@@ -137,8 +143,7 @@ namespace PlutoGE::render
             .coverageFragment = Load("BasicLitTerrainCoverage", "fragment"),
             .indirectFragment = Load("BasicLitTerrainIndirect", "fragment"),
             .compactFragments = {Load("BasicLitTerrainColor", "fragment"), Load("BasicLitTerrainColorMotion", "fragment")}};
-        result.ssaoDepth = Load("SSAODepth", "compute");
-        result.ssaoFilter = {Load("SSAOFilter", "vertex"),Load("SSAOFilter", "fragment")};
+        result.ssaoDenoise = {Load("SSAODenoise", "vertex"),Load("SSAODenoise", "fragment")};
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
         result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};
         result.diffuseProbeComposite = {Load("DiffuseProbeComposite", "vertex"), Load("DiffuseProbeComposite", "fragment")};

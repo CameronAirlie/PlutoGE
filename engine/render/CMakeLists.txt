@@ -38,6 +38,10 @@ add_library(PlutoGERender
     src/RhiGpuSkinning.cpp
     src/DeferredProbeIrradiance.cpp
     src/TemporalReconstructionPasses.cpp
+    src/screenspace/ScreenSpacePass.cpp
+    src/screenspace/ScreenSpaceGuide.cpp
+    src/screenspace/ScreenSpaceAmbientOcclusion.cpp
+    src/screenspace/ScreenSpaceReflections.cpp
     src/CloudNoiseVolume.cpp
     src/CloudOcclusion.cpp
     src/SkinningLodLayout.cpp
@@ -134,10 +138,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
         endif()
         set(material_dependencies)
         if (MODULE MATCHES "^SSR")
-            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang")
+            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang")
         endif()
         if (MODULE MATCHES "^SSAO")
-            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizonSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang")
+            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizonSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang")
         endif()
         if (MODULE MATCHES "^DiffuseProbe")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
@@ -185,8 +189,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^LightCluster")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h")
         endif()
-        if (MODULE MATCHES "^SSAO")
-            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang")
+        if (MODULE MATCHES "^SSR|^ScreenSpace")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuide.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang")
         endif()
         set(normalize_arguments
             -DINPUT=${PLUTO_RHI_SHADER_OUTPUT_DIR}/${MODULE}.compute.glsl.raw
@@ -324,15 +328,16 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(TAA "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TAA.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(AutoExposureMeter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain meterMain)
     pluto_add_slang_graphics_shader(AutoExposureApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain applyMain)
-    pluto_add_slang_graphics_shader(SSAOFilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOFilter.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(SSAODenoise "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain denoiseMain)
     pluto_add_slang_graphics_shader(SSAOUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOUpsample.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DiffuseProbeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceMain)
     pluto_add_slang_graphics_shader(DiffuseProbeComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain compositeMain)
-    pluto_add_slang_compute_shader(SSAODepth "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAODepth.slang" computeMain r32f)
+    pluto_add_slang_compute_shader(ScreenSpaceGuide "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuide.slang" buildMain)
+    pluto_add_slang_compute_shader(ScreenSpaceGuideHierarchy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideHierarchy.slang" buildMain)
     pluto_add_slang_graphics_shader(BasicLitIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain indirectMain)
     pluto_add_slang_graphics_shader(BasicLitStandardIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang" vertexMain indirectMain)
     pluto_add_slang_graphics_shader(SSAO "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" vertexMain fragmentMain)
-    pluto_add_slang_graphics_shader(SSAOResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(SSAOResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain resolveMain)
     pluto_add_slang_graphics_shader(SSAOHorizon "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizon.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSGI "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSGI.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SSR "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang" vertexMain fragmentMain)
@@ -341,6 +346,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSRResolve "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRResolve.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRFilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRFilter.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
     pluto_add_slang_graphics_shader(SSRFilterVertical "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRFilterVertical.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSR.slang")
+    pluto_add_slang_compute_shader(SSRStochasticTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" traceMain)
+    pluto_add_slang_graphics_shader(SSRReuse "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain reuseMain)
+    pluto_add_slang_graphics_shader(SSRTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain temporalMain)
+    pluto_add_slang_graphics_shader(SSRComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain compositeMain)
     pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
     if(BUILD_TESTING)

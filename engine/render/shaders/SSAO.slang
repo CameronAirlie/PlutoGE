@@ -1,59 +1,91 @@
+// Raw ambient occlusion at the surface guide's resolution (see ScreenSpaceAmbientOcclusion.h). Writes visibility
+// and packed depth/normal edges for the edge-aware denoiser; the guide supplies receiver depth and normals, so the
+// G-buffer is not read here.
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"
 #include "SSAOCommon.slang"
 
 [[vk::binding(0, 0)]] cbuffer Parameters : register(b0, space0) { PostProcessParameterBlock pass; };
-[[vk::binding(1, 0)]] Sampler2D sceneTexture : register(t1, space0);
-[[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
-[[vk::binding(3, 0)]] Sampler2D normalTexture : register(t3, space0);
-[[vk::binding(4, 0)]] Sampler2D preparedDepth : register(t4, space0);
+[[vk::binding(1, 0)]] Sampler2D guideTexture : register(t1, space0);
+[[vk::binding(2, 0)]] Sampler2D preparedDepth : register(t2, space0);
 
-// Reconstruct at the texel center that supplied depth, including coarse levels.
-// Reconstructing at the requested UV instead introduces false height on slopes.
+// pass.inverseResolution is the full-resolution texel size; parameters[2].zw the guide's, parameters[3].z the
+// hierarchy level count.
+int2 guideSize() { return int2(round(1.0 / pass.parameters[2].zw)); }
+int2 fullSize() { return int2(round(1.0 / pass.inverseResolution)); }
+
+float3 guidePosition(int2 texel, out float depth)
+{
+    texel = clamp(texel, int2(0), guideSize() - 1);
+    depth = guideTexture.Load(int3(texel, 0)).x;
+    return viewPositionFromLinearDepth(guideRepresentativeUv(texel, guideSize(), fullSize()), depth, pass);
+}
+
+// A sample `offsetPixels` (full-resolution pixels) from the receiver. Distant samples read coarser hierarchy levels
+// for cache locality; every position is reconstructed where its depth came from (the representative pixel, or the
+// level texel centre), since reconstructing at the requested UV introduces false height on slopes.
 float3 ssaoPosition(float2 uv, float2 offsetPixels, out float depth)
 {
-    if (pass.parameters[3].w > 0.5)
-    {
-        const int level = int(floor(clamp(log2(max(length(offsetPixels),1.0))-3.15,0.0,pass.parameters[3].z)+0.5));
-        const uint2 size = max(uint2(1),uint2(round(1.0/pass.inverseResolution)) >> uint(level));
-        const uint width=size.x,height=size.y;
-        const int2 coordinate = clamp(int2(uv*float2(width,height)),int2(0),int2(width,height)-1);
-        const float2 sampleUv = (float2(coordinate)+0.5)/float2(width,height);
-        depth = preparedDepth.Load(int3(coordinate,level)).r;
-        return ssaoViewPosition(sampleUv,depth,pass);
-    }
-    const float deviceDepth = depthTexture.Sample(uv).r;
-    const float3 world = reconstructWorldPosition(uv,deviceDepth,pass.inverseViewProjection,pass.flipY,pass.zeroToOneDepth);
-    const float3 position = mul(pass.view,float4(world,1)).xyz;
-    depth = deviceDepth > 0.000001 ? -position.z : 0.0;
-    return position;
+    const int level = int(floor(clamp(log2(max(length(offsetPixels), 1.0)) - 3.15, 0.0, pass.parameters[3].z) + 0.5));
+    if (level == 0)
+        return guidePosition(int2(uv * float2(guideSize())), depth);
+    // Hierarchy level L - 1 holds full-resolution level L: texel i reduces pixels [i, i + 1) * 2^L, so reconstruct
+    // at their centre (a texel-centre UV is up to a pixel away on odd extents).
+    uint baseWidth, baseHeight, levels;
+    preparedDepth.GetDimensions(0, baseWidth, baseHeight, levels);
+    const int mip = level - 1;
+    const int2 size = max(int2(1), int2(baseWidth, baseHeight) >> mip);
+    const float footprint = float(1 << level);
+    const int2 coordinate = clamp(int2(uv * float2(fullSize()) / footprint), int2(0), size - 1);
+    depth = preparedDepth.Load(int3(coordinate, mip)).r;
+    return viewPositionFromLinearDepth((float2(coordinate) + 0.5) * footprint * pass.inverseResolution, depth, pass);
 }
 
 #ifdef PLUTO_SSAO_HORIZON
 #include "SSAOHorizonSampling.slang"
 #endif
 
+// XeGTAO's slope-adjusted depth edges, attenuated across creases by normal agreement.
+float4 receiverEdges(float center, float4 depthsLRTB, float3 normal, float3x4 neighbourNormals)
+{
+    float4 deltas = depthsLRTB - center;
+    const float slopeLR = (deltas.y - deltas.x) * 0.5;
+    const float slopeTB = (deltas.w - deltas.z) * 0.5;
+    const float4 adjusted = deltas + float4(slopeLR, -slopeLR, slopeTB, -slopeTB);
+    deltas = min(abs(deltas), abs(adjusted));
+    float4 edges = saturate(1.25 - deltas / (center * 0.011)) * float4(depthsLRTB > 0.0);
+    [ForceUnroll] for (int side = 0; side < 4; ++side)
+    {
+        float agreement = saturate(dot(normal, float3(neighbourNormals[0][side], neighbourNormals[1][side],
+                                                      neighbourNormals[2][side])));
+        agreement *= agreement;
+        agreement *= agreement;
+        edges[side] *= agreement * agreement;
+    }
+    return edges;
+}
+
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
 [shader("fragment")]
 float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
-    const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
-    float centerLinearDepth;
-    const float3 centerPosition = ssaoPosition(uv,float2(0),centerLinearDepth);
-    if (centerLinearDepth <= 0.0) return float4(1.0,0.0,0.5,0.5);
-    const float3 shadingNormal = decodeNormal(normalTexture.Load(int3(int2(uv / pass.inverseResolution),0)).xyz);
-    const float3 viewShadingNormal = normalize(mul((float3x3)pass.view,shadingNormal));
+    const int2 pixel = int2(input.position.xy);
+    const float2 uv = guideRepresentativeUv(pixel, guideSize(), fullSize());
+    const GuideSurface receiver = decodeGuide(guideTexture.Load(int3(pixel, 0)));
+    if (receiver.depth <= 0.0) return float4(1.0, 0.0, 0.0, 0.0);
+    const float centerLinearDepth = receiver.depth;
+    const float3 centerPosition = viewPositionFromLinearDepth(uv, centerLinearDepth, pass);
+    const float3 viewShadingNormal = normalize(mul((float3x3)pass.view, receiver.normal));
     // Reconstruct the receiver plane from the continuous side of each axis.
     // Quad derivatives cross silhouettes and can invent occluders on a flat
     // isolated surface; normal-map detail must not define this geometric plane.
-    const float2 step = pass.parameters[2].zw;
-    float leftDepth,rightDepth,topDepth,bottomDepth;
-    const float3 left = ssaoPosition(uv-float2(step.x,0),float2(0),leftDepth);
-    const float3 right = ssaoPosition(uv+float2(step.x,0),float2(0),rightDepth);
-    const float3 top = ssaoPosition(uv-float2(0,step.y),float2(0),topDepth);
-    const float3 bottom = ssaoPosition(uv+float2(0,step.y),float2(0),bottomDepth);
+    float leftDepth, rightDepth, topDepth, bottomDepth;
+    const float3 left = guidePosition(pixel - int2(1, 0), leftDepth);
+    const float3 right = guidePosition(pixel + int2(1, 0), rightDepth);
+    const float3 top = guidePosition(pixel - int2(0, 1), topDepth);
+    const float3 bottom = guidePosition(pixel + int2(0, 1), bottomDepth);
     const bool useLeft = leftDepth>0 && (rightDepth<=0 || abs(leftDepth-centerLinearDepth)<abs(rightDepth-centerLinearDepth));
     const bool useTop = topDepth>0 && (bottomDepth<=0 || abs(topDepth-centerLinearDepth)<abs(bottomDepth-centerLinearDepth));
     const float3 dx = useLeft ? centerPosition-left : right-centerPosition;
@@ -64,6 +96,20 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (dot(planeNormal,viewShadingNormal)<0) planeNormal=-planeNormal;
     const bool validPlane = max(leftDepth,rightDepth)>0 && max(topDepth,bottomDepth)>0 && planeLength>0.000001;
     const float3 normal = validPlane && dot(planeNormal,viewShadingNormal)>0.5 ? planeNormal : viewShadingNormal;
+
+    float3x4 neighbourNormals;
+    [ForceUnroll] for (int side = 0; side < 4; ++side)
+    {
+        const int2 offset = side == 0 ? int2(-1, 0) : side == 1 ? int2(1, 0) : side == 2 ? int2(0, -1) : int2(0, 1);
+        const int2 texel = clamp(pixel + offset, int2(0), guideSize() - 1);
+        const float3 neighbour = decodeOctahedral(guideTexture.Load(int3(texel, 0)).yz);
+        neighbourNormals[0][side] = neighbour.x;
+        neighbourNormals[1][side] = neighbour.y;
+        neighbourNormals[2][side] = neighbour.z;
+    }
+    const float4 edges = receiverEdges(centerLinearDepth, float4(leftDepth, rightDepth, topDepth, bottomDepth),
+                                       receiver.normal, neighbourNormals);
+
     const float temporalRotation = pass.parameters[1].z > 0.0
         ? frac(round(pass.time * 60.0) * 0.618033989) : 0.0;
     const float noiseAngle = frac(temporalRotation + 52.9829189 * frac(dot(floor(input.position.xy),
@@ -117,5 +163,5 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float ao = 1.0 - occlusion / max(sampleWeight, 1.0) * pass.parameters[0].z;
 #endif
     ao = pow(saturate(ao), max(pass.parameters[0].w, 0.25));
-    return float4(ao, centerLinearDepth, encodeOctahedral(shadingNormal));
+    return float4(ao, packEdges(edges), 0.0, 0.0);
 }

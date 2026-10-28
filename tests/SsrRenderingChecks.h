@@ -4,18 +4,23 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 #include <stdexcept>
 #include <iostream>
 #include <glm/gtc/matrix_transform.hpp>
 
+// SSR effect lane 3.y (see ScreenSpaceReflections.h).
+enum class SsrTechnique { Stochastic, Reference };
+
 // A metallic floor reflecting an emissive wall, seen at a grazing angle, with the SSR effect configured for the
 // stress workload (or a project's default settings).
 class SsrFixture
 {
 public:
-    SsrFixture(PlutoGE::render::BasicRenderer &renderer, bool projectSettings)
+    SsrFixture(PlutoGE::render::BasicRenderer &renderer, bool projectSettings,
+               SsrTechnique technique = SsrTechnique::Reference)
     {
         using namespace PlutoGE::render;
         constexpr std::array<BasicVertex, 4> vertices = {{
@@ -55,6 +60,7 @@ public:
             ssr.parameters[0] = {.8f,30,.35f,.08f};
             ssr.parameters[1] = {.12f,5,.75f,5};
         }
+        ssr.parameters[3].y = technique == SsrTechnique::Reference ? 1.0f : 0.0f;
     }
     SsrFixture(const SsrFixture &) = delete;
     SsrFixture &operator=(const SsrFixture &) = delete;
@@ -69,10 +75,23 @@ public:
 template <class ReadPixels>
 void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels,
                        PlutoGE::render::rhi::IRenderDevice *performanceDevice = nullptr, bool projectSettings = false,
-                       bool extendedTiming = false, PlutoGE::render::rhi::IRenderDevice *reflectionDevice = nullptr)
+                       bool extendedTiming = false, PlutoGE::render::rhi::IRenderDevice *reflectionDevice = nullptr,
+                       SsrTechnique technique = SsrTechnique::Reference)
 {
     using namespace PlutoGE::render;
-    SsrFixture fixture(renderer, projectSettings);
+    SsrFixture fixture(renderer, projectSettings, technique);
+    const bool stochastic = technique == SsrTechnique::Stochastic;
+    // Stochastic reflections integrate over frames: measure a static view once its history has settled. The
+    // full-resolution reference (lane 4.w) is deterministic either way.
+    const auto renderReflections = [&](const glm::mat4 &viewProjection, const BasicLighting &frameLighting,
+                                       std::span<const BasicDraw> frameDraws,
+                                       std::span<const BasicPostProcessEffect> effects)
+    {
+        const bool settles = stochastic && std::ranges::any_of(effects, [](const auto &effect)
+            { return effect.type == BasicPostProcessEffectType::SSR && effect.parameters[4].w < 0.5f; });
+        for (int frame = 0; frame < (settles ? 24 : 1); ++frame)
+            renderer.Render(viewProjection, frameLighting, frameDraws, effects);
+    };
     auto &lighting = fixture.lighting;
     const auto &projection = fixture.projection;
     auto &draws = fixture.draws;
@@ -89,7 +108,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         renderer.Render(projection * lighting.view, lighting, draws);
         const auto baseline = readPixels(renderer.GetColorTexture());
         const auto normals = readPixels(renderer.GetNormalTexture());
-        renderer.Render(projection * lighting.view, lighting, draws, std::span(&ssr,1));
+        renderReflections(projection * lighting.view, lighting, draws, std::span(&ssr,1));
         const auto reflected = readPixels(renderer.GetColorTexture());
         Measurement result;
         result.red.resize(baseline.size()/4);
@@ -204,7 +223,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
             // orientation as final scene colour on both Vulkan and OpenGL.
             renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, {}, {}, PostProcessDebugView::Normal);
             const auto normals = readPixels(renderer.GetColorTexture());
-            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
+            renderReflections(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
             const auto replaced = readPixels(renderer.GetColorTexture());
             std::size_t darker = 0;
             for (std::size_t i=0; i<baseline.size(); i+=4)
@@ -214,15 +233,29 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
             ao.quality = 32; ao.parameters[0] = {1.5f,.02f,1.25f,1};
             ao.parameters[1] = {2,0,.9f,1}; ao.parameters[2] = {.02f,.85f,0,0};
             const std::array occludedEffects{ao, replacement};
-            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, occludedEffects);
+            renderReflections(projection * lighting.view, capturedLighting, capturedDraws, occludedEffects);
             const auto occluded = readPixels(renderer.GetColorTexture());
+            int largestChange = 0;
+            double totalChange = 0, signedChange = 0;
             for (std::size_t i=0; i<replaced.size(); ++i)
-                if (std::abs(int(occluded[i])-int(replaced[i])) > 1)
-                    throw std::runtime_error("Diffuse AO invalidated the SSR specular fallback");
+            {
+                const int change = int(occluded[i])-int(replaced[i]);
+                largestChange = std::max(largestChange, std::abs(change));
+                totalChange += std::abs(change);
+                signedChange += change;
+            }
+            const double meanChange = totalChange / double(replaced.size());
+            const double meanSignedChange = signedChange / double(replaced.size());
+            std::cout << "SSR with diffuse AO: mean change " << meanChange << " (signed " << meanSignedChange
+                      << "), largest " << largestChange << "\n";
+            // Stochastic frames differ by residual sampling noise, so they must agree on average and must not
+            // shift in either direction; the deterministic reference must match exactly.
+            if (stochastic ? meanChange > 1.0 || std::abs(meanSignedChange) > 0.2 : largestChange > 1)
+                throw std::runtime_error("Diffuse AO invalidated the SSR specular fallback");
             // Matching capture and on-screen radiance must not brighten the
             // receiver just because both reflection sources are available.
             capturedDraws[1].emission = {.4f,.4f,.4f};
-            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
+            renderReflections(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
             const auto matching = readPixels(renderer.GetColorTexture());
             for (std::size_t i=0; i<baseline.size(); i+=4)
                 if (int(normals[i+1]) > 240 && int(matching[i]) > int(baseline[i])+3)
@@ -232,7 +265,7 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
             capturedDraws[1].emission = {0,0,0};
             const auto distance = replacement.parameters[0].y;
             replacement.parameters[0].y = .00001f;
-            renderer.Render(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
+            renderReflections(projection * lighting.view, capturedLighting, capturedDraws, std::span(&replacement,1));
             const auto missed = readPixels(renderer.GetColorTexture());
             for (std::size_t i=0; i<baseline.size(); ++i)
                 if (std::abs(int(missed[i])-int(baseline[i])) > 1)
@@ -243,10 +276,17 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     }
     if (performanceDevice)
     {
-        for (const bool fullResolution : {true, false})
+        // The full-resolution reference, then both techniques at half resolution. Stage scopes are reported as
+        // the effect records them; the parent includes every child.
+        struct Configuration { const char *name; bool fullResolution; SsrTechnique technique; };
+        for (const auto &configuration : {Configuration{"full-resolution reference", true, SsrTechnique::Reference},
+                                          Configuration{"half-resolution reference", false, SsrTechnique::Reference},
+                                          Configuration{"half-resolution stochastic", false, SsrTechnique::Stochastic}})
         {
-            ssr.parameters[4].w = fullResolution ? 1.0f : 0.0f;
-            double gpuMs = 0, effectMs = 0, traceMs = 0, filterMs = 0, verticalMs = 0, resolveMs = 0;
+            ssr.parameters[4].w = configuration.fullResolution ? 1.0f : 0.0f;
+            ssr.parameters[3].y = configuration.technique == SsrTechnique::Reference ? 1.0f : 0.0f;
+            double gpuMs = 0, effectMs = 0;
+            std::vector<std::pair<std::string, double>> stages;
             int samples = 0;
             // Capture-sized comparisons need a longer warmup/sample window to
             // reduce clock-ramp and scheduling noise on short GPU workloads.
@@ -261,21 +301,24 @@ void CheckSsrRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
                 for (const auto &scope : timing.gpuScopes)
                 {
                     if (scope.name == "RHI SSR") effectMs += scope.milliseconds;
-                    if (scope.name == "RHI SSR / Trace") { traceMs += scope.milliseconds; hasTrace = true; }
-                    if (scope.name == "RHI SSR / Resolve") { resolveMs += scope.milliseconds; hasResolve = true; }
-                    if (scope.name == "RHI SSR / Filter") filterMs += scope.milliseconds;
-                    if (scope.name == "RHI SSR / Vertical filter") verticalMs += scope.milliseconds;
+                    if (!scope.name.starts_with("RHI SSR / ")) continue;
+                    hasTrace |= scope.name == "RHI SSR / Trace";
+                    hasResolve |= scope.name == "RHI SSR / Resolve";
+                    const auto stage = std::ranges::find(stages, scope.name, &std::pair<std::string, double>::first);
+                    if (stage == stages.end()) stages.emplace_back(scope.name, scope.milliseconds);
+                    else stage->second += scope.milliseconds;
                 }
-                if (!hasTrace || (!fullResolution && !hasResolve))
+                if (!hasTrace || (!configuration.fullResolution && !hasResolve))
                     throw std::runtime_error("SSR benchmark is missing stage GPU timings");
                 gpuMs += timing.frameGpuMs;
                 ++samples;
             }
             if (!samples) throw std::runtime_error("SSR benchmark has no GPU timings");
-            std::cout << "SSR benchmark (" << (fullResolution ? "full-resolution reference" : "half-resolution resolve")
-                      << "): " << gpuMs / samples << " ms GPU frame, "
-                      << effectMs / samples << " ms reflections, " << traceMs / samples << " ms trace, "
-                      << filterMs / samples << " ms horizontal filter, " << verticalMs / samples << " ms vertical filter, " << resolveMs / samples << " ms resolve (" << samples << " samples)\n";
+            std::cout << "SSR benchmark (" << configuration.name << "): " << gpuMs / samples << " ms GPU frame, "
+                      << effectMs / samples << " ms reflections";
+            for (const auto &[name, milliseconds] : stages)
+                std::cout << ", " << milliseconds / samples << " ms " << name.substr(10);
+            std::cout << " (" << samples << " samples)\n";
         }
     }
 }

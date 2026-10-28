@@ -17,7 +17,10 @@ For the sky at night (moon phases, moonlight handoff and stars), see
 For clustered local lights, scoped Vulkan synchronisation, bindless GPU-driven
 opaque draws and the frame graph with async compute, and their switches, see
 [renderer modernisation](renderer-modernisation.md).
-Screen-space reflection costs and the **Adaptive Rays** setting are described in
+SSR and SSAO run as screen-space passes over a shared surface guide; their stages,
+costs and rejected alternatives are in
+[screen-space effects optimisation](screen-space-effects-optimisation.md). The
+reference SSR technique's **Adaptive Rays** setting is described in
 [SSR adaptive rays and filtering](ssr-adaptive-rays-and-filter.md).
 
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
@@ -74,13 +77,19 @@ response. Both the full-resolution path and bilateral reduced-resolution resolve
 replace the covered fraction of sky/probe specular. Misses and screen-edge
 fades retain the fallback; diffuse light, emission and direct highlights remain.
 The trace samples the view-visible GGX normal distribution, keeping ray weights
-bounded at grazing angles. The default half-resolution path filters the signed
-correction horizontally at trace resolution, then vertically while upsampling
-and compositing. Its Gaussian footprint grows with roughness (up to 16 trace
-pixels per axis); depth-plane, normal and material weights protect surface edges.
-Smooth receivers retain bilinear reconstruction. This is spatial filtering with
-stable samples, independent of TAA; it introduces no reflection history or motion
-ghosting. The internal full-resolution comparison path remains unfiltered.
+bounded at grazing angles. The default **Stochastic** technique traces one ray
+per half-resolution pixel, re-weights neighbouring rays by each pixel's BRDF (ray
+reuse) and accumulates the result in its own reflection history, reprojected
+along surface motion or reflection parallax and clipped to the current
+neighbourhood; a static view settles within about 16 frames. The **Reference**
+technique traces up to 16 rays per pixel and filters the signed correction
+horizontally at trace resolution, then vertically while upsampling and
+compositing. Its Gaussian footprint grows with roughness (up to 16 trace pixels
+per axis); depth-plane, normal and material weights protect surface edges.
+Smooth receivers retain bilinear reconstruction. The reference is spatial
+filtering with stable samples, independent of TAA, with no reflection history or
+motion ghosting. The internal full-resolution comparison path always uses the
+reference technique, unfiltered.
 SSR strength is bounded to [0,1] and retains the existing roughness fade. Diffuse
 AO excludes environmental specular, so AO cannot invalidate the replaceable
 fallback. Directional specular occlusion is not supplied by diffuse AO.

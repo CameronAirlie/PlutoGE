@@ -87,6 +87,10 @@ int main(int argc, char **argv)
         shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
         shaders.ssrStages[4] = {{.spirv = ReadSpirv("SSRFilterVertical.vertex.spv")}, {.spirv = ReadSpirv("SSRFilterVertical.fragment.spv")}};
         shaders.ssrStages[3] = {{.spirv = ReadSpirv("SSRTraceReduced.vertex.spv")}, {.spirv = ReadSpirv("SSRTraceReduced.fragment.spv")}};
+        shaders.ssrTrace.spirv = ReadSpirv("SSRStochasticTrace.compute.spv");
+        shaders.ssrReuse = {{.spirv = ReadSpirv("SSRReuse.vertex.spv")}, {.spirv = ReadSpirv("SSRReuse.fragment.spv")}};
+        shaders.ssrTemporal = {{.spirv = ReadSpirv("SSRTemporal.vertex.spv")}, {.spirv = ReadSpirv("SSRTemporal.fragment.spv")}};
+        shaders.ssrComposite = {{.spirv = ReadSpirv("SSRComposite.vertex.spv")}, {.spirv = ReadSpirv("SSRComposite.fragment.spv")}};
         shaders.instancedVertex.spirv = ReadSpirv("BasicLitInstanced.vertex.spv");
         shaders.fragment.spirv = ReadSpirv("BasicLit.fragment.spv");
         shaders.transparentFragment.spirv = ReadSpirv("Glass.fragment.spv");
@@ -158,11 +162,12 @@ int main(int argc, char **argv)
         }
         shaders.indirectFragments[0].spirv = ReadSpirv("BasicLitIndirect.fragment.spv");
         shaders.indirectFragments[1].spirv = ReadSpirv("BasicLitStandardIndirect.fragment.spv");
-        shaders.ssaoFilter.vertex.spirv=ReadSpirv("SSAOFilter.vertex.spv");
-        shaders.ssaoFilter.fragment.spirv=ReadSpirv("SSAOFilter.fragment.spv");
+        shaders.ssaoDenoise.vertex.spirv=ReadSpirv("SSAODenoise.vertex.spv");
+        shaders.ssaoDenoise.fragment.spirv=ReadSpirv("SSAODenoise.fragment.spv");
         shaders.ssaoUpsample.vertex.spirv=ReadSpirv("SSAOUpsample.vertex.spv");
         shaders.ssaoUpsample.fragment.spirv=ReadSpirv("SSAOUpsample.fragment.spv");
-        shaders.ssaoDepth.spirv = ReadSpirv("SSAODepth.compute.spv");
+        shaders.screenSpaceGuide.spirv = ReadSpirv("ScreenSpaceGuide.compute.spv");
+        shaders.screenSpaceGuideHierarchy.spirv = ReadSpirv("ScreenSpaceGuideHierarchy.compute.spv");
         constexpr std::array<const char *, 3> ssaoModules{
             "SSAO", "SSAOResolve", "SSAOHorizon"};
         for (std::size_t index = 0; index < ssaoModules.size(); ++index)
@@ -251,6 +256,13 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--ssao-only")
         {
             CheckSsaoRendering(renderer,device);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ssao-performance")
+        {
+            // ThirdPersonProject's FSR2 Quality input at 720p, and the SSR capture size.
+            for (const auto extent : {rhi::Extent2D{853, 480}, rhi::Extent2D{1690, 934}})
+                CheckSsaoPerformance(renderer, device, extent);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
@@ -476,6 +488,8 @@ int main(int argc, char **argv)
                     return device.ReadTextureRgba8(texture);
                 });
                 CheckSsrAdaptiveRays(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+                CheckSsrRendering(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); },
+                                  nullptr, false, false, &device, SsrTechnique::Stochastic);
             }
             return 0;
         }

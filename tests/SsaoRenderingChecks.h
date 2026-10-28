@@ -139,3 +139,64 @@ inline void CheckSsaoRendering(PlutoGE::render::BasicRenderer &renderer,
     }
     std::cout<<"SSAO estimators, motion, resolution switching, planar receivers and direct/emissive preservation passed\n";
 }
+
+// GPU timings of the horizon estimator per sample budget at `extent`, with the project defaults (half resolution,
+// two denoise passes). Stage scopes are reported as recorded; the guide is built inside the SSAO scope.
+inline void CheckSsaoPerformance(PlutoGE::render::BasicRenderer &renderer, PlutoGE::render::rhi::IRenderDevice &device,
+                                 PlutoGE::render::rhi::Extent2D extent)
+{
+    using namespace PlutoGE::render;
+    if (!renderer.Resize(extent.width, extent.height))
+        throw std::runtime_error("SSAO benchmark resize failed");
+    constexpr std::array<BasicVertex,8> vertices{{
+        {{-2,0,0},{0,1,0},{0,0}},{{2,0,0},{0,1,0},{1,0}},
+        {{2,0,3},{0,1,0},{1,1}},{{-2,0,3},{0,1,0},{0,1}},
+        {{-2,0,0},{0,0,1},{0,0}},{{2,0,0},{0,0,1},{1,0}},
+        {{2,3,0},{0,0,1},{1,1}},{{-2,3,0},{0,0,1},{0,1}}}};
+    constexpr std::array<std::uint32_t,12> indices{0,2,1,0,3,2,4,5,6,4,6,7};
+    auto corner = renderer.CreateMesh({vertices,indices});
+    const BasicDraw draw{.mesh=&corner};
+    BasicLighting lighting;
+    lighting.shadowsEnabled=false; lighting.ambientIntensity=1; lighting.directionalIntensity=0;
+    const glm::vec3 eye(2.5f,1.8f,3);
+    lighting.view=glm::lookAtRH(eye,glm::vec3(0,.5f,.6f),glm::vec3(0,1,0));
+    lighting.cameraPosition=eye;
+    constexpr float nearPlane=.1f,farPlane=100;
+    const float f=1.0f/std::tan(glm::radians(50.0f)*.5f);
+    glm::mat4 projection(0);
+    projection[0][0]=f/(float(extent.width)/extent.height);
+    projection[1][1]=f; projection[2][3]=-1;
+    projection[2][2]=device.UsesZeroToOneClipDepth() ? nearPlane/(farPlane-nearPlane) : (farPlane+nearPlane)/(farPlane-nearPlane);
+    projection[3][2]=device.UsesZeroToOneClipDepth() ? farPlane*nearPlane/(farPlane-nearPlane) : 2*farPlane*nearPlane/(farPlane-nearPlane);
+    BasicPostProcessEffect ao{BasicPostProcessEffectType::SSAO};
+    ao.parameters[0]={.85f,.08f,1.25f,1.5f};
+    ao.parameters[1]={2,0,.9f,1}; ao.parameters[2]={.02f,.85f,0,0};
+    ao.parameters[3].y=static_cast<float>(BasicSsaoEstimator::GTAO);
+    for (const std::uint32_t budget : {32u, 16u, 8u})
+    {
+        ao.quality=budget;
+        double effectMs=0;
+        std::vector<std::pair<std::string,double>> stages;
+        int samples=0;
+        for (int frame=0; frame<64+256; ++frame)
+        {
+            renderer.Render(projection*lighting.view,lighting,std::span(&draw,1),std::span(&ao,1));
+            const auto timing=device.GetTimingStats("Scene");
+            if (frame<64 || !timing.hasGpuResult) continue;
+            for (const auto &scope : timing.gpuScopes)
+            {
+                if (scope.name=="RHI SSAO") effectMs+=scope.milliseconds;
+                if (!scope.name.starts_with("RHI SSAO / ") && !scope.name.starts_with("RHI Screen-space guide")) continue;
+                const auto stage=std::ranges::find(stages,scope.name,&std::pair<std::string,double>::first);
+                if (stage==stages.end()) stages.emplace_back(scope.name,scope.milliseconds);
+                else stage->second+=scope.milliseconds;
+            }
+            ++samples;
+        }
+        if (!samples) throw std::runtime_error("SSAO benchmark has no GPU timings");
+        std::cout<<"SSAO benchmark ("<<extent.width<<" x "<<extent.height<<", budget "<<budget<<"): "
+                 <<effectMs/samples<<" ms";
+        for (const auto &[name,milliseconds] : stages) std::cout<<", "<<milliseconds/samples<<" ms "<<name.substr(4);
+        std::cout<<" ("<<samples<<" samples)\n";
+    }
+}

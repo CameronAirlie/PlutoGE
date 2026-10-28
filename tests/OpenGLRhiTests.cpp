@@ -178,6 +178,10 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.ssrStages[2] = {{.glsl = ReadText("SSRFilter.vertex.glsl")}, {.glsl = ReadText("SSRFilter.fragment.glsl")}};
         shaders.ssrStages[3] = {{.glsl = ReadText("SSRTraceReduced.vertex.glsl")}, {.glsl = ReadText("SSRTraceReduced.fragment.glsl")}};
         shaders.ssrStages[4] = {{.glsl = ReadText("SSRFilterVertical.vertex.glsl")}, {.glsl = ReadText("SSRFilterVertical.fragment.glsl")}};
+        shaders.ssrTrace.glsl = ReadText("SSRStochasticTrace.compute.glsl");
+        shaders.ssrReuse = {{.glsl = ReadText("SSRReuse.vertex.glsl")}, {.glsl = ReadText("SSRReuse.fragment.glsl")}};
+        shaders.ssrTemporal = {{.glsl = ReadText("SSRTemporal.vertex.glsl")}, {.glsl = ReadText("SSRTemporal.fragment.glsl")}};
+        shaders.ssrComposite = {{.glsl = ReadText("SSRComposite.vertex.glsl")}, {.glsl = ReadText("SSRComposite.fragment.glsl")}};
         LoadRenderOptimizationShaders(shaders);
         shaders.particles.vertexShader.glsl = ReadText("Particles.vertex.glsl");
         shaders.particleInstancedVertex.glsl = ReadText("ParticlesInstanced.vertex.glsl");
@@ -243,11 +247,12 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricCloud, "VolumetricCloud");
         shaders.indirectFragments[0].glsl = ReadText("BasicLitIndirect.fragment.glsl");
         shaders.indirectFragments[1].glsl = ReadText("BasicLitStandardIndirect.fragment.glsl");
-        shaders.ssaoFilter.vertex.glsl=ReadText("SSAOFilter.vertex.glsl");
-        shaders.ssaoFilter.fragment.glsl=ReadText("SSAOFilter.fragment.glsl");
+        shaders.ssaoDenoise.vertex.glsl=ReadText("SSAODenoise.vertex.glsl");
+        shaders.ssaoDenoise.fragment.glsl=ReadText("SSAODenoise.fragment.glsl");
         shaders.ssaoUpsample.vertex.glsl=ReadText("SSAOUpsample.vertex.glsl");
         shaders.ssaoUpsample.fragment.glsl=ReadText("SSAOUpsample.fragment.glsl");
-        shaders.ssaoDepth.glsl = ReadText("SSAODepth.compute.glsl");
+        shaders.screenSpaceGuide.glsl = ReadText("ScreenSpaceGuide.compute.glsl");
+        shaders.screenSpaceGuideHierarchy.glsl = ReadText("ScreenSpaceGuideHierarchy.compute.glsl");
         constexpr std::array<const char *,3> ssaoModules{"SSAO","SSAOResolve","SSAOHorizon"};
         for (std::size_t index=0;index<ssaoModules.size();++index)
         {
@@ -641,6 +646,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             };
             CheckSsrStageSpecialisation(basicRenderer, device, shaders, readPixels);
             CheckSsrAdaptiveRays(basicRenderer, readPixels);
+            CheckSsrRendering(basicRenderer, readPixels, nullptr, false, false, &device, SsrTechnique::Stochastic);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ssr-project-snapshots")

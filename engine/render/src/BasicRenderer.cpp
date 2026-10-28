@@ -24,6 +24,8 @@
 #include "RhiGpuSkinning.h"
 #include "DeferredProbeIrradiance.h"
 #include "TemporalReconstructionPasses.h"
+#include "screenspace/ScreenSpaceAmbientOcclusion.h"
+#include "screenspace/ScreenSpaceReflections.h"
 #include "CloudNoiseVolume.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PostProcessParameterBlock.h"
@@ -975,9 +977,6 @@ namespace PlutoGE::render
                     postDescriptor.resourceBindings.push_back(
                         {9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 }
-                if (type == BasicPostProcessEffectType::SSR)
-                    postDescriptor.resourceBindings.push_back(
-                        {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 // Baked noise lattice volume: cloud density and fog density variation.
                 if (type == BasicPostProcessEffectType::VolumetricCloud || type == BasicPostProcessEffectType::VolumetricFog)
                     postDescriptor.resourceBindings.push_back(
@@ -1017,8 +1016,9 @@ namespace PlutoGE::render
                 "Volumetric clouds", "Scene composite", "Voxel cone traced global illumination"};
             for (std::size_t index = 0; index < m_postProcessPipelines.size(); ++index)
             {
-                // SSAO owns specialized raw/resolve layouts, never the generic color pass.
-                if (index == static_cast<std::size_t>(BasicPostProcessEffectType::SSAO)) continue;
+                // SSAO and SSR are screen-space passes with their own pipelines (src/screenspace).
+                if (index == static_cast<std::size_t>(BasicPostProcessEffectType::SSAO) ||
+                    index == static_cast<std::size_t>(BasicPostProcessEffectType::SSR)) continue;
                 if ((shaders.postProcess[index].vertex.glsl.empty() && shaders.postProcess[index].vertex.spirv.empty()) ||
                     (shaders.postProcess[index].fragment.glsl.empty() && shaders.postProcess[index].fragment.spirv.empty()))
                     continue;
@@ -1035,12 +1035,6 @@ namespace PlutoGE::render
                 return (!shader.vertex.spirv.empty() || !shader.vertex.glsl.empty()) &&
                        (!shader.fragment.spirv.empty() || !shader.fragment.glsl.empty());
             };
-            for (std::size_t index = 0; index < m_ssrStagePipelines.size(); ++index)
-                if (hasShader(shaders.ssrStages[index]))
-                    m_ssrStagePipelines[index] = createPostProcessPipeline(
-                        shaders.ssrStages[index].vertex, shaders.ssrStages[index].fragment,
-                        index == 0 || index == 3 ? "SSR trace" : (index == 1 ? "SSR resolve" : "SSR filter"),
-                        BasicPostProcessEffectType::SSR);
             for (std::size_t index = 0; index < m_volumetricTracePipelines.size(); ++index)
             {
                 const auto &shader = shaders.volumetricTrace[index];
@@ -1124,72 +1118,6 @@ namespace PlutoGE::render
                 bloomDescriptor.colorFormat = rhi::Format::R16G16B16A16Float;
                 bloomDescriptor.debugName = bloomNames[index];
                 m_bloomPipelines[index] = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(bloomDescriptor));
-            }
-            if (!shaders.ssaoDepth.glsl.empty() || !shaders.ssaoDepth.spirv.empty())
-            {
-                rhi::ComputePipelineDescriptor depth;
-                depth.computeShader = shaders.ssaoDepth;
-                depth.resourceBindings = {
-                    {0,0,0,rhi::ResourceBindingType::UniformBuffer,rhi::ShaderStageMask::Compute},
-                    {1,0,1,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Compute},
-                    {2,0,2,rhi::ResourceBindingType::StorageImage,rhi::ShaderStageMask::Compute}};
-                depth.debugName = "SSAO view-depth hierarchy";
-                m_ssaoDepthPipeline = rhi::GraphicsPipeline(device,device.CreateComputePipeline(depth));
-            }
-            constexpr std::array<const char *, 3> ssaoNames{
-                "SSAO spiral", "SSAO bilateral temporal resolve and composite", "SSAO horizons"};
-            for (std::size_t index = 0; index < m_ssaoPipelines.size(); ++index)
-            {
-                const auto &stage = shaders.ssao[index];
-                if ((stage.vertex.glsl.empty() && stage.vertex.spirv.empty()) ||
-                    (stage.fragment.glsl.empty() && stage.fragment.spirv.empty()))
-                    continue;
-                rhi::GraphicsPipelineDescriptor ssaoDescriptor;
-                ssaoDescriptor.vertexShader = stage.vertex;
-                ssaoDescriptor.fragmentShader = stage.fragment;
-                ssaoDescriptor.depthFormat = rhi::Format::Undefined;
-                ssaoDescriptor.resourceBindings = {
-                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
-                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                };
-                if (index != 1) ssaoDescriptor.resourceBindings.push_back(
-                    {4,0,4,rhi::ResourceBindingType::SampledTexture,rhi::ShaderStageMask::Fragment});
-                {
-                    ssaoDescriptor.resourceBindings.push_back(
-                        {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                    ssaoDescriptor.resourceBindings.push_back(
-                        {3, 0, 3, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                }
-                if (index == 1)
-                {
-                    ssaoDescriptor.resourceBindings.push_back({7, 0, 7, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                    ssaoDescriptor.resourceBindings.push_back({8, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                    ssaoDescriptor.resourceBindings.push_back({9, 0, 9, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                    ssaoDescriptor.resourceBindings.push_back(
-                        {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                    ssaoDescriptor.resourceBindings.push_back(
-                        {6, 0, 6, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
-                }
-                ssaoDescriptor.colorFormat = rhi::Format::R16G16B16A16Float;
-                if (index == 1) ssaoDescriptor.colorFormats = {rhi::Format::R16G16B16A16Float, rhi::Format::R16G16B16A16Float};
-                ssaoDescriptor.cullMode = rhi::CullMode::None;
-                ssaoDescriptor.depthTest = false;
-                ssaoDescriptor.depthWrite = false;
-                ssaoDescriptor.debugName = ssaoNames[index];
-                m_ssaoPipelines[index] = rhi::GraphicsPipeline(
-                    device, device.CreateGraphicsPipeline(ssaoDescriptor));
-                if (index==1 && (!shaders.ssaoFilter.fragment.spirv.empty() || !shaders.ssaoFilter.fragment.glsl.empty()))
-                {
-                    auto filter=ssaoDescriptor;
-                    filter.vertexShader=shaders.ssaoFilter.vertex; filter.fragmentShader=shaders.ssaoFilter.fragment;
-                    filter.colorFormats.clear(); filter.colorFormat=rhi::Format::R16G16B16A16Float;
-                    filter.debugName="SSAO reduced-resolution spatial/temporal filter";
-                    m_ssaoFilterPipeline=rhi::GraphicsPipeline(device,device.CreateGraphicsPipeline(filter));
-                    auto upsample=filter;
-                    upsample.vertexShader=shaders.ssaoUpsample.vertex; upsample.fragmentShader=shaders.ssaoUpsample.fragment;
-                    upsample.debugName="SSAO bilateral upsample and indirect composite";
-                    m_ssaoUpsamplePipeline=rhi::GraphicsPipeline(device,device.CreateGraphicsPipeline(upsample));
-                }
             }
             if (!shaders.vctCompute[0].glsl.empty() || !shaders.vctCompute[0].spirv.empty())
             {
@@ -1356,6 +1284,28 @@ namespace PlutoGE::render
             auto backgroundMotion = std::make_unique<BackgroundMotion>();
             if (backgroundMotion->Initialize(device, {shaders.backgroundMotion.vertex, shaders.backgroundMotion.fragment}))
                 m_backgroundMotion = std::move(backgroundMotion);
+            for (std::uint32_t divisor = 1; divisor <= 2; ++divisor)
+            {
+                auto guide = std::make_unique<ScreenSpaceGuide>();
+                if (guide->Initialize(device, {shaders.screenSpaceGuide, shaders.screenSpaceGuideHierarchy}, divisor))
+                    m_screenSpaceGuides[divisor - 1] = std::move(guide);
+            }
+            const auto fullscreen = [](const BasicPostProcessShaderPackage &shader)
+            { return ScreenSpaceFullscreenShader{shader.vertex, shader.fragment}; };
+            auto ambientOcclusion = std::make_unique<ScreenSpaceAmbientOcclusion>();
+            if (ambientOcclusion->Initialize(device, {fullscreen(shaders.ssao[0]), fullscreen(shaders.ssao[2]),
+                                                      fullscreen(shaders.ssaoDenoise), fullscreen(shaders.ssao[1]),
+                                                      fullscreen(shaders.ssaoUpsample)}))
+                m_ambientOcclusion = std::move(ambientOcclusion);
+            ScreenSpaceReflections::Shaders reflectionShaders{
+                .reference = fullscreen(shaders.postProcess[static_cast<std::size_t>(BasicPostProcessEffectType::SSR)]),
+                .trace = shaders.ssrTrace, .reuse = fullscreen(shaders.ssrReuse),
+                .temporal = fullscreen(shaders.ssrTemporal), .composite = fullscreen(shaders.ssrComposite)};
+            for (std::size_t stage = 0; stage < reflectionShaders.referenceStages.size(); ++stage)
+                reflectionShaders.referenceStages[stage] = fullscreen(shaders.ssrStages[stage]);
+            auto reflections = std::make_unique<ScreenSpaceReflections>();
+            if (reflections->Initialize(device, reflectionShaders))
+                m_reflections = std::move(reflections);
             auto upscalerSharpening = std::make_unique<UpscalerSharpening>();
             if (upscalerSharpening->Initialize(device, {shaders.upscalerSharpening.vertex, shaders.upscalerSharpening.fragment}))
                 m_upscalerSharpening = std::move(upscalerSharpening);
@@ -1446,14 +1396,6 @@ namespace PlutoGE::render
         m_outputCoverage = {};
         for (auto &target : m_exposureHistoryTargets)
             target.Reset();
-        m_ssaoRawTarget.Reset();
-        m_ssaoDepthPyramid.Reset();
-        m_ssaoDepthPipeline.Reset();
-        m_ssaoFilterPipeline.Reset();
-        m_ssaoUpsamplePipeline.Reset();
-        m_ssaoCompositeTarget.Reset();
-        for (auto &target : m_ssaoHistoryTargets)
-            target.Reset();
         m_particlePipeline.Reset();
         m_particleBoundaryPipeline.Reset();
         m_particleBoundaryTwoSidedPipeline.Reset();
@@ -1511,6 +1453,10 @@ namespace PlutoGE::render
         m_backgroundMotion.reset();
         m_upscalerSharpening.reset();
         m_cloudNoise.reset();
+        m_ambientOcclusion.reset();
+        m_reflections.reset();
+        for (auto &guide : m_screenSpaceGuides)
+            guide.reset();
         m_geometrySweepFrame = 0;
         m_emptyVirtualShadowTable.Reset();
         m_emptyVirtualShadowPageTable.Reset();
@@ -1540,8 +1486,6 @@ namespace PlutoGE::render
         for (auto &pipeline : m_bloomPipelines)
             pipeline.Reset();
         for (auto &pipeline : m_autoExposurePipelines)
-            pipeline.Reset();
-        for (auto &pipeline : m_ssaoPipelines)
             pipeline.Reset();
         m_vctProbePipeline.Reset();
         m_vctRelightPipeline.Reset();
@@ -1575,7 +1519,6 @@ namespace PlutoGE::render
         m_glassColorCopyPipeline.Reset();
         m_glassDepthCopyPipeline.Reset();
         m_skyQuadraturePipeline.Reset();
-        for (auto &pipeline : m_ssrStagePipelines) pipeline.Reset();
         m_skyQuadratureBuffer.Reset();
         m_skyQuadratureTexture.Reset();
         m_skyEnvironmentValid = false;
@@ -1603,8 +1546,6 @@ namespace PlutoGE::render
         m_taaHistoryValid = false;
         m_exposureHistoryIndex = 0;
         m_exposureHistoryValid = false;
-        m_ssaoHistoryIndex = 0;
-        m_ssaoHistoryValid = false;
     }
 
     void BasicRenderer::SetGeometryArenaEnabled(bool enabled)
@@ -1843,18 +1784,11 @@ namespace PlutoGE::render
                                                                            index == 0 ? "Exposure history A" : "Exposure history B", true}));
         m_exposureHistoryIndex = 0;
         m_exposureHistoryValid = false;
-        m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                                                      {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment,
-                                                       "SSAO raw", true}));
-        m_ssaoDepthPyramid.Reset();
-        m_ssaoRawWidth = width;
-        m_ssaoRawHeight = height;
-        m_ssaoCompositeTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-            {width, height, rhi::Format::R16G16B16A16Float,
-             rhi::TextureUsage::ColorAttachment, "SSAO composite", true}));
-        for (auto &history : m_ssaoHistoryTargets) history.Reset();
-        m_ssaoHistoryIndex = 0;
-        m_ssaoHistoryValid = false;
+        // Screen-space passes size their targets on use; drop what the old extent held.
+        for (auto &guide : m_screenSpaceGuides)
+            if (guide) guide->ReleaseTargets();
+        if (m_ambientOcclusion) m_ambientOcclusion->ReleaseTargets();
+        if (m_reflections) m_reflections->ReleaseTargets();
         m_depthTarget = std::move(newDepth);
         if (needsTemporalOutput)
             m_temporalUpscalerOutput = rhi::Texture(*m_device, m_device->CreateTexture(
@@ -4092,8 +4026,16 @@ namespace PlutoGE::render
             m_taaHistoryValid = false;
         if (!hasAutoExposure)
             m_exposureHistoryValid = false;
-        if (!hasSsao)
-            m_ssaoHistoryValid = false;
+        if (!hasSsao && m_ambientOcclusion)
+            m_ambientOcclusion->InvalidateHistory();
+        // SSAO's depth hierarchy is built with its guide, whichever effect builds that guide first this frame.
+        m_screenSpaceHierarchyFalloff.fill(0.0f);
+        for (const auto &effect : postProcessEffects)
+            if (effect.type == BasicPostProcessEffectType::SSAO)
+                m_screenSpaceHierarchyFalloff[effect.parameters[1].w > 0.5f ? 1 : 0] = effect.parameters[0].x;
+        if (m_reflections && std::ranges::none_of(postProcessEffects, [](const auto &effect)
+                                                  { return effect.type == BasicPostProcessEffectType::SSR; }))
+            m_reflections->InvalidateHistory();
         std::size_t fusedBufferIndex = 0;
         // Composites transparency and the final particle interval. Ahead of an
         // upscale, first snapshot the opaque colour for its reactive mask.
@@ -4178,6 +4120,11 @@ namespace PlutoGE::render
                 m_outputColor = RenderSsao(m_outputColor, effect, commands);
                 continue;
             }
+            if (effect.type == BasicPostProcessEffectType::SSR)
+            {
+                m_outputColor = RenderSsr(m_outputColor, effect, temporalClipOffset.z > 0.5f, commands);
+                continue;
+            }
             if (effect.type == BasicPostProcessEffectType::VCTGI)
             {
                 m_outputColor = RenderVctgi(m_outputColor, effect, lighting,
@@ -4230,72 +4177,6 @@ namespace PlutoGE::render
                 m_postProcessCameraPosition,
                 effect.type == BasicPostProcessEffectType::TAA ? m_previousMotionViewProjection : effect.worldToLocal,
             };
-            if (effect.type == BasicPostProcessEffectType::SSR)
-            {
-                if (effect.parameters[0].x <= 0.0f)
-                    continue;
-                // Keep the source at full resolution. Only indirect specular
-                // is traced at half resolution, then reconstructed at edges.
-                const bool fullResolution = effect.parameters[4].w > 0.5f;
-                const auto traceWidth = fullResolution ? m_postProcessWidth : (m_postProcessWidth + 1u) / 2u;
-                const auto traceHeight = fullResolution ? m_postProcessHeight : (m_postProcessHeight + 1u) / 2u;
-                const auto source = m_outputColor;
-                const auto trace = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
-                // Reduced ray counts rotate their samples per frame when a
-                // temporal resolve will accumulate them; see SSR.slang.
-                parameters.parameters[2].z = static_cast<float>(m_frameIndex % 64u);
-                parameters.parameters[2].w = temporalClipOffset.z;
-                const auto drawSsr = [&](rhi::TextureHandle destination, rhi::TextureHandle reflections,
-                                         std::uint32_t width, std::uint32_t height, float mode)
-                {
-                    ScopedGpuTiming ssrStage(commands, mode == 3.0f ? "RHI SSR / Filter" : mode == 4.0f ? "RHI SSR / Vertical filter"
-                                                       : mode == 2.0f ? "RHI SSR / Resolve" : "RHI SSR / Trace");
-                    // Fewer than 16 rays per pixel trace with their own variant (lane 2.y).
-                    const bool reducedRays = mode == 1.0f && effect.parameters[2].y > 0.5f &&
-                                             effect.parameters[2].y < 15.5f && m_ssrStagePipelines[3];
-                    const auto stageIndex = mode == 4.0f ? 4u : mode == 3.0f ? 2u : (mode == 2.0f ? 1u : (reducedRays ? 3u : 0u));
-                    const auto stagePipeline = mode != 0.0f && m_ssrStagePipelines[stageIndex]
-                        ? m_ssrStagePipelines[stageIndex].Get() : pipeline;
-                    parameters.parameters[4] = {mode, static_cast<float>(traceWidth),
-                                                static_cast<float>(traceHeight), 0.0f};
-                    // All stages address the same full-resolution G-buffer.
-                    parameters.inverseResolution = {1.0f / m_postProcessWidth, 1.0f / m_postProcessHeight};
-                    auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
-                    m_device->UpdateBuffer(buffer.Get(), 0, Bytes(parameters));
-                    rhi::RenderingInfo info;
-                    info.colorAttachments = {destination};
-                    info.width = width;
-                    info.height = height;
-                    info.clearDepth = false;
-                    commands.BeginRendering(info);
-                    commands.BindPipeline(stagePipeline);
-                    commands.BindUniformBuffer(0, buffer.Get());
-                    commands.BindTexture(1, source, m_screenSampler.Get());
-                    commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-                    commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-                    commands.BindTexture(4, m_materialTarget ? m_materialTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-                    commands.BindTexture(6, reflections, m_screenSampler.Get());
-                    commands.BindTexture(8, m_environmentSpecularTarget.Get(), m_screenSampler.Get());
-                    commands.BindTexture(7, m_albedoTarget ? m_albedoTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-                    commands.Draw(3);
-                    commands.EndRendering();
-                };
-                drawSsr(trace, source, traceWidth, traceHeight, fullResolution ? 0.0f : 1.0f);
-                m_outputColor = trace;
-                if (!fullResolution)
-                {
-                    // Separable bilateral filter at trace resolution, then a bilateral upsample.
-                    const auto horizontal = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
-                    drawSsr(horizontal, trace, traceWidth, traceHeight, 3.0f);
-                    const auto filtered = AcquirePostProcessTarget(targetIndex++, traceWidth, traceHeight).Get();
-                    drawSsr(filtered, horizontal, traceWidth, traceHeight, 4.0f);
-                    const auto resolved = AcquirePostProcessTarget(targetIndex++, m_postProcessWidth,
-                                                                   m_postProcessHeight).Get();
-                    drawSsr(resolved, filtered, m_postProcessWidth, m_postProcessHeight, 2.0f);
-                    m_outputColor = resolved;
-                }
-                continue;
-            }
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
             m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
             rhi::Texture *destination = nullptr;
@@ -5433,145 +5314,99 @@ namespace PlutoGE::render
         return m_vctCompositeTarget.Get();
     }
 
+    void BasicRenderer::ResetTemporalHistory() noexcept
+    {
+        m_taaHistoryValid = false;
+        if (m_ambientOcclusion) m_ambientOcclusion->InvalidateHistory();
+        if (m_reflections) m_reflections->InvalidateHistory();
+        for (auto &guide : m_screenSpaceGuides)
+            if (guide) guide->InvalidateHistory();
+    }
+
+    ScreenSpaceView BasicRenderer::MakeScreenSpaceView(std::uint32_t width, std::uint32_t height) const
+    {
+        const auto target = [&](const rhi::Texture &texture)
+        { return texture ? texture.Get() : m_fallbackDataTexture.Get(); };
+        ScreenSpaceView view;
+        view.depth = m_depthTarget.Get();
+        view.normal = target(m_normalTarget);
+        view.material = target(m_materialTarget);
+        view.albedo = target(m_albedoTarget);
+        view.motion = target(m_motionTarget);
+        view.environmentSpecular = m_environmentSpecularTarget.Get();
+        view.linearSampler = m_screenSampler.Get();
+        view.pointSampler = m_shadowSampler.Get();
+        view.width = width;
+        view.height = height;
+        view.view = m_postProcessView;
+        view.projection = m_postProcessProjection;
+        view.inverseViewProjection = m_inverseViewProjection;
+        view.previousViewProjection = m_framePreviousViewProjection;
+        view.cameraPosition = m_postProcessCameraPosition;
+        view.frameIndex = m_frameIndex;
+        view.time = static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0));
+        view.flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan;
+        view.zeroToOneDepth = m_device->UsesZeroToOneClipDepth();
+        return view;
+    }
+
     rhi::TextureHandle BasicRenderer::RenderSsao(rhi::TextureHandle source,
                                                  const BasicPostProcessEffect &effect,
                                                  rhi::ICommandContext &commands)
     {
-        if (!source || !m_ssaoRawTarget ||
-            std::ranges::any_of(m_ssaoPipelines, [](const auto &pipeline)
-                                { return !pipeline; }))
+        // Effect lanes (RhiPostProcessAdapter): 0 radius, bias, intensity, power; 1 blur, AO only, temporal blend,
+        // half resolution; 2 history depth and normal thresholds; 3.y estimator. Quality is the sample budget.
+        const ScreenSpaceAmbientOcclusion::Settings settings{
+            .radius = effect.parameters[0].x, .bias = effect.parameters[0].y,
+            .intensity = effect.parameters[0].z, .power = effect.parameters[0].w,
+            .samples = effect.quality,
+            .denoisePasses = static_cast<std::uint32_t>(std::max(effect.parameters[1].x, 0.0f)),
+            .historyWeight = effect.parameters[1].z,
+            .historyDepthThreshold = effect.parameters[2].x, .historyNormalThreshold = effect.parameters[2].y,
+            .estimator = effect.parameters[3].y > 0.5f ? ScreenSpaceAmbientOcclusion::Estimator::Horizon
+                                                       : ScreenSpaceAmbientOcclusion::Estimator::Spiral,
+            .halfResolution = effect.parameters[1].w > 0.5f,
+            .aoOnly = effect.parameters[1].y > 0.5f};
+        auto *guide = PrepareScreenSpaceGuide(ScreenSpaceAmbientOcclusion::GuideDivisor(settings), m_width, m_height,
+                                              commands);
+        if (!m_ambientOcclusion || !guide)
             return source;
+        return m_ambientOcclusion->Record(commands, MakeScreenSpaceView(m_width, m_height), settings,
+                                          {source, m_indirectTarget.Get(), m_colorTarget.Get()}, *guide);
+    }
 
-        const auto divisor = effect.parameters[1].w > 0.5f ? 2u : 1u;
-        const bool reducedResolution=divisor==2 && m_ssaoFilterPipeline && m_ssaoUpsamplePipeline;
-        const auto rawWidth = (m_width + divisor - 1u) / divisor;
-        const auto rawHeight = (m_height + divisor - 1u) / divisor;
-        if (m_ssaoRawWidth != rawWidth || m_ssaoRawHeight != rawHeight || !m_ssaoHistoryTargets[0])
-        {
-            m_ssaoRawTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                {rawWidth, rawHeight, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment,
-                 "SSAO raw", true}));
-            for (std::size_t index=0; index<m_ssaoHistoryTargets.size(); ++index)
-                m_ssaoHistoryTargets[index]=rhi::Texture(*m_device,m_device->CreateTexture({
-                    reducedResolution ? rawWidth : m_width,reducedResolution ? rawHeight : m_height,rhi::Format::R16G16B16A16Float,rhi::TextureUsage::ColorAttachment,
-                    index==0 ? "SSAO history A" : "SSAO history B",true}));
-            m_ssaoRawWidth = rawWidth;
-            m_ssaoRawHeight = rawHeight;
-            m_ssaoHistoryValid = false;
-        }
-        const glm::vec4 filter(effect.parameters[1].x,effect.parameters[1].w,effect.parameters[3].y,float(effect.quality));
-        if (m_ssaoPreviousSettings != effect.parameters[0] || m_ssaoPreviousFilter != filter)
-            m_ssaoHistoryValid = false;
-        m_ssaoPreviousSettings = effect.parameters[0];
-        m_ssaoPreviousFilter = filter;
-        auto parameters = effect.parameters;
-        parameters[2].z = 1.0f / static_cast<float>(rawWidth);
-        parameters[2].w = 1.0f / static_cast<float>(rawHeight);
-        parameters[5].w = m_ssaoHistoryValid ? 1.0f : 0.0f;
-        parameters[3].z = std::min(5.0f,std::floor(std::log2(float(std::max(m_width,m_height)))));
-        parameters[3].w = m_ssaoDepthPipeline ? 1.0f : 0.0f;
-        const BasicPostProcessParameters block{
-            effect.exposure, std::max(effect.gamma, 0.001f),
-            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1u : 0u, effect.quality,
-            glm::vec2(1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height)),
-            static_cast<float>((m_frameIndex % 4096u) * (1.0 / 60.0)),
-            m_device->UsesZeroToOneClipDepth() ? 1u : 0u, parameters,
-            m_inverseViewProjection, m_postProcessView, m_postProcessProjection,
-            m_postProcessCameraPosition, m_ssaoPreviousView};
+    ScreenSpaceGuide *BasicRenderer::PrepareScreenSpaceGuide(std::uint32_t divisor, std::uint32_t width,
+                                                             std::uint32_t height, rhi::ICommandContext &commands)
+    {
+        auto &guide = m_screenSpaceGuides[divisor - 1];
+        if (!guide)
+            return nullptr;
+        const float falloff = m_screenSpaceHierarchyFalloff[divisor - 1];
+        guide->Prepare(commands, MakeScreenSpaceView(width, height),
+                       {.hierarchy = falloff > 0.0f && guide->SupportsHierarchy(), .hierarchyFalloff = falloff});
+        return guide.get();
+    }
 
-        // Separate preparation from evaluation so both estimators use the same
-        // view-space representation and cache-friendly distant depth samples.
-        if (m_ssaoDepthPipeline)
-        {
-            constexpr std::uint32_t maxLevels = 6;
-            const auto levels = std::min(maxLevels, 1u + static_cast<std::uint32_t>(std::floor(std::log2(std::max(m_width,m_height)))));
-            if (!m_ssaoDepthPyramid)
-                m_ssaoDepthPyramid = rhi::Texture(*m_device,m_device->CreateTexture({
-                    .width=m_width,.height=m_height,.format=rhi::Format::R32Float,
-                    .usage=rhi::TextureUsage::Sampled,.debugName="SSAO view-depth mips",
-                    .sampled=true,.storage=true,.mipLevels=levels}));
-            commands.BeginGpuScope("RHI SSAO / Depth preparation");
-            for (std::uint32_t level=0; level<levels; ++level)
-            {
-                auto depthBlock = block;
-                depthBlock.parameters[3] = glm::vec4(level ? level-1 : 0,0,0,level ? 1 : 0);
-                auto &buffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
-                m_device->UpdateBuffer(buffer.Get(),0,Bytes(depthBlock));
-                commands.BindPipeline(m_ssaoDepthPipeline.Get());
-                commands.BindUniformBuffer(0,buffer.Get());
-                commands.BindTexture(1,level ? m_ssaoDepthPyramid.Get() : m_depthTarget.Get(),m_shadowSampler.Get());
-                commands.BindStorageImage(2,m_ssaoDepthPyramid.Get(),level);
-                commands.Dispatch((std::max(1u,m_width>>level)+7)/8,(std::max(1u,m_height>>level)+7)/8,1);
-                const std::array written{m_ssaoDepthPyramid.Get()};
-                commands.ComputeImageBarrier(written);
-            }
-            commands.EndGpuScope();
-        }
-        auto &rawBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
-        m_device->UpdateBuffer(rawBuffer.Get(), 0, Bytes(block));
-        rhi::RenderingInfo rawInfo;
-        rawInfo.colorAttachments = {m_ssaoRawTarget.Get()};
-        rawInfo.width = rawWidth;
-        rawInfo.height = rawHeight;
-        rawInfo.clearDepth = false;
-        commands.BeginGpuScope("RHI SSAO / Raw AO");
-        commands.BeginRendering(rawInfo);
-        commands.BindPipeline(m_ssaoPipelines[effect.parameters[3].y > 0.5f ? 2 : 0].Get());
-        commands.BindUniformBuffer(0, rawBuffer.Get());
-        commands.BindTexture(1, source, m_screenSampler.Get());
-        commands.BindTexture(2, m_depthTarget.Get(), m_screenSampler.Get());
-        commands.BindTexture(3, m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-        commands.BindTexture(4, m_ssaoDepthPyramid ? m_ssaoDepthPyramid.Get() : m_depthTarget.Get(), m_shadowSampler.Get());
-        commands.Draw(3);
-        commands.EndRendering();
-        commands.EndGpuScope();
-
-        auto &resolvedHistory = m_ssaoHistoryTargets[1u - m_ssaoHistoryIndex];
-        auto &resolveBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
-        m_device->UpdateBuffer(resolveBuffer.Get(), 0, Bytes(block));
-        commands.BeginGpuScope("RHI SSAO / Spatial and temporal resolve");
-        rhi::RenderingInfo resolveInfo;
-        resolveInfo.colorAttachments={resolvedHistory.Get()};
-        if (!reducedResolution) resolveInfo.colorAttachments.push_back(m_ssaoCompositeTarget.Get());
-        resolveInfo.width=reducedResolution ? rawWidth : m_width;
-        resolveInfo.height=reducedResolution ? rawHeight : m_height;
-        resolveInfo.clearDepth=false;
-        commands.BeginRendering(resolveInfo);
-        commands.BindPipeline(reducedResolution ? m_ssaoFilterPipeline.Get() : m_ssaoPipelines[1].Get());
-        commands.BindUniformBuffer(0,resolveBuffer.Get());
-        commands.BindTexture(1,m_ssaoRawTarget.Get(),m_screenSampler.Get());
-        commands.BindTexture(2,m_depthTarget.Get(),m_screenSampler.Get());
-        commands.BindTexture(3,m_normalTarget ? m_normalTarget.Get() : m_fallbackDataTexture.Get(),m_screenSampler.Get());
-        commands.BindTexture(5,m_motionTarget ? m_motionTarget.Get() : m_fallbackDataTexture.Get(),m_screenSampler.Get());
-        commands.BindTexture(6,m_ssaoHistoryTargets[m_ssaoHistoryIndex].Get(),m_screenSampler.Get());
-        commands.BindTexture(7,source,m_screenSampler.Get());
-        commands.BindTexture(8,m_indirectTarget.Get(),m_screenSampler.Get());
-        commands.BindTexture(9,m_colorTarget.Get(),m_screenSampler.Get());
-        commands.Draw(3); commands.EndRendering();
-        commands.EndGpuScope();
-        if (reducedResolution)
-        {
-            commands.BeginGpuScope("RHI SSAO / Bilateral upsample and composite");
-            rhi::RenderingInfo info;
-            info.colorAttachments={m_ssaoCompositeTarget.Get()}; info.width=m_width; info.height=m_height; info.clearDepth=false;
-            commands.BeginRendering(info);
-            commands.BindPipeline(m_ssaoUpsamplePipeline.Get());
-            commands.BindUniformBuffer(0,resolveBuffer.Get());
-            commands.BindTexture(1,source,m_screenSampler.Get());
-            commands.BindTexture(2,m_depthTarget.Get(),m_screenSampler.Get());
-            commands.BindTexture(3,m_normalTarget.Get(),m_screenSampler.Get());
-            commands.BindTexture(6,resolvedHistory.Get(),m_screenSampler.Get());
-            commands.BindTexture(8,m_indirectTarget.Get(),m_screenSampler.Get());
-            commands.BindTexture(9,m_colorTarget.Get(),m_screenSampler.Get());
-            commands.Draw(3); commands.EndRendering();
-            commands.EndGpuScope();
-        }
-
-        auto *destination = &m_ssaoCompositeTarget;
-        m_ssaoHistoryIndex = 1u - m_ssaoHistoryIndex;
-        m_ssaoHistoryValid = true;
-        m_ssaoPreviousView = m_postProcessView;
-        return destination->Get();
+    rhi::TextureHandle BasicRenderer::RenderSsr(rhi::TextureHandle source,
+                                                const BasicPostProcessEffect &effect,
+                                                bool temporalResolve,
+                                                rhi::ICommandContext &commands)
+    {
+        if (!m_reflections)
+            return source;
+        ScreenSpaceReflections::Settings settings{
+            .technique = effect.parameters[3].y > 0.5f ? ScreenSpaceReflections::Technique::Reference
+                                                       : ScreenSpaceReflections::Technique::Stochastic,
+            .steps = effect.quality,
+            .fullResolution = effect.parameters[4].w > 0.5f,
+            .temporalResolve = temporalResolve};
+        std::copy_n(effect.parameters.begin(), settings.lanes.size(), settings.lanes.begin());
+        auto *guide = settings.technique == ScreenSpaceReflections::Technique::Stochastic && !settings.fullResolution
+            ? PrepareScreenSpaceGuide(ScreenSpaceReflections::GuideDivisor, m_postProcessWidth, m_postProcessHeight,
+                                      commands)
+            : nullptr;
+        return m_reflections->Record(commands, MakeScreenSpaceView(m_postProcessWidth, m_postProcessHeight), settings,
+                                     source, guide);
     }
 
     rhi::TextureHandle BasicRenderer::RenderBloom(rhi::TextureHandle source,

@@ -39,6 +39,10 @@ namespace PlutoGE::render
     class BackgroundMotion;
     class UpscalerSharpening;
     class CloudNoiseVolume;
+    class ScreenSpaceGuide;
+    class ScreenSpaceAmbientOcclusion;
+    class ScreenSpaceReflections;
+    struct ScreenSpaceView;
     struct RhiGpuSkinningSource;
     struct RhiGpuSkinningState;
     struct RhiGpuSkinningDispatch;
@@ -176,12 +180,13 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
                    BasicPostProcessInput::Motion | BasicPostProcessInput::History;
         case BasicPostProcessEffectType::SSAO:
-            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Indirect;
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion |
+                   BasicPostProcessInput::Indirect;
         case BasicPostProcessEffectType::SSGI:
         case BasicPostProcessEffectType::VCTGI:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal;
         case BasicPostProcessEffectType::SSR:
-            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
+            return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion |
                    BasicPostProcessInput::Material | BasicPostProcessInput::Albedo | BasicPostProcessInput::EnvironmentSpecular;
         case BasicPostProcessEffectType::VolumetricFog:
         case BasicPostProcessEffectType::PhysicalSky:
@@ -277,9 +282,15 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
-        // Trace, upsample and composite, horizontal filter, the trace for fewer than 16 rays per pixel, and the
-        // vertical filter. The filters and traces run at trace resolution.
+        // Reference SSR: trace, upsample and composite, horizontal filter, the trace for fewer than 16 rays per
+        // pixel, and the vertical filter. The filters and traces run at trace resolution.
         std::array<BasicPostProcessShaderPackage, 5> ssrStages;
+        // Stochastic SSR (SSRStochastic.slang): trace (compute), ray reuse, temporal accumulation and the guided
+        // composite. Without them SSR uses the reference technique.
+        rhi::ComputePipelineDescriptor::ShaderCode ssrTrace;
+        BasicPostProcessShaderPackage ssrReuse, ssrTemporal, ssrComposite;
+        // Surface guide shared by screen-space effects, and its variant that also builds a depth hierarchy.
+        rhi::ComputePipelineDescriptor::ShaderCode screenSpaceGuide, screenSpaceGuideHierarchy;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowInstancedVertex;
         rhi::GraphicsPipelineDescriptor::ShaderCode shadowFragment;
@@ -298,9 +309,10 @@ namespace PlutoGE::render
             postProcess;
         std::array<BasicPostProcessShaderPackage, 4> bloom;
         std::array<BasicPostProcessShaderPackage, 2> autoExposure;
+        // Raw AO (spiral), denoise + temporal resolve, raw AO (horizons); then the extra denoise passes and the
+        // full-resolution upsample and composite.
         std::array<BasicPostProcessShaderPackage, 3> ssao;
-        rhi::GraphicsPipelineDescriptor::ShaderCode ssaoDepth;
-        BasicPostProcessShaderPackage ssaoFilter, ssaoUpsample;
+        BasicPostProcessShaderPackage ssaoDenoise, ssaoUpsample;
         // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
         BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
         // Temporal reconstruction inputs/outputs: background camera motion and upscaler sharpening.
@@ -594,8 +606,9 @@ namespace PlutoGE::render
         std::uint32_t quality = 0;
         // Effect-specific values are deliberately grouped into aligned lanes.
         // This keeps the GPU ABI stable while new single-input passes are added.
-        // SSR reserves lane 4.xyz for its internal trace/resolve passes; set
-        // lane 4.w to 1 for the full-resolution reference used by GPU benchmarks.
+        // SSR reserves lanes 4.xyz, 5 and 6 for its internal passes; lane 3.y
+        // selects the technique (0 stochastic, 1 reference) and lane 4.w = 1
+        // the full-resolution reference used by GPU benchmarks.
         // VCT uses lane 2.z for trace divisor and lane 4.w for local injection.
         // Lane 5.x is local gain minus one; 5.y is secondary bounce (0 disables).
         // VolumetricFog uses lanes 0-3 for its medium and haze, 4.y/4.z for
@@ -779,7 +792,7 @@ namespace PlutoGE::render
 
         // Camera composition runs on HDR color and geometry inputs before TAA.
         void SetTemporalMetadata(rhi::TextureHandle metadata) noexcept { m_temporalMetadata = metadata; }
-        void ResetTemporalHistory() noexcept { m_taaHistoryValid = m_ssaoHistoryValid = false; }
+        void ResetTemporalHistory() noexcept;
         [[nodiscard]] const glm::mat4 &GetInverseViewProjection() const noexcept { return m_inverseViewProjection; }
         [[nodiscard]] const glm::mat4 &GetPreviousViewProjection() const noexcept { return m_framePreviousViewProjection; }
         // Directional VSM recorded by the Render in progress (or the last one),
@@ -871,9 +884,18 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle RenderAutoExposure(rhi::TextureHandle source,
                                                             const BasicPostProcessEffect &effect,
                                                             rhi::ICommandContext &commands);
+        // Screen-space state for this frame's camera and G-buffer (see ScreenSpacePass.h).
+        [[nodiscard]] ScreenSpaceView MakeScreenSpaceView(std::uint32_t width, std::uint32_t height) const;
         [[nodiscard]] rhi::TextureHandle RenderSsao(rhi::TextureHandle source,
                                                     const BasicPostProcessEffect &effect,
                                                     rhi::ICommandContext &commands);
+        // Builds the guide for `divisor` this frame (once), with any depth hierarchy SSAO needs. Null if unavailable.
+        ScreenSpaceGuide *PrepareScreenSpaceGuide(std::uint32_t divisor, std::uint32_t width, std::uint32_t height,
+                                                  rhi::ICommandContext &commands);
+        [[nodiscard]] rhi::TextureHandle RenderSsr(rhi::TextureHandle source,
+                                                   const BasicPostProcessEffect &effect,
+                                                   bool temporalResolve,
+                                                   rhi::ICommandContext &commands);
         [[nodiscard]] rhi::TextureHandle RenderVctgi(rhi::TextureHandle source,
                                                      const BasicPostProcessEffect &effect,
                                                      const BasicLighting &lighting,
@@ -898,6 +920,12 @@ namespace PlutoGE::render
         std::unique_ptr<BackgroundMotion> m_backgroundMotion;
         std::unique_ptr<UpscalerSharpening> m_upscalerSharpening;
         std::unique_ptr<CloudNoiseVolume> m_cloudNoise;
+        // Surface guides by resolution divisor (full, half), shared by SSAO and SSR.
+        std::array<std::unique_ptr<ScreenSpaceGuide>, 2> m_screenSpaceGuides;
+        std::unique_ptr<ScreenSpaceAmbientOcclusion> m_ambientOcclusion;
+        std::unique_ptr<ScreenSpaceReflections> m_reflections;
+        // This frame's SSAO hierarchy falloff per guide divisor; zero when no SSAO uses that guide.
+        std::array<float, 2> m_screenSpaceHierarchyFalloff{};
         std::vector<RhiGpuSkinningDispatch> m_gpuSkinningDispatches;
         std::uint64_t m_geometrySweepFrame = 0;
         VirtualShadowShaders m_virtualShadowShaders;
@@ -911,7 +939,6 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
         rhi::GraphicsPipeline m_glassColorCopyPipeline, m_glassDepthCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
-        std::array<rhi::GraphicsPipeline, 5> m_ssrStagePipelines;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};
@@ -1012,7 +1039,6 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 4> m_bloomPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_autoExposurePipelines;
         std::array<rhi::Texture, 2> m_exposureHistoryTargets;
-        std::array<rhi::GraphicsPipeline, 3> m_ssaoPipelines;
         rhi::GraphicsPipeline m_vctProbePipeline;
         rhi::Texture m_vctProbeRadiance, m_vctProbeVisibility;
         glm::vec4 m_vctCacheOriginSize{0.0f}, m_vctCacheConfiguration{0.0f};
@@ -1091,13 +1117,6 @@ namespace PlutoGE::render
         std::uint32_t m_vctTraceQuality = 0;
         std::uint32_t m_vctReactiveFrames = 0;
         glm::mat4 m_vctPreviousView{1.0f};
-        rhi::GraphicsPipeline m_ssaoDepthPipeline, m_ssaoFilterPipeline, m_ssaoUpsamplePipeline;
-        rhi::Texture m_ssaoDepthPyramid;
-        rhi::Texture m_ssaoRawTarget;
-        std::uint32_t m_ssaoRawWidth = 0;
-        std::uint32_t m_ssaoRawHeight = 0;
-        std::array<rhi::Texture, 2> m_ssaoHistoryTargets;
-        rhi::Texture m_ssaoCompositeTarget;
         std::unique_ptr<PostProcessResourcePool> m_postProcessResourcePool;
         std::size_t m_postProcessBufferCursor = 0;
         std::uint8_t m_taaHistoryIndex = 0;
@@ -1107,10 +1126,6 @@ namespace PlutoGE::render
         glm::mat4 m_framePreviousViewProjection{1.0f};
         std::uint8_t m_exposureHistoryIndex = 0;
         bool m_exposureHistoryValid = false;
-        std::uint8_t m_ssaoHistoryIndex = 0;
-        bool m_ssaoHistoryValid = false;
-        glm::vec4 m_ssaoPreviousSettings{}, m_ssaoPreviousFilter{};
-        glm::mat4 m_ssaoPreviousView{1.0f};
         rhi::Texture m_depthTarget;
         rhi::Texture m_temporalUpscalerOutput;
         // Render-resolution reactive mask an upscaler derives from translucent composition.

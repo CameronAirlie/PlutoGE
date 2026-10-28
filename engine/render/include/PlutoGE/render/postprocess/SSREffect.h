@@ -30,12 +30,15 @@ namespace PlutoGE::render
             int rayCount;
             // Trace fewer rays where the GGX lobe is narrower than the pixels its rays reach (see SSR.slang).
             bool adaptiveRays;
+            // The multi-ray reference technique instead of stochastic rays with reuse and temporal accumulation
+            // (see ScreenSpaceReflections.h). Ray count and adaptive rays apply to the reference technique only.
+            bool reference;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
             return {m_intensity, m_maxRayDistance, m_thickness, m_startOffset,
                     m_edgeFade, m_fresnelPower, m_metallicBoost, m_maxRoughness,
-                    m_stepCount, m_binarySearchSteps, m_rayCount, m_adaptiveRays};
+                    m_stepCount, m_binarySearchSteps, m_rayCount, m_adaptiveRays, m_reference};
         }
 
     private:
@@ -58,5 +61,6 @@ namespace PlutoGE::render
         int m_binarySearchSteps = 5;
         int m_rayCount = 16;
         bool m_adaptiveRays = true;
+        bool m_reference = false;
     };
 }

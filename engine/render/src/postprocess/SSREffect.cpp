@@ -31,6 +31,8 @@ namespace PlutoGE::render
             {.name = "Adaptive Rays", .type = PostProcessParameterType::Bool, .value = m_adaptiveRays ? "true" : "false"},
             {.name = "Edge Fade", .type = PostProcessParameterType::Float, .value = std::to_string(m_edgeFade)},
             {.name = "Max Roughness", .type = PostProcessParameterType::Float, .value = std::to_string(m_maxRoughness)},
+            {.name = "Technique", .type = PostProcessParameterType::Enum, .value = m_reference ? "1" : "0",
+             .enumOptions = {"Stochastic", "Reference"}},
         };
     }
 
@@ -48,6 +50,7 @@ namespace PlutoGE::render
             else if (parameter.name == "Adaptive Rays") m_adaptiveRays = parameter.value == "true";
             else if (parameter.name == "Edge Fade") m_edgeFade = std::clamp(std::stof(parameter.value), 0.001f, 0.5f);
             else if (parameter.name == "Max Roughness") m_maxRoughness = std::clamp(std::stof(parameter.value), 0.15f, 1.0f);
+            else if (parameter.name == "Technique") m_reference = std::stoi(parameter.value) == 1;
             else if (parameter.name == "Fresnel Power") m_fresnelPower = std::clamp(std::stof(parameter.value), 0.25f, 10.0f);
             else if (parameter.name == "Metallic Boost") m_metallicBoost = std::clamp(std::stof(parameter.value), 0.0f, 1.0f);
         }

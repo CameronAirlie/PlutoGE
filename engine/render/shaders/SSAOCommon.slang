@@ -1,31 +1,19 @@
-// Shared AO geometry encoding. View depth stays positive and linear; half-float
-// precision is sufficient for relative history rejection without quantizing reverse Z.
-float2 encodeOctahedral(float3 normal)
+// Shared AO encodings. Raw AO targets hold visibility and packed edges; history holds visibility, linear view depth
+// and the octahedral normal (half-float precision is sufficient for relative history rejection).
+#include "ScreenSpaceGuideCommon.slang"
+
+// Four edge-stopping weights (left, right, top, bottom) quantised to two bits each, stored as an exact integer in a
+// half-float channel (XeGTAO's packing).
+float packEdges(float4 edges)
 {
-    normal /= abs(normal.x) + abs(normal.y) + abs(normal.z);
-    if (normal.z < 0.0)
-        normal.xy = (1.0 - abs(normal.yx)) *
-                    float2(normal.x >= 0.0 ? 1.0 : -1.0, normal.y >= 0.0 ? 1.0 : -1.0);
-    return normal.xy * 0.5 + 0.5;
+    const float4 quantised = round(saturate(edges) * 3.0);
+    return dot(quantised, float4(64.0, 16.0, 4.0, 1.0));
 }
 
-float3 decodeOctahedral(float2 encoded)
+float4 unpackEdges(float packed)
 {
-    const float2 f = encoded * 2.0 - 1.0;
-    float3 normal = float3(f, 1.0 - abs(f.x) - abs(f.y));
-    const float t = saturate(-normal.z);
-    normal.xy += float2(normal.x >= 0.0 ? -t : t, normal.y >= 0.0 ? -t : t);
-    return normalize(normal);
-}
-
-float3 ssaoViewPosition(float2 textureUv, float depth, PostProcessParameterBlock pass)
-{
-    float2 ndc = textureUv * 2.0 - 1.0;
-    if (pass.flipY != 0) ndc.y = -ndc.y;
-    const float z = -depth;
-    const float w = pass.projection[3][2] * z + pass.projection[3][3];
-    return float3((ndc.x * w - pass.projection[0][2] * z - pass.projection[0][3]) / pass.projection[0][0],
-                  (ndc.y * w - pass.projection[1][2] * z - pass.projection[1][3]) / pass.projection[1][1], z);
+    const uint value = uint(packed + 0.5);
+    return float4((value >> 6) & 3u, (value >> 4) & 3u, (value >> 2) & 3u, value & 3u) / 3.0;
 }
 
 // AO is visibility of indirect illumination, not a multiplier on direct light.

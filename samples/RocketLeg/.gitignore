@@ -2,3 +2,5 @@ Assets/Managed/
 bin/
 obj/
 .plutoge-cache/
+Tests/bin
+Tests/obj

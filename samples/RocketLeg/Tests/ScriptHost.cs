@@ -7,7 +7,7 @@ public static class Native {
 [DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern void SetRayMask(int mask);
 [DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern void SetBall(Vector3 p);
 [DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern Vector3 BallPointVelocity(Vector3 p);
-[DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern void Initialize(float[] vertices, int count);
+[DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern void Initialize(float[] vertices, int count, float floorHalfLength, float floorHalfWidth, float ceiling);
 [DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern void Step(float dt);
 [DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern void Clear();
 [DllImport("RocketLegBullet", CallingConvention=CallingConvention.Cdecl)] public static extern Vector3 Position();
@@ -27,7 +27,7 @@ public static class Native {
 }
 [AttributeUsage(AttributeTargets.Field)] public class SerializedFieldAttribute : Attribute {}
 [AttributeUsage(AttributeTargets.Field)] public class InputMappingAssetAttribute : Attribute {}
-public class ScriptBehaviour { public GameObject GameObject {get;} = new(); public virtual void OnCreate(){} public virtual void OnUpdate(float dt){} public virtual void OnFixedUpdate(float dt){} }
+public class ScriptBehaviour { public GameObject GameObject {get;} = new(); public virtual void OnCreate(){} public virtual void OnUpdate(float dt){} public virtual void OnFixedUpdate(float dt){} public virtual void OnCollisionEnter(GameObject other){} }
 public class GameObject {
  public static GameObject? Find(string name)=>null;
  public Vector3 Position;
@@ -43,10 +43,12 @@ public class GameObject {
  public T? GetComponent<T>() where T:class => Ball && typeof(T)==typeof(RigidbodyComponent) ? new RigidbodyComponent {IsBall=true} as T : Static ? null : Components.GetValueOrDefault(typeof(T)) as T;
 }
 public enum ColliderShape {Box}
-public class ColliderComponent {public ColliderShape Shape; public Vector3 Center,Size;}
+// Defaults match the cars' authored collider in Main.plutoscene.
+public class ColliderComponent {public ColliderShape Shape=ColliderShape.Box; public Vector3 Center=new(0,.1f,0),Size=new(.92f,.75f,.88f);}
 public class RigidbodyComponent {
  public bool IsBall;
- public float Mass, LinearDrag, AngularDrag, Friction; public bool UseGravity, IsKinematic, FreezeRotation;
+ // Defaults match the cars' authored rigidbody in Main.plutoscene (and BulletHost's body).
+ public float Mass=850, LinearDrag=.04f, AngularDrag, Friction=.05f; public bool UseGravity, IsKinematic, FreezeRotation;
  // Match ScriptCore's fixed-callback snapshots: impulses mutate Bullet at once,
  // but Velocity remains the pre-callback value until the host synchronizes it.
  public Vector3 Velocity {get;set;} public Vector3 AngularVelocity {get;set;}
@@ -64,7 +66,7 @@ public class InputActionMap {
  public bool IsDown(string a)=>(Boost&&a.EndsWith("Boost"))||(Jump&&a.EndsWith("Jump"))||(Powerslide&&a.EndsWith("Powerslide"));
  public bool WasPressed(string a)=>false;
 }
-public static class Debug {public static void LogError(string s)=>throw new Exception(s);}
+public static class Debug {public static void LogError(string s)=>throw new Exception(s); public static void LogWarning(string s)=>Console.WriteLine("WARNING: "+s);}
 public struct RaycastHit {public Vector3 Normal,Point; public float Distance; public GameObject Entity;}
 public static class Physics {
  public static bool Raycast(Vector3 o,Vector3 d,float l,GameObject ignore,out RaycastHit hit){

@@ -1,0 +1,231 @@
+@blue: color = 0.16,0.55,1,1
+@blue-deep: color = 0.04,0.22,0.62,0.94
+@blue-soft: color = 0.16,0.55,1,0.28
+@orange: color = 1,0.52,0.1,1
+@orange-deep: color = 0.66,0.24,0.02,0.94
+@orange-soft: color = 1,0.52,0.1,0.28
+@boost: color = 1,0.74,0.18,1
+@text: color = 0.97,0.98,1,1
+@text-dim: color = 0.72,0.77,0.85,1
+@text-faint: color = 0.5,0.55,0.62,1
+@warn: color = 1,0.84,0.3,1
+@panel: color = 0.02,0.04,0.08,0.84
+@panel-light: color = 0.08,0.11,0.17,0.88
+@track: color = 1,1,1,0.12
+@line: color = 1,1,1,0.14
+@shadow: color = 0,0,0,0.55
+@outline: color = 0,0,0,0.7
+@font: text = "project://UI/Fonts/Roboto.ttf"
+@font-numbers: text = "project://UI/Fonts/MartianMono-StdRg.ttf"
+
+.Text {
+    UITextComponent.FontPath = @font
+    UITextComponent.FontSize = 16
+    UITextComponent.Color = @text
+    UITextComponent.ShadowColor = @shadow
+    UITextComponent.ShadowOffset = 0,-2
+    UITextComponent.ShadowSoftness = 0.7
+}
+
+.Caption extends .Text {
+    UITextComponent.FontSize = 13
+    UITextComponent.Bold = true
+    UITextComponent.LetterSpacing = 3
+    UITextComponent.Color = @text-dim
+}
+
+// Scoreboard
+
+.Score-Panel {
+    UIShapeComponent.Color = @panel
+    UIShapeComponent.CornerRadii = 0,0,14,14
+    UIShapeComponent.Shadow = true
+    UIShapeComponent.ShadowColor = @shadow
+    UIShapeComponent.ShadowBlur = 18
+    UIShapeComponent.ShadowOffset = 0,-4
+}
+
+.Score-Blue {
+    UIShapeComponent.Color = @blue
+    UIShapeComponent.EndColor = @blue-deep
+    UIShapeComponent.FillType = 1
+    UIShapeComponent.GradientAngle = 90
+    UIShapeComponent.CornerRadii = 0,0,0,14
+}
+
+.Score-Orange {
+    UIShapeComponent.Color = @orange
+    UIShapeComponent.EndColor = @orange-deep
+    UIShapeComponent.FillType = 1
+    UIShapeComponent.GradientAngle = 90
+    UIShapeComponent.CornerRadii = 0,0,14,0
+}
+
+.Score-Number extends .Text {
+    UITextComponent.FontSize = 54
+    UITextComponent.Bold = true
+}
+
+.Team-Name extends .Caption {
+    UITextComponent.FontSize = 12
+    UITextComponent.Color = @text
+}
+
+.Clock extends .Text {
+    UITextComponent.FontPath = @font-numbers
+    UITextComponent.FontSize = 38
+}
+
+.Clock-Overtime extends .Clock {
+    UITextComponent.Color = @warn
+}
+
+.Clock-Caption extends .Caption {
+    UITextComponent.FontSize = 11
+    UITextComponent.LetterSpacing = 4
+}
+
+.Clock-Caption-Overtime extends .Clock-Caption {
+    UITextComponent.Color = @warn
+}
+
+// Boost meters
+
+.Boost-Backdrop {
+    UIImageComponent.Color = @panel
+    UIImageComponent.CornerRadius = 100
+    UIImageComponent.Thickness = 0
+}
+
+.Boost-Track {
+    UIImageComponent.Color = @track
+    UIImageComponent.Thickness = 16
+}
+
+.Boost-Fill-Blue {
+    UIImageComponent.Color = @blue
+    UIImageComponent.Thickness = 16
+}
+
+.Boost-Fill-Orange {
+    UIImageComponent.Color = @orange
+    UIImageComponent.Thickness = 16
+}
+
+.Boost-Fill-Empty {
+    UIImageComponent.Color = @track
+    UIImageComponent.Thickness = 16
+}
+
+.Boost-Number extends .Text {
+    UITextComponent.FontSize = 50
+    UITextComponent.Bold = true
+}
+
+.Boost-Number-Active extends .Boost-Number {
+    UITextComponent.Color = @boost
+}
+
+.Boost-Caption extends .Caption {
+    UITextComponent.FontSize = 11
+}
+
+.Car-Status extends .Caption {
+    UITextComponent.FontSize = 12
+    UITextComponent.LetterSpacing = 2
+}
+
+.Car-Status-Alert extends .Car-Status {
+    UITextComponent.Color = @warn
+}
+
+// Centre banners
+
+.Countdown extends .Text {
+    UITextComponent.FontSize = 150
+    UITextComponent.Bold = true
+    UITextComponent.Italic = true
+    UITextComponent.OutlineColor = @outline
+    UITextComponent.OutlineWidth = 3
+}
+
+.Banner extends .Countdown {
+    UITextComponent.FontSize = 96
+}
+
+.Banner-Blue extends .Banner {
+    UITextComponent.Color = @blue
+}
+
+.Banner-Orange extends .Banner {
+    UITextComponent.Color = @orange
+}
+
+.Banner-Detail extends .Text {
+    UITextComponent.FontSize = 26
+    UITextComponent.Bold = true
+    UITextComponent.LetterSpacing = 2
+    UITextComponent.OutlineColor = @outline
+    UITextComponent.OutlineWidth = 1.5
+}
+
+// Event feed
+
+.Feed-Item {
+    UIShapeComponent.Color = @panel
+    UIShapeComponent.CornerRadii = 8,8,8,8
+}
+
+.Feed-Item-Blue extends .Feed-Item {
+    UIShapeComponent.BorderWidth = 2
+    UIShapeComponent.BorderColor = @blue
+}
+
+.Feed-Item-Orange extends .Feed-Item {
+    UIShapeComponent.BorderWidth = 2
+    UIShapeComponent.BorderColor = @orange
+}
+
+.Feed-Text extends .Text {
+    UITextComponent.FontSize = 16
+    UITextComponent.Bold = true
+}
+
+// Help and result cards
+
+.Card {
+    UIShapeComponent.Color = @panel
+    UIShapeComponent.CornerRadii = 14,14,14,14
+    UIShapeComponent.BorderWidth = 1
+    UIShapeComponent.BorderColor = @line
+    UIShapeComponent.Shadow = true
+    UIShapeComponent.ShadowColor = @shadow
+    UIShapeComponent.ShadowBlur = 24
+}
+
+.Card-Title extends .Text {
+    UITextComponent.FontSize = 22
+    UITextComponent.Bold = true
+    UITextComponent.LetterSpacing = 3
+}
+
+.Card-Body extends .Text {
+    UITextComponent.FontSize = 15
+    UITextComponent.Color = @text-dim
+    UITextComponent.LineSpacing = 1.35
+}
+
+.Card-Row {
+    UIShapeComponent.Color = @panel-light
+    UIShapeComponent.CornerRadii = 8,8,8,8
+}
+
+.Stat-Value extends .Text {
+    UITextComponent.FontPath = @font-numbers
+    UITextComponent.FontSize = 20
+}
+
+.Hint extends .Caption {
+    UITextComponent.FontSize = 12
+    UITextComponent.Color = @text-faint
+}

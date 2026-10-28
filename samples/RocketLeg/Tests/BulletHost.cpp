@@ -28,11 +28,13 @@ static btRigidBody* add(std::unique_ptr<btCollisionShape> shape, float mass, btV
     world.addRigidBody(body.get());auto result=body.get();
     shapes.push_back(std::move(shape));bodies.push_back(std::move(body));return result;
 }
-API void Initialize(float* vertices, int count) {
+API void Initialize(float* vertices, int count, float floorHalfLength, float floorHalfWidth, float ceiling) {
     world.setGravity({0,-9.81f,0});
     for(int i=0;i<count;i+=9) triangles.addTriangle({vertices[i],vertices[i+1],vertices[i+2]}, {vertices[i+3],vertices[i+4],vertices[i+5]}, {vertices[i+6],vertices[i+7],vertices[i+8]});
     add(std::make_unique<btBvhTriangleMeshShape>(&triangles,true),0,{0,0,0});
-    add(std::make_unique<btBoxShape>(btVector3(35,.25f,21)),0,{0,-.25f,0});
+    add(std::make_unique<btBoxShape>(btVector3(floorHalfLength,.25f,floorHalfWidth)),0,{0,-.25f,0});
+    // Solid slab over the roof mesh, as in the scene, so fast cars cannot tunnel out.
+    add(std::make_unique<btBoxShape>(btVector3(floorHalfLength+12,1,floorHalfWidth+12)),0,{0,ceiling+1,0});
     auto box=std::make_unique<btBoxShape>(btVector3(.552f,.15f,.88f));
     auto compound=std::make_unique<btCompoundShape>();
     compound->addChildShape(btTransform(btQuaternion(0,0,0,1),{0,.04f,0}),box.get());

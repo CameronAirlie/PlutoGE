@@ -147,7 +147,17 @@
     {
       "Name": "RestartMatch",
       "Bindings": [
-        { "Kind": "Key", "Key": "R" }
+        { "Kind": "Key", "Key": "R" },
+        { "Kind": "GamepadButton", "Button": "Start", "Gamepad": 0 },
+        { "Kind": "GamepadButton", "Button": "Start", "Gamepad": 1 }
+      ]
+    },
+    {
+      "Name": "ToggleHelp",
+      "Bindings": [
+        { "Kind": "Key", "Key": "H" },
+        { "Kind": "GamepadButton", "Button": "Back", "Gamepad": 0 },
+        { "Kind": "GamepadButton", "Button": "Back", "Gamepad": 1 }
       ]
     }
   ]

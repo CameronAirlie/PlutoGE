@@ -1,0 +1,14 @@
+Color=0.12,0.36,0.9,0.3
+SurfaceType=Glass
+AlphaMode=Blend
+CastsShadow=false
+TwoSided=true
+Metallic=0
+Roughness=0.08
+Emission=0,0,0
+Transmission=0.8
+Ior=1.5
+Thickness=0.5
+AttenuationColor=0.45,0.65,1
+AttenuationDistance=1
+ShaderGraph=engine://builtin/shadergraph/default-lit

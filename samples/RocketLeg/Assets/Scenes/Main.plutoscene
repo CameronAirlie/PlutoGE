@@ -1,7 +1,7 @@
 SCENE	1
-ENTITY	1	0	1	Arena Floor	0.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	70.000000,0.500000,42.000000
-TAGS	1	1	ground
-COMPONENT	1	ColliderComponent	1
+ENTITY	1000	0	1	Arena Floor	0.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	120.000000,0.500000,82.000000
+TAGS	1000	2	generated	ground
+COMPONENT	1000	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -11,7 +11,24 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	1	MeshComponent	1
+COMPONENT	1000	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	false	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/FieldBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	1001	0	1	Blue Half	-30.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	60.000000,0.500000,82.000000
+TAGS	1001	1	generated
+COMPONENT	1001	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -20,24 +37,59 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/FieldBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	2	0	1	Concave Lower Banks	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
-TAGS	2	1	ground
-COMPONENT	2	ColliderComponent	1
+ENTITY	1002	0	1	Orange Half	30.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	60.000000,0.500000,82.000000
+TAGS	1002	1	generated
+COMPONENT	1002	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/FieldOrange.plutomaterial	0
+END_COMPONENT
+ENTITY	1003	0	1	Field Lines	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1003	1	generated
+COMPONENT	1003	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/FieldLines.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/FieldLines.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/FieldLines.plutomaterial	0
+END_COMPONENT
+ENTITY	1004	0	1	Concave Lower Banks	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1004	2	generated	ground
+COMPONENT	1004	ColliderComponent	1
 PROPERTY	Shape	6	4	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
 PROPERTY	Radius	0	0.500000	0
 PROPERTY	Height	0	2.000000	0
 PROPERTY	Is Trigger	4	false	0
-PROPERTY	Surface Asset	2	project://Materials/glass Copy.plutosurface	0
+PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	2	MeshComponent	1
+COMPONENT	1004	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -46,14 +98,15 @@ PROPERTY	ModelAssetId	2	project://Models/ArenaBanks.glb	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	project://Models/ArenaBanks.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Wall.plutomaterial	0
 END_COMPONENT
-ENTITY	3	0	1	Translucent Walls and Ceiling	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
-TAGS	3	1	ground
-COMPONENT	3	ColliderComponent	1
+ENTITY	1005	0	1	Translucent Walls and Ceiling	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1005	2	generated	ground
+COMPONENT	1005	ColliderComponent	1
 PROPERTY	Shape	6	4	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -63,7 +116,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	3	MeshComponent	1
+COMPONENT	1005	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -72,30 +125,15 @@ PROPERTY	ModelAssetId	2	project://Models/ArenaShell.glb	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	project://Models/ArenaShell.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
-ENTITY	16	0	1	Centre Line	0.000000,0.018000,0.000000	0.000000,0.000000,0.000000	0.180000,0.035000,41.000000
-TAGS	16	1	ground
-COMPONENT	16	MeshComponent	1
-PROPERTY	Static	4	true	0
-PROPERTY	Visible	4	true	0
-PROPERTY	SubmeshIndex	1	-1	0
-PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
-PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
-PROPERTY	UseGeneratedLods	4	false	0
-PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Ball.plutomaterial	0
-END_COMPONENT
-ENTITY	100	0	1	Blue Goal Floor	-40.500000,-0.250000,0.000000	0.000000,0.000000,0.000000	11.000000,0.500000,16.000000
-TAGS	100	1	ground
-COMPONENT	100	ColliderComponent	1
+ENTITY	1006	0	1	Roof Slab	0.000000,31.000000,0.000000	0.000000,0.000000,0.000000	144.000000,2.000000,106.000000
+TAGS	1006	2	generated	ground
+COMPONENT	1006	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -105,101 +143,58 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	100	MeshComponent	1
+COMPONENT	1006	MeshComponent	1
 PROPERTY	Static	4	true	0
-PROPERTY	Visible	4	true	0
+PROPERTY	Visible	4	false	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
 PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
-PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
-END_COMPONENT
-ENTITY	101	0	1	Blue Goal Back	-46.250000,4.000000,0.000000	0.000000,0.000000,0.000000	0.500000,8.000000,16.500000
-TAGS	101	1	ground
-COMPONENT	101	ColliderComponent	1
-PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
-PROPERTY	Center	3	0.000000,0.000000,0.000000	0
-PROPERTY	Size	3	1.000000,1.000000,1.000000	0
-PROPERTY	Radius	0	0.500000	0
-PROPERTY	Height	0	2.000000	0
-PROPERTY	Is Trigger	4	false	0
-PROPERTY	Surface Asset	2		0
-PROPERTY	Blocks Audio	4	true	0
-END_COMPONENT
-COMPONENT	101	MeshComponent	1
-PROPERTY	Static	4	true	0
-PROPERTY	Visible	4	true	0
-PROPERTY	SubmeshIndex	1	-1	0
-PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
-PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
-PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
 END_COMPONENT
-ENTITY	102	0	1	Blue Goal North	-40.500000,4.000000,-8.250000	0.000000,0.000000,0.000000	11.500000,8.000000,0.500000
-TAGS	102	1	ground
-COMPONENT	102	ColliderComponent	1
-PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
-PROPERTY	Center	3	0.000000,0.000000,0.000000	0
-PROPERTY	Size	3	1.000000,1.000000,1.000000	0
-PROPERTY	Radius	0	0.500000	0
-PROPERTY	Height	0	2.000000	0
-PROPERTY	Is Trigger	4	false	0
-PROPERTY	Surface Asset	2		0
-PROPERTY	Blocks Audio	4	true	0
-END_COMPONENT
-COMPONENT	102	MeshComponent	1
+ENTITY	1007	0	1	Blue Wall Trim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1007	1	generated
+COMPONENT	1007	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	project://Models/ArenaTrimBlue.glb	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	project://Models/ArenaTrimBlue.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/TrimBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	103	0	1	Blue Goal South	-40.500000,4.000000,8.250000	0.000000,0.000000,0.000000	11.500000,8.000000,0.500000
-TAGS	103	1	ground
-COMPONENT	103	ColliderComponent	1
-PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
-PROPERTY	Center	3	0.000000,0.000000,0.000000	0
-PROPERTY	Size	3	1.000000,1.000000,1.000000	0
-PROPERTY	Radius	0	0.500000	0
-PROPERTY	Height	0	2.000000	0
-PROPERTY	Is Trigger	4	false	0
-PROPERTY	Surface Asset	2		0
-PROPERTY	Blocks Audio	4	true	0
-END_COMPONENT
-COMPONENT	103	MeshComponent	1
+ENTITY	1008	0	1	Orange Wall Trim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1008	1	generated
+COMPONENT	1008	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	project://Models/ArenaTrimOrange.glb	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	project://Models/ArenaTrimOrange.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/TrimOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	104	0	1	Blue Goal Roof	-43.000000,8.250000,0.000000	0.000000,0.000000,0.000000	6.500000,0.500000,16.500000
-TAGS	104	1	ground
-COMPONENT	104	ColliderComponent	1
+ENTITY	1009	0	1	Blue Goal Floor	-68.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	18.000000,0.500000,24.000000
+TAGS	1009	3	generated	ground	blue
+COMPONENT	1009	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -209,7 +204,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	104	MeshComponent	1
+COMPONENT	1009	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -218,14 +213,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/FieldBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	105	0	1	Blue Goal Crossbar	-40.000000,8.150000,0.000000	0.000000,0.000000,0.000000	0.350000,0.300000,16.500000
-TAGS	105	1	ground
-COMPONENT	105	ColliderComponent	1
+ENTITY	1010	0	1	Blue Goal Back	-77.250000,4.500000,0.000000	0.000000,0.000000,0.000000	0.500000,9.000000,24.500000
+TAGS	1010	3	generated	ground	blue
+COMPONENT	1010	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -235,7 +231,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	105	MeshComponent	1
+COMPONENT	1010	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -244,14 +240,123 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	1011	0	1	Blue Goal North	-68.000000,4.500000,-12.250000	0.000000,0.000000,0.000000	18.500000,9.000000,0.500000
+TAGS	1011	3	generated	ground	blue
+COMPONENT	1011	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Surface Asset	2		0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	1011	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	1012	0	1	Blue Goal South	-68.000000,4.500000,12.250000	0.000000,0.000000,0.000000	18.500000,9.000000,0.500000
+TAGS	1012	3	generated	ground	blue
+COMPONENT	1012	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Surface Asset	2		0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	1012	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	1013	0	1	Blue Goal Roof	-72.000000,9.250000,0.000000	0.000000,0.000000,0.000000	10.500000,0.500000,24.500000
+TAGS	1013	3	generated	ground	blue
+COMPONENT	1013	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Surface Asset	2		0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	1013	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassBlue.plutomaterial	0
+END_COMPONENT
+ENTITY	1014	0	1	Blue Goal Crossbar	-67.000000,9.150000,0.000000	0.000000,0.000000,0.000000	0.350000,0.300000,24.500000
+TAGS	1014	3	generated	ground	blue
+COMPONENT	1014	ColliderComponent	1
+PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
+PROPERTY	Center	3	0.000000,0.000000,0.000000	0
+PROPERTY	Size	3	1.000000,1.000000,1.000000	0
+PROPERTY	Radius	0	0.500000	0
+PROPERTY	Height	0	2.000000	0
+PROPERTY	Is Trigger	4	false	0
+PROPERTY	Surface Asset	2		0
+PROPERTY	Blocks Audio	4	true	0
+END_COMPONENT
+COMPONENT	1014	MeshComponent	1
+PROPERTY	Static	4	true	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	106	0	1	Blue Goal Post North	-40.000000,4.000000,-8.150000	0.000000,0.000000,0.000000	0.350000,8.000000,0.300000
-TAGS	106	1	ground
-COMPONENT	106	ColliderComponent	1
+ENTITY	1015	0	1	Blue Goal Post North	-67.000000,4.500000,-12.150000	0.000000,0.000000,0.000000	0.350000,9.000000,0.300000
+TAGS	1015	3	generated	ground	blue
+COMPONENT	1015	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -261,7 +366,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	106	MeshComponent	1
+COMPONENT	1015	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -270,14 +375,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	107	0	1	Blue Goal Post South	-40.000000,4.000000,8.150000	0.000000,0.000000,0.000000	0.350000,8.000000,0.300000
-TAGS	107	1	ground
-COMPONENT	107	ColliderComponent	1
+ENTITY	1016	0	1	Blue Goal Post South	-67.000000,4.500000,12.150000	0.000000,0.000000,0.000000	0.350000,9.000000,0.300000
+TAGS	1016	3	generated	ground	blue
+COMPONENT	1016	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -287,7 +393,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	107	MeshComponent	1
+COMPONENT	1016	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -296,14 +402,25 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	108	0	1	Orange Goal Floor	40.500000,-0.250000,0.000000	0.000000,0.000000,0.000000	11.000000,0.500000,16.000000
-TAGS	108	1	ground
-COMPONENT	108	ColliderComponent	1
+ENTITY	1017	0	1	Blue Goal Light	-72.000000,4.500000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1017	1	generated
+COMPONENT	1017	LightComponent	1
+PROPERTY	Color	3	0.250000,0.550000,1.000000	0
+PROPERTY	Intensity	0	90.000000	0
+PROPERTY	CastsShadows	4	false	0
+PROPERTY	Direction	3	0.000000,0.000000,-1.000000	0
+PROPERTY	LightType	6	0	3	Point	Directional	Spot
+PROPERTY	Static	4	false	0
+END_COMPONENT
+ENTITY	1018	0	1	Orange Goal Floor	68.000000,-0.250000,0.000000	0.000000,0.000000,0.000000	18.000000,0.500000,24.000000
+TAGS	1018	3	generated	ground	orange
+COMPONENT	1018	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -313,7 +430,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	108	MeshComponent	1
+COMPONENT	1018	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -322,14 +439,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Arena.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/FieldOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	109	0	1	Orange Goal Back	46.250000,4.000000,0.000000	0.000000,0.000000,0.000000	0.500000,8.000000,16.500000
-TAGS	109	1	ground
-COMPONENT	109	ColliderComponent	1
+ENTITY	1019	0	1	Orange Goal Back	77.250000,4.500000,0.000000	0.000000,0.000000,0.000000	0.500000,9.000000,24.500000
+TAGS	1019	3	generated	ground	orange
+COMPONENT	1019	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -339,7 +457,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	109	MeshComponent	1
+COMPONENT	1019	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -348,14 +466,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	110	0	1	Orange Goal North	40.500000,4.000000,-8.250000	0.000000,0.000000,0.000000	11.500000,8.000000,0.500000
-TAGS	110	1	ground
-COMPONENT	110	ColliderComponent	1
+ENTITY	1020	0	1	Orange Goal North	68.000000,4.500000,-12.250000	0.000000,0.000000,0.000000	18.500000,9.000000,0.500000
+TAGS	1020	3	generated	ground	orange
+COMPONENT	1020	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -365,7 +484,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	110	MeshComponent	1
+COMPONENT	1020	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -374,14 +493,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	111	0	1	Orange Goal South	40.500000,4.000000,8.250000	0.000000,0.000000,0.000000	11.500000,8.000000,0.500000
-TAGS	111	1	ground
-COMPONENT	111	ColliderComponent	1
+ENTITY	1021	0	1	Orange Goal South	68.000000,4.500000,12.250000	0.000000,0.000000,0.000000	18.500000,9.000000,0.500000
+TAGS	1021	3	generated	ground	orange
+COMPONENT	1021	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -391,7 +511,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	111	MeshComponent	1
+COMPONENT	1021	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -400,14 +520,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	112	0	1	Orange Goal Roof	43.000000,8.250000,0.000000	0.000000,0.000000,0.000000	6.500000,0.500000,16.500000
-TAGS	112	1	ground
-COMPONENT	112	ColliderComponent	1
+ENTITY	1022	0	1	Orange Goal Roof	72.000000,9.250000,0.000000	0.000000,0.000000,0.000000	10.500000,0.500000,24.500000
+TAGS	1022	3	generated	ground	orange
+COMPONENT	1022	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -417,7 +538,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	112	MeshComponent	1
+COMPONENT	1022	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -426,14 +547,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/StadiumGlass.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalGlassOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	113	0	1	Orange Goal Crossbar	40.000000,8.150000,0.000000	0.000000,0.000000,0.000000	0.350000,0.300000,16.500000
-TAGS	113	1	ground
-COMPONENT	113	ColliderComponent	1
+ENTITY	1023	0	1	Orange Goal Crossbar	67.000000,9.150000,0.000000	0.000000,0.000000,0.000000	0.350000,0.300000,24.500000
+TAGS	1023	3	generated	ground	orange
+COMPONENT	1023	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -443,7 +565,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	113	MeshComponent	1
+COMPONENT	1023	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -452,14 +574,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	114	0	1	Orange Goal Post North	40.000000,4.000000,-8.150000	0.000000,0.000000,0.000000	0.350000,8.000000,0.300000
-TAGS	114	1	ground
-COMPONENT	114	ColliderComponent	1
+ENTITY	1024	0	1	Orange Goal Post North	67.000000,4.500000,-12.150000	0.000000,0.000000,0.000000	0.350000,9.000000,0.300000
+TAGS	1024	3	generated	ground	orange
+COMPONENT	1024	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -469,7 +592,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	114	MeshComponent	1
+COMPONENT	1024	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -478,14 +601,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	115	0	1	Orange Goal Post South	40.000000,4.000000,8.150000	0.000000,0.000000,0.000000	0.350000,8.000000,0.300000
-TAGS	115	1	ground
-COMPONENT	115	ColliderComponent	1
+ENTITY	1025	0	1	Orange Goal Post South	67.000000,4.500000,12.150000	0.000000,0.000000,0.000000	0.350000,9.000000,0.300000
+TAGS	1025	3	generated	ground	orange
+COMPONENT	1025	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
 PROPERTY	Center	3	0.000000,0.000000,0.000000	0
 PROPERTY	Size	3	1.000000,1.000000,1.000000	0
@@ -495,7 +619,7 @@ PROPERTY	Is Trigger	4	false	0
 PROPERTY	Surface Asset	2		0
 PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
-COMPONENT	115	MeshComponent	1
+COMPONENT	1025	MeshComponent	1
 PROPERTY	Static	4	true	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -504,248 +628,1019 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/GoalOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	116	0	1	Boost Pad 116	-26.000000,0.080000,-14.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	116	1	boost-pad
-COMPONENT	116	MeshComponent	1
+ENTITY	1026	0	1	Orange Goal Light	72.000000,4.500000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1026	1	generated
+COMPONENT	1026	LightComponent	1
+PROPERTY	Color	3	1.000000,0.500000,0.150000	0
+PROPERTY	Intensity	0	90.000000	0
+PROPERTY	CastsShadows	4	false	0
+PROPERTY	Direction	3	0.000000,0.000000,-1.000000	0
+PROPERTY	LightType	6	0	3	Point	Directional	Spot
+PROPERTY	Static	4	false	0
+END_COMPONENT
+ENTITY	1027	0	1	Big Boost Pad	-54.000000,0.060000,-35.000000	0.000000,0.000000,0.000000	2.600000,0.120000,2.600000
+TAGS	1027	2	generated	boost-pad
+COMPONENT	1027	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	116	ScriptComponent	1
+COMPONENT	1027	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
+PROPERTY	big	4	true	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
 END_COMPONENT
-ENTITY	117	0	1	Boost Pad 117	-26.000000,0.080000,14.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	117	1	boost-pad
-COMPONENT	117	MeshComponent	1
+ENTITY	1028	1027	1	Orb	0.000000,8.500000,0.000000	0.000000,0.000000,0.000000	0.420000,9.000000,0.420000
+TAGS	1028	1	generated
+COMPONENT	1028	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	117	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
-END_COMPONENT
-ENTITY	118	0	1	Boost Pad 118	-12.000000,0.080000,-12.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	118	1	boost-pad
-COMPONENT	118	MeshComponent	1
+ENTITY	1029	0	1	Big Boost Pad	-54.000000,0.060000,35.000000	0.000000,0.000000,0.000000	2.600000,0.120000,2.600000
+TAGS	1029	2	generated	boost-pad
+COMPONENT	1029	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	118	ScriptComponent	1
+COMPONENT	1029	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
+PROPERTY	big	4	true	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
 END_COMPONENT
-ENTITY	119	0	1	Boost Pad 119	-12.000000,0.080000,12.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	119	1	boost-pad
-COMPONENT	119	MeshComponent	1
+ENTITY	1030	1029	1	Orb	0.000000,8.500000,0.000000	0.000000,0.000000,0.000000	0.420000,9.000000,0.420000
+TAGS	1030	1	generated
+COMPONENT	1030	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	119	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
-END_COMPONENT
-ENTITY	120	0	1	Boost Pad 120	0.000000,0.080000,-17.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	120	1	boost-pad
-COMPONENT	120	MeshComponent	1
+ENTITY	1031	0	1	Big Boost Pad	0.000000,0.060000,-37.000000	0.000000,0.000000,0.000000	2.600000,0.120000,2.600000
+TAGS	1031	2	generated	boost-pad
+COMPONENT	1031	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	120	ScriptComponent	1
+COMPONENT	1031	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
+PROPERTY	big	4	true	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
 END_COMPONENT
-ENTITY	121	0	1	Boost Pad 121	0.000000,0.080000,17.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	121	1	boost-pad
-COMPONENT	121	MeshComponent	1
+ENTITY	1032	1031	1	Orb	0.000000,8.500000,0.000000	0.000000,0.000000,0.000000	0.420000,9.000000,0.420000
+TAGS	1032	1	generated
+COMPONENT	1032	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	121	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
-END_COMPONENT
-ENTITY	122	0	1	Boost Pad 122	12.000000,0.080000,-12.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	122	1	boost-pad
-COMPONENT	122	MeshComponent	1
+ENTITY	1033	0	1	Big Boost Pad	54.000000,0.060000,35.000000	0.000000,0.000000,0.000000	2.600000,0.120000,2.600000
+TAGS	1033	2	generated	boost-pad
+COMPONENT	1033	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	122	ScriptComponent	1
+COMPONENT	1033	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
+PROPERTY	big	4	true	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
 END_COMPONENT
-ENTITY	123	0	1	Boost Pad 123	12.000000,0.080000,12.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	123	1	boost-pad
-COMPONENT	123	MeshComponent	1
+ENTITY	1034	1033	1	Orb	0.000000,8.500000,0.000000	0.000000,0.000000,0.000000	0.420000,9.000000,0.420000
+TAGS	1034	1	generated
+COMPONENT	1034	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	123	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
-END_COMPONENT
-ENTITY	124	0	1	Boost Pad 124	26.000000,0.080000,-14.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	124	1	boost-pad
-COMPONENT	124	MeshComponent	1
+ENTITY	1035	0	1	Big Boost Pad	54.000000,0.060000,-35.000000	0.000000,0.000000,0.000000	2.600000,0.120000,2.600000
+TAGS	1035	2	generated	boost-pad
+COMPONENT	1035	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	124	ScriptComponent	1
+COMPONENT	1035	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
+PROPERTY	big	4	true	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
 END_COMPONENT
-ENTITY	125	0	1	Boost Pad 125	26.000000,0.080000,14.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	125	1	boost-pad
-COMPONENT	125	MeshComponent	1
+ENTITY	1036	1035	1	Orb	0.000000,8.500000,0.000000	0.000000,0.000000,0.000000	0.420000,9.000000,0.420000
+TAGS	1036	1	generated
+COMPONENT	1036	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	125	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
-END_COMPONENT
-ENTITY	126	0	1	Boost Pad 126	0.000000,0.080000,0.000000	0.000000,0.000000,0.000000	2.400000,0.120000,2.400000
-TAGS	126	1	boost-pad
-COMPONENT	126	MeshComponent	1
+ENTITY	1037	0	1	Big Boost Pad	0.000000,0.060000,37.000000	0.000000,0.000000,0.000000	2.600000,0.120000,2.600000
+TAGS	1037	2	generated	boost-pad
+COMPONENT	1037	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
 END_COMPONENT
-COMPONENT	126	ScriptComponent	1
+COMPONENT	1037	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
-PROPERTY	amount	0	35.000000	0
-PROPERTY	rechargeSeconds	0	6.000000	0
+PROPERTY	big	4	true	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1038	1037	1	Orb	0.000000,8.500000,0.000000	0.000000,0.000000,0.000000	0.420000,9.000000,0.420000
+TAGS	1038	1	generated
+COMPONENT	1038	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+ENTITY	1039	0	1	Small Boost Pad	-52.000000,0.040000,0.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1039	2	generated	boost-pad
+COMPONENT	1039	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1039	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1040	0	1	Small Boost Pad	-40.000000,0.040000,-15.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1040	2	generated	boost-pad
+COMPONENT	1040	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1040	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1041	0	1	Small Boost Pad	-40.000000,0.040000,15.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1041	2	generated	boost-pad
+COMPONENT	1041	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1041	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1042	0	1	Small Boost Pad	-26.000000,0.040000,-27.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1042	2	generated	boost-pad
+COMPONENT	1042	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1042	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1043	0	1	Small Boost Pad	-26.000000,0.040000,27.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1043	2	generated	boost-pad
+COMPONENT	1043	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1043	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1044	0	1	Small Boost Pad	-26.000000,0.040000,0.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1044	2	generated	boost-pad
+COMPONENT	1044	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1044	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1045	0	1	Small Boost Pad	-11.000000,0.040000,-14.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1045	2	generated	boost-pad
+COMPONENT	1045	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1045	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1046	0	1	Small Boost Pad	-11.000000,0.040000,14.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1046	2	generated	boost-pad
+COMPONENT	1046	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1046	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1047	0	1	Small Boost Pad	-14.000000,0.040000,-36.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1047	2	generated	boost-pad
+COMPONENT	1047	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1047	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1048	0	1	Small Boost Pad	-14.000000,0.040000,36.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1048	2	generated	boost-pad
+COMPONENT	1048	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1048	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1049	0	1	Small Boost Pad	-46.000000,0.040000,-26.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1049	2	generated	boost-pad
+COMPONENT	1049	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1049	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1050	0	1	Small Boost Pad	-46.000000,0.040000,26.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1050	2	generated	boost-pad
+COMPONENT	1050	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1050	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1051	0	1	Small Boost Pad	52.000000,0.040000,0.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1051	2	generated	boost-pad
+COMPONENT	1051	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1051	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1052	0	1	Small Boost Pad	40.000000,0.040000,15.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1052	2	generated	boost-pad
+COMPONENT	1052	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1052	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1053	0	1	Small Boost Pad	40.000000,0.040000,-15.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1053	2	generated	boost-pad
+COMPONENT	1053	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1053	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1054	0	1	Small Boost Pad	26.000000,0.040000,27.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1054	2	generated	boost-pad
+COMPONENT	1054	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1054	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1055	0	1	Small Boost Pad	26.000000,0.040000,-27.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1055	2	generated	boost-pad
+COMPONENT	1055	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1055	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1056	0	1	Small Boost Pad	26.000000,0.040000,0.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1056	2	generated	boost-pad
+COMPONENT	1056	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1056	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1057	0	1	Small Boost Pad	11.000000,0.040000,14.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1057	2	generated	boost-pad
+COMPONENT	1057	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1057	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1058	0	1	Small Boost Pad	11.000000,0.040000,-14.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1058	2	generated	boost-pad
+COMPONENT	1058	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1058	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1059	0	1	Small Boost Pad	14.000000,0.040000,36.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1059	2	generated	boost-pad
+COMPONENT	1059	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1059	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1060	0	1	Small Boost Pad	14.000000,0.040000,-36.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1060	2	generated	boost-pad
+COMPONENT	1060	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1060	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1061	0	1	Small Boost Pad	46.000000,0.040000,26.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1061	2	generated	boost-pad
+COMPONENT	1061	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1061	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1062	0	1	Small Boost Pad	46.000000,0.040000,-26.000000	0.000000,0.000000,0.000000	1.300000,0.080000,1.300000
+TAGS	1062	2	generated	boost-pad
+COMPONENT	1062	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BoostPad.plutomaterial	0
+END_COMPONENT
+COMPONENT	1062	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BoostPad	0
+PROPERTY	big	4	false	0
+PROPERTY	smallAmount	0	12.000000	0
+PROPERTY	bigAmount	0	100.000000	0
+PROPERTY	smallRechargeSeconds	0	4.000000	0
+PROPERTY	bigRechargeSeconds	0	10.000000	0
+PROPERTY	smallPickupRadius	0	1.300000	0
+PROPERTY	bigPickupRadius	0	2.100000	0
+PROPERTY	pickupHeight	0	1.600000	0
+END_COMPONENT
+ENTITY	1063	0	1	Ball Marker	0.000000,0.020000,0.000000	0.000000,0.000000,0.000000	2.400000,0.010000,2.400000
+TAGS	1063	1	generated
+COMPONENT	1063	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BallMarker.plutomaterial	0
+END_COMPONENT
+COMPONENT	1063	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.BallMarker	0
+PROPERTY	ball	9	0	0
+PROPERTY	maximumHeight	0	30.000000	0
+PROPERTY	surfaceOffset	0	0.020000	0
+END_COMPONENT
+ENTITY	1064	0	1	Goal Explosion	0.000000,-50.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1064	1	generated
+COMPONENT	1064	ParticleSystemComponent	1
+PROPERTY	ParticleSystemAsset	2	project://Effects/GoalExplosion.plutoparticles	0
+END_COMPONENT
+COMPONENT	1064	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.GoalExplosion	0
+PROPERTY	particleCount	1	260	0
+PROPERTY	flashIntensity	0	260.000000	0
+PROPERTY	flashDuration	0	1.200000	0
+END_COMPONENT
+ENTITY	1065	1064	1	Flash	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1065	1	generated
+COMPONENT	1065	LightComponent	1
+PROPERTY	Color	3	1.000000,1.000000,1.000000	0
+PROPERTY	Intensity	0	0.000000	0
+PROPERTY	CastsShadows	4	false	0
+PROPERTY	Direction	3	0.000000,0.000000,-1.000000	0
+PROPERTY	LightType	6	0	3	Point	Directional	Spot
+PROPERTY	Static	4	false	0
+END_COMPONENT
+ENTITY	1066	0	1	Demolition Effect	0.000000,-50.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1066	1	generated
+COMPONENT	1066	ParticleSystemComponent	1
+PROPERTY	ParticleSystemAsset	2	project://Effects/DemolitionBurst.plutoparticles	0
 END_COMPONENT
 ENTITY	20	0	1	Blue Car	-22.000000,0.750000,0.000000	0.000000,-90.000000,0.000000	1.200000,0.400000,2.000000
 TAGS	20	2	car	blue
 COMPONENT	20	ColliderComponent	1
 PROPERTY	Shape	6	0	5	Box	Sphere	Capsule	Terrain	Mesh
-PROPERTY	Center	3	0.000000,0.100000,0.000000	0
-PROPERTY	Size	3	0.920000,0.750000,0.880000	0
+PROPERTY	Center	3	0.000000,1.000000,0.000000	0
+PROPERTY	Size	3	1.100000,1.750000,1.100000	0
 PROPERTY	Radius	0	0.500000	0
 PROPERTY	Height	0	2.000000	0
 PROPERTY	Is Trigger	4	false	0
@@ -754,51 +1649,18 @@ PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
 COMPONENT	20	MeshComponent	1
 PROPERTY	Static	4	false	0
-PROPERTY	Visible	4	true	0
+PROPERTY	Visible	4	false	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
 PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Blue.plutomaterial	0
-END_COMPONENT
-COMPONENT	20	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.ArcadeCarController	0
-PROPERTY	playerNumber	1	1	0
-PROPERTY	acceleration	0	28.000000	0
-PROPERTY	boostCapacity	0	100.000000	0
-PROPERTY	boostConsumption	0	25.000000	0
-PROPERTY	boostAcceleration	0	23.000000	0
-PROPERTY	maximumSpeed	0	18.000000	0
-PROPERTY	maximumBoostSpeed	0	25.000000	0
-PROPERTY	maximumAngularSpeed	0	7.000000	0
-PROPERTY	angularMomentumDrag	0	2.500000	0
-PROPERTY	lateralGrip	0	8.000000	0
-PROPERTY	maximumSteerAngle	0	32.000000	0
-PROPERTY	steeringResponse	0	12.000000	0
-PROPERTY	powerslideFrontGrip	0	0.450000	0
-PROPERTY	powerslideRearGrip	0	0.080000	0
-PROPERTY	flipWindow	0	1.500000	0
-PROPERTY	flipImpulse	0	9.000000	0
-PROPERTY	flipDuration	0	0.700000	0
-PROPERTY	flipDeadZone	0	0.200000	0
-PROPERTY	suspensionRestLength	0	0.850000	0
-PROPERTY	suspensionTravel	0	0.550000	0
-PROPERTY	suspensionStiffness	0	180.000000	0
-PROPERTY	suspensionDamping	0	18.000000	0
-PROPERTY	surfaceAlignment	0	60.000000	0
-PROPERTY	surfaceDamping	0	8.000000	0
-PROPERTY	wallAdhesion	0	12.000000	0
-PROPERTY	airControlForce	0	3000.000000	0
-PROPERTY	controlLeverArm	0	1.350000	0
-PROPERTY	jumpImpulse	0	7.000000	0
-PROPERTY	jumpBufferDuration	0	0.160000	0
-PROPERTY	respawnHeight	0	-4.000000	0
-PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
 END_COMPONENT
 COMPONENT	20	RigidbodyComponent	1
 PROPERTY	Mass	0	850.000000	0
@@ -813,23 +1675,129 @@ PROPERTY	Center Of Mass	3	0.000000,0.000000,0.000000	0
 PROPERTY	Velocity	3	0.000000,0.000000,0.000000	0
 PROPERTY	Angular Velocity	3	0.000000,0.000000,0.000000	0
 END_COMPONENT
-ENTITY	21	20	1	Blue Cabin	0.000000,0.700000,0.250000	0.000000,0.000000,0.000000	0.700000,0.650000,0.520000
-COMPONENT	21	MeshComponent	1
+COMPONENT	20	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.ArcadeCarController	0
+PROPERTY	playerNumber	1	1	0
+PROPERTY	acceleration	0	26.000000	0
+PROPERTY	brakeAcceleration	0	30.000000	0
+PROPERTY	coastDeceleration	0	0.600000	0
+PROPERTY	boostCapacity	0	100.000000	0
+PROPERTY	boostConsumption	0	25.000000	0
+PROPERTY	boostAcceleration	0	18.000000	0
+PROPERTY	maximumSpeed	0	23.000000	0
+PROPERTY	maximumBoostSpeed	0	36.000000	0
+PROPERTY	maximumAngularSpeed	0	5.500000	0
+PROPERTY	lateralGrip	0	32.000000	0
+PROPERTY	maximumGripAcceleration	0	120.000000	0
+PROPERTY	lowSpeedCurvature	0	0.500000	0
+PROPERTY	highSpeedCurvature	0	0.075000	0
+PROPERTY	powerslideTurnBoost	0	1.350000	0
+PROPERTY	steeringResponse	0	14.000000	0
+PROPERTY	maximumSteerAngle	0	32.000000	0
+PROPERTY	powerslideFrontGrip	0	0.450000	0
+PROPERTY	powerslideRearGrip	0	0.080000	0
+PROPERTY	flipWindow	0	1.500000	0
+PROPERTY	dodgeForwardImpulse	0	9.000000	0
+PROPERTY	dodgeSideImpulse	0	9.000000	0
+PROPERTY	dodgeSideSpeedBonus	0	0.900000	0
+PROPERTY	flipSpinRate	0	8.400000	0
+PROPERTY	flipDuration	0	0.650000	0
+PROPERTY	flipStallDuration	0	0.300000	0
+PROPERTY	flipCancelDeadZone	0	0.100000	0
+PROPERTY	flipCancelAcceleration	0	45.000000	0
+PROPERTY	rightingImpulse	0	3.500000	0
+PROPERTY	rightingSpinRate	0	9.000000	0
+PROPERTY	rightingDuration	0	0.800000	0
+PROPERTY	autoRightDelay	0	1.000000	0
+PROPERTY	flipDeadZone	0	0.500000	0
+PROPERTY	airPitchAcceleration	0	12.000000	0
+PROPERTY	airYawAcceleration	0	9.000000	0
+PROPERTY	airRollAcceleration	0	30.000000	0
+PROPERTY	airPitchDamping	0	6.000000	0
+PROPERTY	airYawDamping	0	5.000000	0
+PROPERTY	airRollDamping	0	4.500000	0
+PROPERTY	suspensionRestLength	0	0.850000	0
+PROPERTY	suspensionTravel	0	0.550000	0
+PROPERTY	suspensionStiffness	0	180.000000	0
+PROPERTY	suspensionDamping	0	18.000000	0
+PROPERTY	surfaceAlignment	0	60.000000	0
+PROPERTY	surfaceDamping	0	8.000000	0
+PROPERTY	wallAdhesion	0	12.000000	0
+PROPERTY	controlLeverArm	0	1.350000	0
+PROPERTY	jumpImpulse	0	7.500000	0
+PROPERTY	jumpHoldAcceleration	0	28.000000	0
+PROPERTY	jumpHoldDuration	0	0.200000	0
+PROPERTY	jumpBufferDuration	0	0.160000	0
+PROPERTY	airThrottleAcceleration	0	1.600000	0
+PROPERTY	supersonicSpeed	0	33.000000	0
+PROPERTY	supersonicHysteresis	0	2.000000	0
+PROPERTY	demolitionClosingSpeed	0	15.000000	0
+PROPERTY	respawnDelay	0	3.000000	0
+PROPERTY	respawnHeight	0	-4.000000	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+COMPONENT	20	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.CarVisuals	0
+PROPERTY	wheelRadius	0	0.320000	0
+PROPERTY	minimumWheelExtension	0	0.350000	0
+PROPERTY	demolitionEffect	9	1061	0
+END_COMPONENT
+ENTITY	1067	20	1	Visual Root	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.833333,2.500000,0.500000
+TAGS	1067	1	generated
+ENTITY	1068	1067	1	Body	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1068	1	generated
+COMPONENT	1068	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	project://Models/CarBody.glb	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	project://Models/CarBody.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Blue.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/CarPaintBlue.plutomaterial	0
 END_COMPONENT
-ENTITY	200	20	1	Blue Car Wheel 1	-0.470000,-0.450000,-0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	200	MeshComponent	1
+ENTITY	1069	1067	1	Glass	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1069	1	generated
+COMPONENT	1069	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/CarGlass.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/CarGlass.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/CarGlass.plutomaterial	0
+END_COMPONENT
+ENTITY	1070	1067	1	Trim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1070	1	generated
+COMPONENT	1070	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/CarTrim.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/CarTrim.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/CarTrim.plutomaterial	0
+END_COMPONENT
+ENTITY	1071	1067	1	Exhaust	0.000000,0.060000,1.050000	90.000000,0.000000,0.000000	0.200000,0.120000,0.200000
+TAGS	1071	1	generated
+COMPONENT	1071	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -838,13 +1806,25 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Exhaust.plutomaterial	0
 END_COMPONENT
-ENTITY	201	20	1	Blue Car Wheel 2	0.470000,-0.450000,-0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	201	MeshComponent	1
+ENTITY	1072	1067	1	Boost Flame	0.000000,0.060000,1.120000	90.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1072	1	generated
+COMPONENT	1072	ParticleSystemComponent	1
+PROPERTY	ParticleSystemAsset	2	project://Effects/BoostFlame.plutoparticles	0
+END_COMPONENT
+ENTITY	1073	1067	1	Supersonic Trail	0.000000,0.120000,1.000000	90.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1073	1	generated
+COMPONENT	1073	ParticleSystemComponent	1
+PROPERTY	ParticleSystemAsset	2	project://Effects/SupersonicTrail.plutoparticles	0
+END_COMPONENT
+ENTITY	1074	1067	1	Wheel FL	-0.560000,-0.020000,-0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1074	1	generated
+COMPONENT	1074	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -853,13 +1833,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
-ENTITY	202	20	1	Blue Car Wheel 3	-0.470000,-0.450000,0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	202	MeshComponent	1
+ENTITY	1075	1074	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1075	1	generated
+COMPONENT	1075	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -868,13 +1850,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
 END_COMPONENT
-ENTITY	203	20	1	Blue Car Wheel 4	0.470000,-0.450000,0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	203	MeshComponent	1
+ENTITY	1076	1067	1	Wheel FR	0.560000,-0.020000,-0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1076	1	generated
+COMPONENT	1076	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -883,10 +1867,96 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+END_COMPONENT
+ENTITY	1077	1076	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1077	1	generated
+COMPONENT	1077	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
+END_COMPONENT
+ENTITY	1078	1067	1	Wheel RL	-0.560000,-0.020000,0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1078	1	generated
+COMPONENT	1078	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+END_COMPONENT
+ENTITY	1079	1078	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1079	1	generated
+COMPONENT	1079	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
+END_COMPONENT
+ENTITY	1080	1067	1	Wheel RR	0.560000,-0.020000,0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1080	1	generated
+COMPONENT	1080	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+END_COMPONENT
+ENTITY	1081	1080	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1081	1	generated
+COMPONENT	1081	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
 END_COMPONENT
 ENTITY	22	0	1	Orange Car	22.000000,0.750000,0.000000	0.000000,90.000000,0.000000	1.200000,0.400000,2.000000
 TAGS	22	2	car	orange
@@ -902,51 +1972,18 @@ PROPERTY	Blocks Audio	4	true	0
 END_COMPONENT
 COMPONENT	22	MeshComponent	1
 PROPERTY	Static	4	false	0
-PROPERTY	Visible	4	true	0
+PROPERTY	Visible	4	false	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
 PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Orange.plutomaterial	0
-END_COMPONENT
-COMPONENT	22	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.ArcadeCarController	0
-PROPERTY	playerNumber	1	2	0
-PROPERTY	acceleration	0	28.000000	0
-PROPERTY	boostCapacity	0	100.000000	0
-PROPERTY	boostConsumption	0	25.000000	0
-PROPERTY	boostAcceleration	0	42.000000	0
-PROPERTY	maximumSpeed	0	18.000000	0
-PROPERTY	maximumBoostSpeed	0	25.000000	0
-PROPERTY	maximumAngularSpeed	0	7.000000	0
-PROPERTY	angularMomentumDrag	0	1.000000	0
-PROPERTY	lateralGrip	0	8.000000	0
-PROPERTY	maximumSteerAngle	0	32.000000	0
-PROPERTY	steeringResponse	0	12.000000	0
-PROPERTY	powerslideFrontGrip	0	0.450000	0
-PROPERTY	powerslideRearGrip	0	0.080000	0
-PROPERTY	flipWindow	0	1.500000	0
-PROPERTY	flipImpulse	0	9.000000	0
-PROPERTY	flipDuration	0	0.700000	0
-PROPERTY	flipDeadZone	0	0.200000	0
-PROPERTY	suspensionRestLength	0	0.850000	0
-PROPERTY	suspensionTravel	0	0.550000	0
-PROPERTY	suspensionStiffness	0	180.000000	0
-PROPERTY	suspensionDamping	0	18.000000	0
-PROPERTY	surfaceAlignment	0	60.000000	0
-PROPERTY	surfaceDamping	0	8.000000	0
-PROPERTY	wallAdhesion	0	12.000000	0
-PROPERTY	airControlForce	0	750.000000	0
-PROPERTY	controlLeverArm	0	1.350000	0
-PROPERTY	jumpImpulse	0	7.000000	0
-PROPERTY	jumpBufferDuration	0	0.160000	0
-PROPERTY	respawnHeight	0	-4.000000	0
-PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
 END_COMPONENT
 COMPONENT	22	RigidbodyComponent	1
 PROPERTY	Mass	0	850.000000	0
@@ -961,23 +1998,129 @@ PROPERTY	Center Of Mass	3	0.000000,0.000000,0.000000	0
 PROPERTY	Velocity	3	0.000000,0.000000,0.000000	0
 PROPERTY	Angular Velocity	3	0.000000,0.000000,0.000000	0
 END_COMPONENT
-ENTITY	23	22	1	Orange Cabin	0.000000,0.700000,0.250000	0.000000,0.000000,0.000000	0.700000,0.650000,0.520000
-COMPONENT	23	MeshComponent	1
+COMPONENT	22	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.ArcadeCarController	0
+PROPERTY	playerNumber	1	2	0
+PROPERTY	acceleration	0	26.000000	0
+PROPERTY	brakeAcceleration	0	30.000000	0
+PROPERTY	coastDeceleration	0	0.600000	0
+PROPERTY	boostCapacity	0	100.000000	0
+PROPERTY	boostConsumption	0	25.000000	0
+PROPERTY	boostAcceleration	0	18.000000	0
+PROPERTY	maximumSpeed	0	23.000000	0
+PROPERTY	maximumBoostSpeed	0	36.000000	0
+PROPERTY	maximumAngularSpeed	0	5.500000	0
+PROPERTY	lateralGrip	0	32.000000	0
+PROPERTY	maximumGripAcceleration	0	120.000000	0
+PROPERTY	lowSpeedCurvature	0	0.500000	0
+PROPERTY	highSpeedCurvature	0	0.075000	0
+PROPERTY	powerslideTurnBoost	0	1.350000	0
+PROPERTY	steeringResponse	0	14.000000	0
+PROPERTY	maximumSteerAngle	0	32.000000	0
+PROPERTY	powerslideFrontGrip	0	0.450000	0
+PROPERTY	powerslideRearGrip	0	0.080000	0
+PROPERTY	flipWindow	0	1.500000	0
+PROPERTY	dodgeForwardImpulse	0	9.000000	0
+PROPERTY	dodgeSideImpulse	0	9.000000	0
+PROPERTY	dodgeSideSpeedBonus	0	0.900000	0
+PROPERTY	flipSpinRate	0	8.400000	0
+PROPERTY	flipDuration	0	0.650000	0
+PROPERTY	flipStallDuration	0	0.300000	0
+PROPERTY	flipCancelDeadZone	0	0.100000	0
+PROPERTY	flipCancelAcceleration	0	45.000000	0
+PROPERTY	rightingImpulse	0	3.500000	0
+PROPERTY	rightingSpinRate	0	9.000000	0
+PROPERTY	rightingDuration	0	0.800000	0
+PROPERTY	autoRightDelay	0	1.000000	0
+PROPERTY	flipDeadZone	0	0.500000	0
+PROPERTY	airPitchAcceleration	0	12.000000	0
+PROPERTY	airYawAcceleration	0	9.000000	0
+PROPERTY	airRollAcceleration	0	30.000000	0
+PROPERTY	airPitchDamping	0	6.000000	0
+PROPERTY	airYawDamping	0	5.000000	0
+PROPERTY	airRollDamping	0	4.500000	0
+PROPERTY	suspensionRestLength	0	0.850000	0
+PROPERTY	suspensionTravel	0	0.550000	0
+PROPERTY	suspensionStiffness	0	180.000000	0
+PROPERTY	suspensionDamping	0	18.000000	0
+PROPERTY	surfaceAlignment	0	60.000000	0
+PROPERTY	surfaceDamping	0	8.000000	0
+PROPERTY	wallAdhesion	0	12.000000	0
+PROPERTY	controlLeverArm	0	1.350000	0
+PROPERTY	jumpImpulse	0	7.500000	0
+PROPERTY	jumpHoldAcceleration	0	28.000000	0
+PROPERTY	jumpHoldDuration	0	0.200000	0
+PROPERTY	jumpBufferDuration	0	0.160000	0
+PROPERTY	airThrottleAcceleration	0	1.600000	0
+PROPERTY	supersonicSpeed	0	33.000000	0
+PROPERTY	supersonicHysteresis	0	2.000000	0
+PROPERTY	demolitionClosingSpeed	0	15.000000	0
+PROPERTY	respawnDelay	0	3.000000	0
+PROPERTY	respawnHeight	0	-4.000000	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+COMPONENT	22	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.CarVisuals	0
+PROPERTY	wheelRadius	0	0.320000	0
+PROPERTY	minimumWheelExtension	0	0.350000	0
+PROPERTY	demolitionEffect	9	1061	0
+END_COMPONENT
+ENTITY	1082	22	1	Visual Root	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.833333,2.500000,0.500000
+TAGS	1082	1	generated
+ENTITY	1083	1082	1	Body	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1083	1	generated
+COMPONENT	1083	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
 PROPERTY	SubmeshCount	1	1	0
-PROPERTY	ModelAssetId	2	engine://builtin/mesh/cube	0
+PROPERTY	ModelAssetId	2	project://Models/CarBody.glb	0
 PROPERTY	ModelObjectId	2	0	0
-PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cube	0
+PROPERTY	MeshAssetReference	2	project://Models/CarBody.glb	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Orange.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/CarPaintOrange.plutomaterial	0
 END_COMPONENT
-ENTITY	204	22	1	Orange Car Wheel 1	-0.470000,-0.450000,-0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	204	MeshComponent	1
+ENTITY	1084	1082	1	Glass	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1084	1	generated
+COMPONENT	1084	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/CarGlass.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/CarGlass.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/CarGlass.plutomaterial	0
+END_COMPONENT
+ENTITY	1085	1082	1	Trim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1085	1	generated
+COMPONENT	1085	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/CarTrim.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/CarTrim.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/CarTrim.plutomaterial	0
+END_COMPONENT
+ENTITY	1086	1082	1	Exhaust	0.000000,0.060000,1.050000	90.000000,0.000000,0.000000	0.200000,0.120000,0.200000
+TAGS	1086	1	generated
+COMPONENT	1086	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -986,13 +2129,25 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Exhaust.plutomaterial	0
 END_COMPONENT
-ENTITY	205	22	1	Orange Car Wheel 2	0.470000,-0.450000,-0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	205	MeshComponent	1
+ENTITY	1087	1082	1	Boost Flame	0.000000,0.060000,1.120000	90.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1087	1	generated
+COMPONENT	1087	ParticleSystemComponent	1
+PROPERTY	ParticleSystemAsset	2	project://Effects/BoostFlame.plutoparticles	0
+END_COMPONENT
+ENTITY	1088	1082	1	Supersonic Trail	0.000000,0.120000,1.000000	90.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1088	1	generated
+COMPONENT	1088	ParticleSystemComponent	1
+PROPERTY	ParticleSystemAsset	2	project://Effects/SupersonicTrail.plutoparticles	0
+END_COMPONENT
+ENTITY	1089	1082	1	Wheel FL	-0.560000,-0.020000,-0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1089	1	generated
+COMPONENT	1089	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -1001,13 +2156,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
-ENTITY	206	22	1	Orange Car Wheel 3	-0.470000,-0.450000,0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	206	MeshComponent	1
+ENTITY	1090	1089	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1090	1	generated
+COMPONENT	1090	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -1016,13 +2173,15 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
 END_COMPONENT
-ENTITY	207	22	1	Orange Car Wheel 4	0.470000,-0.450000,0.360000	0.000000,0.000000,90.000000	0.800000,0.100000,0.160000
-COMPONENT	207	MeshComponent	1
+ENTITY	1091	1082	1	Wheel FR	0.560000,-0.020000,-0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1091	1	generated
+COMPONENT	1091	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
 PROPERTY	SubmeshIndex	1	-1	0
@@ -1031,12 +2190,98 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
 END_COMPONENT
-ENTITY	30	0	1	Ball	0.000000,1.100000,0.000000	0.000000,0.000000,0.000000	2.200000,2.200000,2.200000
+ENTITY	1092	1091	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1092	1	generated
+COMPONENT	1092	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
+END_COMPONENT
+ENTITY	1093	1082	1	Wheel RL	-0.560000,-0.020000,0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1093	1	generated
+COMPONENT	1093	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+END_COMPONENT
+ENTITY	1094	1093	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1094	1	generated
+COMPONENT	1094	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
+END_COMPONENT
+ENTITY	1095	1082	1	Wheel RR	0.560000,-0.020000,0.720000	0.000000,0.000000,90.000000	0.640000,0.320000,0.640000
+TAGS	1095	1	generated
+COMPONENT	1095	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Tyre.plutomaterial	0
+END_COMPONENT
+ENTITY	1096	1095	1	Rim	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	0.600000,1.040000,0.600000
+TAGS	1096	1	generated
+COMPONENT	1096	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	engine://builtin/mesh/cylinder	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	engine://builtin/mesh/cylinder	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Rim.plutomaterial	0
+END_COMPONENT
+ENTITY	30	0	1	Ball	0.000000,1.550000,0.000000	0.000000,0.000000,0.000000	3.000000,3.000000,3.000000
 TAGS	30	1	ball
 COMPONENT	30	ColliderComponent	1
 PROPERTY	Shape	6	1	5	Box	Sphere	Capsule	Terrain	Mesh
@@ -1057,22 +2302,18 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/sphere	0
 PROPERTY	ModelObjectId	2	0	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/sphere	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
-PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/Ball.plutomaterial	0
-END_COMPONENT
-COMPONENT	30	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.RocketBall	0
-PROPERTY	maximumSpeed	0	30.000000	0
-PROPERTY	lostBallHeight	0	-5.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BallCore.plutomaterial	0
 END_COMPONENT
 COMPONENT	30	RigidbodyComponent	1
-PROPERTY	Mass	0	18.000000	0
-PROPERTY	Linear Drag	0	0.050000	0
-PROPERTY	Angular Drag	0	0.050000	0
-PROPERTY	Friction	0	0.450000	0
-PROPERTY	Restitution	0	0.820000	0
+PROPERTY	Mass	0	30.000000	0
+PROPERTY	Linear Drag	0	0.030000	0
+PROPERTY	Angular Drag	0	0.030000	0
+PROPERTY	Friction	0	0.350000	0
+PROPERTY	Restitution	0	0.600000	0
 PROPERTY	Use Gravity	4	true	0
 PROPERTY	Is Kinematic	4	false	0
 PROPERTY	Freeze Rotation	4	false	0
@@ -1080,34 +2321,64 @@ PROPERTY	Center Of Mass	3	0.000000,0.000000,0.000000	0
 PROPERTY	Velocity	3	0.000000,0.000000,0.000000	0
 PROPERTY	Angular Velocity	3	0.000000,0.000000,0.000000	0
 END_COMPONENT
+COMPONENT	30	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.RocketBall	0
+PROPERTY	maximumSpeed	0	65.000000	0
+PROPERTY	maximumAngularSpeed	0	9.000000	0
+PROPERTY	lostBallHeight	0	-5.000000	0
+PROPERTY	hitAssist	0	0.450000	0
+PROPERTY	hitAimBlend	0	0.350000	0
+PROPERTY	hitVerticalScale	0	0.600000	0
+PROPERTY	minimumHitSpeed	0	2.000000	0
+PROPERTY	touchCooldown	0	0.100000	0
+END_COMPONENT
+ENTITY	1097	30	1	Ball Panels	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1097	1	generated
+COMPONENT	1097	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/BallPanels.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/BallPanels.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BallPanels.plutomaterial	0
+END_COMPONENT
+ENTITY	1098	30	1	Ball Accents	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
+TAGS	1098	1	generated
+COMPONENT	1098	MeshComponent	1
+PROPERTY	Static	4	false	0
+PROPERTY	Visible	4	true	0
+PROPERTY	SubmeshIndex	1	-1	0
+PROPERTY	SubmeshCount	1	1	0
+PROPERTY	ModelAssetId	2	project://Models/BallAccents.glb	0
+PROPERTY	ModelObjectId	2	0	0
+PROPERTY	MeshAssetReference	2	project://Models/BallAccents.glb	0
+PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
+PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0
+PROPERTY	MaterialSlots.0.MaterialAsset	2	project://Materials/BallAccents.plutomaterial	0
+END_COMPONENT
 ENTITY	40	0	1	Match Manager	0.000000,0.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
 COMPONENT	40	ScriptComponent	1
 PROPERTY	Source	2	RocketLeg.Scripts.RocketLegMatch	0
 PROPERTY	ball	9	30	0
 PROPERTY	blueCar	9	20	0
 PROPERTY	orangeCar	9	22	0
-PROPERTY	documentPath	2	UI/rocketleg-hud.rml	0
-PROPERTY	goalLine	0	41.000000	0
-PROPERTY	goalHalfWidth	0	8.000000	0
-PROPERTY	kickoffDelay	0	1.500000	0
-PROPERTY	winningScore	1	5	0
+PROPERTY	goalExplosion	9	1059	0
+PROPERTY	matchSeconds	0	300.000000	0
+PROPERTY	countdownSeconds	0	3.000000	0
+PROPERTY	celebrationSeconds	0	3.000000	0
 PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
 END_COMPONENT
 ENTITY	50	0	1	Chase Camera	-19.750000,4.050000,18.670000	-15.700000,0.000000,0.000000	1.000000,1.000000,1.000000
-COMPONENT	50	ScriptComponent	1
-PROPERTY	Source	2	RocketLeg.Scripts.RocketChaseCamera	0
-PROPERTY	blueCar	9	20	0
-PROPERTY	orangeCar	9	22	0
-PROPERTY	ball	9	30	0
-PROPERTY	distance	0	8.500000	0
-PROPERTY	height	0	3.300000	0
-PROPERTY	lookHeight	0	1.000000	0
-PROPERTY	lookAhead	0	4.000000	0
-PROPERTY	positionSharpness	0	9.000000	0
-PROPERTY	rotationSharpness	0	12.000000	0
-PROPERTY	startInBallCam	4	true	0
-PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
-END_COMPONENT
 COMPONENT	50	CameraComponent	1
 PROPERTY	FOV	0	72.000000	0
 PROPERTY	Projection	6	0	2	Perspective	Orthographic
@@ -1120,7 +2391,28 @@ PROPERTY	OverlayOrder	1	0	0
 PROPERTY	RenderTags	2		0
 PROPERTY	IgnoredTags	2		0
 PROPERTY	TargetTexture	2		0
+PROPERTY	TransparentBackground	4	false	0
+PROPERTY	FilterLightsByTags	4	false	0
+PROPERTY	RenderRuntimeUI	4	true	0
 PROPERTY	PostProcessPresetAsset	2	project://PostProcessing/main.plutopostprocess	0
+END_COMPONENT
+COMPONENT	50	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.RocketChaseCamera	0
+PROPERTY	blueCar	9	20	0
+PROPERTY	orangeCar	9	22	0
+PROPERTY	ball	9	30	0
+PROPERTY	distance	0	8.500000	0
+PROPERTY	height	0	3.300000	0
+PROPERTY	lookHeight	0	1.000000	0
+PROPERTY	lookAhead	0	4.000000	0
+PROPERTY	positionSharpness	0	9.000000	0
+PROPERTY	rotationSharpness	0	12.000000	0
+PROPERTY	startInBallCam	4	true	0
+PROPERTY	boostFovKick	0	4.000000	0
+PROPERTY	supersonicFovKick	0	8.000000	0
+PROPERTY	fovSharpness	0	4.000000	0
+PROPERTY	ballCamCeiling	0	60.000000	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
 END_COMPONENT
 ENTITY	51	0	1	Arena Sun	0.000000,20.000000,0.000000	-55.000000,35.000000,0.000000	1.000000,1.000000,1.000000
 COMPONENT	51	LightComponent	1
@@ -1174,14 +2466,26 @@ PROPERTY	RenderMode	6	0	4	Screen Space	World Screen Space	Screen Space Camera	Wo
 PROPERTY	ScaleMode	6	1	3	ConstantPixels	ScaleWithScreenSize	ConstantPhysicalSize
 PROPERTY	ScaleFactor	0	1.000000	0
 PROPERTY	ReferenceResolution	7	1920.000000,1080.000000	0
-PROPERTY	MatchWidthOrHeight	0	0.500000	0
+PROPERTY	MatchWidthOrHeight	0	1.000000	0
 PROPERTY	ScreenMatchMode	6	0	3	MatchWidthOrHeight	Expand	Shrink
 PROPERTY	SortingOrder	1	0	0
 PROPERTY	WorldSizeMode	6	0	3	WorldUnits	ConstantScreenSize	DistanceScaled
 PROPERTY	FaceCamera	4	true	0
-PROPERTY	Backend	6	1	2	Legacy Native	RmlUi
+PROPERTY	Backend	6	0	2	Legacy Native	RmlUi
 PROPERTY	ContentSource	6	0	2	RML Document	Text
-PROPERTY	DocumentPath	2	project://UI/rocketleg-hud.rml	0
+PROPERTY	DocumentPath	2		0
+END_COMPONENT
+COMPONENT	60	ScriptComponent	1
+PROPERTY	Source	2	RocketLeg.Scripts.UI.RocketLegHud	0
+PROPERTY	match	9	40	0
+PROPERTY	showHelpOnStart	4	true	0
+PROPERTY	helpAutoCloseSeconds	0	10.000000	0
+PROPERTY	inputMappingAsset	2	project://Input/RocketLeg.plutoinput	0
+END_COMPONENT
+COMPONENT	60	UIStyleSheetComponent	1
+PROPERTY	Enabled	4	true	0
+PROPERTY	Theme	2	project://UI/Themes/RocketLeg.plutotheme	0
+PROPERTY	Rules	2		0
 END_COMPONENT
 ENTITY	65	0	1	Sky	0.000000,300.000000,0.000000	0.000000,0.000000,0.000000	1.000000,1.000000,1.000000
 COMPONENT	65	PhysicalSkyComponent	1
@@ -1195,9 +2499,24 @@ PROPERTY	Sun Color	3	1.000000,0.980000,0.920000	0
 PROPERTY	Exposure	0	1.000000	0
 PROPERTY	Night Intensity	0	0.035000	0
 PROPERTY	Star Intensity	0	1.000000	0
+PROPERTY	Star Twinkle	0	0.350000	0
+PROPERTY	Milky Way Intensity	0	0.350000	0
+PROPERTY	Light Pollution Color	3	1.000000,0.620000,0.320000	0
+PROPERTY	Light Pollution Intensity	0	0.000000	0
+PROPERTY	Moon Placement	6	0	2	Orbit	Manual
+PROPERTY	Moon Phase	0	0.500000	0
+PROPERTY	Moon Azimuth	0	180.000000	0
+PROPERTY	Moon Elevation	0	35.000000	0
 PROPERTY	Moon Intensity	0	0.800000	0
 PROPERTY	Moon Angular Radius	0	0.260000	0
 PROPERTY	Moon Color	3	0.550000,0.650000,1.000000	0
+PROPERTY	Moon Earthshine	0	0.020000	0
+PROPERTY	Moon Casts Light	4	true	0
+PROPERTY	Moon Light Intensity	0	0.050000	0
+PROPERTY	Moon Sky Intensity	0	0.010000	0
+PROPERTY	Latitude	0	40.000000	0
+PROPERTY	North Azimuth	0	0.000000	0
+PROPERTY	Star Rotation	0	0.000000	0
 PROPERTY	Ground Color	3	0.012000,0.015000,0.020000	0
 END_COMPONENT
 COMPONENT	65	VolumetricCloudComponent	1
@@ -1218,7 +2537,7 @@ PROPERTY	Render Scale	0	0.500000	0
 PROPERTY	Primary Steps	1	24	0
 PROPERTY	Light Steps	1	3	0
 END_COMPONENT
-ENTITY	208	0	1	MatchCamera	0.000000,11.088253,30.287645	-14.999990,0.000000,-0.000000	1.000000,1.000000,1.000000
+ENTITY	208	0	0	MatchCamera	0.000000,11.088253,30.287645	-14.999990,0.000000,-0.000000	1.000000,1.000000,1.000000
 COMPONENT	208	CameraComponent	1
 PROPERTY	FOV	0	60.000000	0
 PROPERTY	Projection	6	0	2	Perspective	Orthographic
@@ -1231,6 +2550,9 @@ PROPERTY	OverlayOrder	1	0	0
 PROPERTY	RenderTags	2		0
 PROPERTY	IgnoredTags	2		0
 PROPERTY	TargetTexture	2	project://Textures/MatchRender.plutorendertexture	0
+PROPERTY	TransparentBackground	4	false	0
+PROPERTY	FilterLightsByTags	4	false	0
+PROPERTY	RenderRuntimeUI	4	true	0
 PROPERTY	PostProcessPresetAsset	2		0
 PROPERTY	PostProcessEffectCount	1	11	0
 PROPERTY	PostProcessEffects.0.Type	2	SSGI	0
@@ -1344,7 +2666,7 @@ PROPERTY	PostProcessEffects.10.Enabled	4	true	0
 PROPERTY	PostProcessEffects.10.Params.Enable SSGI	4	true	0
 PROPERTY	PostProcessEffects.10.Params.Indirect Debug View	6	0	5	None	LPV Only	SSGI Only	Combined Indirect	RSM Only
 END_COMPONENT
-ENTITY	209	0	1	ArenaTV	0.000000,17.891432,-19.821785	21.019314,0.000000,0.000000	16.426798,16.426794,16.426794
+ENTITY	209	0	0	ArenaTV	0.000000,17.891432,-19.821785	21.019314,0.000000,0.000000	16.426798,16.426794,16.426794
 COMPONENT	209	MeshComponent	1
 PROPERTY	Static	4	false	0
 PROPERTY	Visible	4	true	0
@@ -1354,6 +2676,7 @@ PROPERTY	ModelAssetId	2	engine://builtin/mesh/plane	0
 PROPERTY	ModelObjectId	2	1	0
 PROPERTY	MeshAssetReference	2	engine://builtin/mesh/plane	0
 PROPERTY	UseGeneratedLods	4	false	0
+PROPERTY	MinShadowLod	1	0	0
 PROPERTY	MeshPositionOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	PivotOffset	3	0.000000,0.000000,0.000000	0
 PROPERTY	MeshRotationOffset	3	0.000000,0.000000,0.000000	0

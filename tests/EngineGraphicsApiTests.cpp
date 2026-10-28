@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/render/postprocess/VoxelConeTracingEffect.h"
 #include "PlutoGE/render/postprocess/DDGIEffect.h"
+#include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/render/postprocess/ToneMappingEffect.h"
 #include <filesystem>
 #include <fstream>
@@ -248,9 +249,104 @@ int main(int argc, char **argv)
                 save(name);
                 return true;
             };
+            // Optional arguments after the camera: preset=<project post-process preset> applies its DDGI settings,
+            // move=<units per frame> dollies the camera sideways while measuring stability, full=1 measures with the
+            // preset's whole effect stack (TAA, exposure and so on, DDGI in its place), and Name=Value overrides one DDGI
+            // parameter.
+            float move = 0.0f;
+            bool full = false;
+            std::vector<std::unique_ptr<render::IPostProcessEffect>> presetEffects;
+            std::vector<render::IPostProcessEffect *> fullStack;
+            for (int argument = 12; argument < argc; ++argument)
+            {
+                const std::string text = argv[argument];
+                const auto split = text.find('=');
+                if (split == std::string::npos) continue;
+                const auto name = text.substr(0, split), value = text.substr(split + 1);
+                if (name == "preset")
+                {
+                    bool loaded = false;
+                    const auto preset = engine.GetAssetManager().LoadPostProcessPresetAsset(value, &loaded);
+                    if (!loaded) return 33;
+                    for (const auto &effect : preset.effects)
+                    {
+                        if (effect.typeName == "DDGI")
+                        {
+                            ddgi.ApplyParameters(effect.parameters);
+                            fullStack.push_back(&ddgi);
+                            continue;
+                        }
+                        auto created = render::CreatePostProcessEffect(effect.typeName);
+                        if (!created || !effect.enabled) continue;
+                        created->ApplyParameters(effect.parameters);
+                        fullStack.push_back(created.get());
+                        presetEffects.push_back(std::move(created));
+                    }
+                }
+                else if (name == "full")
+                    full = value == "1";
+                else if (name == "move")
+                    move = std::stof(value);
+                else
+                    ddgi.ApplyParameters({{name, render::PostProcessParameterType::String, value}});
+            }
+            ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "0"}});
             const int frames = std::stoi(argv[5]);
             if (!run({&tone, &gamma}, 4, "off")) return 32;
             if (!run({&ddgi, &tone, &gamma}, frames, "ddgi")) return 32;
+            // Temporal stability: mean and 99th percentile of the second temporal difference |L(t+1) - 2 L(t) + L(t-1)|
+            // of the final image (8-bit display values), without DDGI, with it, and of the indirect light alone. Smooth
+            // camera motion leaves it near zero; flicker, and aliased edges crawling without TAA, do not.
+            const auto stability = [&](const std::vector<render::IPostProcessEffect *> &stack, const char *label)
+            {
+                std::vector<std::byte> previous, older;
+                std::vector<float> changes, map(std::size_t(output.extentWidth) * output.extentHeight, 0.0f);
+                for (int frame = 0; frame < 96; ++frame)
+                {
+                    const glm::vec3 offset(move * float(frame), 0.0f, 0.0f);
+                    camera.view = glm::lookAtRH(eye + offset, target + offset, glm::vec3(0, 1, 0));
+                    lighting.view = camera.view;
+                    lighting.cameraPosition = eye + offset;
+                    if (!service.RenderSceneAndPresent(camera, lighting, commands, textures, scene.get(), stack)) return false;
+                    auto pixels = device.ReadTextureRgba8(output.texture);
+                    if (!older.empty())
+                        for (std::size_t i = 0; i < pixels.size(); i += 4)
+                        {
+                            float change = 0;
+                            for (int channel = 0; channel < 3; ++channel)
+                                change = std::max(change, std::abs(float(pixels[i + channel]) -
+                                    2.0f * float(previous[i + channel]) + float(older[i + channel])));
+                            changes.push_back(change);
+                            map[i / 4] += change;
+                        }
+                    older = std::move(previous);
+                    previous = std::move(pixels);
+                }
+                double mean = 0;
+                for (const float change : changes) mean += change;
+                std::nth_element(changes.begin(), changes.begin() + changes.size() * 99 / 100, changes.end());
+                std::cout << "DDGI flicker " << label << " mean " << mean / changes.size() << " p99 "
+                          << changes[changes.size() * 99 / 100] << std::endl;
+                // Where it flickers: accumulated second differences, bright where unstable.
+                std::ofstream file(std::filesystem::path(argv[4]) / (std::string("flicker-") + label + ".pgm"), std::ios::binary);
+                file << "P5\n" << output.extentWidth << ' ' << output.extentHeight << "\n255\n";
+                for (const float value : map)
+                {
+                    const auto byte = static_cast<unsigned char>(std::min(255.0f, value * 2.0f));
+                    file.write(reinterpret_cast<const char *>(&byte), 1);
+                }
+                return true;
+            };
+            if (full)
+            {
+                std::vector<render::IPostProcessEffect *> withoutDdgi;
+                for (auto *effect : fullStack)
+                    if (effect != &ddgi) withoutDdgi.push_back(effect);
+                if (!stability(withoutDdgi, "preset off") || !stability(fullStack, "preset on")) return 32;
+            }
+            if (!stability({&tone, &gamma}, "off") || !stability({&ddgi, &tone, &gamma}, "on")) return 32;
+            ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "2"}});
+            if (!stability({&ddgi, &tone, &gamma}, "indirect")) return 32;
             for (const auto &[view, name] : {std::pair{"1", "irradiance"}, std::pair{"2", "indirect"}, std::pair{"3", "probes"}})
             {
                 ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, view}});

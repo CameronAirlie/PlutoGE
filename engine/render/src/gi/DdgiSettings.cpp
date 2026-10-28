@@ -35,7 +35,7 @@ namespace PlutoGE::render
         DdgiSettings result = *this;
         result.grid = grid.Sanitized();
         result.intensity = std::clamp(Finite(intensity, 1.0f), 0.0f, 8.0f);
-        result.hysteresis = std::clamp(Finite(hysteresis, 0.9f), 0.0f, 0.99f);
+        result.hysteresis = std::clamp(Finite(hysteresis, 0.97f), 0.0f, 0.99f);
         result.normalBias = std::clamp(Finite(normalBias, 0.2f), 0.0f, 1.0f);
         result.viewBias = std::clamp(Finite(viewBias, 0.3f), 0.0f, 1.0f);
         result.minFrontfaceDistance = std::clamp(Finite(minFrontfaceDistance, 0.2f), 0.0f, 0.45f);

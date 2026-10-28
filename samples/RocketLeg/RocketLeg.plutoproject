@@ -23,10 +23,10 @@ RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	1
 EDITOR_FONT_SIZE	16.1
 EDITOR_FONT	Georama
-EDITOR_CAMERA_POSITION	32.435	8.57429	4.7292
+EDITOR_CAMERA_POSITION	-15.6428	11.9652	10.4928
 EDITOR_CAMERA_SPEED	12
 EDITOR_CAMERA_RUNTIME_UI	0
-EDITOR_CAMERA_ROTATION	311.754	-30.1203
+EDITOR_CAMERA_ROTATION	282.357	-2.40026
 EDITOR_CAMERA_LENS	70	0.1	500
 EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/main.plutopostprocess
 ASSET	engine://builtin/material/default	0	Material
@@ -109,8 +109,8 @@ ASSET	project://Models/CarBody.glb	8344	Model
 ASSET	project://Models/CarGlass.glb	3304	Model
 ASSET	project://Models/CarTrim.glb	7244	Model
 ASSET	project://Models/FieldLines.glb	25132	Model
-ASSET	project://PostProcessing/main.plutopostprocess	5960	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	15672739	Scene
+ASSET	project://PostProcessing/main.plutopostprocess	6456	Post Process Preset
+ASSET	project://Scenes/Main.plutoscene	15672740	Scene
 ASSET	project://Scripts/Arena/BoostPad.cs	4449	Script
 ASSET	project://Scripts/Ball/BallMarker.cs	2172	Script
 ASSET	project://Scripts/Ball/GoalExplosion.cs	1776	Script

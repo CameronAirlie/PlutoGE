@@ -29,7 +29,7 @@ namespace PlutoGE::render
         DdgiGridSettings grid;
         float intensity = 1.0f;
         // Share of a probe's history kept per update.
-        float hysteresis = 0.9f;
+        float hysteresis = 0.97f;
         float normalBias = 0.2f;
         float viewBias = 0.3f;
         bool relocation = true;

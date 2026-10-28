@@ -122,8 +122,6 @@ int2 borderSource(int2 texel, int tileSize)
     return texel;
 }
 
-float maxComponent(float3 value) { return max(value.x, max(value.y, value.z)); }
-
 [shader("compute")]
 [numthreads(PLUTO_DDGI_IRRADIANCE_TILE, PLUTO_DDGI_IRRADIANCE_TILE, 1)]
 void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID, uint threadIndex : SV_GroupIndex)
@@ -158,9 +156,13 @@ void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     if (weightSum <= 0.0001) return;
     const float3 current = radiance / weightSum;
     const float3 previous = irradianceAtlas[texel].rgb;
-    // Converge quickly after a large change (a light switched on) while still averaging away ray noise.
-    const float change = maxComponent(abs(current - previous)) / max(maxComponent(previous), 0.05);
-    const float hysteresis = change > 0.5 ? ddgiBlend.x * 0.5 : ddgiBlend.x;
+    // Converge quickly after a large change (a light switched on or off) while averaging away ray noise. Each probe
+    // updates only every few frames, so one update's estimate is noisy: only a change that doubles or halves the
+    // brightness, well beyond that noise, gives up history. A lower threshold lets noise in dim scenes trip it and
+    // makes the lighting shimmer.
+    const float luminancePrevious = dot(previous, float3(0.2126, 0.7152, 0.0722));
+    const float luminanceChange = abs(dot(current - previous, float3(0.2126, 0.7152, 0.0722)));
+    const float hysteresis = luminanceChange > max(luminancePrevious, 0.1) ? ddgiBlend.x * 0.5 : ddgiBlend.x;
     irradianceAtlas[texel] = float4(lerp(current, previous, hysteresis), 1.0);
 }
 

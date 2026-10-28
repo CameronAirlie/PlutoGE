@@ -27,7 +27,10 @@ unoccluded ambient light, which shows as a box of probe lighting around the came
 Other controls:
 
 - **Intensity** scales the probe lighting.
-- **Hysteresis** is the share of a probe's history kept per update. Raise it for less noise and slower response.
+- **Hysteresis** (default 0.97) is the share of a probe's history kept per update. Each probe updates only every
+  few frames, so lower values average fewer noisy updates and the lighting shimmers; 0.9 roughly doubled the flicker
+  in RocketLeg. Changes that double or halve a probe's brightness (a light switched on) use half the hysteresis, so
+  large changes still settle in a few updates.
 - **Normal Bias** and **View Bias** (in probe spacings) move lookups off the surface so probes behind it are not seen.
   The renderer never uses less than one and a half voxels, which is as sharply as the voxel scene places surfaces.
 - **Probe Relocation** moves probes out of walls and away from nearby surfaces, by up to 0.45 spacings.
@@ -72,7 +75,8 @@ The frame runs in this order: geometry pass, DDGI, SSGI, SSAO.
    **Rays Per Probe** spherical-Fibonacci rays rotated randomly at every update.
 4. **Probe update** (`DDGIProbeUpdate.slang`). Relocation and classification use the fixed rays. Rays are then blended
    into two octahedral atlases per probe: 6 x 6 texels of irradiance and 14 x 14 texels of hit distance and squared
-   distance, both with a one-texel border. Large changes converge at half the hysteresis.
+   distance, both with a one-texel border. Changes beyond twice the ray noise (doubling or halving a probe's
+   luminance, above 0.1) converge at half the hysteresis.
 5. **Apply** (`DDGIApply.slang`). Each opaque lit pixel interpolates its eight surrounding probes, weighted by
    trilinear position, a smooth backface term and Chebyshev visibility. The result *replaces* the diffuse ambient the
    geometry pass wrote: sky, reflection-capture or baked-grid irradiance times the surface's diffuse response. It fades

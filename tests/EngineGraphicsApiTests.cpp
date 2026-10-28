@@ -251,8 +251,8 @@ int main(int argc, char **argv)
             };
             // Optional arguments after the camera: preset=<project post-process preset> applies its DDGI settings,
             // move=<units per frame> dollies the camera sideways while measuring stability, full=1 measures with the
-            // preset's whole effect stack (TAA, exposure and so on, DDGI in its place), and Name=Value overrides one DDGI
-            // parameter.
+            // preset's whole effect stack (TAA, exposure and so on, DDGI in its place), AutoExposure:Name=Value overrides
+            // one auto exposure parameter (after preset=), and Name=Value overrides one DDGI parameter.
             float move = 0.0f;
             bool full = false;
             std::vector<std::unique_ptr<render::IPostProcessEffect>> presetEffects;
@@ -282,6 +282,12 @@ int main(int argc, char **argv)
                         fullStack.push_back(created.get());
                         presetEffects.push_back(std::move(created));
                     }
+                }
+                else if (name.rfind("AutoExposure:", 0) == 0)
+                {
+                    for (auto &effect : presetEffects)
+                        if (effect->GetTypeName() == "AutoExposure")
+                            effect->ApplyParameters({{name.substr(13), render::PostProcessParameterType::String, value}});
                 }
                 else if (name == "full")
                     full = value == "1";
@@ -343,6 +349,12 @@ int main(int argc, char **argv)
                 for (auto *effect : fullStack)
                     if (effect != &ddgi) withoutDdgi.push_back(effect);
                 if (!stability(withoutDdgi, "preset off") || !stability(fullStack, "preset on")) return 32;
+                // The settled image with the whole stack, without auto exposure and without DDGI.
+                std::vector<render::IPostProcessEffect *> withoutExposure;
+                for (auto *effect : fullStack)
+                    if (effect->GetTypeName() != "AutoExposure") withoutExposure.push_back(effect);
+                if (!run(fullStack, 180, "preset") || !run(withoutExposure, 180, "preset-noexposure") ||
+                    !run(withoutDdgi, 180, "preset-noddgi")) return 32;
             }
             if (!stability({&tone, &gamma}, "off") || !stability({&ddgi, &tone, &gamma}, "on")) return 32;
             ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "2"}});

@@ -29,4 +29,4 @@ MetallicTexture=
 MetallicTextureChannel=0
 RoughnessTexture=
 RoughnessTextureChannel=0
-ShaderGraph=project://Shaders/Toon.plutoshadergraph
+ShaderGraph=engine://builtin/shadergraph/default-lit

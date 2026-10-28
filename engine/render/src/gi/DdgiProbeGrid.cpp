@@ -9,14 +9,14 @@
 
 namespace PlutoGE::render
 {
+    glm::uvec2 DdgiAtlasTiles(std::uint32_t probes) noexcept
+    {
+        const auto perRow = std::max(1u, static_cast<std::uint32_t>(std::ceil(std::sqrt(static_cast<double>(probes)))));
+        return {perRow, (probes + perRow - 1) / perRow};
+    }
+
     namespace
     {
-        glm::uvec2 AtlasTilesFor(std::uint32_t probeCount) noexcept
-        {
-            const auto perRow = std::max(1u, static_cast<std::uint32_t>(std::ceil(std::sqrt(static_cast<double>(probeCount)))));
-            return {perRow, (probeCount + perRow - 1) / perRow};
-        }
-
         int PositiveModulo(int value, int divisor) noexcept
         {
             const int remainder = value % divisor;
@@ -35,23 +35,42 @@ namespace PlutoGE::render
     DdgiGridSettings DdgiGridSettings::Sanitized() const
     {
         DdgiGridSettings result = *this;
+        result.cascades = std::clamp(cascades, 1, MaxCascades);
         result.counts = glm::clamp(counts, glm::ivec3(2), glm::ivec3(MaxAxisCount, MaxVerticalCount, MaxAxisCount));
-        while (result.ProbeCount() > MaxProbes)
+        while (result.TotalProbes() > MaxProbes)
         {
-            const double scale = std::cbrt(static_cast<double>(MaxProbes) / result.ProbeCount());
+            const double scale = std::cbrt(static_cast<double>(MaxProbes) / result.TotalProbes());
             for (int axis = 0; axis < 3; ++axis)
                 result.counts[axis] = std::max(2, std::min(result.counts[axis] - 1,
                     static_cast<int>(std::floor(result.counts[axis] * scale))));
         }
         result.spacing = std::isfinite(spacing) && spacing > 0.0f ? std::clamp(spacing, 0.1f, 64.0f) : 2.0f;
         result.blendedRays = std::clamp<std::uint32_t>(blendedRays, 32u, PLUTO_DDGI_MAX_BLENDED_RAYS);
-        result.probesPerFrame = std::clamp<std::uint32_t>(probesPerFrame, 1u, MaxProbesPerFrame);
+        result.probesPerFrame = std::clamp<std::uint32_t>(probesPerFrame, static_cast<std::uint32_t>(result.cascades),
+                                                          MaxProbesPerFrame);
         return result;
+    }
+
+    float DdgiGridSettings::CascadeSpacing(int cascade) const noexcept
+    {
+        return spacing * std::pow(CascadeScale, static_cast<float>(cascade));
+    }
+
+    std::uint32_t DdgiGridSettings::CascadeBudget(int cascade) const noexcept
+    {
+        // Weights 2^(cascades - 1 - c): with three cascades the budget splits 4:2:1.
+        const std::uint32_t total = (1u << cascades) - 1u;
+        const std::uint32_t weight = 1u << (cascades - 1 - cascade);
+        const auto share = static_cast<std::uint32_t>(static_cast<std::uint64_t>(probesPerFrame) * weight / total);
+        return std::clamp(share, 1u, ProbeCount());
     }
 
     std::uint32_t DdgiGridSettings::FrameBudget() const noexcept
     {
-        return std::max(1u, std::min(probesPerFrame, ProbeCount()));
+        std::uint32_t budget = 0;
+        for (int cascade = 0; cascade < cascades; ++cascade)
+            budget += CascadeBudget(cascade);
+        return budget;
     }
 
     std::uint32_t DdgiGridSettings::TracedRays() const noexcept
@@ -59,30 +78,33 @@ namespace PlutoGE::render
         return PLUTO_DDGI_FIXED_RAYS + blendedRays;
     }
 
-    std::uint32_t DdgiGridSettings::FramesPerSweep() const noexcept
+    std::uint32_t DdgiGridSettings::FramesPerSweep(int cascade) const noexcept
     {
-        return (ProbeCount() + FrameBudget() - 1) / FrameBudget();
+        const auto budget = CascadeBudget(cascade);
+        return (ProbeCount() + budget - 1) / budget;
     }
 
     std::size_t DdgiGridSettings::MemoryBytes() const noexcept
     {
         constexpr std::size_t texelBytes = 8; // RGBA16F
-        const auto tiles = AtlasTilesFor(ProbeCount());
+        const auto tiles = DdgiAtlasTiles(TotalProbes());
         const std::size_t tileCount = static_cast<std::size_t>(tiles.x) * tiles.y;
         const std::size_t irradiance = tileCount * PLUTO_DDGI_IRRADIANCE_TILE * PLUTO_DDGI_IRRADIANCE_TILE;
         const std::size_t distance = tileCount * PLUTO_DDGI_DISTANCE_TILE * PLUTO_DDGI_DISTANCE_TILE;
         const std::size_t rays = static_cast<std::size_t>(FrameBudget()) * TracedRays();
-        return (irradiance + distance + tileCount + rays) * texelBytes + FrameBudget() * sizeof(std::uint32_t);
+        return (irradiance + distance + tileCount + rays) * texelBytes +
+               (static_cast<std::size_t>(TotalProbes()) + FrameBudget()) * sizeof(std::uint32_t);
     }
 
-    DdgiProbeGrid::DdgiProbeGrid(const DdgiGridSettings &settings) : m_settings(settings.Sanitized())
+    DdgiProbeGrid::DdgiProbeGrid(const DdgiGridSettings &settings, int cascade)
+        : m_settings(settings.Sanitized()), m_cascade(cascade), m_spacing(m_settings.CascadeSpacing(cascade))
     {
     }
 
     DdgiProbeGrid::Scroll DdgiProbeGrid::Recenter(glm::vec3 center)
     {
         const glm::vec3 halfExtent = glm::vec3(m_settings.counts - 1) * 0.5f;
-        const glm::vec3 centerCells = center / m_settings.spacing;
+        const glm::vec3 centerCells = center / m_spacing;
         const glm::ivec3 desired(glm::round(centerCells - halfExtent));
         Scroll scroll;
         if (!m_placed)
@@ -116,11 +138,6 @@ namespace PlutoGE::render
     {
         return static_cast<std::uint32_t>(storageCoordinate.x + m_settings.counts.x *
                                           (storageCoordinate.y + m_settings.counts.y * storageCoordinate.z));
-    }
-
-    glm::uvec2 DdgiProbeGrid::AtlasTiles() const noexcept
-    {
-        return AtlasTilesFor(ProbeCount());
     }
 
     void DdgiProbeGrid::AppendEnteredProbes(const Scroll &scroll, std::vector<std::uint32_t> &probes) const

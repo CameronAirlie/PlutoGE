@@ -37,7 +37,7 @@ namespace
                 for (int x = 0; x < 5; ++x)
                     slots.insert(grid.StorageIndex(grid.StorageCoordinate({x, y, z})));
         Check(slots.size() == 60 && *slots.rbegin() == 59, "storage indices are not a bijection");
-        const auto tiles = grid.AtlasTiles();
+        const auto tiles = DdgiAtlasTiles(grid.ProbeCount());
         Check(tiles.x * tiles.y >= 60 && tiles.x == 8, "atlas tiles");
 
         const auto before = grid.OriginCell();
@@ -95,12 +95,23 @@ namespace
         huge.blendedRays = 4;
         huge.probesPerFrame = 0;
         const auto sane = huge.Sanitized();
-        Check(sane.ProbeCount() <= DdgiGridSettings::MaxProbes && sane.spacing > 0.0f, "grid limits");
-        Check(sane.blendedRays == 32 && sane.probesPerFrame == 1 && sane.FramesPerSweep() == sane.ProbeCount(),
+        Check(sane.TotalProbes() <= DdgiGridSettings::MaxProbes && sane.spacing > 0.0f, "grid limits");
+        // At least one probe per cascade per frame.
+        Check(sane.blendedRays == 32 && sane.probesPerFrame == 3 && sane.FramesPerSweep() == sane.ProbeCount(),
               "ray and budget limits");
         const DdgiGridSettings defaults;
-        Check(defaults.TracedRays() == PLUTO_DDGI_FIXED_RAYS + 96 && defaults.FramesPerSweep() == 6, "defaults");
-        Check(defaults.MemoryBytes() > 10u << 20 && defaults.MemoryBytes() < 32u << 20, "memory estimate");
+        Check(defaults.TracedRays() == PLUTO_DDGI_FIXED_RAYS + 96 && defaults.cascades == 3, "defaults");
+        Check(defaults.MemoryBytes() > 40u << 20 && defaults.MemoryBytes() < 64u << 20, "memory estimate");
+        // Cascades triple in spacing and split the budget 4:2:1, so the finest refreshes most often.
+        Check(defaults.CascadeSpacing(2) == 18.0f && defaults.Extent(2).x == 23 * 18.0f, "cascade spacing");
+        Check(defaults.CascadeBudget(0) == 987 && defaults.CascadeBudget(1) == 493 && defaults.CascadeBudget(2) == 246 &&
+                  defaults.FrameBudget() == 987 + 493 + 246, "cascade budgets");
+        Check(defaults.FramesPerSweep(0) == 8 && defaults.FramesPerSweep(2) == 29, "cascade refresh");
+        DdgiGridSettings single = defaults;
+        single.cascades = 1;
+        Check(single.CascadeBudget(0) == 1728 && single.TotalProbes() == single.ProbeCount(), "single cascade");
+        const DdgiProbeGrid outer(defaults, 2);
+        Check(outer.Spacing() == 18.0f && outer.GlobalIndex(5) == 2 * defaults.ProbeCount() + 5, "cascade indices");
 
         for (const auto rotation : {DdgiRayRotation(0), DdgiRayRotation(1), DdgiRayRotation(12345)})
         {

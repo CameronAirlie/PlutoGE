@@ -2,6 +2,7 @@
 
 #include "DdgiRaySource.h"
 #include "../screenspace/ScreenSpacePass.h"
+#include "PlutoGE/render/DdgiConfig.h"
 #include "PlutoGE/render/DdgiProbeGrid.h"
 #include "PlutoGE/render/DdgiSettings.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
@@ -17,9 +18,10 @@ namespace PlutoGE::render
     // Mirrors DdgiParameters in DDGICommon.slang.
     struct alignas(16) DdgiGpuParameters
     {
-        glm::vec4 originSpacing{0.0f};
-        glm::ivec4 originCell{0};
+        std::array<glm::vec4, PLUTO_DDGI_MAX_CASCADES> cascadeOrigins{};
+        std::array<glm::ivec4, PLUTO_DDGI_MAX_CASCADES> cascadeCells{};
         glm::ivec4 counts{0};
+        glm::uvec4 volume{0u};
         glm::uvec4 rays{0u};
         std::array<glm::vec4, 3> rotation{};
         glm::vec4 blend{0.0f};
@@ -31,7 +33,7 @@ namespace PlutoGE::render
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
         glm::vec4 physicalSkySettings{0.0f};
     };
-    static_assert(sizeof(DdgiGpuParameters) == 16 * (14 + PLUTO_SKY_LANE_COUNT));
+    static_assert(sizeof(DdgiGpuParameters) == 16 * (13 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT));
 
     // What rays that leave the scene see: the physical sky, or the flat ambient term without it. Matches the
     // environment the geometry pass lights surfaces with, so an unoccluded volume reproduces that lighting.
@@ -43,12 +45,13 @@ namespace PlutoGE::render
         float ambientIntensity = 0.0f;
     };
 
-    // A camera-centred volume of irradiance probes, updated progressively from a ray source and applied to the
+    // Camera-centred cascades of irradiance probes, updated progressively from a ray source and applied to the
     // G-buffer in screen space (docs/DDGI.md). Each frame:
     //
-    //   Update  recentres the grid (probes that enter it lose their history), lists this frame's probes
-    //           (DdgiProbeScheduler), has the ray source trace them, then relocates and classifies them and blends
-    //           their rays into the irradiance and visibility atlases (DDGIProbeUpdate.slang).
+    //   Update  recentres every cascade (probes that enter one lose their history), lists this frame's probes per
+    //           cascade (DdgiProbeScheduler, DdgiGridSettings::CascadeBudget), has the ray source trace them all in one
+    //           dispatch, then relocates and classifies them and blends their rays into the shared irradiance and
+    //           visibility atlases (DDGIProbeUpdate.slang).
     //   Apply   replaces the diffuse ambient light of every lit opaque pixel with the volume's (DDGIApply.slang).
     //
     // Depends only on the RHI, the screen-space infrastructure and IDdgiRaySource.
@@ -97,11 +100,13 @@ namespace PlutoGE::render
         rhi::Texture m_irradiance, m_distance, m_states, m_rays;
         rhi::Buffer m_probeList;
         ScreenSpaceTarget m_color, m_indirect;
-        DdgiProbeGrid m_grid;
-        DdgiProbeScheduler m_scheduler;
+        DdgiGridSettings m_grid;
+        std::vector<DdgiProbeGrid> m_cascades;
+        std::vector<DdgiProbeScheduler> m_schedulers;
         DdgiSettings m_settings;
         DdgiEnvironment m_environment;
-        std::vector<std::uint32_t> m_listed, m_entered, m_upload;
+        // Global probe indices: this frame's traced probes, those it resets, and the list uploaded to the GPU.
+        std::vector<std::uint32_t> m_listed, m_entered, m_upload, m_scratch;
         std::uint64_t m_updates = 0;
         float m_surfaceTolerance = 0.0f;
         bool m_hasResources = false, m_resetAll = true;

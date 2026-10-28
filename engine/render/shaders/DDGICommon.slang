@@ -6,9 +6,11 @@
 // radiance (irradiance / pi, as samplePhysicalSkyIrradiance and the baked probe grid), and a receiver's diffuse
 // light is that value times albedo (1 - F)(1 - metallic) / pi.
 //
-// Grid coordinate g (0..counts-1) is probe g of the current, camera-centred placement. Its data lives at storage
-// coordinate (originCell + g) mod counts, so scrolling the grid never moves data (DdgiProbeGrid.h). Each storage index
-// owns tile (index mod tilesPerRow, index / tilesPerRow) of the atlases and one texel of the probe state texture.
+// The volume is a set of nested, camera-centred cascades (DdgiProbeGrid.h), each three times the spacing of the one
+// inside it. Grid coordinate g (0..counts-1) of cascade c is that cascade's probe g in its current placement; its data
+// lives at storage coordinate (originCell[c] + g) mod counts, so scrolling never moves data. Its global index is
+// c * probesPerCascade + storage index, which owns tile (index mod tilesPerRow, index / tilesPerRow) of the atlases
+// and one texel of the probe state texture.
 #ifndef PLUTO_DDGI_COMMON
 #define PLUTO_DDGI_COMMON
 
@@ -23,13 +25,15 @@
 // expects, so ray misses evaluate exactly the sky the geometry pass lit with.
 [[vk::binding(0, 0)]] cbuffer DdgiParameters : register(b0, space0)
 {
-    float4 ddgiOriginSpacing; // xyz position of grid coordinate 0, w probe spacing
-    int4 ddgiOriginCell;      // xyz absolute cell of grid coordinate 0, w probe count
+    float4 ddgiCascadeOrigins[PLUTO_DDGI_MAX_CASCADES]; // xyz position of grid coordinate 0, w probe spacing
+    int4 ddgiCascadeCells[PLUTO_DDGI_MAX_CASCADES];     // xyz absolute cell of grid coordinate 0
     int4 ddgiCounts;          // xyz probes per axis, w atlas tiles per row
+    uint4 ddgiVolume;         // x cascades, y probes per cascade, z probes in all cascades
     uint4 ddgiRays;           // x fixed rays, y blended rays, z probes listed this frame, w traced rays per probe
     float4 ddgiRotation[3];   // rows of this frame's rotation of the blended ray directions
-    float4 ddgiBlend;         // x hysteresis, y brightness clamp, z visibility sharpness exponent, w visibility range
-    float4 ddgiBias;          // x normal bias, y view bias (world units), zw unused
+    float4 ddgiBlend;         // x hysteresis, y brightness clamp, z visibility sharpness exponent,
+                              // w visibility range (spacing units)
+    float4 ddgiBias;          // x normal bias, y view bias (spacing units), z minimum normal bias (world units)
     float4 ddgiState;         // x relocation, y classification, z min frontface distance (spacing units),
                               // w multiple-bounce gain (hits reflect the volume's irradiance)
     float4 ddgiApply;         // x intensity, y debug view, z debug probe radius (spacing units), w probes to reset
@@ -40,8 +44,11 @@
     float4 physicalSkySettings;
 };
 
-float ddgiSpacing() { return ddgiOriginSpacing.w; }
-uint ddgiProbeCount() { return uint(ddgiOriginCell.w); }
+uint ddgiCascades() { return ddgiVolume.x; }
+float ddgiSpacing(uint cascade) { return ddgiCascadeOrigins[cascade].w; }
+// Probes in all cascades.
+uint ddgiProbeCount() { return ddgiVolume.z; }
+uint ddgiCascadeOf(uint index) { return index / ddgiVolume.y; }
 
 // GLSL leaves % undefined for negative operands, and grid cells left of the world origin are negative: floor division
 // is exact for every cell index a float can address.
@@ -50,25 +57,28 @@ int3 ddgiPositiveModulo(int3 value, int3 divisor)
     return value - divisor * int3(floor(float3(value) / float3(divisor)));
 }
 
-int3 ddgiStorageCoordinate(int3 gridCoordinate)
+int3 ddgiStorageCoordinate(uint cascade, int3 gridCoordinate)
 {
-    return ddgiPositiveModulo(ddgiOriginCell.xyz + gridCoordinate, ddgiCounts.xyz);
+    return ddgiPositiveModulo(ddgiCascadeCells[cascade].xyz + gridCoordinate, ddgiCounts.xyz);
 }
 
-uint ddgiStorageIndex(int3 storage)
+// Global index of a cascade's storage coordinate.
+uint ddgiStorageIndex(uint cascade, int3 storage)
 {
-    return uint(storage.x + ddgiCounts.x * (storage.y + ddgiCounts.y * storage.z));
+    return cascade * ddgiVolume.y + uint(storage.x + ddgiCounts.x * (storage.y + ddgiCounts.y * storage.z));
 }
 
+// Storage coordinate of a global index within its cascade.
 int3 ddgiStorageFromIndex(uint index)
 {
+    const uint local = index % ddgiVolume.y;
     const uint layer = uint(ddgiCounts.x * ddgiCounts.y);
-    return int3(int(index % uint(ddgiCounts.x)), int((index % layer) / uint(ddgiCounts.x)), int(index / layer));
+    return int3(int(local % uint(ddgiCounts.x)), int((local % layer) / uint(ddgiCounts.x)), int(local / layer));
 }
 
-int3 ddgiGridFromStorage(int3 storage)
+int3 ddgiGridFromStorage(uint cascade, int3 storage)
 {
-    return ddgiPositiveModulo(storage - ddgiOriginCell.xyz, ddgiCounts.xyz);
+    return ddgiPositiveModulo(storage - ddgiCascadeCells[cascade].xyz, ddgiCounts.xyz);
 }
 
 int2 ddgiTile(uint storageIndex)
@@ -81,9 +91,16 @@ int2 ddgiTile(uint storageIndex)
 uint ddgiFlags(float4 state) { return uint(state.w + 0.5); }
 bool ddgiHasFlag(float4 state, uint flag) { return (ddgiFlags(state) & flag) != 0; }
 
-float3 ddgiProbePosition(int3 gridCoordinate, float4 state)
+float3 ddgiProbePosition(uint cascade, int3 gridCoordinate, float4 state)
 {
-    return ddgiOriginSpacing.xyz + (float3(gridCoordinate) + state.xyz) * ddgiSpacing();
+    return ddgiCascadeOrigins[cascade].xyz + (float3(gridCoordinate) + state.xyz) * ddgiSpacing(cascade);
+}
+
+// The world position of the probe with global index `index`.
+float3 ddgiProbePositionOf(uint index, float4 state)
+{
+    const uint cascade = ddgiCascadeOf(index);
+    return ddgiProbePosition(cascade, ddgiGridFromStorage(cascade, ddgiStorageFromIndex(index)), state);
 }
 
 float2 ddgiSignNotZero(float2 value) { return float2(value.x >= 0.0 ? 1.0 : -1.0, value.y >= 0.0 ? 1.0 : -1.0); }
@@ -137,16 +154,17 @@ float3 ddgiRayDirection(uint ray)
                   dot(ddgiRotation[2].xyz, direction));
 }
 
-// Irradiance at a surface (cosine-weighted mean radiance) from the eight surrounding probes, weighted trilinearly, by
-// a smooth backface term and by Chebyshev visibility from the probes' distance moments. `coverage` falls from one to
-// zero over the outermost cell of the volume and is zero where no surrounding probe has data.
+// Irradiance at a surface (cosine-weighted mean radiance) from one cascade's eight surrounding probes, weighted
+// trilinearly, by a smooth backface term and by Chebyshev visibility from the probes' distance moments. `coverage`
+// falls from one to zero over the cascade's outermost cell and is zero where no surrounding probe has data.
 #ifdef PLUTO_DDGI_SAMPLING
-float3 ddgiIrradiance(float3 position, float3 normal, float3 viewDirection, out float coverage)
+float3 ddgiCascadeIrradiance(uint cascade, float3 position, float3 normal, float3 viewDirection, out float coverage)
 {
     coverage = 0.0;
-    const float spacing = ddgiSpacing();
-    const float3 biasedPosition = position + normal * ddgiBias.x + viewDirection * ddgiBias.y;
-    const float3 local = (biasedPosition - ddgiOriginSpacing.xyz) / spacing;
+    const float spacing = ddgiSpacing(cascade);
+    const float3 biasedPosition = position + normal * max(ddgiBias.x * spacing, ddgiBias.z) +
+                                  viewDirection * (ddgiBias.y * spacing);
+    const float3 local = (biasedPosition - ddgiCascadeOrigins[cascade].xyz) / spacing;
     const float3 last = float3(ddgiCounts.xyz - 1);
     if (any(local < 0.0) || any(local > last))
         return 0.0;
@@ -158,11 +176,11 @@ float3 ddgiIrradiance(float3 position, float3 normal, float3 viewDirection, out 
     {
         const int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
         const int3 gridCoordinate = base + offset;
-        const uint storage = ddgiStorageIndex(ddgiStorageCoordinate(gridCoordinate));
+        const uint storage = ddgiStorageIndex(cascade, ddgiStorageCoordinate(cascade, gridCoordinate));
         const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
         if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE | PLUTO_DDGI_PROBE_FRESH))
             continue;
-        const float3 probePosition = ddgiProbePosition(gridCoordinate, state);
+        const float3 probePosition = ddgiProbePosition(cascade, gridCoordinate, state);
         const float3 trilinear3 = lerp(1.0 - alpha, alpha, float3(offset));
         const float trilinear = max(0.001, trilinear3.x * trilinear3.y * trilinear3.z);
         // Smooth backface: probes behind the surface contribute little but never exactly zero.
@@ -196,10 +214,27 @@ float3 ddgiIrradiance(float3 position, float3 normal, float3 viewDirection, out 
     }
     if (weightSum <= 0.0)
         return 0.0;
-    // Fade over the outermost cell so the volume edge does not show as a seam.
+    // Fade over the outermost cell so the cascade's edge does not show as a seam.
     const float3 edge = min(local, last - local);
     coverage = saturate(min(min(edge.x, edge.y), edge.z));
     return irradiance / weightSum;
+}
+
+// Irradiance from the finest cascade that covers the surface, blending into the next one out where the finer fades
+// over its outermost cell. `coverage` is how much of the result the cascades supply (zero beyond the widest).
+float3 ddgiIrradiance(float3 position, float3 normal, float3 viewDirection, out float coverage)
+{
+    float3 irradiance = 0.0;
+    float remaining = 1.0;
+    for (uint cascade = 0; cascade < ddgiCascades() && remaining > 0.001; ++cascade)
+    {
+        float cascadeCoverage;
+        const float3 cascadeIrradiance = ddgiCascadeIrradiance(cascade, position, normal, viewDirection, cascadeCoverage);
+        irradiance += cascadeIrradiance * cascadeCoverage * remaining;
+        remaining *= 1.0 - cascadeCoverage;
+    }
+    coverage = 1.0 - remaining;
+    return coverage > 0.0 ? irradiance / coverage : 0.0;
 }
 #endif
 

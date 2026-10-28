@@ -214,6 +214,5 @@ void traceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
     const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
     if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE) && ray >= ddgiRays.x)
         return;
-    const int3 gridCoordinate = ddgiGridFromStorage(ddgiStorageFromIndex(storage));
-    rayOutput[int2(ray, slot)] = traceRay(ddgiProbePosition(gridCoordinate, state), ddgiRayDirection(ray));
+    rayOutput[int2(ray, slot)] = traceRay(ddgiProbePositionOf(storage, state), ddgiRayDirection(ray));
 }

@@ -96,43 +96,52 @@ namespace PlutoGE::render
 
     void DdgiVolume::EnsureResources(const DdgiGridSettings &grid)
     {
-        if (m_hasResources && grid == m_grid.Settings())
+        if (m_hasResources && grid == m_grid)
             return;
-        m_grid = DdgiProbeGrid(grid);
-        const auto tiles = m_grid.AtlasTiles();
+        m_grid = grid;
+        m_cascades.clear();
+        m_schedulers.assign(static_cast<std::size_t>(grid.cascades), {});
+        for (int cascade = 0; cascade < grid.cascades; ++cascade)
+        {
+            m_cascades.emplace_back(grid, cascade);
+            m_schedulers[static_cast<std::size_t>(cascade)].Reset(grid.ProbeCount());
+        }
+        const auto tiles = DdgiAtlasTiles(grid.TotalProbes());
         m_irradiance = CreateDataTexture(*m_device, tiles * glm::uvec2(PLUTO_DDGI_IRRADIANCE_TILE), "DDGI irradiance");
         m_distance = CreateDataTexture(*m_device, tiles * glm::uvec2(PLUTO_DDGI_DISTANCE_TILE), "DDGI visibility");
         m_states = CreateDataTexture(*m_device, tiles, "DDGI probe states");
         m_rays = CreateDataTexture(*m_device, {grid.TracedRays(), grid.FrameBudget()}, "DDGI rays");
         // This frame's listed probes followed by those it resets: at most a full budget plus every probe.
         m_probeList = rhi::Buffer(*m_device, m_device->CreateBuffer(
-            {(static_cast<std::size_t>(grid.ProbeCount()) + grid.FrameBudget()) * sizeof(std::uint32_t),
+            {(static_cast<std::size_t>(grid.TotalProbes()) + grid.FrameBudget()) * sizeof(std::uint32_t),
              rhi::BufferUsage::Storage, "DDGI probe list"}));
-        m_scheduler.Reset(grid.ProbeCount());
         m_resetAll = true;
         m_hasResources = true;
     }
 
     DdgiGpuParameters DdgiVolume::BuildParameters(std::uint32_t listedProbes, float resetProbes) const
     {
-        const auto &grid = m_grid.Settings();
-        const float spacing = grid.spacing;
-        const auto tiles = m_grid.AtlasTiles();
+        const auto &grid = m_grid;
+        const auto tiles = DdgiAtlasTiles(grid.TotalProbes());
         DdgiGpuParameters parameters;
-        parameters.originSpacing = {m_grid.Origin(), spacing};
-        parameters.originCell = {m_grid.OriginCell(), static_cast<int>(grid.ProbeCount())};
+        for (const auto &cascade : m_cascades)
+        {
+            const auto index = static_cast<std::size_t>(cascade.Cascade());
+            parameters.cascadeOrigins[index] = {cascade.Origin(), cascade.Spacing()};
+            parameters.cascadeCells[index] = {cascade.OriginCell(), 0};
+        }
         parameters.counts = {grid.counts, static_cast<int>(tiles.x)};
+        parameters.volume = {static_cast<std::uint32_t>(grid.cascades), grid.ProbeCount(), grid.TotalProbes(), 0u};
         parameters.rays = {PLUTO_DDGI_FIXED_RAYS, grid.blendedRays, listedProbes, grid.TracedRays()};
         const auto rotation = DdgiRayRotation(m_updates);
         for (int row = 0; row < 3; ++row)
             parameters.rotation[row] = {rotation[0][row], rotation[1][row], rotation[2][row], 0.0f};
-        // Visibility moments only need distances up to a cell diagonal plus bias; clamping keeps them precise.
-        parameters.blend = {m_settings.hysteresis, m_settings.brightnessClamp, DistanceExponent,
-                            1.5f * std::sqrt(3.0f) * spacing};
+        // Visibility moments only need distances up to a cell diagonal plus bias (in each cascade's spacings);
+        // clamping keeps them precise.
+        parameters.blend = {m_settings.hysteresis, m_settings.brightnessClamp, DistanceExponent, 1.5f * std::sqrt(3.0f)};
         // Lookups must clear the probes embedded in or behind the surface. Visibility separates them only as sharply
         // as the ray source places surfaces, so the normal offset is at least one and a half times that tolerance.
-        parameters.bias = {std::max(m_settings.normalBias * spacing, 1.5f * m_surfaceTolerance),
-                           m_settings.viewBias * spacing, 0.0f, 0.0f};
+        parameters.bias = {m_settings.normalBias, m_settings.viewBias, 1.5f * m_surfaceTolerance, 0.0f};
         parameters.state = {m_settings.relocation ? 1.0f : 0.0f, m_settings.classification ? 1.0f : 0.0f,
                             m_settings.minFrontfaceDistance, m_settings.multipleBounces ? 1.0f : 0.0f};
         parameters.apply = {m_settings.intensity, static_cast<float>(m_settings.debugView), m_settings.probeRadius,
@@ -158,23 +167,45 @@ namespace PlutoGE::render
         EnsureResources(m_settings.grid);
         m_volumeUniforms.BeginFrame();
         m_screenUniforms.BeginFrame();
-        const auto &grid = m_grid.Settings();
-        m_stats = {.framesPerSweep = grid.FramesPerSweep()};
+        const auto &grid = m_grid;
+        m_stats = {.framesPerSweep = grid.FramesPerSweep(0)};
 
-        const auto scroll = m_grid.Recenter(cameraPosition);
-        const bool resetAll = m_resetAll || scroll.reset;
-        m_entered.clear();
-        if (resetAll)
-            m_scheduler.Reset(grid.ProbeCount());
-        else
+        // Recentre every cascade; a cascade that moved by its own size (or a full reset) restarts all its probes.
+        std::array<DdgiProbeGrid::Scroll, DdgiGridSettings::MaxCascades> scrolls{};
+        bool everyCascadeReset = true;
+        for (std::size_t index = 0; index < m_cascades.size(); ++index)
         {
-            m_grid.AppendEnteredProbes(scroll, m_entered);
-            m_scheduler.Enqueue(m_entered);
+            scrolls[index] = m_cascades[index].Recenter(cameraPosition);
+            everyCascadeReset = everyCascadeReset && scrolls[index].reset;
+        }
+        const bool resetAll = m_resetAll || everyCascadeReset;
+        m_entered.clear();
+        for (std::size_t index = 0; index < m_cascades.size(); ++index)
+        {
+            const auto &cascade = m_cascades[index];
+            m_scratch.clear();
+            if (resetAll || scrolls[index].reset)
+            {
+                m_schedulers[index].Reset(grid.ProbeCount());
+                if (!resetAll)
+                    for (std::uint32_t probe = 0; probe < grid.ProbeCount(); ++probe)
+                        m_entered.push_back(cascade.GlobalIndex(probe));
+                continue;
+            }
+            cascade.AppendEnteredProbes(scrolls[index], m_scratch);
+            m_schedulers[index].Enqueue(m_scratch);
+            for (const auto probe : m_scratch)
+                m_entered.push_back(cascade.GlobalIndex(probe));
         }
         m_listed.clear();
         if (rays.Ready())
         {
-            m_scheduler.Next(grid.FrameBudget(), m_listed);
+            for (std::size_t index = 0; index < m_cascades.size(); ++index)
+            {
+                m_schedulers[index].Next(grid.CascadeBudget(static_cast<int>(index)), m_scratch);
+                for (const auto probe : m_scratch)
+                    m_listed.push_back(m_cascades[index].GlobalIndex(probe));
+            }
             m_surfaceTolerance = rays.SurfaceTolerance();
         }
         m_upload = m_listed;
@@ -196,7 +227,7 @@ namespace PlutoGE::render
         };
         const std::array states{m_states.Get()};
 
-        const auto resetCount = resetAll ? grid.ProbeCount() : static_cast<std::uint32_t>(m_entered.size());
+        const auto resetCount = resetAll ? grid.TotalProbes() : static_cast<std::uint32_t>(m_entered.size());
         if (resetCount > 0)
         {
             commands.BeginGpuScope("RHI DDGI / Probe reset");
@@ -289,7 +320,7 @@ namespace PlutoGE::render
             info.colorAttachments = {m_color.Get()};
             commands.BeginRendering(info);
             bindApply(m_probes);
-            commands.Draw(6 * m_grid.ProbeCount());
+            commands.Draw(6 * m_grid.TotalProbes());
             commands.EndRendering();
             commands.EndGpuScope();
         }
@@ -312,7 +343,8 @@ namespace PlutoGE::render
         m_probeList.Reset();
         m_volumeUniforms.Reset();
         m_screenUniforms.Reset();
-        m_grid.Invalidate();
+        m_cascades.clear();
+        m_schedulers.clear();
         m_hasResources = false;
         m_resetAll = true;
     }

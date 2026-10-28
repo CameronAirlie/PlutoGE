@@ -65,6 +65,7 @@ namespace PlutoGE::render
             {"Probe Count Y", PostProcessParameterType::Int, std::to_string(s.grid.counts.y)},
             {"Probe Count Z", PostProcessParameterType::Int, std::to_string(s.grid.counts.z)},
             {"Probe Spacing", PostProcessParameterType::Float, std::to_string(s.grid.spacing)},
+            {"Probe Cascades", PostProcessParameterType::Int, std::to_string(s.grid.cascades)},
             {"Rays Per Probe", PostProcessParameterType::Int, std::to_string(s.grid.blendedRays)},
             {"Probes Per Frame", PostProcessParameterType::Int, std::to_string(s.grid.probesPerFrame)},
             {"Hysteresis", PostProcessParameterType::Float, std::to_string(s.hysteresis)},
@@ -107,6 +108,7 @@ namespace PlutoGE::render
             else if (p.name == "Probe Count Y") s.grid.counts.y = ParseInt(p.value, s.grid.counts.y);
             else if (p.name == "Probe Count Z") s.grid.counts.z = ParseInt(p.value, s.grid.counts.z);
             else if (p.name == "Probe Spacing") s.grid.spacing = ParseFloat(p.value, s.grid.spacing);
+            else if (p.name == "Probe Cascades") s.grid.cascades = ParseInt(p.value, s.grid.cascades);
             else if (p.name == "Rays Per Probe")
                 s.grid.blendedRays = static_cast<std::uint32_t>(std::max(ParseInt(p.value, 96), 0));
             else if (p.name == "Probes Per Frame")
@@ -138,13 +140,17 @@ namespace PlutoGE::render
     std::vector<std::string> DDGIEffect::GetSummary() const
     {
         const auto &grid = m_settings.grid;
-        const auto extent = grid.Extent();
+        const auto finest = grid.Extent(0), widest = grid.Extent(grid.cascades - 1);
+        std::string refresh;
+        for (int cascade = 0; cascade < grid.cascades; ++cascade)
+            refresh += (cascade ? ", " : "") + std::to_string(grid.FramesPerSweep(cascade));
         return {
-            Grouped(grid.ProbeCount()) + Format(" probes covering %.0f x %.0f x %.0f units around the camera",
-                                                extent.x, extent.y, extent.z),
+            Grouped(grid.TotalProbes()) + " probes in " + std::to_string(grid.cascades) +
+                Format(" cascades: %.0f x %.0f x %.0f units around the camera", finest.x, finest.y, finest.z) +
+                (grid.cascades > 1 ? Format(", reaching %.0f x %.0f x %.0f", widest.x, widest.y, widest.z) : ""),
             Grouped(grid.FrameBudget()) + " probes per frame at " + std::to_string(grid.blendedRays) + " rays (+" +
-                std::to_string(PLUTO_DDGI_FIXED_RAYS) + " for classification); each refreshes every " +
-                std::to_string(grid.FramesPerSweep()) + " frames",
+                std::to_string(PLUTO_DDGI_FIXED_RAYS) + " for classification); cascades refresh every " + refresh +
+                " frames",
             Format("Probe data %.1f MiB on the GPU", static_cast<double>(grid.MemoryBytes()) / (1024.0 * 1024.0)),
             "Rays march the voxel scene. With Voxel Cone Traced GI on the same camera, its voxel settings apply; use one "
             "or the other for diffuse bounce, not both.",

@@ -13,7 +13,7 @@ namespace PlutoGE::render
     struct DdgiVoxelSettings
     {
         int resolution = 64;
-        int cascades = 2;
+        int cascades = 3;
         float volumeSize = 48.0f;
         float updateSpeed = 1.0f;
         bool injectLocalLights = true;

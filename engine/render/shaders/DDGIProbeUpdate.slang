@@ -41,10 +41,11 @@ void resetMain(uint3 id : SV_DispatchThreadID)
 void stateMain(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= ddgiRays.z) return;
-    const int2 tile = ddgiTile(probeList[id.x]);
+    const uint probe = probeList[id.x];
+    const int2 tile = ddgiTile(probe);
     const float4 state = probeState[tile];
     const uint flags = ddgiFlags(state);
-    const float spacing = ddgiSpacing();
+    const float spacing = ddgiSpacing(ddgiCascadeOf(probe));
     uint backfaces = 0;
     float closestBackface = 1e30, closestFrontface = 1e30;
     float3 backfaceDirection = 0.0, frontfaceDirection = 0.0;
@@ -169,10 +170,12 @@ void blendDistanceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID,
 {
     const uint slot = group.x;
     if (slot >= ddgiRays.z) return;
-    const int2 tile = ddgiTile(probeList[slot]);
+    const uint probe = probeList[slot];
+    const int2 tile = ddgiTile(probe);
     const float4 state = probeState[tile];
     if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE)) return;
     loadRays(slot, threadIndex, PLUTO_DDGI_DISTANCE_TILE * PLUTO_DDGI_DISTANCE_TILE);
+    const float range = ddgiBlend.w * ddgiSpacing(ddgiCascadeOf(probe));
 
     const int2 source = borderSource(int2(local.xy), PLUTO_DDGI_DISTANCE_TILE);
     const float3 direction = ddgiTexelDirection(source - 1, PLUTO_DDGI_DISTANCE_INTERIOR);
@@ -181,12 +184,11 @@ void blendDistanceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID,
     for (uint ray = ddgiRays.x; ray < ddgiRays.w; ++ray)
     {
         const float weight = pow(max(dot(direction, sharedDirections[ray]), 0.0), ddgiBlend.z);
-        const float distance = min(abs(sharedRays[ray].a), ddgiBlend.w);
+        const float distance = min(abs(sharedRays[ray].a), range);
         moments += float2(distance, distance * distance) * weight;
         weightSum += weight;
     }
     const int2 texel = tile * PLUTO_DDGI_DISTANCE_TILE + int2(local.xy);
-    const float range = ddgiBlend.w;
     const float2 current = weightSum > 1e-12 ? moments / weightSum : float2(range, range * range);
     distanceAtlas[texel] = float4(ddgiHasFlag(state, PLUTO_DDGI_PROBE_FRESH)
         ? current : lerp(current, distanceAtlas[texel].rg, ddgiBlend.x), 0.0, 1.0);

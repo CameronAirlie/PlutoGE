@@ -11,38 +11,59 @@ namespace PlutoGE::render
 {
     // CPU side of the dynamic diffuse GI probe volume (docs/DDGI.md): where the probes are, where their data lives
     // and which of them are traced each frame. Independent of the GPU so it can be tested and reasoned about alone.
+    //
+    // The volume is a set of nested, camera-centred cascades. Cascade c has the same probe counts as the others and
+    // CascadeScale^c times the finest spacing, so each reaches three times as far with the same probe budget. A probe's
+    // global index is cascade * ProbeCount() + its index within the cascade.
 
     struct DdgiGridSettings
     {
         static constexpr int MaxAxisCount = 64;
         static constexpr int MaxVerticalCount = 32;
-        static constexpr std::uint32_t MaxProbes = 32768;
+        static constexpr int MaxCascades = 4;
+        static constexpr float CascadeScale = 3.0f;
+        // Probes across all cascades: the atlases hold every one.
+        static constexpr std::uint32_t MaxProbes = 65536;
         static constexpr std::uint32_t MaxProbesPerFrame = 8192;
 
         glm::ivec3 counts{24, 12, 24};
+        // The finest cascade's spacing.
         float spacing = 2.0f;
+        int cascades = 3;
         // Rays per probe update that are blended into irradiance and visibility (fixed classification rays excluded).
         std::uint32_t blendedRays = 96;
-        std::uint32_t probesPerFrame = 1152;
+        // Probes traced per frame across all cascades (CascadeBudget splits it).
+        std::uint32_t probesPerFrame = 1728;
 
-        // Counts within the axis limits and MaxProbes (reducing every axis proportionally), finite positive spacing,
-        // supported ray counts and a per-frame budget between one probe and MaxProbesPerFrame.
+        // Counts within the axis limits, and with every cascade within MaxProbes (reducing each axis proportionally),
+        // finite positive spacing, one to MaxCascades cascades, supported ray counts and a per-frame budget between one
+        // probe per cascade and MaxProbesPerFrame.
         [[nodiscard]] DdgiGridSettings Sanitized() const;
+        // Probes in one cascade.
         [[nodiscard]] std::uint32_t ProbeCount() const noexcept
         { return static_cast<std::uint32_t>(counts.x * counts.y * counts.z); }
-        // The probes traced per frame, never more than the grid holds.
+        [[nodiscard]] std::uint32_t TotalProbes() const noexcept
+        { return ProbeCount() * static_cast<std::uint32_t>(cascades); }
+        [[nodiscard]] float CascadeSpacing(int cascade) const noexcept;
+        // Cascade c's share of the frame budget: halving outwards, since distant light changes less visibly.
+        [[nodiscard]] std::uint32_t CascadeBudget(int cascade) const noexcept;
+        // The probes traced per frame, never more than the cascades hold.
         [[nodiscard]] std::uint32_t FrameBudget() const noexcept;
         // Fixed plus blended rays traced for one active probe.
         [[nodiscard]] std::uint32_t TracedRays() const noexcept;
-        // Frames needed to refresh every probe once.
-        [[nodiscard]] std::uint32_t FramesPerSweep() const noexcept;
+        // Frames needed to refresh every probe of a cascade once.
+        [[nodiscard]] std::uint32_t FramesPerSweep(int cascade = 0) const noexcept;
         // GPU memory of the atlases, probe states, ray buffer and update list, in bytes.
         [[nodiscard]] std::size_t MemoryBytes() const noexcept;
-        [[nodiscard]] glm::vec3 Extent() const noexcept { return glm::vec3(counts - 1) * spacing; }
+        [[nodiscard]] glm::vec3 Extent(int cascade = 0) const noexcept
+        { return glm::vec3(counts - 1) * CascadeSpacing(cascade); }
         bool operator==(const DdgiGridSettings &) const = default;
     };
 
-    // A camera-centred grid that scrolls in whole cells. Probe g (0..counts-1 per axis) sits at
+    // Probe tiles per atlas row and the number of rows for `probes` (near square, within texture limits).
+    [[nodiscard]] glm::uvec2 DdgiAtlasTiles(std::uint32_t probes) noexcept;
+
+    // One cascade: a camera-centred grid that scrolls in whole cells. Probe g (0..counts-1 per axis) sits at
     // (originCell + g) * spacing, so a probe that stays in range keeps the lighting it accumulated for the same world
     // point. Its data lives at storage coordinate (originCell + g) mod counts: scrolling reuses the slots of probes that
     // left for those that entered, without moving any data.
@@ -56,29 +77,34 @@ namespace PlutoGE::render
             bool reset = false;
         };
 
-        explicit DdgiProbeGrid(const DdgiGridSettings &settings = {});
+        explicit DdgiProbeGrid(const DdgiGridSettings &settings = {}, int cascade = 0);
 
         // Centres the grid on `center`, snapped to whole cells.
         Scroll Recenter(glm::vec3 center);
         void Invalidate() noexcept { m_placed = false; }
 
         [[nodiscard]] const DdgiGridSettings &Settings() const noexcept { return m_settings; }
+        [[nodiscard]] int Cascade() const noexcept { return m_cascade; }
         [[nodiscard]] glm::ivec3 Counts() const noexcept { return m_settings.counts; }
-        [[nodiscard]] float Spacing() const noexcept { return m_settings.spacing; }
+        [[nodiscard]] float Spacing() const noexcept { return m_spacing; }
         [[nodiscard]] std::uint32_t ProbeCount() const noexcept { return m_settings.ProbeCount(); }
         [[nodiscard]] glm::ivec3 OriginCell() const noexcept { return m_originCell; }
-        [[nodiscard]] glm::vec3 Origin() const noexcept { return glm::vec3(m_originCell) * m_settings.spacing; }
+        [[nodiscard]] glm::vec3 Origin() const noexcept { return glm::vec3(m_originCell) * m_spacing; }
 
         [[nodiscard]] glm::ivec3 StorageCoordinate(glm::ivec3 gridCoordinate) const noexcept;
+        // Index within this cascade.
         [[nodiscard]] std::uint32_t StorageIndex(glm::ivec3 storageCoordinate) const noexcept;
-        // Probe tiles per atlas row and the number of rows (near square, so every atlas stays within texture limits).
-        [[nodiscard]] glm::uvec2 AtlasTiles() const noexcept;
+        // Index across all cascades (what the atlases and update lists use).
+        [[nodiscard]] std::uint32_t GlobalIndex(std::uint32_t storageIndex) const noexcept
+        { return static_cast<std::uint32_t>(m_cascade) * ProbeCount() + storageIndex; }
 
         // Storage indices of the probes that entered the volume with `scroll` (one slab per moved axis), unless it reset.
         void AppendEnteredProbes(const Scroll &scroll, std::vector<std::uint32_t> &probes) const;
 
     private:
         DdgiGridSettings m_settings;
+        int m_cascade = 0;
+        float m_spacing = 2.0f;
         glm::ivec3 m_originCell{0};
         bool m_placed = false;
     };

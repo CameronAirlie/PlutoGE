@@ -23,10 +23,10 @@ RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	1
 EDITOR_FONT_SIZE	16.1
 EDITOR_FONT	Georama
-EDITOR_CAMERA_POSITION	10.6127	8.47048	-19.6711
+EDITOR_CAMERA_POSITION	32.435	8.57429	4.7292
 EDITOR_CAMERA_SPEED	12
 EDITOR_CAMERA_RUNTIME_UI	0
-EDITOR_CAMERA_ROTATION	-228.12	1.07982
+EDITOR_CAMERA_ROTATION	311.754	-30.1203
 EDITOR_CAMERA_LENS	70	0.1	500
 EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/main.plutopostprocess
 ASSET	engine://builtin/material/default	0	Material
@@ -42,7 +42,7 @@ ASSET	project://Effects/BoostFlame.plutoparticles	731	Particle System
 ASSET	project://Effects/DemolitionBurst.plutoparticles	740	Particle System
 ASSET	project://Effects/GoalExplosion.plutoparticles	729	Particle System
 ASSET	project://Effects/SupersonicTrail.plutoparticles	739	Particle System
-ASSET	project://Input/RocketLeg.plutoinput	4883	Input Mapping
+ASSET	project://Input/RocketLeg.plutoinput	8385	Input Mapping
 ASSET	project://Managed/PlutoGE.ScriptCore.deps.json	446	Unknown
 ASSET	project://Managed/PlutoGE.ScriptCore.dll	449536	Assembly
 ASSET	project://Managed/PlutoGE.ScriptCore.pdb	147656	Unknown
@@ -110,7 +110,7 @@ ASSET	project://Models/CarGlass.glb	3304	Model
 ASSET	project://Models/CarTrim.glb	7244	Model
 ASSET	project://Models/FieldLines.glb	25132	Model
 ASSET	project://PostProcessing/main.plutopostprocess	5960	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	15675504	Scene
+ASSET	project://Scenes/Main.plutoscene	15672739	Scene
 ASSET	project://Scripts/Arena/BoostPad.cs	4449	Script
 ASSET	project://Scripts/Ball/BallMarker.cs	2172	Script
 ASSET	project://Scripts/Ball/GoalExplosion.cs	1776	Script

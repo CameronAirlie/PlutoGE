@@ -84,6 +84,7 @@ struct ProbeVertexOutput
     nointerpolation float3 center : CENTER;
     nointerpolation uint storage : STORAGE;
     nointerpolation float flags : FLAGS;
+    nointerpolation float radius : RADIUS;
 };
 
 [shader("vertex")]
@@ -93,9 +94,11 @@ ProbeVertexOutput probeVertexMain(uint id : SV_VertexID)
     ProbeVertexOutput output;
     output.storage = id / 6u;
     const float4 state = probeStateTexture.Load(int3(ddgiTile(output.storage), 0));
-    output.center = ddgiProbePosition(ddgiGridFromStorage(ddgiStorageFromIndex(output.storage)), state);
+    const uint cascade = ddgiCascadeOf(output.storage);
+    output.center = ddgiProbePositionOf(output.storage, state);
     output.flags = state.w;
-    const float radius = ddgiApply.z * ddgiSpacing();
+    const float radius = ddgiApply.z * ddgiSpacing(cascade);
+    output.radius = radius;
     const float3 toCamera = normalize(pass.cameraPosition.xyz - output.center);
     const float3 right = normalize(cross(abs(toCamera.y) < 0.99 ? float3(0, 1, 0) : float3(1, 0, 0), toCamera));
     const float3 up = cross(toCamera, right);
@@ -103,7 +106,14 @@ ProbeVertexOutput probeVertexMain(uint id : SV_VertexID)
     const float2 corner = corners[id % 6u];
     output.world = output.center + (right * corner.x + up * corner.y) * radius * 1.5 + toCamera * radius;
     output.position = mul(pass.projection, mul(pass.view, float4(output.world, 1.0)));
-    if (output.storage >= ddgiProbeCount())
+    // Coarser cascades are only drawn outside the finer cascade they surround.
+    bool covered = false;
+    if (cascade > 0)
+    {
+        const float3 inner = (output.center - ddgiCascadeOrigins[cascade - 1].xyz) / ddgiSpacing(cascade - 1);
+        covered = all(inner >= 0.0) && all(inner <= float3(ddgiCounts.xyz - 1));
+    }
+    if (output.storage >= ddgiProbeCount() || covered)
         output.position = 0.0;
     return output;
 }
@@ -113,7 +123,7 @@ float4 probeFragmentMain(ProbeVertexOutput input) : SV_Target
 {
     const float3 eye = pass.cameraPosition.xyz;
     const float3 ray = normalize(input.world - eye);
-    const float radius = ddgiApply.z * ddgiSpacing();
+    const float radius = input.radius;
     const float3 offset = eye - input.center;
     const float b = dot(offset, ray);
     const float discriminant = b * b - (dot(offset, offset) - radius * radius);

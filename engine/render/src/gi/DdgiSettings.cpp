@@ -16,14 +16,16 @@ namespace PlutoGE::render
             std::uint32_t rays, probesPerFrame;
             int voxelResolution, voxelCascades;
         };
-        // Each level roughly doubles the per-frame ray budget of the one before; all refresh the whole grid every
-        // six to eight frames and keep a ~48-unit volume around the camera.
+        // Each level roughly doubles the per-frame ray budget of the one before. All use three probe cascades (a
+        // ~48-unit finest grid reaching ~430 units at the third) refreshing the finest every seven to nine frames, and
+        // three voxel cascades of matching reach.
         constexpr std::array<QualityLevel, 4> QualityLevels{{
-            {{16, 8, 16}, 3.0f, 64, 512, 64, 2},
-            {{24, 12, 24}, 2.0f, 96, 1152, 64, 2},
-            {{32, 16, 32}, 1.5f, 128, 2048, 128, 2},
-            {{40, 20, 40}, 1.25f, 192, 4000, 128, 3},
+            {{16, 8, 16}, 3.0f, 64, 768, 64, 3},
+            {{24, 12, 24}, 2.0f, 96, 1728, 64, 3},
+            {{32, 16, 32}, 1.5f, 128, 3072, 128, 3},
+            {{32, 16, 32}, 1.5f, 192, 4096, 128, 3},
         }};
+        constexpr int QualityCascades = 3;
 
         float Finite(float value, float fallback) { return std::isfinite(value) ? value : fallback; }
     }
@@ -57,6 +59,7 @@ namespace PlutoGE::render
         base.grid.spacing = level.spacing;
         base.grid.blendedRays = level.rays;
         base.grid.probesPerFrame = level.probesPerFrame;
+        base.grid.cascades = QualityCascades;
         base.voxels.resolution = level.voxelResolution;
         base.voxels.cascades = level.voxelCascades;
         return base;
@@ -71,7 +74,7 @@ namespace PlutoGE::render
     // relocation, classification, debug view; 3 = voxel resolution, cascades, volume size, update speed; 4 = inject
     // local lights, local light bounce, secondary bounce, voxelization command budget; 5.xy = debug probe radius,
     // brightness clamp (5.zw carry the camera's clip planes); 6.x = minimum frontface distance, 6.y = multiple
-    // bounces. Quality is the number of blended rays per probe.
+    // bounces, 6.z = probe cascades. Quality is the number of blended rays per probe.
     BasicPostProcessEffect EncodeDdgiPacket(const DdgiSettings &input, const void *historyOwner)
     {
         const auto settings = input.Sanitized();
@@ -90,6 +93,7 @@ namespace PlutoGE::render
         packet.parameters[5].y = settings.brightnessClamp;
         packet.parameters[6].x = settings.minFrontfaceDistance;
         packet.parameters[6].y = settings.multipleBounces ? 1.0f : 0.0f;
+        packet.parameters[6].z = static_cast<float>(settings.grid.cascades);
         return packet;
     }
 
@@ -120,6 +124,7 @@ namespace PlutoGE::render
         settings.brightnessClamp = lanes[5].y;
         settings.minFrontfaceDistance = lanes[6].x;
         settings.multipleBounces = lanes[6].y > 0.5f;
+        settings.grid.cascades = static_cast<int>(std::lround(lanes[6].z));
         return settings.Sanitized();
     }
 }

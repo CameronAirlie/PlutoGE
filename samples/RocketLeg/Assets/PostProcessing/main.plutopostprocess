@@ -1,4 +1,4 @@
-PostProcessPresetVersion 1 12
+PostProcessPresetVersion 1 13
 Effect "SSR" 1 11
 Parameter 0 "Intensity" "0.800000" 0
 Parameter 0 "Max Ray Distance" "30.000000" 0
@@ -23,30 +23,46 @@ Parameter 1 "Samples" "16" 0
 Parameter 1 "Blur Radius" "1" 0
 Parameter 3 "Half Resolution" "true" 0
 Parameter 3 "AO Only" "false" 0
-Effect "VCTGI" 1 24
-Parameter 4 "Resolution" "0" 2 "64" "128"
-Parameter 1 "Cascade Count" "2" 0
-Parameter 0 "Volume Size" "40.000000" 0
-Parameter 3 "World Cache" "true" 0
-Parameter 0 "Cache Size" "432.000000" 0
-Parameter 0 "Update Speed" "1.000000" 0
-Parameter 1 "Cache Updates" "64" 0
-Parameter 0 "Intensity" "1.000000" 0
-Parameter 1 "Cone Count" "2" 0
-Parameter 4 "Trace Quality" "0" 2 "Balanced" "High"
+Effect "DDGI" 1 25
+Parameter 4 "Quality" "4" 5 "Low" "Medium" "High" "Ultra" "Custom"
+Parameter 0 "Intensity" "4.000000" 0
+Parameter 1 "Probe Count X" "24" 0
+Parameter 1 "Probe Count Y" "12" 0
+Parameter 1 "Probe Count Z" "24" 0
+Parameter 0 "Probe Spacing" "2.000000" 0
+Parameter 1 "Rays Per Probe" "96" 0
+Parameter 1 "Probes Per Frame" "1152" 0
+Parameter 0 "Hysteresis" "0.900000" 0
+Parameter 0 "Normal Bias" "0.200000" 0
+Parameter 0 "View Bias" "0.300000" 0
+Parameter 3 "Probe Relocation" "true" 0
+Parameter 3 "Probe Classification" "true" 0
+Parameter 3 "Multiple Bounces" "true" 0
+Parameter 0 "Brightness Clamp" "32.000000" 0
+Parameter 4 "Voxel Resolution" "0" 2 "64" "128"
+Parameter 1 "Voxel Cascades" "3" 0
+Parameter 0 "Voxel Volume Size" "48.000000" 0
+Parameter 0 "Voxel Update Speed" "1.000000" 0
 Parameter 3 "Inject Local Lights" "true" 0
 Parameter 0 "Local Light Bounce" "1.000000" 0
 Parameter 0 "Secondary Bounce" "1.000000" 0
-Parameter 1 "Voxelization LOD Bias" "0" 0
-Parameter 1 "Voxelization Command Budget" "8" 0
-Parameter 0 "Cone Aperture" "1.200000" 0
-Parameter 0 "Max Distance" "105.000000" 0
-Parameter 0 "Normal Bias" "0.350000" 0
-Parameter 1 "Refresh Interval (frames)" "1" 0
-Parameter 0 "Temporal Blend" "0.920000" 0
-Parameter 0 "History Depth Threshold" "0.250000" 0
+Parameter 1 "Voxelization Budget" "8" 0
+Parameter 4 "Debug View" "0" 4 "None" "Irradiance" "Indirect Lighting" "Probes"
+Parameter 0 "Probe Debug Radius" "0.150000" 0
+Effect "SSGI" 1 14
+Parameter 0 "Intensity" "1.000000" 0
+Parameter 0 "Ray Distance" "4.000000" 0
+Parameter 0 "Step Size" "0.080000" 0
+Parameter 0 "Thickness" "0.450000" 0
+Parameter 1 "Samples" "2" 0
+Parameter 1 "Steps" "16" 0
+Parameter 1 "Blur Radius" "2" 0
+Parameter 0 "Depth Weight" "20.000000" 0
+Parameter 0 "Normal Weight" "12.000000" 0
+Parameter 0 "Temporal Blend" "0.880000" 0
+Parameter 0 "History Depth Threshold" "0.030000" 0
 Parameter 0 "History Normal Threshold" "0.900000" 0
-Parameter 4 "Debug View" "0" 9 "Final Composite" "Raw Cone Trace" "Temporal Result" "History Validation" "Voxel Radiance" "Voxel Opacity" "Upsample Classification" "Voxel Sample Count" "Cascade Coverage"
+Parameter 3 "Half Resolution" "true" 0
 Parameter 3 "Indirect Only" "false" 0
 Effect "VolumetricFog" 0 22
 Parameter 0 "Density" "0.015000" 0

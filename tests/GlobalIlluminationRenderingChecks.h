@@ -173,7 +173,8 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
     settings.grid.counts = {16, 6, 24};
     settings.grid.spacing = 0.75f;
     settings.grid.blendedRays = 64;
-    settings.grid.probesPerFrame = 16 * 6 * 24; // refresh every probe each frame
+    // Enough for the finest cascade to refresh every probe each frame (CascadeBudget splits it 4:2:1).
+    settings.grid.probesPerFrame = DdgiGridSettings::MaxProbesPerFrame;
     settings.hysteresis = 0.5f;
     settings.voxels = {.resolution = 64, .cascades = 2, .volumeSize = 24.0f, .updateSpeed = 4.0f,
                        .injectLocalLights = false, .commandBudget = 256};
@@ -239,6 +240,28 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
     const double roofRatio = roofMeans[1] / roofMeans[0];
     if (roofRatio >= 0.9) std::cerr << "DDGI roofed floor ratio: " << roofRatio << '\n';
     Require(roofRatio < 0.9, "DDGI did not occlude ambient light under a roof");
+
+    // Coarser cascades extend the volume: a roof beyond the finest cascade (11 units across here) still shades the
+    // floor beneath it, which a single cascade leaves to flat ambient light.
+    {
+        auto bigFloorMesh = MakeQuad(renderer, {0, 0, -10}, {20, 0, 0}, {0, 0, -20});
+        auto farRoofMesh = MakeQuad(renderer, {0, 1.0f, -22}, {10, 0, 0}, {0, 0, 8});
+        BasicDraw bigFloor{.mesh = &bigFloorMesh}, farRoof{.mesh = &farRoofMesh};
+        bigFloor.baseColor = farRoof.baseColor = {0.5f, 0.5f, 0.5f, 1.0f};
+        const std::array farScene{bigFloor, farRoof};
+        scene.Look({0, 1.5f, 4.5f}, {0, 0.5f, -20});
+        const auto farBase = scene.Render(farScene, {}, 2);
+        const auto farMean = [&](int cascades)
+        {
+            auto cascaded = settings;
+            cascaded.grid.cascades = cascades;
+            const auto packet = EncodeDdgiPacket(cascaded, &cascaded);
+            return LitMeans(farBase, scene.Render(farScene, std::span(&packet, 1), ConvergenceFrames))[1];
+        };
+        const double single = farMean(1), cascaded = farMean(3);
+        if (cascaded >= 0.95 * single) std::cerr << "DDGI far roof, 1 cascade: " << single << ", 3: " << cascaded << '\n';
+        Require(cascaded < 0.95 * single, "DDGI cascades did not extend the volume beyond the finest cascade");
+    }
 
     for (const int view : {PLUTO_DDGI_VIEW_IRRADIANCE, PLUTO_DDGI_VIEW_INDIRECT, PLUTO_DDGI_VIEW_PROBES})
     {

@@ -11,6 +11,9 @@
 #define PLUTO_DDGI_DISTANCE_INTERIOR 14
 #define PLUTO_DDGI_DISTANCE_TILE 16
 
+// Nested probe cascades (DdgiProbeGrid.h), each this many times the spacing of the one inside it.
+#define PLUTO_DDGI_MAX_CASCADES 4
+
 // Rays traced in fixed (unrotated) directions, used only for probe relocation and classification. Inactive probes
 // trace just these; the blended rays follow them in the ray buffer.
 #define PLUTO_DDGI_FIXED_RAYS 16

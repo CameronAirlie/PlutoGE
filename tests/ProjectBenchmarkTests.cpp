@@ -75,6 +75,20 @@ int main() try
         catch (const std::invalid_argument &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Invalid capture path accepted");
     }
+    if (!options.disabledEffects.empty() || options.DisablesEffect("SSAO")) throw std::runtime_error("Effects disabled by default");
+    const std::array disabled{"game.plutoproject", "results.csv", "--disable-effects=SSAO,DDGI"};
+    const auto disabledOptions = ProjectBenchmarkOptions::Parse(disabled);
+    if (!disabledOptions.DisablesEffect("SSAO") || !disabledOptions.DisablesEffect("DDGI") || disabledOptions.DisablesEffect("SSR"))
+        throw std::runtime_error("Disabled effect list wrong");
+    const std::array everyEffect{"game.plutoproject", "results.csv", "--disable-effects=all"};
+    if (!ProjectBenchmarkOptions::Parse(everyEffect).DisablesEffect("TAA")) throw std::runtime_error("'all' did not disable every effect");
+    for (const auto *bad : {"--disable-effects=", "--disable-effects=SSAO,", "--disable-effects=,SSAO"})
+    {
+        bool rejected = false;
+        try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Empty disabled effect name accepted");
+    }
     struct TempFile
     {
         std::filesystem::path path = std::filesystem::temp_directory_path() /

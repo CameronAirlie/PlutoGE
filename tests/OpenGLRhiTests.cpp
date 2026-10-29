@@ -33,6 +33,7 @@
 #include "SsrRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "VsmOnlyRenderingChecks.h"
+#include "DisabledEffectRenderingChecks.h"
 #include "VsmMembershipChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "GlobalIlluminationRenderingChecks.h"
@@ -538,6 +539,21 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             });
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--disabled-effects")
+        {
+            // OpenGL may not report GPU scopes; the image must still be unchanged.
+            CheckDisabledPostProcessEffects(device, shaders, [&](render::rhi::TextureHandle texture)
+            {
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                int width = 0, height = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+                std::vector<std::byte> pixels(width * height * 4);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            }, false);
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--temporal-motion")
         {
             CheckTemporalMotionRendering(basicRenderer, device, false, [&](auto texture) {
@@ -595,13 +611,15 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
         if (argc > 1 && std::string(argv[1]) == "--vsm-reuse")
         {
-            CheckVsmReceiverReuse(basicRenderer, device, shaders, [&](render::rhi::TextureHandle texture)
+            const auto readPixels = [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(64 * 64 * 4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
-            });
+            };
+            CheckVsmReceiverReuse(basicRenderer, device, shaders, readPixels);
+            CheckVsmCoverageDepthPlanning(basicRenderer, readPixels);
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string(argv[1]) == "--vsm-only")

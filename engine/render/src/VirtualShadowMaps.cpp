@@ -250,9 +250,14 @@ namespace PlutoGE::render
         };
         return chunkCount(casters) <= PLUTO_VSM_MAX_DRAW_CHUNKS && chunkCount(receivers) <= PLUTO_VSM_MAX_DRAW_CHUNKS;
     }
+    bool VirtualShadowMaps::IsReceiver(const BasicDraw &draw) noexcept
+    {
+        return draw.mesh && draw.mesh->IsValid() && draw.alphaMode != 2 && draw.surfaceType != 1;
+    }
     bool VirtualShadowMaps::Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                                    std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
-                                   std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height)
+                                   std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height,
+                                   rhi::TextureHandle sceneDepth)
     {
         if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
         if (!CanPrepare(receivers, casters)) return false;
@@ -273,10 +278,17 @@ namespace PlutoGE::render
         bool changed = m_frame == 0 || m_width != width || m_height != height;
         if (m_width != width || m_height != height)
         {
-            m_receiverDepth = rhi::Texture(device, device.CreateTexture({width, height, rhi::Format::D32Float,
-                rhi::TextureUsage::DepthStencilAttachment, "VSM receiver depth", true}));
+            m_receiverDepth.Reset();
             m_width = width; m_height = height;
         }
+        // Created only while some frame renders its own receivers.
+        if (!sceneDepth && !m_receiverDepth)
+            m_receiverDepth = rhi::Texture(device, device.CreateTexture({width, height, rhi::Format::D32Float,
+                rhi::TextureUsage::DepthStencilAttachment, "VSM receiver depth", true}));
+        // Switching the depth source replans: the reused frame's requests came from the other depth.
+        changed |= m_sceneDepth != static_cast<bool>(sceneDepth);
+        m_sceneDepth = static_cast<bool>(sceneDepth);
+        m_planningDepth = sceneDepth ? sceneDepth : m_receiverDepth.Get();
         // Directional adaptation uses its own demand and the capacity remaining
         // after coarse/local residency. Local lights cannot block its recovery.
         if (m_stats->gpuCountersAvailable)
@@ -298,7 +310,7 @@ namespace PlutoGE::render
             for (std::size_t index = 0; index < draws.size(); ++index)
             {
                 const auto &draw = draws[index];
-                const bool eligible = draw.mesh && draw.mesh->IsValid() && draw.alphaMode != 2 && draw.surfaceType != 1 && (!shadow || draw.castsShadow);
+                const bool eligible = IsReceiver(draw) && (!shadow || draw.castsShadow);
                 // Fixed-width entries preserve section boundaries even when
                 // filtering changes without changing the packet array sizes.
                 if (!eligible)
@@ -372,7 +384,7 @@ namespace PlutoGE::render
                 for (std::size_t index = 0; index < draws.size(); ++index)
                 {
                     const auto &draw = draws[index];
-                    if (!draw.mesh || !draw.mesh->IsValid() || draw.alphaMode == 2 || draw.surfaceType == 1 || (shadow && !draw.castsShadow)) continue;
+                    if (!IsReceiver(draw) || (shadow && !draw.castsShadow)) continue;
                     auto &packet = packets[index];
                     const bool clustered = shadow && useClusters;
                     const bool coalesced = clustered && m_clusterPlans[index].coalesce;
@@ -637,7 +649,7 @@ namespace PlutoGE::render
     {
         commands.BindPipeline(m_compute[pipeline].Get());
         commands.BindUniformBuffer(0, m_parameters.Get());
-        commands.BindTexture(1, m_receiverDepth.Get(), m_sampler.Get());
+        commands.BindTexture(1, m_planningDepth, m_sampler.Get());
         const std::array buffers{m_pages.Get(), m_casters.Get(), m_lists.Get(), m_indirect.Get(), m_requestList.Get(), m_counters.Get()};
         for (std::uint32_t index = 0; index < buffers.size(); ++index) commands.BindStorageBuffer(index + 2, buffers[index]);
         commands.BindStorageBuffer(0, m_membership.Get());
@@ -700,16 +712,19 @@ namespace PlutoGE::render
     void VirtualShadowMaps::RecordPlanning(rhi::ICommandContext &commands, const SubmitMesh &submit)
     {
         if (m_reuseFrame) return;
-        commands.BeginGpuScope("RHI VSM Receiver Depth");
-        rhi::RenderingInfo depth;
-        depth.depthAttachment = m_receiverDepth.Get();
-        depth.clearColor = false;
-        depth.width = m_width; depth.height = m_height; depth.clearDepthValue = 0;
-        commands.BeginRendering(depth);
-        commands.BindPipeline(m_raster[0].Get());
-        commands.BindUniformBuffer(0, m_parameters.Get());
-        RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, {0, 3, 6, 7});
-        commands.EndRendering(); commands.EndGpuScope();
+        if (!m_sceneDepth)
+        {
+            commands.BeginGpuScope("RHI VSM Receiver Depth");
+            rhi::RenderingInfo depth;
+            depth.depthAttachment = m_receiverDepth.Get();
+            depth.clearColor = false;
+            depth.width = m_width; depth.height = m_height; depth.clearDepthValue = 0;
+            commands.BeginRendering(depth);
+            commands.BindPipeline(m_raster[0].Get());
+            commands.BindUniformBuffer(0, m_parameters.Get());
+            RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, {0, 3, 6, 7});
+            commands.EndRendering(); commands.EndGpuScope();
+        }
         commands.BeginGpuScope("RHI VSM GPU Planning");
         using rhi::BarrierAccess;
         // Planning rewrites page state that earlier page rasterization and planning read.
@@ -793,7 +808,7 @@ namespace PlutoGE::render
         stats.resolutionScale = m_resolutionPolicy.Scale();
         stats.reusedFrame = m_reuseFrame;
         stats.submittedIndirectCommands = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_casterCount);
-        stats.receiverDraws = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_receiverCount);
+        stats.receiverDraws = m_reuseFrame || m_sceneDepth ? 0 : static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 8 +
             PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + poolCapacity * PLUTO_VSM_PAGE_METADATA_BYTES + sizeof(VirtualShadowParameters) + PLUTO_VSM_COUNTER_COUNT * 4 + 16 +
             m_capacity * (sizeof(Caster) + poolCapacity * (4 + sizeof(glm::uvec4)) + 20) + PLUTO_VSM_CAPACITY * 4 +

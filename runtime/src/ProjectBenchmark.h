@@ -60,7 +60,16 @@ namespace PlutoGE
         // Swings the base camera's yaw by +/- this many degrees over CameraPanPeriodFrames,
         // after the scene update, so temporal reconstruction is measured under motion.
         float cameraPanDegrees = 0.0f;
+        // Post-process effect type names ("all" for every effect) disabled on the rendering camera each frame, as the
+        // editor's Enabled toggle does, to measure what each effect costs.
+        std::vector<std::string> disabledEffects;
         static constexpr std::size_t CameraPanPeriodFrames = 120;
+
+        [[nodiscard]] bool DisablesEffect(std::string_view type) const
+        {
+            return std::any_of(disabledEffects.begin(), disabledEffects.end(),
+                               [&](const std::string &name) { return name == "all" || name == type; });
+        }
         static constexpr float FixedDelta = 1.0f / 60.0f;
 
         // Yaw offset in degrees for a frame; zero when panning is off.
@@ -73,10 +82,11 @@ namespace PlutoGE
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 10) // project, output, two counts and six switches
+            if (args.size() < 2 || args.size() > 11) // project, output, two counts and seven switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
                                             "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] "
-                                            "[--quality=low|medium|high|ultra] [--camera-pan=<degrees>]");
+                                            "[--quality=low|medium|high|ultra] [--camera-pan=<degrees>] "
+                                            "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
             {
@@ -95,6 +105,7 @@ namespace PlutoGE
                 constexpr std::string_view capturePrefix = "--capture=";
                 constexpr std::string_view qualityPrefix = "--quality=";
                 constexpr std::string_view panPrefix = "--camera-pan=";
+                constexpr std::string_view disablePrefix = "--disable-effects=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
@@ -123,6 +134,20 @@ namespace PlutoGE
                         !(degrees > 0.0f) || degrees > 180.0f)
                         throw std::invalid_argument("Camera pan must be a number of degrees in (0, 180]");
                     result.cameraPanDegrees = degrees;
+                }
+                else if (value.starts_with(disablePrefix) && result.disabledEffects.empty())
+                {
+                    auto names = value.substr(disablePrefix.size());
+                    while (true)
+                    {
+                        const auto comma = names.find(',');
+                        const auto name = names.substr(0, comma);
+                        if (name.empty())
+                            throw std::invalid_argument("Disabled effect names must not be empty");
+                        result.disabledEffects.emplace_back(name);
+                        if (comma == std::string_view::npos) break;
+                        names.remove_prefix(comma + 1);
+                    }
                 }
                 else if (value == "--scalar-shadows" && !diagnosticSet)
                     result.geometryDiagnostic = render::GeometryDiagnosticMode::ReferenceDirectionalShadows;

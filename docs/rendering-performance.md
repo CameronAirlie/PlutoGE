@@ -12,6 +12,7 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
                [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
                [--quality=low|medium|high|ultra] [--camera-pan=<degrees>]
+               [--disable-effects=<Type>[,<Type>...]|all]
 ```
 
 * Frames record on the render thread unless `--serial-render` is given (see [frame-pipeline.md](frame-pipeline.md));
@@ -35,6 +36,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 * `--camera-pan` swings the base camera's yaw by +/- that many degrees over a
   120-frame cycle, after the scene update, so temporal reconstruction (TAA,
   upscalers) is measured and captured under motion.
+* `--disable-effects` turns off the named post-process effects (type names such as `SSAO`, `DDGI`; `all` for
+  every one) on the rendering camera each frame, exactly as the editor's Enabled toggle does, so a run per effect
+  shows what it costs. A disabled effect records no GPU work at all (`PlutoGE{Vulkan,OpenGL}DisabledEffectTests`).
 * `--capture` writes the last presented frame as an upright PNG (Vulkan only).
   Frozen renders are deterministic, so two captures of one mode match exactly
   and any difference between modes is real.

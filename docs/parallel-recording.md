@@ -60,13 +60,20 @@ arena is lock-free for that reason.
 ## What a job may do
 
 A job may read anything prepared before `ParallelRecording::Run` and create or update resources through the device.
-It may write only state no other job of the same run touches. `BasicRenderer` records up to three jobs:
+It may write only state no other job of the same run touches, unless the two share a chain
+(`ParallelRecording::AddAfter`): a chain records on one thread in the order added, each job into its own context, so a
+later job may continue CPU state an earlier one left while other jobs record in parallel between them in GPU order.
+`ParallelRecording::Reserve` takes a GPU position for a job given later with `Set`, when the job's state is prepared
+after jobs that must execute after it. `BasicRenderer` records up to four jobs, in this GPU order:
 
+- **Coverage depth** (with the depth prepass): opaque and alpha-tested surfaces' exact depth. Reserved first so VSM
+  planning can read it; chained with the geometry job, whose draw and binding state it shares.
 - **VSM planning** (when VSM is active): receiver depth and the GPU planning dispatches
-  (`VirtualShadowMaps::RecordPlanning`). Writes nothing on the CPU beyond its own context.
+  (`VirtualShadowMaps::RecordPlanning`). When the coverage depth holds every VSM receiver, planning reads it and
+  renders no receiver depth of its own. Writes nothing on the CPU beyond its own context.
 - **Shadows:** VSM caster pages and the residency pass (`RecordPages`, the longest shadow recording), the cascaded
   fallback, point shadows. Writes only shadow caches, shadow buffers and the shadow fields of `m_frameStats`.
-- **Geometry:** coverage depth, occlusion, opaque and alpha-tested draws, outlines, and collecting transparent draws.
+- **Geometry:** occlusion, opaque and alpha-tested draws, outlines, and collecting transparent draws.
   Writes only the geometry parameter, material and object-stream caches and the geometry fields of `m_frameStats`.
 
 Everything both read is prepared before `Run`: VSM preparation and receivers, geometry targets, the point shadow atlas

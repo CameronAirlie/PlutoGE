@@ -7,6 +7,7 @@ namespace PlutoGE::render
 {
     void ParallelRecording::RunJob(std::size_t index, rhi::ICommandContext &context)
     {
+        if (!m_jobs[index]) return;
         const auto start = std::chrono::steady_clock::now();
         m_jobs[index](context);
         m_jobMilliseconds[index] = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - start).count();
@@ -20,39 +21,56 @@ namespace PlutoGE::render
                               m_pool->Concurrency() > 1 && !core::TaskPool::InsideTask();
         if (!parallel)
         {
+            // In GPU order, which is also each chain's order.
             for (std::size_t index = 0; index < count; ++index)
                 RunJob(index, m_commands);
-            m_jobs.clear();
+            Clear();
             return false;
         }
 
+        // One task per chain, recording its jobs in order.
+        std::vector<std::vector<std::size_t>> chains;
+        std::vector<std::size_t> chainOf(count);
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            if (m_chains[index] == index)
+            {
+                chainOf[index] = chains.size();
+                chains.emplace_back();
+            }
+            else chainOf[index] = chainOf[m_chains[index]];
+            chains[chainOf[index]].push_back(index);
+        }
         const auto contexts = m_commands.BeginParallelRecording(static_cast<std::uint32_t>(count));
         // Workers read the frame's shader-graph clock, which a render thread pins for itself.
         const auto clock = ScopedShaderGraphClock::Pinned();
         try
         {
-            m_pool->Run(count, [&](std::size_t index)
+            m_pool->Run(chains.size(), [&](std::size_t chain)
             {
-                auto &context = *contexts[index];
                 const ScopedShaderGraphClock pinnedClock(clock);
-                // Device calls on this thread that record commands (buffer uploads) belong to this job's context.
-                context.BindToCurrentThread();
-                struct Unbind
+                for (const auto index : chains[chain])
                 {
-                    rhi::ICommandContext &context;
-                    ~Unbind() { context.UnbindFromCurrentThread(); }
-                } unbind{context};
-                RunJob(index, context);
+                    auto &context = *contexts[index];
+                    // Device calls on this thread that record commands (buffer uploads) belong to this job's context.
+                    context.BindToCurrentThread();
+                    struct Unbind
+                    {
+                        rhi::ICommandContext &context;
+                        ~Unbind() { context.UnbindFromCurrentThread(); }
+                    } unbind{context};
+                    RunJob(index, context);
+                }
             });
         }
         catch (...)
         {
             m_commands.EndParallelRecording();
-            m_jobs.clear();
+            Clear();
             throw;
         }
         m_commands.EndParallelRecording();
-        m_jobs.clear();
+        Clear();
         return true;
     }
 }

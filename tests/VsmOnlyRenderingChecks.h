@@ -416,3 +416,63 @@ void CheckVsmReceiverReuse(PlutoGE::render::BasicRenderer &source, PlutoGE::rend
     std::cout << "VSM receiver reuse passed\n";
     source.Resize(width, height);
 }
+
+// With the depth prepass on, VSM planning reads the scene's coverage depth instead of rendering its receivers again.
+// Shadowing must match VSM's own receiver pass exactly, which the renderer falls back to without the prepass.
+template<class ReadPixels>
+void CheckVsmCoverageDepthPlanning(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    const auto width = renderer.GetWidth(), height = renderer.GetHeight();
+    renderer.Resize(64, 64);
+    constexpr std::array<BasicVertex, 4> vertices = {{
+        {{{-1,-1,0}}, {{0,0,1}}, {{0,0}}}, {{{1,-1,0}}, {{0,0,1}}, {{1,0}}},
+        {{{1,1,0}}, {{0,0,1}}, {{1,1}}}, {{{-1,1,0}}, {{0,0,1}}, {{0,1}}}
+    }};
+    constexpr std::array<std::uint32_t, 6> indices{0,1,2,0,2,3};
+    auto mesh = renderer.CreateMesh({vertices, indices});
+    BasicDraw receiver, caster;
+    receiver.mesh = caster.mesh = &mesh;
+    receiver.model = glm::scale(glm::mat4(1), glm::vec3(4));
+    receiver.castsShadow = false;
+    caster.model = glm::translate(glm::mat4(1), glm::vec3(0.137f, -0.219f, 2)) * glm::scale(glm::mat4(1), glm::vec3(0.75f));
+    caster.shadowBoundsCenter = {0, 0, 2};
+    caster.shadowBoundsRadius = 2;
+    BasicLighting lighting;
+    lighting.shadowsEnabled = true;
+    lighting.directionalDirection = {0, 0, -1};
+    lighting.cameraPosition = {0, 0, 4};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0), glm::vec3(0,1,0));
+    const auto viewProjection = glm::perspectiveRH_ZO(glm::radians(60.0f), 1.0f, 100.0f, 0.1f) * lighting.view;
+    const std::array draws{receiver, caster};
+    // Returns the settled shadow mask and the receiver draws VSM recorded on the first frame, which always plans.
+    const auto render = [&](bool depthPrepass)
+    {
+        renderer.SetGeometryOptimizations(true, depthPrepass, true);
+        std::uint32_t receiverDraws = 0;
+        for (int frame = 0; frame < 16; ++frame)
+        {
+            renderer.Render(viewProjection, lighting, std::span(&draws[0], 1), {}, draws,
+                            PostProcessDebugView::DirectionalShadowMaskFiltered);
+            (void)readPixels(renderer.GetColorTexture());
+            if (frame == 0) receiverDraws = renderer.GetFrameStats().virtualShadows.receiverDraws;
+        }
+        if (!renderer.GetFrameStats().virtualShadowsActive)
+            throw std::runtime_error("VSM coverage-depth check did not render virtual shadows");
+        return std::pair(readPixels(renderer.GetColorTexture()), receiverDraws);
+    };
+    const auto [shared, sharedReceiverDraws] = render(true);
+    const auto [own, ownReceiverDraws] = render(false);
+    renderer.SetGeometryOptimizations(true, true, true);
+    renderer.Resize(width, height);
+    if (sharedReceiverDraws != 0 || ownReceiverDraws == 0)
+        throw std::runtime_error("VSM did not plan from the coverage depth with the prepass, or from its own receivers without it");
+    std::size_t shadowedPixels = 0;
+    for (std::size_t pixel = 0; pixel < shared.size(); pixel += 4)
+        shadowedPixels += static_cast<unsigned char>(shared[pixel]) < 128;
+    if (shadowedPixels == 0 || shadowedPixels == shared.size() / 4)
+        throw std::runtime_error("VSM coverage-depth check saw no shadow edge");
+    if (shared != own)
+        throw std::runtime_error("Planning VSM from the coverage depth changed directional shadowing");
+    std::cout << "VSM planning from coverage depth passed (" << shadowedPixels << " shadowed pixels)\n";
+}

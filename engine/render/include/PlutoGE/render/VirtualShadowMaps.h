@@ -80,12 +80,17 @@ namespace PlutoGE::render
         // resource bindings are owned by Record's pass-local state cache.
         using SubmitMesh = std::function<void(const Submission &)>;
         void Initialize(rhi::IRenderDevice &device, const VirtualShadowShaders &shaders);
+        // `sceneDepth`, when given, is the view's depth from `viewProjection` (reverse depth, width x height) with
+        // every receiver in it, written on the GPU before RecordPlanning: planning reads it instead of rendering the
+        // receivers itself.
         bool Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                      std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
-                     std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height);
+                     std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height,
+                     rhi::TextureHandle sceneDepth = {});
         // Recording has two phases that execute on the GPU in this order and share no CPU state, so they may record
-        // concurrently into separate contexts: receiver depth and GPU planning, then the caster pages (which read the
-        // planning results) and the final residency pass. Record runs both on one context.
+        // concurrently into separate contexts: receiver depth (unless Prepare was given the scene's) and GPU
+        // planning, then the caster pages (which read the planning results) and the final residency pass. Record
+        // runs both on one context.
         void RecordPlanning(rhi::ICommandContext &commands, const SubmitMesh &submit);
         void RecordPages(rhi::ICommandContext &commands, const SubmitMesh &submit);
         void Record(rhi::ICommandContext &commands, const SubmitMesh &submit)
@@ -97,7 +102,10 @@ namespace PlutoGE::render
                                                                   const VirtualShadowParameters *previous = nullptr,
                                                                   float resolutionScale = 1.0f);
         [[nodiscard]] static bool CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters);
-        [[nodiscard]] auto ReceiverDepth() const { return m_receiverDepth.Get(); }
+        // Surfaces that sample virtual shadows: valid, non-blended and not glass.
+        [[nodiscard]] static bool IsReceiver(const BasicDraw &draw) noexcept;
+        // The depth planning reads this frame: the receiver depth pass's, or the scene depth given to Prepare.
+        [[nodiscard]] auto ReceiverDepth() const { return m_planningDepth; }
         [[nodiscard]] auto Atlas() const { return m_depth.Get(); }
         [[nodiscard]] auto PageTable() const { return m_table.Get(); }
         [[nodiscard]] auto ParameterBuffer() const { return m_parameters.Get(); }
@@ -134,6 +142,9 @@ namespace PlutoGE::render
         std::unique_ptr<GpuRecordTable> m_batchedDraws, m_batchedModels;
         bool m_batchPages = false;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_white;
+        // m_receiverDepth, or the scene depth Prepare was given (then no receiver depth pass is recorded).
+        rhi::TextureHandle m_planningDepth;
+        bool m_sceneDepth = false;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;
         rhi::Sampler m_sampler, m_materialSampler;

@@ -45,6 +45,7 @@
 #include "VctPublicationChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
 #include "VsmOnlyRenderingChecks.h"
+#include "DisabledEffectRenderingChecks.h"
 #include "VsmMembershipChecks.h"
 
 #include <array>
@@ -359,6 +360,11 @@ int main(int argc, char **argv)
             CheckCameraLightFiltering(device, shaders);
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--disabled-effects")
+        {
+            CheckDisabledPostProcessEffects(device, shaders, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); }, true);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--render-texture")
         {
             CheckRenderTextureMaterial(device, shaders);
@@ -475,7 +481,9 @@ int main(int argc, char **argv)
         }
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-reuse")
         {
-            CheckVsmReceiverReuse(renderer, device, shaders, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            const auto readPixels = [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); };
+            CheckVsmReceiverReuse(renderer, device, shaders, readPixels);
+            CheckVsmCoverageDepthPlanning(renderer, readPixels);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")

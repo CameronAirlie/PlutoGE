@@ -709,7 +709,12 @@ int RunRuntime(int argc, char **argv)
                 std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
                 postProcessEffects.reserve(cameraComponent->GetPostProcessEffects().size());
                 for (const auto &effect : cameraComponent->GetPostProcessEffects())
+                {
+                    // Every frame, so scripts re-enabling an effect cannot reinstate it.
+                    if (projectBenchmark && effect && projectBenchmark->DisablesEffect(effect->GetTypeName()))
+                        effect->SetEnabled(false);
                     postProcessEffects.push_back(effect.get());
+                }
                 const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)
                 {
                     const auto source = texture.GetRgba8Pixels();

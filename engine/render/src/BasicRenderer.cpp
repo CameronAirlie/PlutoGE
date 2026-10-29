@@ -2069,11 +2069,25 @@ namespace PlutoGE::render
                     }
             }
         }
+        // Coverage depth: opaque and alpha-tested surfaces' exact depth, rendered once before they are shaded.
+        const bool depthPrepassActive = m_depthPrepass && std::ranges::all_of(m_coverageFragments,
+            [](const auto &shader) { return !shader.glsl.empty() || !shader.spirv.empty(); });
+        const auto prepassEligible = [](const BasicDraw &draw)
+        {
+            return !draw.outlinePass && draw.surfaceType == 0 && draw.alphaMode < 2 &&
+                !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures);
+        };
+        // When it holds every surface that samples virtual shadows, VSM planning reads it instead of rendering those
+        // surfaces' depth a second time. Graphs that read scene textures are shaded without it; their views keep
+        // VSM's own receiver pass.
+        const bool coverageDepthPlansShadows = depthPrepassActive && std::ranges::all_of(draws, [&](const BasicDraw &draw)
+            { return !VirtualShadowMaps::IsReceiver(draw) || prepassEligible(draw); });
         if (virtualShadowsActive)
         {
             core::CpuScope prepareScope("VSM preparation", core::CpuCategory::Rendering);
             virtualShadowsActive = m_virtualShadows->Prepare(*m_device, lighting, viewProjection, draws, shadowDraws,
-                m_shadowDrawSignatures, m_width, m_height);
+                m_shadowDrawSignatures, m_width, m_height,
+                coverageDepthPlansShadows ? m_depthTarget.Get() : rhi::TextureHandle{});
         }
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
         if (virtualShadowsRequested && !virtualShadowIssue && !virtualShadowsActive)
@@ -2351,6 +2365,9 @@ namespace PlutoGE::render
                     commands.DrawIndexedInstanced(submission.indexCount, submission.instances, submission.firstIndex);
             };
         };
+        // Coverage depth executes first: VSM planning may read it (coverageDepthPlansShadows). It records in one chain
+        // with the geometry job, whose draw and binding state it shares, and is given below once that state exists.
+        const auto coverageDepthJob = depthPrepassActive ? std::optional(recording.Reserve()) : std::nullopt;
         // VSM receiver depth and planning record apart from the caster pages that consume them: the pages are the
         // longest shadow recording, and splitting there keeps every GPU scope inside one job.
         std::vector<std::size_t> shadowJobs;
@@ -2985,12 +3002,6 @@ namespace PlutoGE::render
             std::ranges::all_of(draws, OcclusionCulling::SafeOccluder);
         bool occlusionActive = false;
         bool recordingDepth = false;
-        const bool depthPrepassActive = m_depthPrepass && std::ranges::all_of(m_coverageFragments, available);
-        const auto prepassEligible = [](const BasicDraw &draw)
-        {
-            return !draw.outlinePass && draw.surfaceType == 0 && draw.alphaMode < 2 &&
-                !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures);
-        };
         core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
         if (!geometryDebug) renderingInfo.clearColorValues.resize(geometryLayout == GeometryOutputLayout::SurfaceReflections ? 7u : 6u);
         if (geometryLayout == GeometryOutputLayout::SurfaceIndirect)
@@ -3330,20 +3341,9 @@ namespace PlutoGE::render
             m_gpuDriven->Prepare(*m_device, sources, draws.size());
         }
         std::vector<BasicDraw> transparentDraws;
-        const auto geometryJob = recording.Add([&](rhi::ICommandContext &commands)
+        if (coverageDepthJob)
         {
-            commands.BeginGpuScope(geometryScopeName);
-            // Transition shadow outputs before entering dynamic rendering.
-            commands.BindPipeline(m_pipeline.Get());
-            commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
-            for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
-                commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-            if (receiverShadows)
-            {
-                commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
-                commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
-            }
-            if (depthPrepassActive)
+            recording.Set(*coverageDepthJob, [&](rhi::ICommandContext &commands)
             {
                 commands.BeginGpuScope("RHI Geometry / Coverage depth");
                 rhi::RenderingInfo depth;
@@ -3360,10 +3360,24 @@ namespace PlutoGE::render
                 m_frameStats.geometryDepthDraws = m_frameStats.geometryDraws;
                 m_frameStats.geometryDraws = m_frameStats.geometryInstances = 0;
                 m_frameStats.geometryTriangles = {};
-                renderingInfo.clearDepth = false;
+            });
+            renderingInfo.clearDepth = false;
+        }
+        const auto recordGeometry = [&](rhi::ICommandContext &commands)
+        {
+            commands.BeginGpuScope(geometryScopeName);
+            // Transition shadow outputs before entering dynamic rendering.
+            commands.BindPipeline(m_pipeline.Get());
+            commands.BindTexture(2, m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(), m_screenSampler.Get());
+            for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
+                commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+            if (receiverShadows)
+            {
+                commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
+                commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
             }
             // The legacy simplified occluder pass is two-sided. With material
-            // culling it is only safe to use the exact coverage depth produced above.
+            // culling it is only safe to use the exact coverage depth produced before.
             occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, commands, draws, occlusionProjection,
                 m_width, m_height, lighting.occlusionMode, [&](const BasicDraw &draw)
                 {
@@ -3530,7 +3544,9 @@ namespace PlutoGE::render
                 commands.EndGpuScope();
             }
             commands.EndGpuScope();
-        });
+        };
+        const auto geometryJob = coverageDepthJob ? recording.AddAfter(*coverageDepthJob, recordGeometry)
+                                                  : recording.Add(recordGeometry);
         // Created up front: shadows draw into it while geometry samples it.
         if (pointShadowCount > 0)
             EnsurePointShadowAtlas();
@@ -3576,7 +3592,8 @@ namespace PlutoGE::render
                 .previousViewProjection = m_framePreviousViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan});
         const auto geometryRecordingEnd = std::chrono::steady_clock::now();
-        m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[geometryJob] + elapsedMs(recordingEnd, geometryRecordingEnd);
+        m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[geometryJob] + elapsedMs(recordingEnd, geometryRecordingEnd) +
+            (coverageDepthJob ? recording.JobMilliseconds()[*coverageDepthJob] : 0.0f);
 
         m_outputColor = m_colorTarget.Get();
         core::CpuScope postScope("Post processing", core::CpuCategory::Rendering);

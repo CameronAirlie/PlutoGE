@@ -14,6 +14,7 @@
 #include "PlutoGE/ui/ScriptAssetFieldPicker.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/ui/postprocess/PostProcessPresetField.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
@@ -37,7 +38,6 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
-#include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
@@ -166,8 +166,6 @@ namespace PlutoGE::ui
                                           std::tolower(static_cast<unsigned char>(right));
                                }) != text.end();
         }
-        constexpr const char *kPostProcessEffectDragDropPayload = "PGE_PP_FX";
-        constexpr const char *kEditorPostProcessEffectDragDropPayload = "PGE_ED_PP_FX";
         constexpr const char *kHierarchyEntityDragDropPayload = "PLUTOGE_SCENE_ENTITY";
         struct ScriptAssetOption
         {
@@ -2211,203 +2209,20 @@ namespace PlutoGE::ui
                 ImGui::TreePop();
             }
         }
-
-        // An effect's parameters, edited through the generic property editors, followed by its read-only summary
-        // (cost, memory, caveats). Changed parameters are applied to the effect.
-        void RenderPostProcessEffectParameters(render::IPostProcessEffect &effect)
-        {
-            auto parameters = effect.GetParameters();
-            bool parametersChanged = false;
-            for (auto &parameter : parameters)
-            {
-                scene::Property property{
-                    .name = parameter.name,
-                    .type = scene::PropertyType::String,
-                    .value = parameter.value,
-                    .enumOptions = parameter.enumOptions,
-                };
-
-                switch (parameter.type)
-                {
-                case render::PostProcessParameterType::Float:
-                    property.type = scene::PropertyType::Float;
-                    break;
-                case render::PostProcessParameterType::Int:
-                    property.type = scene::PropertyType::Int;
-                    break;
-                case render::PostProcessParameterType::Bool:
-                    property.type = scene::PropertyType::Bool;
-                    break;
-                case render::PostProcessParameterType::Enum:
-                    property.type = scene::PropertyType::Enum;
-                    break;
-                case render::PostProcessParameterType::Color:
-                    property.type = scene::PropertyType::Color;
-                    break;
-                case render::PostProcessParameterType::String:
-                default:
-                    property.type = scene::PropertyType::String;
-                    break;
-                }
-
-                parametersChanged |= ui::RenderPropertyEditor(property);
-                parameter.value = property.value;
-                parameter.enumOptions = property.enumOptions;
-            }
-
-            if (parametersChanged)
-            {
-                effect.ApplyParameters(parameters);
-            }
-            const auto summary = effect.GetSummary();
-            if (summary.empty())
-                return;
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-            for (const auto &line : summary)
-                ImGui::TextWrapped("%s", line.c_str());
-            ImGui::PopStyleColor();
-        }
     }
 
     void InspectorPanel::RenderCameraPostProcessEditor(scene::CameraComponent &cameraComponent) const
     {
-        if (!ImGui::TreeNode("Post Processing"))
+        auto &shell = EditorShell::GetInstance();
+        ImGui::SeparatorText("Post Processing");
+        if (auto reference = cameraComponent.GetPostProcessPresetAssetReference();
+            DrawPostProcessPresetField("##CameraPostProcess", reference, cameraComponent.GetPostProcessEffects()))
         {
-            return;
+            if (cameraComponent.SetPostProcessPresetAssetReference(reference))
+                shell.MarkSceneDirty();
+            else
+                shell.Log(EditorShell::ConsoleSeverity::Warning, "Could not load post process preset: " + reference);
         }
-
-        const std::string &presetReference = cameraComponent.GetPostProcessPresetAssetReference();
-        if (auto selection = presetReference;
-            RenderProjectAssetPicker("Preset", EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset,
-                                     selection, {.includeEngineAssets = true}) &&
-            cameraComponent.SetPostProcessPresetAssetReference(selection))
-            EditorShell::GetInstance().MarkSceneDirty();
-        if (!presetReference.empty())
-        {
-            ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
-        }
-        else
-            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings).");
-
-        const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
-        static int selectedEffectTypeIndex = 0;
-        if (!registeredTypes.empty())
-        {
-            selectedEffectTypeIndex = std::clamp(selectedEffectTypeIndex, 0, static_cast<int>(registeredTypes.size()) - 1);
-            if (ImGui::BeginCombo("Add Effect", registeredTypes[selectedEffectTypeIndex].c_str()))
-            {
-                for (int index = 0; index < static_cast<int>(registeredTypes.size()); ++index)
-                {
-                    const bool isSelected = (selectedEffectTypeIndex == index);
-                    if (ImGui::Selectable(registeredTypes[index].c_str(), isSelected))
-                    {
-                        selectedEffectTypeIndex = index;
-                    }
-                    if (isSelected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("Add") && selectedEffectTypeIndex >= 0 && selectedEffectTypeIndex < static_cast<int>(registeredTypes.size()))
-            {
-                cameraComponent.AddPostProcessEffectByType(registeredTypes[selectedEffectTypeIndex]);
-            }
-        }
-
-        for (size_t effectIndex = 0; effectIndex < cameraComponent.GetPostProcessEffects().size(); ++effectIndex)
-        {
-            auto *effect = cameraComponent.GetPostProcessEffect(effectIndex);
-            if (!effect)
-            {
-                continue;
-            }
-
-            ImGui::PushID(static_cast<int>(effectIndex));
-            const bool effectTreeOpen = ImGui::TreeNode(effect->GetDisplayName().c_str());
-            if (ImGui::BeginDragDropSource())
-            {
-                const size_t draggedIndex = effectIndex;
-                ImGui::SetDragDropPayload(kPostProcessEffectDragDropPayload, &draggedIndex, sizeof(draggedIndex));
-                ImGui::TextUnformatted(effect->GetDisplayName().c_str());
-                ImGui::EndDragDropSource();
-            }
-            bool reorderedEffect = false;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kPostProcessEffectDragDropPayload))
-                {
-                    const size_t draggedIndex = *static_cast<const size_t *>(payload->Data);
-                    if (draggedIndex != effectIndex)
-                    {
-                        cameraComponent.MovePostProcessEffect(draggedIndex, effectIndex);
-                        reorderedEffect = true;
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            if (reorderedEffect)
-            {
-                if (effectTreeOpen)
-                {
-                    ImGui::TreePop();
-                }
-                ImGui::PopID();
-                break;
-            }
-            if (effectTreeOpen)
-            {
-                bool isEnabled = effect->IsEnabled();
-                if (ImGui::Checkbox("Enabled", &isEnabled))
-                {
-                    effect->SetEnabled(isEnabled);
-                    EditorShell::GetInstance().MarkSceneDirty();
-                }
-
-                if (ImGui::Button("Up") && effectIndex > 0)
-                {
-                    cameraComponent.MovePostProcessEffect(effectIndex, effectIndex - 1);
-                    ImGui::TreePop();
-                    ImGui::PopID();
-                    break;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Down") && effectIndex + 1 < cameraComponent.GetPostProcessEffects().size())
-                {
-                    cameraComponent.MovePostProcessEffect(effectIndex, effectIndex + 1);
-                    ImGui::TreePop();
-                    ImGui::PopID();
-                    break;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Remove"))
-                {
-                    cameraComponent.RemovePostProcessEffect(effectIndex);
-                    ImGui::TreePop();
-                    ImGui::PopID();
-                    break;
-                }
-
-                RenderPostProcessEffectParameters(*effect);
-
-                ImGui::TreePop();
-            }
-
-            ImGui::PopID();
-        }
-
-        if (!presetReference.empty() && ImGui::Button("Save Preset"))
-        {
-            std::string errorMessage;
-            auto preset = assets::CapturePostProcessPreset(cameraComponent.GetPostProcessEffects());
-            if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(presetReference, preset, &errorMessage))
-                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
-        }
-        ImGui::TreePop();
     }
 
     void InspectorPanel::RenderEditorCameraInspector(EditorShell::EditorViewportCamera &camera) const
@@ -2465,142 +2280,17 @@ namespace PlutoGE::ui
 
     void InspectorPanel::RenderEditorCameraPostProcessEditor(EditorShell::EditorViewportCamera &camera) const
     {
-        if (!ImGui::TreeNode("Post Processing"))
-        {
+        if (!ImGui::CollapsingHeader("Post Processing", ImGuiTreeNodeFlags_DefaultOpen))
             return;
-        }
-
-        const std::string &presetReference = camera.GetPostProcessPresetAssetReference();
-        if (auto selection = presetReference;
-            RenderProjectAssetPicker("Preset", EditorShell::GetInstance().GetProject(), assets::ProjectAssetType::PostProcessPreset,
-                                     selection, {.includeEngineAssets = true}) &&
-            camera.SetPostProcessPresetAssetReference(selection))
-            EditorShell::GetInstance().MarkProjectDirty();
-        if (!presetReference.empty())
+        auto &shell = EditorShell::GetInstance();
+        if (auto reference = camera.GetPostProcessPresetAssetReference();
+            DrawPostProcessPresetField("##EditorCameraPostProcess", reference, camera.GetPostProcessEffects()))
         {
-            ImGui::TextDisabled("Changes below can be saved back to the shared preset.");
+            if (camera.SetPostProcessPresetAssetReference(reference))
+                shell.MarkProjectDirty();
+            else
+                shell.Log(EditorShell::ConsoleSeverity::Warning, "Could not load post process preset: " + reference);
         }
-        else
-            ImGui::TextDisabled("Legacy inline stack (select a preset to share settings).");
-
-        const auto &registeredTypes = render::GetRegisteredPostProcessEffectTypes();
-        static int selectedEffectTypeIndex = 0;
-        if (!registeredTypes.empty())
-        {
-            selectedEffectTypeIndex = std::clamp(selectedEffectTypeIndex, 0, static_cast<int>(registeredTypes.size()) - 1);
-            if (ImGui::BeginCombo("Add Effect", registeredTypes[selectedEffectTypeIndex].c_str()))
-            {
-                for (int index = 0; index < static_cast<int>(registeredTypes.size()); ++index)
-                {
-                    const bool isSelected = (selectedEffectTypeIndex == index);
-                    if (ImGui::Selectable(registeredTypes[index].c_str(), isSelected))
-                    {
-                        selectedEffectTypeIndex = index;
-                    }
-                    if (isSelected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("Add") && selectedEffectTypeIndex >= 0 && selectedEffectTypeIndex < static_cast<int>(registeredTypes.size()))
-            {
-                camera.AddPostProcessEffectByType(registeredTypes[selectedEffectTypeIndex]);
-            }
-        }
-
-        for (size_t effectIndex = 0; effectIndex < camera.GetPostProcessEffects().size(); ++effectIndex)
-        {
-            auto *effect = camera.GetPostProcessEffect(effectIndex);
-            if (!effect)
-            {
-                continue;
-            }
-
-            ImGui::PushID(static_cast<int>(effectIndex));
-            const bool effectTreeOpen = ImGui::TreeNode(effect->GetDisplayName().c_str());
-            if (ImGui::BeginDragDropSource())
-            {
-                const size_t draggedIndex = effectIndex;
-                ImGui::SetDragDropPayload(kEditorPostProcessEffectDragDropPayload, &draggedIndex, sizeof(draggedIndex));
-                ImGui::TextUnformatted(effect->GetDisplayName().c_str());
-                ImGui::EndDragDropSource();
-            }
-            bool reorderedEffect = false;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kEditorPostProcessEffectDragDropPayload))
-                {
-                    const size_t draggedIndex = *static_cast<const size_t *>(payload->Data);
-                    if (draggedIndex != effectIndex)
-                    {
-                        camera.MovePostProcessEffect(draggedIndex, effectIndex);
-                        reorderedEffect = true;
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            if (reorderedEffect)
-            {
-                if (effectTreeOpen)
-                {
-                    ImGui::TreePop();
-                }
-                ImGui::PopID();
-                break;
-            }
-            if (effectTreeOpen)
-            {
-                bool isEnabled = effect->IsEnabled();
-                if (ImGui::Checkbox("Enabled", &isEnabled))
-                {
-                    effect->SetEnabled(isEnabled);
-                    EditorShell::GetInstance().MarkProjectDirty();
-                }
-
-                if (ImGui::Button("Up") && effectIndex > 0)
-                {
-                    camera.MovePostProcessEffect(effectIndex, effectIndex - 1);
-                    ImGui::TreePop();
-                    ImGui::PopID();
-                    break;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Down") && effectIndex + 1 < camera.GetPostProcessEffects().size())
-                {
-                    camera.MovePostProcessEffect(effectIndex, effectIndex + 1);
-                    ImGui::TreePop();
-                    ImGui::PopID();
-                    break;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Remove"))
-                {
-                    camera.RemovePostProcessEffect(effectIndex);
-                    ImGui::TreePop();
-                    ImGui::PopID();
-                    break;
-                }
-
-                RenderPostProcessEffectParameters(*effect);
-
-                ImGui::TreePop();
-            }
-
-            ImGui::PopID();
-        }
-
-        if (!presetReference.empty() && ImGui::Button("Save Preset"))
-        {
-            std::string errorMessage;
-            auto preset = assets::CapturePostProcessPreset(camera.GetPostProcessEffects());
-            if (!core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(presetReference, preset, &errorMessage))
-                EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Error, errorMessage);
-        }
-        ImGui::TreePop();
     }
 
     void InspectorPanel::RenderMultiEntityInspector(const std::vector<scene::Entity *> &selection) const

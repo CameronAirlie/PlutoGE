@@ -409,6 +409,19 @@ int main()
         if (!IsRhiPostProcessEffectSupported(type))
             return 14;
 
+    // Editors group effects by the registry's stage; it must order effects exactly as the renderer does.
+    std::vector<std::pair<PostProcessStage, BasicPostProcessStage>> stages;
+    for (const auto &descriptor : GetPostProcessEffectDescriptors())
+    {
+        const auto effect = CreatePostProcessEffect(descriptor.typeName);
+        if (const auto packet = effect ? AdaptPostProcessEffect(*effect) : std::nullopt)
+            stages.emplace_back(descriptor.stage, StageFor(packet->type));
+    }
+    for (const auto &[registryA, rendererA] : stages)
+        for (const auto &[registryB, rendererB] : stages)
+            if ((registryA < registryB) != (rendererA < rendererB) || (registryA == registryB) != (rendererA == rendererB))
+                return 15;
+
     std::cout << "RHI post-process adapters preserve typed effect parameters\n";
     return 0;
 }

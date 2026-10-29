@@ -80,6 +80,12 @@ add_library(PlutoGEEditorUI
     src/input/InputMappingActionsView.cpp
     src/input/InputMappingOverviewView.cpp
     src/panels/InputMappingEditorPanel.cpp
+    src/postprocess/PostProcessPresetSession.cpp
+    src/postprocess/PostProcessStackAnalysis.cpp
+    src/postprocess/PostProcessEffectsView.cpp
+    src/postprocess/PostProcessUsageView.cpp
+    src/postprocess/PostProcessPresetField.cpp
+    src/panels/PostProcessEditorPanel.cpp
     src/panels/QualitySettingsPanel.cpp
     src/panels/LoadingScreenEditorPanel.cpp
     src/panels/ShaderGraphEditorPanel.cpp

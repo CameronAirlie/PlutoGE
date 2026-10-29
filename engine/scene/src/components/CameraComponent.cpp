@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -119,15 +120,15 @@ namespace PlutoGE::scene
         AddPostProcessEffectByType("TAA");
         if (AddPostProcessEffectByType("MotionBlur"))
         {
-            GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
+            GetPostProcessEffect(GetPostProcessEffects().size() - 1)->SetEnabled(false);
         }
         if (AddPostProcessEffectByType("DepthOfField"))
         {
-            GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
+            GetPostProcessEffect(GetPostProcessEffects().size() - 1)->SetEnabled(false);
         }
         if (AddPostProcessEffectByType("LensFlare"))
         {
-            GetPostProcessEffect(m_postProcessEffects.size() - 1)->SetEnabled(false);
+            GetPostProcessEffect(GetPostProcessEffects().size() - 1)->SetEnabled(false);
         }
         EmplacePostProcessEffect<render::ToneMappingEffect>();
         AddPostProcessEffectByType("ColorGrading");
@@ -141,6 +142,7 @@ namespace PlutoGE::scene
 
     void CameraComponent::Update(float deltaTime)
     {
+        RefreshPostProcessPreset();
         if (m_camera)
         {
             auto entity = GetOwner();
@@ -172,7 +174,7 @@ namespace PlutoGE::scene
             return;
         }
 
-        m_postProcessEffects.push_back(std::move(effect));
+        m_postProcess.GetEffects().push_back(std::move(effect));
     }
 
     bool CameraComponent::AddPostProcessEffectByType(std::string_view typeName)
@@ -193,12 +195,13 @@ namespace PlutoGE::scene
         {
             return;
         }
-        m_postProcessEffects.clear();
+        m_postProcess.GetEffects().clear();
     }
 
     bool CameraComponent::RemovePostProcessEffect(size_t index)
     {
-        if (index >= m_postProcessEffects.size())
+        auto &effects = m_postProcess.GetEffects();
+        if (index >= effects.size())
         {
             return false;
         }
@@ -208,41 +211,44 @@ namespace PlutoGE::scene
             return false;
         }
 
-        m_postProcessEffects.erase(m_postProcessEffects.begin() + static_cast<std::ptrdiff_t>(index));
+        effects.erase(effects.begin() + static_cast<std::ptrdiff_t>(index));
         return true;
     }
 
     bool CameraComponent::MovePostProcessEffect(size_t fromIndex, size_t toIndex)
     {
-        if (fromIndex >= m_postProcessEffects.size() || toIndex >= m_postProcessEffects.size() || fromIndex == toIndex)
+        auto &effects = m_postProcess.GetEffects();
+        if (fromIndex >= effects.size() || toIndex >= effects.size() || fromIndex == toIndex)
         {
             return false;
         }
 
-        auto effect = std::move(m_postProcessEffects[fromIndex]);
-        m_postProcessEffects.erase(m_postProcessEffects.begin() + static_cast<std::ptrdiff_t>(fromIndex));
-        m_postProcessEffects.insert(m_postProcessEffects.begin() + static_cast<std::ptrdiff_t>(toIndex), std::move(effect));
+        auto effect = std::move(effects[fromIndex]);
+        effects.erase(effects.begin() + static_cast<std::ptrdiff_t>(fromIndex));
+        effects.insert(effects.begin() + static_cast<std::ptrdiff_t>(toIndex), std::move(effect));
         return true;
     }
 
     render::IPostProcessEffect *CameraComponent::GetPostProcessEffect(size_t index)
     {
-        if (index >= m_postProcessEffects.size())
+        auto &effects = m_postProcess.GetEffects();
+        if (index >= effects.size())
         {
             return nullptr;
         }
 
-        return m_postProcessEffects[index].get();
+        return effects[index].get();
     }
 
     const render::IPostProcessEffect *CameraComponent::GetPostProcessEffect(size_t index) const
     {
-        if (index >= m_postProcessEffects.size())
+        const auto &effects = m_postProcess.GetEffects();
+        if (index >= effects.size())
         {
             return nullptr;
         }
 
-        return m_postProcessEffects[index].get();
+        return effects[index].get();
     }
 
     bool CameraComponent::SetTargetTextureAssetReference(std::string assetReference)
@@ -277,19 +283,28 @@ namespace PlutoGE::scene
             return false;
         }
 
-        if (assetReference.empty())
-        {
-            m_postProcessPresetAssetReference.clear();
-            ClearPostProcessEffects();
-            return true;
-        }
-        bool loaded = false;
-        const auto preset = core::Engine::GetInstance().GetAssetManager().LoadPostProcessPresetAsset(assetReference, &loaded);
-        if (!loaded)
+        return m_postProcess.SetPreset(core::Engine::GetInstance().GetAssetManager(), std::move(assetReference));
+    }
+
+    bool CameraComponent::RefreshPostProcessPreset()
+    {
+        auto &assets = core::Engine::GetInstance().GetAssetManager();
+        if (!m_postProcess.IsOutOfDate(assets) || !EnsurePostProcessMutationContext())
             return false;
-        m_postProcessEffects = assets::InstantiatePostProcessPreset(preset);
-        m_postProcessPresetAssetReference = std::move(assetReference);
-        return true;
+        return m_postProcess.Refresh(assets);
+    }
+
+    void RefreshCameraPostProcessPresets(Scene &scene)
+    {
+        const auto visit = [](const auto &self, Entity *entity) -> void
+        {
+            if (auto *camera = entity->GetComponent<CameraComponent>())
+                camera->RefreshPostProcessPreset();
+            for (auto *child : entity->GetChildren())
+                self(self, child);
+        };
+        for (auto *root : scene.GetRootEntities())
+            visit(visit, root);
     }
 
     std::vector<Property> CameraComponent::Serialize() const
@@ -314,17 +329,18 @@ namespace PlutoGE::scene
         properties.push_back({"FilterLightsByTags", scene::PropertyType::Bool, m_filterLightsByTags ? "true" : "false"});
         properties.push_back({"RenderRuntimeUI", scene::PropertyType::Bool, m_renderRuntimeUI ? "true" : "false"});
 
-        properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcessPresetAssetReference});
+        properties.push_back({"PostProcessPresetAsset", scene::PropertyType::String, m_postProcess.GetPresetReference()});
 
         // Inline effects are retained only for legacy cameras that have not selected a preset yet.
-        if (!m_postProcessPresetAssetReference.empty())
+        if (m_postProcess.HasPreset())
             return properties;
 
-        properties.push_back({"PostProcessEffectCount", scene::PropertyType::Int, std::to_string(m_postProcessEffects.size())});
+        const auto &effects = m_postProcess.GetEffects();
+        properties.push_back({"PostProcessEffectCount", scene::PropertyType::Int, std::to_string(effects.size())});
 
-        for (size_t index = 0; index < m_postProcessEffects.size(); ++index)
+        for (size_t index = 0; index < effects.size(); ++index)
         {
-            const auto &effect = m_postProcessEffects[index];
+            const auto &effect = effects[index];
             if (!effect)
             {
                 continue;
@@ -501,7 +517,7 @@ namespace PlutoGE::scene
 
             effect->SetEnabled(serializedEffect.enabled);
             effect->ApplyParameters(serializedEffect.parameters);
-            m_postProcessEffects.push_back(std::move(effect));
+            m_postProcess.GetEffects().push_back(std::move(effect));
         }
     }
 }

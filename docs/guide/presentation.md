@@ -117,9 +117,24 @@ check saved bake dependencies and startup scene before retuning lights.
 
 ## Post-processing and upscaling
 
-Post-processing transforms the camera image. Save reusable configurations as
-`.plutopostprocess` assets where the project workflow exposes presets. Tune in this
-order so later effects do not obscure fundamental lighting errors:
+Post-processing transforms the camera image. Effects live in `.plutopostprocess`
+preset assets, and cameras choose one: select a camera (or the editor camera) and
+pick a preset under **Post Processing** in the Inspector. **+** creates a new preset
+and the gear opens it in the **Post Process Editor** (Window > Post Process Editor,
+or double-click the preset in the Content Browser).
+
+The editor lists the stack grouped by pipeline stage. The renderer always runs the
+stages in that order, so dragging only reorders effects within a stage. Changed
+settings read in full colour with a reset button beside them, and problems such as
+a missing tone mapper or a duplicated effect appear above the tabs. With **Live**
+on, edits show on every camera using the preset before they are saved; saving
+updates all of them, including the editor viewport, and closing without saving
+puts them back. **Used By** lists the cameras in the open scene that use the preset.
+
+Cameras from older scenes may keep their own inline stack. The Inspector offers
+**Save as Preset...** to move it into an asset.
+
+Tune in this order so later effects do not obscure fundamental lighting errors:
 
 1. Exposure and tone mapping: keep ordinary surfaces readable in both bright and
    dark areas; test auto exposure while moving between them.

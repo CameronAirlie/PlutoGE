@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/assets/PostProcessStack.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
@@ -19,6 +20,8 @@ namespace PlutoGE::render
 
 namespace PlutoGE::scene
 {
+    class Scene;
+
     // Base cameras render the scene; overlay cameras are composited on top of
     // the main base camera, in OverlayOrder (for example a weapon camera).
     enum class CameraRenderType
@@ -81,11 +84,15 @@ namespace PlutoGE::scene
         void ClearPostProcessEffects();
         bool RemovePostProcessEffect(size_t index);
         bool MovePostProcessEffect(size_t fromIndex, size_t toIndex);
-        const std::vector<std::unique_ptr<render::IPostProcessEffect>> &GetPostProcessEffects() const { return m_postProcessEffects; }
+        const std::vector<std::unique_ptr<render::IPostProcessEffect>> &GetPostProcessEffects() const { return m_postProcess.GetEffects(); }
         render::IPostProcessEffect *GetPostProcessEffect(size_t index);
         const render::IPostProcessEffect *GetPostProcessEffect(size_t index) const;
+        // Takes the effects from a preset asset and follows its changes. Empty clears the effects.
         bool SetPostProcessPresetAssetReference(std::string assetReference);
-        const std::string &GetPostProcessPresetAssetReference() const { return m_postProcessPresetAssetReference; }
+        const std::string &GetPostProcessPresetAssetReference() const { return m_postProcess.GetPresetReference(); }
+        // Re-applies the preset if it was saved or previewed since. Update calls this; editors call
+        // RefreshCameraPostProcessPresets for scenes that are not updating.
+        bool RefreshPostProcessPreset();
 
         template <typename TEffect, typename... TArgs>
         TEffect &EmplacePostProcessEffect(TArgs &&...args)
@@ -109,7 +116,9 @@ namespace PlutoGE::scene
         bool m_transparentBackground = false;
         bool m_filterLightsByTags = false;
         bool m_renderRuntimeUI = true;
-        std::vector<std::unique_ptr<render::IPostProcessEffect>> m_postProcessEffects;
-        std::string m_postProcessPresetAssetReference;
+        assets::PostProcessStack m_postProcess;
     };
+
+    // Brings every camera in the scene up to date with its post-process preset.
+    void RefreshCameraPostProcessPresets(Scene &scene);
 }

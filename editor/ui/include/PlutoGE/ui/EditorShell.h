@@ -23,6 +23,7 @@
 #include "PlutoGE/ui/SceneHistory.h"
 #include "PlutoGE/ui/SceneRecovery.h"
 #include "PlutoGE/ui/ModelInstanceRefresh.h"
+#include "PlutoGE/assets/PostProcessStack.h"
 #include "PlutoGE/assets/ProjectValidation.h"
 #include "PlutoGE/import/MeshImportOptions.h"
 #include "PlutoGE/asset_import/ModelNodeRepairService.h"
@@ -65,6 +66,7 @@ namespace PlutoGE::ui
     class AnimationGraphEditorPanel;
     class UIThemeEditorPanel;
     class InputMappingEditorPanel;
+    class PostProcessEditorPanel;
     struct UIThemeTarget;
     class ContentBrowserPanel;
     class ProfilerPanel;
@@ -109,20 +111,17 @@ namespace PlutoGE::ui
             float orthographicSize = 10.0f;
             glm::vec3 perspectivePosition{0.0f, 2.0f, 6.0f};
             bool hasPerspectivePosition = false;
-            std::vector<std::unique_ptr<render::IPostProcessEffect>> postProcessEffects;
-            std::string postProcessPresetAssetReference;
+            // Normally follows a preset asset, so saving the preset updates the viewport. Projects from older
+            // builds may still carry an inline stack.
+            assets::PostProcessStack postProcess;
 
             bool SetPostProcessPresetAssetReference(std::string assetReference);
-
-            void AddPostProcessEffect(std::unique_ptr<render::IPostProcessEffect> effect)
-            {
-                if (!effect)
-                {
-                    return;
-                }
-
-                postProcessEffects.push_back(std::move(effect));
-            }
+            const std::string &GetPostProcessPresetAssetReference() const { return postProcess.GetPresetReference(); }
+            // Re-applies the preset if it was saved or previewed since it was last applied.
+            bool RefreshPostProcessPreset();
+            // Destroys the effects, forgetting the preset. Effects can own OpenGL objects, so the old context must
+            // still be current.
+            void ClearPostProcessEffects() { postProcess.SetInlineEffects({}); }
 
             bool AddPostProcessEffectByType(std::string_view typeName)
             {
@@ -132,54 +131,17 @@ namespace PlutoGE::ui
                     return false;
                 }
 
-                AddPostProcessEffect(std::move(effect));
-                return true;
-            }
-
-            bool RemovePostProcessEffect(size_t index)
-            {
-                if (index >= postProcessEffects.size())
-                {
-                    return false;
-                }
-
-                auto &engine = core::Engine::GetInstance();
-                auto &window = core::Engine::GetInstance().GetWindow();
-                if (engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL &&
-                    window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
-                {
-                    return false;
-                }
-
-                postProcessEffects.erase(postProcessEffects.begin() + static_cast<std::ptrdiff_t>(index));
-                return true;
-            }
-
-            bool MovePostProcessEffect(size_t fromIndex, size_t toIndex)
-            {
-                if (fromIndex >= postProcessEffects.size() || toIndex >= postProcessEffects.size() || fromIndex == toIndex)
-                {
-                    return false;
-                }
-
-                auto effect = std::move(postProcessEffects[fromIndex]);
-                postProcessEffects.erase(postProcessEffects.begin() + static_cast<std::ptrdiff_t>(fromIndex));
-                postProcessEffects.insert(postProcessEffects.begin() + static_cast<std::ptrdiff_t>(toIndex), std::move(effect));
+                postProcess.GetEffects().push_back(std::move(effect));
                 return true;
             }
 
             render::IPostProcessEffect *GetPostProcessEffect(size_t index)
             {
-                if (index >= postProcessEffects.size())
-                {
-                    return nullptr;
-                }
-
-                return postProcessEffects[index].get();
+                auto &effects = postProcess.GetEffects();
+                return index < effects.size() ? effects[index].get() : nullptr;
             }
 
-            const std::vector<std::unique_ptr<render::IPostProcessEffect>> &GetPostProcessEffects() const { return postProcessEffects; }
-            const std::string &GetPostProcessPresetAssetReference() const { return postProcessPresetAssetReference; }
+            const std::vector<std::unique_ptr<render::IPostProcessEffect>> &GetPostProcessEffects() const { return postProcess.GetEffects(); }
         };
 
         bool Initialize(const std::filesystem::path &startupProject = {}, bool visible = true);
@@ -245,6 +207,11 @@ namespace PlutoGE::ui
         void OpenAnimationClipAsset(std::string animationClipAssetReference);
         void OpenParticleSystemAsset(std::string particleSystemAssetReference);
         void OpenInputMappingAsset(std::string inputMappingAssetReference);
+        // Shows a .plutopostprocess preset in the Post Process Editor.
+        void OpenPostProcessPresetAsset(std::string postProcessPresetAssetReference);
+        // Re-applies post process presets that were saved or previewed to the editor camera and scene cameras.
+        // Runs every frame, so edits show even while the scene is not updating.
+        void RefreshPostProcessPresets();
         void OpenRmlDocument(std::string reference);
         // Shows a UI theme in the theme editor, selecting `style` when given.
         void OpenUIThemeEditor(const UIThemeTarget &target, const std::string &style = {});
@@ -258,6 +225,7 @@ namespace PlutoGE::ui
         const std::string &GetActiveAnimationClipAssetReference() const { return m_activeAnimationClipAssetReference; }
         const std::string &GetActiveParticleSystemAssetReference() const { return m_activeParticleSystemAssetReference; }
         const std::string &GetActiveInputMappingAssetReference() const { return m_activeInputMappingAssetReference; }
+        const std::string &GetActivePostProcessPresetAssetReference() const { return m_activePostProcessPresetAssetReference; }
         bool ConsumeMaterialEditorOpenRequest()
         {
             const bool requested = m_openMaterialEditorRequested;
@@ -305,6 +273,12 @@ namespace PlutoGE::ui
         {
             const bool requested = m_openInputMappingEditorRequested;
             m_openInputMappingEditorRequested = false;
+            return requested;
+        }
+        bool ConsumePostProcessEditorOpenRequest()
+        {
+            const bool requested = m_openPostProcessEditorRequested;
+            m_openPostProcessEditorRequested = false;
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
@@ -514,12 +488,14 @@ namespace PlutoGE::ui
         std::string m_activeAnimationClipAssetReference;
         std::string m_activeParticleSystemAssetReference;
         std::string m_activeInputMappingAssetReference;
+        std::string m_activePostProcessPresetAssetReference;
         std::string m_activeLoadingScreenAssetReference;
         bool m_openLoadingScreenEditorRequested = false;
         RmlDocumentEditorPanel *m_rmlDocumentEditor = nullptr;
         AnimationGraphEditorPanel *m_animationGraphEditor = nullptr;
         UIThemeEditorPanel *m_uiThemeEditor = nullptr;
         InputMappingEditorPanel *m_inputMappingEditor = nullptr;
+        PostProcessEditorPanel *m_postProcessEditor = nullptr;
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
         TimelinePreview m_timelinePreview;
@@ -555,6 +531,7 @@ namespace PlutoGE::ui
         bool m_openSequencerEditorRequested = false;
         bool m_openParticleSystemEditorRequested = false;
         bool m_openInputMappingEditorRequested = false;
+        bool m_openPostProcessEditorRequested = false;
         std::optional<std::filesystem::path> m_pendingProjectLoad;
         std::optional<render::rhi::GraphicsApi> m_pendingGraphicsApi;
         struct AssetReconciliationCompletion

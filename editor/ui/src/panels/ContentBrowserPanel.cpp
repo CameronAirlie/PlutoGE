@@ -44,6 +44,7 @@
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/SurfacePlacement.h"
+#include "PlutoGE/ui/postprocess/PostProcessPresetSession.h"
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -764,6 +765,10 @@ namespace PlutoGE::ui
             else if (asset.type == assets::ProjectAssetType::InputMapping)
             {
                 editorShell.OpenInputMappingAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::PostProcessPreset)
+            {
+                editorShell.OpenPostProcessPresetAsset(asset.reference);
             }
         }
 
@@ -1919,15 +1924,16 @@ namespace PlutoGE::ui
             ImGui::BeginDisabled(sanitizedName.empty());
             if (ImGui::Button("Create"))
             {
-                const auto path = createDirectory / (sanitizedName + ".plutopostprocess");
-                const std::string reference = project->MakeAssetReference(path);
                 std::string errorMessage;
-                if (core::Engine::GetInstance().GetAssetManager().SavePostProcessPresetAsset(reference, assets::CreateDefaultPostProcessPresetAsset(), &errorMessage))
+                const std::string reference = CreatePostProcessPresetAsset(*project, core::Engine::GetInstance().GetAssetManager(), sanitizedName,
+                                                                           assets::CreateDefaultPostProcessPresetAsset(), errorMessage, createDirectory);
+                if (!reference.empty())
                 {
                     EditorShell::GetInstance().RefreshProjectAssets();
                     m_assetCacheDirty = true;
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created post process preset: " + reference);
+                    editorShell.OpenPostProcessPresetAsset(reference);
                     ImGui::CloseCurrentPopup();
                 }
                 else
@@ -2552,6 +2558,11 @@ namespace PlutoGE::ui
             {
                 if (ImGui::Button("Open Input Mapping"))
                     editorShell.OpenInputMappingAsset(asset.reference);
+            }
+            else if (asset.type == assets::ProjectAssetType::PostProcessPreset)
+            {
+                if (ImGui::Button("Open Post Process Editor"))
+                    editorShell.OpenPostProcessPresetAsset(asset.reference);
             }
             ImGui::EndChild();
         }

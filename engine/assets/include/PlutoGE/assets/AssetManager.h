@@ -133,6 +133,13 @@ namespace PlutoGE::assets
         bool SaveParticleSystemAsset(const std::string &assetReference, const ParticleSystemAsset &asset, std::string *errorMessage = nullptr);
         PostProcessPresetAsset LoadPostProcessPresetAsset(const std::string &assetReference, bool *loaded = nullptr);
         bool SavePostProcessPresetAsset(const std::string &assetReference, const PostProcessPresetAsset &asset, std::string *errorMessage = nullptr);
+        // Increments whenever what LoadPostProcessPresetAsset returns for the reference changes (a save, a preview
+        // set or cleared), so cameras using the preset know to re-apply it. 0 until the first change.
+        [[nodiscard]] std::uint64_t GetPostProcessPresetRevision(const std::string &assetReference) const;
+        // Unsaved settings that LoadPostProcessPresetAsset returns in place of the file until cleared or the preset
+        // is saved, so editors can show changes on every camera using the preset before they are kept.
+        void SetPostProcessPresetPreview(const std::string &assetReference, PostProcessPresetAsset asset);
+        void ClearPostProcessPresetPreview(const std::string &assetReference);
         bool ResolveMaterialShaderGraph(render::MaterialConfig &config, std::string *errorMessage = nullptr);
         // Scoped scene-owned overrides borrow graph resources from this reader.
         // Weak registration refreshes external graph dependencies without ownership cycles.
@@ -201,6 +208,10 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, std::pair<bool, SurfaceResponseAsset>> m_surfaceResponseCache;
         std::unordered_map<std::string, ParticleSystemAsset> m_particleSystemCache;
         std::unordered_map<std::string, PostProcessPresetAsset> m_postProcessPresetCache;
+        std::unordered_map<std::string, PostProcessPresetAsset> m_postProcessPresetPreviews;
+        std::unordered_map<std::string, std::uint64_t> m_postProcessPresetRevisions;
+        std::uint64_t m_lastPostProcessPresetRevision = 0;
+        void BumpPostProcessPresetRevision(const std::string &assetReference);
         std::unordered_map<std::string, std::pair<std::uint64_t, render::Shader *>> m_shaderGraphShaderCache;
 
         void RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference);

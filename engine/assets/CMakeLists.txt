@@ -36,6 +36,7 @@ add_library(PlutoGEAssets
     src/LoadingScreenAsset.cpp
     src/ParticleSystemAsset.cpp
     src/PostProcessPresetAsset.cpp
+    src/PostProcessStack.cpp
     src/Project.cpp
     src/Json.cpp
 )

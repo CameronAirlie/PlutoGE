@@ -1,8 +1,24 @@
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 
+#include <algorithm>
+
 namespace PlutoGE::assets
 {
+    namespace
+    {
+        // True when applying `wanted` would change one of `current`'s values. Enum option lists are not compared:
+        // presets saved by older builds may list fewer options for the same value.
+        bool ParametersDiffer(const std::vector<render::PostProcessParameter> &current, const std::vector<render::PostProcessParameter> &wanted)
+        {
+            return std::ranges::any_of(wanted, [&](const render::PostProcessParameter &parameter)
+                                       {
+                                           const auto match = std::ranges::find(current, parameter.name, &render::PostProcessParameter::name);
+                                           return match != current.end() && match->value != parameter.value;
+                                       });
+        }
+    }
+
     PostProcessPresetAsset CreateDefaultPostProcessPresetAsset()
     {
         PostProcessPresetAsset asset;
@@ -13,12 +29,18 @@ namespace PlutoGE::assets
         };
         for (const auto &entry : defaults)
         {
-            auto effect = render::CreatePostProcessEffect(entry.type);
-            if (!effect)
-                continue;
-            asset.effects.push_back({entry.type, entry.enabled, effect->GetParameters()});
+            if (render::FindPostProcessEffectDescriptor(entry.type))
+                asset.effects.push_back(CreateDefaultPostProcessEffectAsset(entry.type, entry.enabled));
         }
         return asset;
+    }
+
+    PostProcessEffectAsset CreateDefaultPostProcessEffectAsset(const std::string &typeName, bool enabled)
+    {
+        PostProcessEffectAsset effect{typeName, enabled, {}};
+        if (const auto *defaults = render::GetPostProcessEffectDefaults(typeName))
+            effect.parameters = defaults->parameters;
+        return effect;
     }
 
     PostProcessPresetAsset CapturePostProcessPreset(const std::vector<std::unique_ptr<render::IPostProcessEffect>> &effects)
@@ -35,16 +57,50 @@ namespace PlutoGE::assets
     std::vector<std::unique_ptr<render::IPostProcessEffect>> InstantiatePostProcessPreset(const PostProcessPresetAsset &asset)
     {
         std::vector<std::unique_ptr<render::IPostProcessEffect>> effects;
-        effects.reserve(asset.effects.size());
+        SyncPostProcessEffects(asset, effects);
+        return effects;
+    }
+
+    bool SyncPostProcessEffects(const PostProcessPresetAsset &asset, std::vector<std::unique_ptr<render::IPostProcessEffect>> &effects)
+    {
+        bool changed = false;
+        std::vector<std::unique_ptr<render::IPostProcessEffect>> synced;
+        synced.reserve(asset.effects.size());
         for (const auto &serialized : asset.effects)
         {
-            auto effect = render::CreatePostProcessEffect(serialized.typeName);
-            if (!effect)
-                continue;
-            effect->SetEnabled(serialized.enabled);
-            effect->ApplyParameters(serialized.parameters);
-            effects.push_back(std::move(effect));
+            // Take the first unused effect of this type, wherever it sits, so reordering keeps instances.
+            auto reusable = std::ranges::find_if(effects, [&](const auto &effect)
+                                                 { return effect && effect->GetTypeName() == serialized.typeName; });
+            std::unique_ptr<render::IPostProcessEffect> effect;
+            if (reusable != effects.end())
+            {
+                // Taken slots stay behind as null, so the index is the effect's old position.
+                changed |= static_cast<std::size_t>(reusable - effects.begin()) != synced.size();
+                effect = std::move(*reusable);
+            }
+            else
+            {
+                effect = render::CreatePostProcessEffect(serialized.typeName);
+                if (!effect)
+                    continue;
+                changed = true;
+                effect->ApplyParameters(serialized.parameters);
+            }
+            if (effect->IsEnabled() != serialized.enabled)
+            {
+                effect->SetEnabled(serialized.enabled);
+                changed = true;
+            }
+            if (ParametersDiffer(effect->GetParameters(), serialized.parameters))
+            {
+                effect->ApplyParameters(serialized.parameters);
+                changed = true;
+            }
+            synced.push_back(std::move(effect));
         }
-        return effects;
+        // Anything left over was removed from the preset.
+        changed |= std::ranges::any_of(effects, [](const auto &effect) { return effect != nullptr; });
+        effects = std::move(synced);
+        return changed;
     }
 }

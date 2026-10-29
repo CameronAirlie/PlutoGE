@@ -32,6 +32,7 @@
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
 #include "PlutoGE/ui/panels/InputMappingEditorPanel.h"
+#include "PlutoGE/ui/panels/PostProcessEditorPanel.h"
 #include "PlutoGE/ui/panels/UIThemeEditorPanel.h"
 #include "PlutoGE/ui/panels/QualitySettingsPanel.h"
 #include "PlutoGE/ui/panels/LoadingScreenEditorPanel.h"
@@ -100,29 +101,30 @@
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        bool EnsureEditorPostProcessContext()
+        {
+            auto &engine = core::Engine::GetInstance();
+            auto &window = engine.GetWindow();
+            return engine.GetConfig().graphicsApi != render::rhi::GraphicsApi::OpenGL ||
+                   !window.IsOpen() || window.EnsureOpenGLContextCurrent(true);
+        }
+    }
+
     bool EditorShell::EditorViewportCamera::SetPostProcessPresetAssetReference(std::string assetReference)
     {
-        auto &engine = core::Engine::GetInstance();
-        auto &window = core::Engine::GetInstance().GetWindow();
-        if (engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL &&
-            window.IsOpen() && !window.EnsureOpenGLContextCurrent(true))
-        {
+        if (!EnsureEditorPostProcessContext())
             return false;
-        }
+        return postProcess.SetPreset(core::Engine::GetInstance().GetAssetManager(), std::move(assetReference));
+    }
 
-        if (assetReference.empty())
-        {
-            postProcessPresetAssetReference.clear();
-            postProcessEffects.clear();
-            return true;
-        }
-        bool loaded = false;
-        const auto preset = core::Engine::GetInstance().GetAssetManager().LoadPostProcessPresetAsset(assetReference, &loaded);
-        if (!loaded)
+    bool EditorShell::EditorViewportCamera::RefreshPostProcessPreset()
+    {
+        auto &assets = core::Engine::GetInstance().GetAssetManager();
+        if (!postProcess.IsOutOfDate(assets) || !EnsureEditorPostProcessContext())
             return false;
-        postProcessEffects = assets::InstantiatePostProcessPreset(preset);
-        postProcessPresetAssetReference = std::move(assetReference);
-        return true;
+        return postProcess.Refresh(assets);
     }
 
     void EditorShell::GenerateAmbientReflectionCaptures()
@@ -649,7 +651,7 @@ namespace PlutoGE::ui
             {
                 window.EnsureOpenGLContextCurrent(true);
             }
-            camera.postProcessEffects.clear();
+            camera.ClearPostProcessEffects();
             for (const auto &serializedEffect : serializedEffects)
             {
                 if (!camera.AddPostProcessEffectByType(serializedEffect.typeName))
@@ -2123,6 +2125,7 @@ namespace PlutoGE::ui
             (m_animationGraphEditor && m_animationGraphEditor->OwnsKeyboardFocus()) ||
             (m_uiThemeEditor && m_uiThemeEditor->HasKeyboardFocus()) ||
             (m_inputMappingEditor && m_inputMappingEditor->HasKeyboardFocus()) ||
+            (m_postProcessEditor && m_postProcessEditor->HasKeyboardFocus()) ||
             ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
         {
             return;
@@ -2226,7 +2229,8 @@ namespace PlutoGE::ui
         if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()) &&
             !(m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges()) &&
             !(m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges()) &&
-            !(m_inputMappingEditor && m_inputMappingEditor->HasUnsavedChanges()))
+            !(m_inputMappingEditor && m_inputMappingEditor->HasUnsavedChanges()) &&
+            !(m_postProcessEditor && m_postProcessEditor->HasUnsavedChanges()))
         {
             return true;
         }
@@ -2260,6 +2264,12 @@ namespace PlutoGE::ui
         {
             m_inputMappingEditor->SetOpen(true);
             Log(ConsoleSeverity::Warning, "Save or revert input mapping edits before switching projects or exiting.");
+            return false;
+        }
+        if (m_postProcessEditor && m_postProcessEditor->HasUnsavedChanges())
+        {
+            m_postProcessEditor->SetOpen(true);
+            Log(ConsoleSeverity::Warning, "Save or revert post process preset edits before switching projects or exiting.");
             return false;
         }
         return true;
@@ -2678,6 +2688,21 @@ namespace PlutoGE::ui
         m_activeInputMappingAssetReference = std::move(reference);
         m_openInputMappingEditorRequested = true;
         Log(ConsoleSeverity::Info, "Opened input mapping: " + m_activeInputMappingAssetReference);
+    }
+
+    void EditorShell::RefreshPostProcessPresets()
+    {
+        m_editorCamera.RefreshPostProcessPreset();
+        if (m_scene)
+            scene::RefreshCameraPostProcessPresets(*m_scene);
+    }
+
+    void EditorShell::OpenPostProcessPresetAsset(std::string reference)
+    {
+        if (reference.empty())
+            return;
+        m_activePostProcessPresetAssetReference = std::move(reference);
+        m_openPostProcessEditorRequested = true;
     }
 
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
@@ -3470,7 +3495,7 @@ namespace PlutoGE::ui
 
         if (!m_panelManager.InitializeImGui(&m_engine.GetWindow(), m_engine.GetRenderDevice(), m_engine.GetSwapchain()))
         {
-            m_editorCamera.postProcessEffects.clear();
+            m_editorCamera.ClearPostProcessEffects();
             m_scene.reset();
             ++m_sceneRevision;
             m_gameSceneRenderService.reset();
@@ -3677,6 +3702,10 @@ namespace PlutoGE::ui
         m_inputMappingEditor->Initialize();
         m_panelManager.AddPanel(m_inputMappingEditor);
 
+        m_postProcessEditor = new PostProcessEditorPanel(PanelConfig{"Post Process Editor", false});
+        m_postProcessEditor->Initialize();
+        m_panelManager.AddPanel(m_postProcessEditor);
+
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
@@ -3816,6 +3845,7 @@ namespace PlutoGE::ui
             const auto pollEventsStart = std::chrono::high_resolution_clock::now();
             window.PollEvents();
             UpdateAuthoring();
+            RefreshPostProcessPresets();
             eventsScope.End();
             const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
@@ -4347,6 +4377,8 @@ namespace PlutoGE::ui
                 { loadingScreenEditorPanel->SetOpen(true); m_openLoadingScreenEditorRequested = false; }
                 if (ConsumeInputMappingEditorOpenRequest())
                     m_inputMappingEditor->SetOpen(true);
+                if (ConsumePostProcessEditorOpenRequest())
+                    m_postProcessEditor->SetOpen(true);
 
                 const auto newProject = [&](const std::string &templateId = "pluto.empty")
                 {
@@ -4624,6 +4656,7 @@ namespace PlutoGE::ui
                         panelToggle("UI Theme Editor", m_uiThemeEditor);
                         panelToggle("Loading Screen Editor", loadingScreenEditorPanel);
                         panelToggle("Input Mapping Editor", m_inputMappingEditor);
+                        panelToggle("Post Process Editor", m_postProcessEditor);
                         ImGui::EndMenu();
                     }
                     if (ImGui::BeginMenu("Tools"))
@@ -5606,7 +5639,7 @@ namespace PlutoGE::ui
                 const auto requestedApi = *m_pendingGraphicsApi;
                 m_pendingGraphicsApi.reset();
                 const auto savedEditorEffects = BuildProjectEditorPostProcessEffects(m_editorCamera);
-                const std::string savedEditorPreset = m_editorCamera.postProcessPresetAssetReference;
+                const std::string savedEditorPreset = m_editorCamera.GetPostProcessPresetAssetReference();
 
                 // Release every resource tied to the old device/context before
                 // Engine::Shutdown destroys the native window.
@@ -5620,8 +5653,7 @@ namespace PlutoGE::ui
                 // Editor post-process effects can own legacy OpenGL objects.
                 // Destroy them while the old context is still current and
                 // recreate their backend resources after the switch.
-                m_editorCamera.postProcessEffects.clear();
-                m_editorCamera.postProcessPresetAssetReference.clear();
+                m_editorCamera.ClearPostProcessEffects();
 
                 const auto previousConfig = m_engine.GetConfig();
                 auto config = previousConfig;
@@ -5740,7 +5772,7 @@ namespace PlutoGE::ui
         ++m_sceneRevision;
         m_entityLocks.Clear();
         m_project.reset();
-        m_editorCamera.postProcessEffects.clear();
+        m_editorCamera.ClearPostProcessEffects();
         m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
         m_panelManager.ShutdownPanels();

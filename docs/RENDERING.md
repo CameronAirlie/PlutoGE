@@ -137,6 +137,12 @@ Test the intended backend, optimized configuration and exported build. Existing
 regression tests and historical performance captures describe specific workloads;
 they do not establish feature parity or performance on every GPU.
 
+A new post-process effect needs one entry in the
+[effect registry](../engine/render/src/postprocess/PostProcessEffectFactory.cpp): its type
+name, pipeline stage and a one-line description. The Post Process Editor, presets and the
+camera inspector pick it up from there. The stage must match `StageFor` in `BasicRenderer.h`;
+`PlutoGERhiPostProcessAdapterTests` checks this.
+
 Implementation entry points: [render build](../engine/render/CMakeLists.txt),
 [post-process adapters](../engine/render/src/RhiPostProcessAdapter.cpp),
 [RHI scene renderer](../engine/render/src/RhiSceneRenderer.cpp),

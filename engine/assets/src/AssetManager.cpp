@@ -3010,6 +3010,12 @@ namespace PlutoGE::assets
             *loaded = false;
         if (assetReference.empty())
             return {};
+        if (auto preview = m_postProcessPresetPreviews.find(assetReference); preview != m_postProcessPresetPreviews.end())
+        {
+            if (loaded)
+                *loaded = true;
+            return preview->second;
+        }
         if (auto cached = m_postProcessPresetCache.find(assetReference); cached != m_postProcessPresetCache.end())
         {
             if (loaded)
@@ -3104,7 +3110,37 @@ namespace PlutoGE::assets
             return false;
         }
         m_postProcessPresetCache[assetReference] = asset;
+        m_postProcessPresetPreviews.erase(assetReference);
+        BumpPostProcessPresetRevision(assetReference);
         return true;
+    }
+
+    std::uint64_t AssetManager::GetPostProcessPresetRevision(const std::string &assetReference) const
+    {
+        const auto found = m_postProcessPresetRevisions.find(assetReference);
+        return found == m_postProcessPresetRevisions.end() ? 0 : found->second;
+    }
+
+    void AssetManager::SetPostProcessPresetPreview(const std::string &assetReference, PostProcessPresetAsset asset)
+    {
+        if (assetReference.empty())
+            return;
+        if (const auto existing = m_postProcessPresetPreviews.find(assetReference);
+            existing != m_postProcessPresetPreviews.end() && existing->second == asset)
+            return;
+        m_postProcessPresetPreviews[assetReference] = std::move(asset);
+        BumpPostProcessPresetRevision(assetReference);
+    }
+
+    void AssetManager::ClearPostProcessPresetPreview(const std::string &assetReference)
+    {
+        if (m_postProcessPresetPreviews.erase(assetReference) > 0)
+            BumpPostProcessPresetRevision(assetReference);
+    }
+
+    void AssetManager::BumpPostProcessPresetRevision(const std::string &assetReference)
+    {
+        m_postProcessPresetRevisions[assetReference] = ++m_lastPostProcessPresetRevision;
     }
 
     std::string AssetManager::GetAssetPath(const std::string &relativePath) const
@@ -3360,6 +3396,9 @@ namespace PlutoGE::assets
         m_stableIdReferenceCache.clear();
         m_modelResolutionCache.clear();
         m_surfaceResponseCache.clear();
+        // project:// references name different files in the next project.
+        m_postProcessPresetCache.clear();
+        m_postProcessPresetPreviews.clear();
         {
             std::scoped_lock lock(m_animationClipCacheMutex);
             m_animationClipCache.clear();

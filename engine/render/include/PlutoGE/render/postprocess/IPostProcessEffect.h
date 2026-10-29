@@ -25,6 +25,8 @@ namespace PlutoGE::render
         PostProcessParameterType type = PostProcessParameterType::String;
         std::string value;
         std::vector<std::string> enumOptions;
+
+        bool operator==(const PostProcessParameter &) const = default;
     };
 
     struct PostProcessContext

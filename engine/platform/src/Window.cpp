@@ -18,6 +18,15 @@ namespace PlutoGE::platform
 {
     namespace
     {
+        bool IsRemoteSession()
+        {
+#ifdef _WIN32
+            return GetSystemMetrics(SM_REMOTESESSION) != 0;
+#else
+            return false;
+#endif
+        }
+
 #ifdef _WIN32
         void RestoreNativeEventRouting(GLFWwindow *window)
         {
@@ -419,6 +428,12 @@ namespace PlutoGE::platform
         StopGamepadVibration();
         std::erase_if(DropForwarding(), [this](const auto &entry) { return entry.second == this; });
         m_customFrame.reset();
+        if (m_invisibleCursor)
+        {
+            glfwDestroyCursor(m_invisibleCursor);
+            m_invisibleCursor = nullptr;
+        }
+        m_isCursorConfined = false;
         if (m_window)
         {
             glfwDestroyWindow(m_window);
@@ -674,15 +689,37 @@ namespace PlutoGE::platform
         if (m_window)
         {
             auto *window = static_cast<GLFWwindow *>(m_window);
-            const int cursorMode = m_isCursorLocked ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL;
+            // Remote desktop delivers the client's absolute pointer position.
+            // Disabled mode warps the cursor back to the window centre every
+            // poll, which the client never sees, so each event reports the
+            // pointer's offset from centre as motion and the camera spins.
+            // Confine an invisible cursor instead and take deltas from its
+            // absolute position; look range is then bounded by the window.
+            const bool confineInsteadOfDisable = m_isCursorLocked && IsRemoteSession();
+            const int cursorMode = !m_isCursorLocked ? GLFW_CURSOR_NORMAL
+                                   : confineInsteadOfDisable ? GLFW_CURSOR_CAPTURED
+                                                             : GLFW_CURSOR_DISABLED;
             const bool modeChanged = glfwGetInputMode(window, GLFW_CURSOR) != cursorMode;
             glfwSetInputMode(window, GLFW_CURSOR, cursorMode);
+            if (confineInsteadOfDisable != m_isCursorConfined)
+            {
+                if (confineInsteadOfDisable && !m_invisibleCursor)
+                {
+                    unsigned char pixels[4] = {};
+                    const GLFWimage image{1, 1, pixels};
+                    m_invisibleCursor = glfwCreateCursor(&image, 0, 0);
+                }
+                // Releasing restores the arrow; ImGui reapplies its own shape.
+                glfwSetCursor(window, confineInsteadOfDisable ? m_invisibleCursor : nullptr);
+                m_isCursorConfined = confineInsteadOfDisable;
+            }
 
             // Bypass OS cursor acceleration while locked so mouse deltas represent
             // unmodified device motion, as expected by first-person camera controls.
             if (glfwRawMouseMotionSupported())
             {
-                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, m_isCursorLocked ? GLFW_TRUE : GLFW_FALSE);
+                const bool raw = m_isCursorLocked && !confineInsteadOfDisable;
+                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, raw ? GLFW_TRUE : GLFW_FALSE);
             }
             if (modeChanged)
             {

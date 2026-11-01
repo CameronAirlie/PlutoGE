@@ -10,6 +10,7 @@
 #include "PlutoGE/platform/InputState.h"
 
 struct GLFWwindow;
+struct GLFWcursor;
 
 namespace PlutoGE::platform
 {
@@ -118,6 +119,9 @@ namespace PlutoGE::platform
         bool m_requestedScriptCursorLocked = false;
         bool m_requestedEditorCursorLocked = false;
         bool m_forceCursorVisible = false;
+        // Transparent cursor shown while a lock is confined rather than disabled.
+        GLFWcursor *m_invisibleCursor = nullptr;
+        bool m_isCursorConfined = false;
 
         void ApplyCursorMode();
     };

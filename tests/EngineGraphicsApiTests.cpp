@@ -369,7 +369,8 @@ int main(int argc, char **argv)
             // probeframes=<n> saves n consecutive frames of the probe view, to follow a probe that keeps moving.
             for (int frame = 0; frame < probeFrames; ++frame)
                 if (!run({&ddgi, &tone, &gamma}, 1, ("probes-" + std::to_string(frame)).c_str())) return 32;
-            for (const auto &[view, name] : {std::pair{"1", "irradiance"}, std::pair{"2", "indirect"}, std::pair{"3", "probes"}})
+            for (const auto &[view, name] : {std::pair{"1", "irradiance"}, std::pair{"2", "indirect"}, std::pair{"3", "probes"},
+                                             std::pair{"4", "sky"}, std::pair{"5", "reflections"}})
             {
                 ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, view}});
                 if (!run({&ddgi, &tone, &gamma}, 2, name)) return 32;

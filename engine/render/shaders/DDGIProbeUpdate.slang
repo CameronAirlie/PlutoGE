@@ -106,6 +106,9 @@ void stateMain(uint3 id : SV_DispatchThreadID)
     }
     uint next = (flags & PLUTO_DDGI_PROBE_FRESH) | (inactive ? PLUTO_DDGI_PROBE_INACTIVE : 0u) |
                 (moves << PLUTO_DDGI_RELOCATION_SHIFT);
+    // The trace saw this probe inactive and traced only its fixed rays.
+    if ((flags & PLUTO_DDGI_PROBE_INACTIVE) != 0)
+        next |= PLUTO_DDGI_PROBE_PARTIAL_RAYS;
     // A reactivated probe's history stopped updating while it was inactive.
     if ((flags & PLUTO_DDGI_PROBE_INACTIVE) != 0 && !inactive)
         next |= PLUTO_DDGI_PROBE_FRESH;
@@ -149,7 +152,7 @@ void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     if (slot >= ddgiRays.z) return;
     const int2 tile = ddgiTile(probeList[slot]);
     const float4 state = probeState[tile];
-    if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE)) return;
+    if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE | PLUTO_DDGI_PROBE_PARTIAL_RAYS)) return;
     loadRays(slot, threadIndex, PLUTO_DDGI_IRRADIANCE_TILE * PLUTO_DDGI_IRRADIANCE_TILE);
 
     const int2 source = borderSource(int2(local.xy), PLUTO_DDGI_IRRADIANCE_TILE);
@@ -194,7 +197,7 @@ void blendDistanceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID,
     const uint probe = probeList[slot];
     const int2 tile = ddgiTile(probe);
     const float4 state = probeState[tile];
-    if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE)) return;
+    if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE | PLUTO_DDGI_PROBE_PARTIAL_RAYS)) return;
     loadRays(slot, threadIndex, PLUTO_DDGI_DISTANCE_TILE * PLUTO_DDGI_DISTANCE_TILE);
     const float range = ddgiBlend.w * ddgiSpacing(ddgiCascadeOf(probe));
 

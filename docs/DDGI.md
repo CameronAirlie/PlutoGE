@@ -87,14 +87,20 @@ The frame runs in this order: geometry pass, DDGI, SSGI, SSAO.
 3. **Tracing.** A ray source fills a buffer of (radiance, hit distance) per ray (`IDdgiRaySource`). The current
    source, `VoxelDdgiRaySource`, marches near-ray cones through the VCT voxel cascades (voxelized, relit, with one
    secondary bounce). Transmission that leaves the scene picks up the physical sky (or the flat ambient term), exactly
-   as the geometry pass lights surfaces, and the ray reports `PLUTO_DDGI_MISS_DISTANCE`. With **Multiple Bounces**, a
+   as the geometry pass lights surfaces. A ray that leaves above the horizon reports `PLUTO_DDGI_MISS_DISTANCE`; one
+   that leaves below it reports the distance travelled, since it slipped through a floor thinner than a voxel or left
+   past the cascades' lower faces, where the real world holds ground. Counted as sky, such rays made probes under
+   Basin's hall floor (0.03 thick, nothing beneath) see sky downwards, and the undersides of objects and walls near
+   them reflected it. With **Multiple Bounces**, a
    hit adds the voxel's albedo times the volume's irradiance at the hit point from the previous update. Each probe
    traces 16 fixed rays for relocation and classification, plus **Rays Per Probe** spherical-Fibonacci rays rotated
    randomly at every update.
 4. **Probe update** (`DDGIProbeUpdate.slang`). Relocation and classification use the fixed rays. Rays are then blended
    into two octahedral atlases per probe: 6 x 6 texels of irradiance and 14 x 14 texels of hit distance, squared
    distance and sky visibility (the share of rays that missed), both with a one-texel border. Changes beyond twice the
-   ray noise (doubling or halving a probe's luminance, above 0.1) converge at half the hysteresis. Sky visibility uses
+   ray noise (doubling or halving a probe's luminance, above 0.1) converge at half the hysteresis. A probe that was
+   inactive when traced has only its fixed rays, so it skips the blends even if classification reactivates it, and
+   blends at its next update (blending the other ray slots once replaced its history with another probe's rays). Sky visibility uses
    a wider lobe than the distances (cosine to the 16th, half power at about 17 degrees): a distance texel's lobe holds
    about one ray per update, too few to estimate a share from.
 5. **Apply** (`DDGIApply.slang`). Each opaque lit pixel interpolates its eight surrounding probes, weighted by
@@ -137,7 +143,7 @@ pass omits.
 `DdgiVolume` depends only on `IDdgiRaySource`. A hardware ray-query source would implement `Trace` with the same
 bindings and output (see `DDGIVoxelTrace.slang`): negative distances for rays that start inside geometry, and
 `SurfaceTolerance()` near zero, and `PLUTO_DDGI_MISS_DISTANCE` (`DdgiConfig.h`) for rays that see the sky, which
-reflection occlusion counts. Scheduling, blending, relocation, classification, sampling and the editor need no
+reflection occlusion counts. Rays that leave the scene below the horizon should report a finite distance instead. Scheduling, blending, relocation, classification, sampling and the editor need no
 changes.
 
 ## Cost

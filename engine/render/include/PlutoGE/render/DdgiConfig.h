@@ -31,6 +31,9 @@
 // the flags stay small integers). Relocation stops at the maximum, which is also the count's mask.
 #define PLUTO_DDGI_RELOCATION_SHIFT 2
 #define PLUTO_DDGI_MAX_RELOCATIONS 7
+// This update traced only the fixed rays (the probe was inactive when traced), so its blended rays hold no data even if
+// classification has just reactivated it: the blends skip it until its next update.
+#define PLUTO_DDGI_PROBE_PARTIAL_RAYS 32
 
 // Compute group sizes.
 #define PLUTO_DDGI_TRACE_GROUP 64

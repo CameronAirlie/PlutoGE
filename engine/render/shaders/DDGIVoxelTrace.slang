@@ -144,12 +144,22 @@ float3 missRadiance(float3 direction)
                            : float3(ddgiSky.y);
 }
 
+// The hit distance of a ray that left the voxel scene without reaching a surface. Only rays leaving above the horizon
+// reach the sky (PLUTO_DDGI_MISS_DISTANCE). Below it the world ends in ground the voxel scene does not hold: rays that
+// slipped through a floor thinner than a voxel with nothing beneath it, or left past the cascades' lower faces, report
+// the distance travelled instead, so probes under floors do not count sky that downward-facing surfaces near them
+// would then reflect. Their radiance still includes the sky term below the horizon.
+float escapeDistance(float3 direction, float travelled)
+{
+    return direction.y >= 0.0 ? PLUTO_DDGI_MISS_DISTANCE : travelled;
+}
+
 float4 traceRay(float3 origin, float3 direction)
 {
     float covered, voxelSize;
     const float4 start = sampleScene(origin, direction, 0.0, covered, voxelSize);
     if (covered <= 0.0)
-        return float4(missRadiance(direction), PLUTO_DDGI_MISS_DISTANCE);
+        return float4(missRadiance(direction), escapeDistance(direction, voxelTrace.y));
     if (start.a > 0.5)
     {
         // Inside geometry: report how far this direction must travel to leave it.
@@ -205,7 +215,7 @@ float4 traceRay(float3 origin, float3 direction)
     if (luminance > ddgiBlend.y)
         radiance *= ddgiBlend.y / luminance;
     radiance += transmission * missRadiance(direction);
-    return float4(radiance, hitDistance >= 0.0 ? hitDistance : PLUTO_DDGI_MISS_DISTANCE);
+    return float4(radiance, hitDistance >= 0.0 ? hitDistance : escapeDistance(direction, distance));
 }
 
 [shader("compute")]

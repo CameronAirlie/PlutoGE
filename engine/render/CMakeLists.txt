@@ -43,6 +43,7 @@ add_library(PlutoGERender
     src/screenspace/ScreenSpaceAmbientOcclusion.cpp
     src/screenspace/ScreenSpaceReflections.cpp
     src/screenspace/ScreenSpaceGlobalIllumination.cpp
+    src/screenspace/ScreenSpaceContactShadows.cpp
     src/gi/DdgiProbeGrid.cpp
     src/gi/DdgiSettings.cpp
     src/gi/DdgiVolume.cpp
@@ -170,6 +171,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceBrdf.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowTent.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
         endif()
@@ -348,6 +350,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(AutoExposureApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain applyMain)
     pluto_add_slang_graphics_shader(SSAODenoise "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain denoiseMain)
     pluto_add_slang_graphics_shader(SSAOUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOUpsample.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(ContactShadows "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ContactShadows.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DiffuseProbeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceMain)
     pluto_add_slang_graphics_shader(DiffuseProbeComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain compositeMain)
     pluto_add_slang_compute_shader(ScreenSpaceGuide "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuide.slang" buildMain)

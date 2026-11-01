@@ -43,6 +43,7 @@ namespace PlutoGE::render
     class ScreenSpaceAmbientOcclusion;
     class ScreenSpaceReflections;
     class ScreenSpaceGlobalIllumination;
+    class ScreenSpaceContactShadows;
     class DdgiVolume;
     class VoxelDdgiRaySource;
     struct ScreenSpaceView;
@@ -188,8 +189,11 @@ namespace PlutoGE::render
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal |
                    BasicPostProcessInput::Motion | BasicPostProcessInput::History;
         case BasicPostProcessEffectType::SSAO:
+            // Material roughness and the environment reflection, for specular occlusion (GeometryInputsFor drops
+            // them when it is off).
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion |
-                   BasicPostProcessInput::Indirect;
+                   BasicPostProcessInput::Indirect | BasicPostProcessInput::Material |
+                   BasicPostProcessInput::EnvironmentSpecular;
         case BasicPostProcessEffectType::SSGI:
             return BasicPostProcessInput::Depth | BasicPostProcessInput::Normal | BasicPostProcessInput::Material |
                    BasicPostProcessInput::Albedo | BasicPostProcessInput::Motion | BasicPostProcessInput::Indirect;
@@ -337,6 +341,8 @@ namespace PlutoGE::render
         // full-resolution upsample and composite.
         std::array<BasicPostProcessShaderPackage, 3> ssao;
         BasicPostProcessShaderPackage ssaoDenoise, ssaoUpsample;
+        // Directional contact shadows traced after the depth prepass (ContactShadows.slang).
+        BasicPostProcessShaderPackage contactShadows;
         // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
         BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
         // Temporal reconstruction inputs/outputs: background camera motion and upscaler sharpening.
@@ -533,6 +539,11 @@ namespace PlutoGE::render
         glm::vec3 color{1.0f};
         float intensity = 1.0f;
         bool castsShadows = false;
+        // Emitter shape (scene::Light): sphere radius, and for point lights a tube of `sourceLength` along
+        // `sourceAxis`. Specular only (SurfaceBrdf.slang).
+        float sourceRadius = 0.0f;
+        float sourceLength = 0.0f;
+        glm::vec3 sourceAxis{0.0f, -1.0f, 0.0f};
     };
 
 
@@ -624,6 +635,9 @@ namespace PlutoGE::render
         float shadowFilterNormalSoftness = 0.26f;
         float shadowDistance = 150.0f;
         float shadowCasterDistance = 0.0f;
+        // World length of the screen-space contact shadow rays towards the directional light; 0 disables them.
+        // They need the depth prepass and directional shadows (ScreenSpaceContactShadows.h).
+        float contactShadowLength = 0.0f;
     };
 
     struct BasicPostProcessEffect
@@ -649,6 +663,17 @@ namespace PlutoGE::render
         std::uint32_t volumetricResolutionDivisor = 2;
         std::shared_ptr<const OceanParameters> ocean;
     };
+
+    // The geometry outputs one effect needs with its settings; InputsFor its type covers every setting.
+    [[nodiscard]] inline BasicPostProcessInput GeometryInputsFor(const BasicPostProcessEffect &effect) noexcept
+    {
+        auto inputs = static_cast<std::uint8_t>(InputsFor(effect.type));
+        // SSAO without specular occlusion (lane 2.z) keeps the narrower indirect-only layout.
+        if (effect.type == BasicPostProcessEffectType::SSAO && !(effect.parameters[2].z > 0.0f))
+            inputs &= static_cast<std::uint8_t>(~static_cast<std::uint8_t>(BasicPostProcessInput::Material |
+                                                                           BasicPostProcessInput::EnvironmentSpecular));
+        return static_cast<BasicPostProcessInput>(inputs);
+    }
 
     struct BasicRendererFrameStats
     {
@@ -732,6 +757,8 @@ namespace PlutoGE::render
         // texture slots from TerrainTextureSlot, the layer parameters in a uniform slot.
         static constexpr std::uint32_t TerrainTextureSlot = 3;
         static constexpr std::uint32_t TerrainParameterSlot = 4;
+        // The directional contact shadow mask (BasicLit.slang contactShadowMask, set 0 binding 7).
+        static constexpr std::uint32_t ContactShadowSlot = 7;
 
         // Runs outside a rendering pass with command recording open. The
         // callback may append camera work, but must not begin or submit a frame.
@@ -981,6 +1008,7 @@ namespace PlutoGE::render
         std::unique_ptr<ScreenSpaceAmbientOcclusion> m_ambientOcclusion;
         std::unique_ptr<ScreenSpaceReflections> m_reflections;
         std::unique_ptr<ScreenSpaceGlobalIllumination> m_globalIllumination;
+        std::unique_ptr<ScreenSpaceContactShadows> m_contactShadows;
         std::unique_ptr<DdgiVolume> m_ddgi;
         std::unique_ptr<VoxelDdgiRaySource> m_ddgiRays;
         const void *m_ddgiOwner = nullptr;

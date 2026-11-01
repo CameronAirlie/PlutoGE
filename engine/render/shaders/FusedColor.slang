@@ -26,7 +26,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     {
         const ColorOperation operation = operations[index];
         if (operation.control.x < 0.5)
-            color = pow(aces(color * max(operation.control.y, 0.0)), 1.0 / max(operation.control.z, 0.001));
+            color = pow(toneMapCurve(color * max(operation.control.y, 0.0), operation.parameters[0].x),
+                        1.0 / max(operation.control.z, 0.001));
         else if (operation.control.x < 1.5)
             color = pow(max(color, 0.0), 1.0 / max(operation.control.z, 0.001));
         else

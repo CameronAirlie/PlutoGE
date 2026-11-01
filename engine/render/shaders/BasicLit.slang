@@ -24,6 +24,24 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 #include "SceneLightingParameters.slang"
 #include "LightClusters.slang"
 
+#ifndef PLUTO_GLASS
+// Directional contact shadows (ContactShadows.slang): visibility and the device depth it was traced for.
+[[vk::binding(7, 0)]] Sampler2D contactShadowMask : register(t7, space0);
+#endif
+
+// The contact shadow at this fragment: the mask's visibility where it was traced for this surface, else 1 (draws
+// absent from the coverage depth, transparent surfaces, or no mask this frame).
+float contactShadowVisibility(float4 fragmentPosition, bool transparentPass)
+{
+#ifdef PLUTO_GLASS
+    return 1.0;
+#else
+    if (transparentPass || contactShadowParameters.x < 0.5) return 1.0;
+    const float2 mask = contactShadowMask.Load(int3(int2(fragmentPosition.xy), 0)).xy;
+    return abs(mask.y - fragmentPosition.z) <= 0.0001 * fragmentPosition.z + 1.e-7 ? mask.x : 1.0;
+#endif
+}
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -866,16 +884,7 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBia
     return fadeFogCoverage ? lerp(1.0, visibility, smoothstep(0.0, 0.05, edge)) : visibility;
 }
 
-// Exact unpolarized air/dielectric Fresnel, including index-matched glass.
-float dielectricFresnel(float cosine, float ior)
-{
-    if (ior <= 1.000001) return 0.0;
-    cosine = saturate(cosine);
-    const float transmittedCosine = sqrt(max(1.0 - (1.0 - cosine * cosine) / (ior * ior), 0.0));
-    const float rs = (cosine - ior * transmittedCosine) / max(cosine + ior * transmittedCosine, 0.000001);
-    const float rp = (ior * cosine - transmittedCosine) / max(ior * cosine + transmittedCosine, 0.000001);
-    return 0.5 * (rs * rs + rp * rp);
-}
+#include "SurfaceBrdf.slang"
 
 #ifdef PLUTO_GLASS
 // Integrate only camera-to-pane fog. The scene snapshot already contains
@@ -1068,6 +1077,8 @@ struct SurfaceDerivatives
 {
     float2 uvDx, uvDy, uv2Dx, uv2Dy;
     float3 worldDx, worldDy;
+    // The interpolated normal's, for geometric specular antialiasing (SurfaceBrdf.slang).
+    float3 normalDx, normalDy;
 };
 [ForceInline]
 SurfaceDerivatives surfaceDerivatives(VertexOutput input)
@@ -1083,6 +1094,8 @@ SurfaceDerivatives surfaceDerivatives(VertexOutput input)
     result.uv2Dy = ddy(input.uv2) * uvScale;
     result.worldDx = ddx(input.worldPosition);
     result.worldDy = ddy(input.worldPosition);
+    result.normalDx = ddx(input.worldNormal);
+    result.normalDy = ddy(input.worldNormal);
     return result;
 }
 
@@ -1156,6 +1169,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission,
                         graphState);
 #endif
+    // Rough enough that the geometric normal's variation over the pixel stays inside the specular lobe.
+    materialRoughness = clamp(surfaceAntialiasedRoughness(derivatives.normalDx, derivatives.normalDy,
+                                                          materialRoughness), 0.04, 1.0);
 #include "SurfaceCoverage.slang"
     // Unlit graphs output colour + emission only (see the end of this function). The flag is graph data, not a
     // compile-time constant, so return before lighting, probes and the transparent fog march instead of computing
@@ -1188,29 +1204,15 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     }
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
-    const float3 halfDirection = normalize(lightDirection + viewDirection);
     const float ndotl = saturate(dot(normal, lightDirection));
-    const float ndotv = max(saturate(dot(normal, viewDirection)), 0.0001);
-    const float ndoth = saturate(dot(normal, halfDirection));
-    const float hdotv = saturate(dot(halfDirection, viewDirection));
     const float dielectricF0 = pow((glassParameters.z - 1.0) / (glassParameters.z + 1.0), 2.0);
     const float3 f0 = glass ? float3(dielectricF0) : lerp(float3(0.04), sampledColor.rgb, materialMetallic);
-    const float3 fresnel = glass ? float3(dielectricFresnel(hdotv, glassParameters.z)) :
-        f0 + (1.0 - f0) * pow(1.0 - hdotv, 5.0);
-    const float alpha = materialRoughness * materialRoughness;
-    const float alphaSquared = alpha * alpha;
-    const float distributionDenominator = ndoth * ndoth * (alphaSquared - 1.0) + 1.0;
-    const float distribution = alphaSquared /
-                               max(3.14159265 * distributionDenominator * distributionDenominator, 0.0001);
-    const float geometryK = (materialRoughness + 1.0) * (materialRoughness + 1.0) / 8.0;
-    const float geometryView = ndotv / (ndotv * (1.0 - geometryK) + geometryK);
-    const float geometryLight = ndotl / (ndotl * (1.0 - geometryK) + geometryK);
-    const float3 specular = distribution * geometryView * geometryLight * fresnel /
-                            max(4.0 * ndotv * ndotl, 0.0001);
-    const float3 diffuseWeight = (1.0 - fresnel) * (1.0 - materialMetallic);
-    const float3 diffuse = diffuseWeight * sampledColor.rgb / 3.14159265;
-    const float3 direct = (diffuse + specular) * directionalColor.rgb *
-                          directionalDirectionIntensity.w * ndotl;
+    const BrdfSurface brdf = brdfSurface(normal, viewDirection, sampledColor.rgb, materialMetallic, materialRoughness,
+                                         f0, glass ? glassParameters.z : 0.0);
+    const float ndotv = brdf.ndotv;
+    float3 directDiffuse, specular;
+    brdfEvaluate(brdf, brdfPointLight(lightDirection), ndotl, directDiffuse, specular);
+    const float3 direct = (directDiffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
     float3 pointLighting = 0.0;
     float3 pointSpecularLighting = 0.0;
     // Evaluate geometry derivatives before divergent per-light/face selection.
@@ -1226,17 +1228,14 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float distance = length(offset);
         const float range = pointPositionRange[light].w;
         if (range <= 0.0 || distance >= range) continue;
-        const float3 l = offset / max(distance, 0.0001);
-        const float3 h = normalize(l + viewDirection);
+        // Source shape (SceneLightingParameters.slang): sphere radius, tube axis times length.
+        const float tubeLength = length(pointShape[light].yzw);
+        float3 l;
+        const BrdfLight shape = brdfAreaLight(brdf, offset, pointShape[light].x,
+            tubeLength > 0.0 ? pointShape[light].yzw / tubeLength : float3(0.0), tubeLength, l);
         const float nl = saturate(dot(normal, l));
-        const float nh = saturate(dot(normal, h));
-        const float hv = saturate(dot(h, viewDirection));
-        const float3 f = f0 + (1.0 - f0) * pow(1.0 - hv, 5.0);
-        const float d = nh * nh * (alphaSquared - 1.0) + 1.0;
-        const float distributionPoint = alphaSquared / max(PI * d * d, 0.0001);
-        const float geometryPoint = nl / max(nl * (1.0 - geometryK) + geometryK, 0.0001);
-        const float3 brdf = (1.0 - f) * (1.0 - materialMetallic) * sampledColor.rgb / PI +
-            distributionPoint * geometryView * geometryPoint * f / max(4.0 * ndotv * nl, 0.0001);
+        float3 diffusePoint, specularPoint;
+        brdfEvaluate(brdf, shape, nl, diffusePoint, specularPoint);
         float visibility = 1.0;
         // Standard lighting scales by nl, so surfaces facing away from the
         // light need no shadow lookup. Custom graph lighting receives visibility.
@@ -1253,13 +1252,12 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                 visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition,
                     pointReceiverNormal, l, pointWorldDx, pointWorldDy);
         }
-        const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * nl * attenuation * visibility;
+        const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * attenuation * visibility;
         if(customLighting)
             pointLighting += evaluateShaderGraphLighting(shaderGraph,graphState,l,
                 pointColorIntensity[light].rgb*pointColorIntensity[light].w,attenuation,visibility);
-        else pointLighting += brdf * pointRadiance;
-        pointSpecularLighting += distributionPoint * geometryView * geometryPoint * f /
-            max(4.0 * ndotv * nl, 0.0001) * pointRadiance;
+        else pointLighting += (diffusePoint + specularPoint) * pointRadiance;
+        pointSpecularLighting += specularPoint * pointRadiance;
     }
     const float subsurfaceStrength = saturate(subsurfaceColorStrength.w) * (1.0 - materialMetallic);
     const float subsurfaceRadius = max(subsurfaceRadiusPadding.x, 0.001);
@@ -1364,6 +1362,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         }
         }
     }
+    if (shadowsEnabled != 0 && needsDirectionalShadow)
+        shadowVisibility *= contactShadowVisibility(input.position, transparentPass);
     // Environment lighting layers, most specific first: reflection captures,
     // then the baked diffuse grid, then the physical sky, then flat ambient.
     // A layer below full capture coverage is only evaluated where it shows.
@@ -1483,7 +1483,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float3 surfaceDiffuse = sampledColor.rgb * (cameraPositionAmbient.w +
             directionalColor.rgb * directionalDirectionIntensity.w * ndotl * shadowVisibility / PI);
         const float3 directSpecular = specular * directionalColor.rgb * directionalDirectionIntensity.w *
-                                      ndotl * shadowVisibility;
+                                      shadowVisibility;
         const float3 transmissionWeight = (1.0 - viewFresnel) * transmission * absorption * saturate(sampledColor.rgb);
         const float3 surface = (1.0 - viewFresnel) * (1.0 - transmission) * surfaceDiffuse +
                                viewFresnel * environment + directSpecular + surfaceEmission + pointSpecularLighting +

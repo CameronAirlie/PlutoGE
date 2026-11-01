@@ -12,7 +12,9 @@ namespace PlutoGE::render
     //   denoise    XeGTAO-style edge-aware 3 x 3 passes that read only the raw target (SSAOResolve.slang).
     //   resolve    the last denoise pass plus reprojected, neighbourhood-clamped history; its output is the next
     //              frame's history (SSAOResolve.slang).
-    //   composite  full-resolution bilateral upsample, attenuating indirect light only (SSAOUpsample.slang).
+    //   composite  full-resolution bilateral upsample, attenuating indirect light only (SSAOUpsample.slang): diffuse
+    //              indirect light by AO, and the environment reflection by the share of its lobe AO leaves visible
+    //              (specular occlusion), writing the occluded reflection SSR falls back to.
     class ScreenSpaceAmbientOcclusion
     {
     public:
@@ -29,6 +31,7 @@ namespace PlutoGE::render
             std::uint32_t denoisePasses = 2;
             float historyWeight = 0.9f, historyDepthThreshold = 0.02f, historyNormalThreshold = 0.85f;
             Estimator estimator = Estimator::Horizon;
+            float specularOcclusion = 1.0f;
             bool halfResolution = true;
             // Writes visibility instead of the composite (diagnostic).
             bool aoOnly = false;
@@ -38,8 +41,9 @@ namespace PlutoGE::render
         struct Inputs
         {
             // Scene colour; the geometry pass's diffuse indirect light; scene colour as the geometry pass left it
-            // (anything added since, such as screen-space GI, also counts as indirect).
-            rhi::TextureHandle source, indirect, geometryScene;
+            // (anything added since, such as screen-space GI, also counts as indirect); the environment reflection in
+            // the scene colour (rgb, a its sky share; optional).
+            rhi::TextureHandle source, indirect, geometryScene, environmentSpecular;
         };
 
         bool Initialize(rhi::IRenderDevice &device, const Shaders &shaders);
@@ -49,9 +53,10 @@ namespace PlutoGE::render
         [[nodiscard]] static ScreenSpaceGuide::Request GuideRequest(const Settings &settings) noexcept
         { return {.hierarchy = true, .hierarchyFalloff = settings.radius}; }
 
-        // Records every stage outside rendering. `guide` must match GuideDivisor. Returns the composited colour
-        // (owned by this pass until the next Record), or `inputs.source` when AO is unavailable.
-        [[nodiscard]] rhi::TextureHandle Record(rhi::ICommandContext &commands, const ScreenSpaceView &view,
+        // Records every stage outside rendering. `guide` must match GuideDivisor. Returns the composited colour and
+        // occluded environment reflection (owned by this pass until the next Record; `indirect` is the input's), or
+        // the inputs when AO is unavailable.
+        [[nodiscard]] ScreenSpaceLighting Record(rhi::ICommandContext &commands, const ScreenSpaceView &view,
                                                 const Settings &settings, const Inputs &inputs,
                                                 ScreenSpaceGuide &guide);
         void InvalidateHistory() noexcept { m_historyValid = false; }
@@ -61,7 +66,7 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_spiral, m_horizon, m_denoise, m_resolve, m_upsample;
         ScreenSpaceUniforms m_uniforms;
-        ScreenSpaceTarget m_raw, m_composite;
+        ScreenSpaceTarget m_raw, m_composite, m_environmentSpecular;
         std::array<ScreenSpaceTarget, 2> m_scratch, m_history;
         std::uint32_t m_historyIndex = 0;
         bool m_historyValid = false;

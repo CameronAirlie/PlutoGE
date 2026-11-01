@@ -137,7 +137,47 @@ inline void CheckSsaoRendering(PlutoGE::render::BasicRenderer &renderer,
         postDraw.emission={0,0,0};
     }
     }
-    std::cout<<"SSAO estimators, motion, resolution switching, planar receivers and direct/emissive preservation passed\n";
+    // Specular occlusion: a rough metal corner under the sky has no diffuse light for AO to occlude, only its sky
+    // reflection. Without specular occlusion SSAO must leave it as it is; with it, the crease's reflection darkens.
+    {
+        lighting.ambientIntensity=0; lighting.directionalIntensity=0;
+        lighting.physicalSkyEnabled=true; lighting.physicalSkyExposure=1;
+        lighting.physicalSkyParameters[0]={0,1,0,1};
+        lighting.physicalSkyParameters[1]={1,1,1,.1f};
+        lighting.physicalSkyParameters[2]={0,0,0,.2f};
+        lighting.physicalSkyParameters[3]={.1f,.1f,.1f,1};
+        lighting.physicalSkyParameters[4]={10,.5f,0,0};
+        ao.parameters[1]={2,0,.9f,1}; ao.parameters[3].y=1;
+        const glm::vec3 eye(2.5f,1.8f,3);
+        lighting.view=glm::lookAtRH(eye,glm::vec3(0,.5f,.6f),glm::vec3(0,1,0));
+        lighting.cameraPosition=eye;
+        postDraw.model=glm::translate(glm::mat4(1),glm::vec3(-.4f,0,0));
+        postDraw.previousModel=postDraw.model;
+        BasicDraw metal{.mesh=&corner,.baseColor={.9f,.9f,.9f,1},.metallic=1,.roughness=.6f};
+        const auto settle=[&](bool enabled) {
+            std::vector<float> image;
+            for (int frame=0;frame<6;++frame) image=render(metal,enabled);
+            return image;
+        };
+        const auto unoccluded=settle(false);
+        ao.parameters[2].z=0;
+        const auto diffuseOnly=settle(true);
+        ao.parameters[2].z=1;
+        const auto occluded=settle(true);
+        std::size_t darkened=0;
+        for (std::size_t i=0;i<unoccluded.size();i+=4)
+        {
+            require(std::abs(diffuseOnly[i+1]-unoccluded[i+1])<.003f+unoccluded[i+1]*.01f,
+                    "SSAO without specular occlusion changed a metal's reflection");
+            require(occluded[i+1]<=unoccluded[i+1]+.003f,"Specular occlusion brightened a reflection");
+            darkened+=unoccluded[i+1]-occluded[i+1]>.01f*std::max(unoccluded[i+1],.01f)*5;
+        }
+        require(darkened>10,"Specular occlusion left the crease's reflection unoccluded");
+        lighting.physicalSkyEnabled=false;
+        ao.parameters[2].z=0;
+    }
+    std::cout<<"SSAO estimators, motion, resolution switching, planar receivers, direct/emissive preservation and "
+               "specular occlusion passed\n";
 }
 
 // GPU timings of the horizon estimator per sample budget at `extent`, with the project defaults (half resolution,

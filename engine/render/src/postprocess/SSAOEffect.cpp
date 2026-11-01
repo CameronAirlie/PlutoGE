@@ -41,7 +41,8 @@ namespace PlutoGE::render
           m_historyNormalThreshold(config.historyNormalThreshold),
           m_sampleCount(config.sampleCount),
           m_blurRadius(config.blurRadius),
-          m_halfResolution(config.halfResolution)
+          m_halfResolution(config.halfResolution),
+          m_specularOcclusion(config.specularOcclusion)
     {
     }
 
@@ -101,6 +102,11 @@ namespace PlutoGE::render
                 .value = m_halfResolution ? "true" : "false",
             },
             PostProcessParameter{
+                .name = "Specular Occlusion",
+                .type = PostProcessParameterType::Float,
+                .value = std::to_string(m_specularOcclusion),
+            },
+            PostProcessParameter{
                 .name = "AO Only",
                 .type = PostProcessParameterType::Bool,
                 .value = m_outputMode == kAoOnlyMode ? "true" : "false",
@@ -156,6 +162,10 @@ namespace PlutoGE::render
                     m_halfResolution = nextHalfResolution;
                     ResetHistory();
                 }
+            }
+            else if (parameter.name == "Specular Occlusion")
+            {
+                m_specularOcclusion = std::clamp(std::stof(parameter.value), 0.0f, 1.0f);
             }
             else if (parameter.name == "AO Only")
             {

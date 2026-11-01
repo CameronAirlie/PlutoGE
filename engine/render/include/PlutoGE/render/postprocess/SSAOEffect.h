@@ -27,6 +27,9 @@ namespace PlutoGE::render
         int sampleCount = 32;
         int blurRadius = 2;
         bool halfResolution = true;
+        // How much ambient occlusion also occludes environment reflections (0 to 1), through the visibility of the
+        // reflection lobe (SSAOUpsample.slang). SSR hits replace the occluded reflection where it finds them.
+        float specularOcclusion = 1.0f;
     };
 
     class SSAOEffect : public ShaderPostProcessEffect
@@ -46,7 +49,7 @@ namespace PlutoGE::render
         {
             return {m_typeName, m_displayName, m_radius, m_bias, m_intensity, m_power,
                     m_temporalBlend, m_historyDepthThreshold, m_historyNormalThreshold,
-                    m_sampleCount, m_blurRadius, m_halfResolution};
+                    m_sampleCount, m_blurRadius, m_halfResolution, m_specularOcclusion};
         }
         [[nodiscard]] bool IsAoOnly() const noexcept { return m_outputMode != 0; }
 
@@ -76,6 +79,7 @@ namespace PlutoGE::render
         float m_temporalBlend = 0.0f;
         float m_historyDepthThreshold = 0.0f;
         float m_historyNormalThreshold = 0.0f;
+        float m_specularOcclusion = 1.0f;
         int m_sampleCount = 0;
         int m_blurRadius = 0;
         int m_outputMode = 0;

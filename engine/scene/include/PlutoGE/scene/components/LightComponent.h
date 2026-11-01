@@ -55,6 +55,9 @@ namespace PlutoGE::scene
         float screenSpaceFilterMinDepthScale = 0.05f;
         float screenSpaceFilterNormalThreshold = 0.72f;
         float screenSpaceFilterNormalSoftness = 0.26f;
+        // World length of screen-space contact shadows, which catch occluders too close for the shadow map to
+        // resolve (feet, props, creases); 0 disables them.
+        float contactShadowLength = 0.25f;
     };
 
     struct Light
@@ -66,6 +69,11 @@ namespace PlutoGE::scene
         float intensity = 1.0f; // Candela for point/spot, illuminance for directional.
         [[nodiscard]] float GetRange() const { return render::LocalLightRange(intensity, color); }
         glm::vec3 direction{0.0f, -1.0f, 0.0f};     // Direction of the light (for directional and spot lights)
+        // Emitter shape for point and spot lights, in metres: a sphere of this radius, which softens and widens
+        // highlights; for point lights optionally stretched into a tube of `sourceLength` along `direction`.
+        // Zero is an ideal point. Shapes change specular only; falloff and shadows stay those of the centre.
+        float sourceRadius = 0.0f;
+        float sourceLength = 0.0f;
         std::unique_ptr<render::Texture> shadowMap; // Owned shadow map texture (if any)
         glm::mat4 shadowMatrix{1.0f};               // Light-space matrix for projected shadow maps
         std::array<std::unique_ptr<render::Texture>, kMaxDirectionalShadowCascades> shadowCascadeMaps;
@@ -111,6 +119,7 @@ namespace PlutoGE::scene
         void SetDirection(const glm::vec3 &direction);
         void SetStatic(bool isStatic);
         void SetCastsShadows(bool castsShadows);
+        void SetSourceShape(float radius, float length);
         void SetDirectionalShadowSettings(const DirectionalShadowSettings &settings);
         void MarkDirty();
         void ClearDirty();

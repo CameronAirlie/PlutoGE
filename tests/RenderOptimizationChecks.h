@@ -338,6 +338,23 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
             require(fusedDraws < referenceDraws, "Color fusion did not reduce fullscreen draws");
         compare(original, readPixels(renderer.GetColorTexture()), 1.0, 4, "Fused color changed authored operations");
     }
+    // Every tone mapping curve (lane 0.x) renders alike fused and standalone, and each is applied.
+    {
+        std::vector<decltype(readPixels(reference.GetColorTexture()))> curves;
+        for (const float curve : {0.0f, 1.0f, 2.0f})
+        {
+            auto curveTone = tone;
+            curveTone.exposure = 4.0f;
+            curveTone.parameters[0].x = curve;
+            const std::vector<BasicPostProcessEffect> toneAndGamma{curveTone, gamma};
+            reference.Render(glm::mat4(1), lighting, {&draw, 1}, toneAndGamma);
+            curves.push_back(readPixels(reference.GetColorTexture()));
+            renderer.Render(glm::mat4(1), lighting, {&draw, 1}, toneAndGamma);
+            compare(curves.back(), readPixels(renderer.GetColorTexture()), 1.0, 4, "Fused tone mapping curve differs");
+        }
+        require(curves[0] != curves[1] && curves[1] != curves[2] && curves[0] != curves[2],
+                "Tone mapping curves are not applied");
+    }
 
     // Compare procedural instances to CPU-expanded geometry with asymmetric
     // positions, rotations and overlapping alpha, on two consecutive frames.

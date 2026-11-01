@@ -21,7 +21,7 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
     const float2 uv = orientFullscreenUv(input.uv, pass.flipY);
     float3 color = sceneTexture.Sample(uv).rgb * max(pass.exposure, 0.0);
-    color = aces(color);
+    color = toneMapCurve(color, pass.parameters[0].x);
     color = pow(max(color, 0.0), 1.0 / max(pass.gamma, 0.001));
     return float4(color, 1.0);
 }

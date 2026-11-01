@@ -56,4 +56,8 @@ cbuffer CameraParameters : register(b0, space0)
     // log-depth unit, farthest light reach, enabled.
     column_major float4x4 lightClusterProjection;
     float4 lightClusterDepth;
+    // Local light emitter shapes (SurfaceBrdf.slang brdfAreaLight): sphere radius, tube axis times length.
+    float4 pointShape[32];
+    // x: the directional contact shadow mask (BasicLit.slang contactShadowVisibility) is present.
+    float4 contactShadowParameters;
 };

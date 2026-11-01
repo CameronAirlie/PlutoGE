@@ -11,7 +11,7 @@ namespace PlutoGE::render
         constexpr std::uint32_t RawGuideSlot = 1, RawHierarchySlot = 2;
         constexpr std::uint32_t ResolveAoSlot = 1, ResolveGuideSlot = 2, ResolveMotionSlot = 5, ResolveHistorySlot = 6;
         constexpr std::uint32_t SceneSlot = 1, DepthSlot = 2, NormalSlot = 3, HistorySlot = 6, IndirectSlot = 8,
-                                GeometrySceneSlot = 9;
+                                GeometrySceneSlot = 9, EnvironmentSpecularSlot = 10, MaterialSlot = 11;
     }
 
     bool ScreenSpaceAmbientOcclusion::Initialize(rhi::IRenderDevice &device, const Shaders &shaders)
@@ -30,8 +30,8 @@ namespace PlutoGE::render
             {ResolveAoSlot, ResolveGuideSlot, ResolveMotionSlot, ResolveHistorySlot}, AoFormat,
             "SSAO denoise and temporal resolve");
         m_upsample = CreateScreenSpacePipeline(device, shaders.upsample,
-            {SceneSlot, DepthSlot, NormalSlot, HistorySlot, IndirectSlot, GeometrySceneSlot}, AoFormat,
-            "SSAO bilateral upsample and indirect composite");
+            {SceneSlot, DepthSlot, NormalSlot, HistorySlot, IndirectSlot, GeometrySceneSlot, EnvironmentSpecularSlot,
+             MaterialSlot}, {AoFormat, AoFormat}, "SSAO bilateral upsample and indirect composite");
         m_uniforms.Initialize(device, "SSAO pass parameters");
         m_device = &device;
         return Available();
@@ -42,14 +42,15 @@ namespace PlutoGE::render
         return m_device && m_horizon && m_denoise && m_resolve && m_upsample;
     }
 
-    rhi::TextureHandle ScreenSpaceAmbientOcclusion::Record(rhi::ICommandContext &commands, const ScreenSpaceView &view,
-                                                           const Settings &settings, const Inputs &inputs,
-                                                           ScreenSpaceGuide &guide)
+    ScreenSpaceLighting ScreenSpaceAmbientOcclusion::Record(rhi::ICommandContext &commands, const ScreenSpaceView &view,
+                                                            const Settings &settings, const Inputs &inputs,
+                                                            ScreenSpaceGuide &guide)
     {
         const auto &raw = settings.estimator == Estimator::Spiral && m_spiral ? m_spiral : m_horizon;
+        const ScreenSpaceLighting unchanged{inputs.source, inputs.indirect, inputs.environmentSpecular};
         if (!Available() || !inputs.source || guide.Divisor() != GuideDivisor(settings) ||
             !guide.Prepare(commands, view, GuideRequest(settings)))
-            return inputs.source;
+            return unchanged;
         m_uniforms.BeginFrame();
         const auto width = guide.Width(), height = guide.Height();
         const rhi::TextureDescriptor reduced{.width = width, .height = height, .format = AoFormat,
@@ -62,12 +63,17 @@ namespace PlutoGE::render
             historyLost |= history.Ensure(*m_device, reduced);
         m_composite.Ensure(*m_device, {.width = view.width, .height = view.height, .format = AoFormat,
             .usage = rhi::TextureUsage::ColorAttachment, .debugName = "SSAO composite", .sampled = true});
+        m_environmentSpecular.Ensure(*m_device, {.width = view.width, .height = view.height, .format = AoFormat,
+            .usage = rhi::TextureUsage::ColorAttachment, .debugName = "SSAO occluded environment specular",
+            .sampled = true});
         const bool historyValid = m_historyValid && !historyLost && settings == m_previousSettings;
 
         const auto passes = std::min(settings.denoisePasses, MaxDenoisePasses);
         std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> lanes{};
         lanes[0] = {settings.radius, settings.bias, settings.intensity, settings.power};
-        lanes[1] = {0.0f, settings.aoOnly ? 1.0f : 0.0f, settings.historyWeight, passes > 0 ? 1.0f : 0.0f};
+        // Specular occlusion needs the reflection it occludes.
+        const float specularOcclusion = inputs.environmentSpecular ? std::clamp(settings.specularOcclusion, 0.0f, 1.0f) : 0.0f;
+        lanes[1] = {specularOcclusion, settings.aoOnly ? 1.0f : 0.0f, settings.historyWeight, passes > 0 ? 1.0f : 0.0f};
         lanes[2] = {settings.historyDepthThreshold, settings.historyNormalThreshold,
                     1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height)};
         lanes[3].z = static_cast<float>(guide.HierarchyLevels());
@@ -106,23 +112,29 @@ namespace PlutoGE::render
         commands.EndGpuScope();
 
         commands.BeginGpuScope("RHI SSAO / Bilateral upsample and composite");
-        DrawScreenSpacePass(commands, m_composite.Get(), view.width, view.height, m_upsample.Get(), uniforms,
+        DrawScreenSpacePass(commands, {m_composite.Get(), m_environmentSpecular.Get()}, view.width, view.height,
+                            m_upsample.Get(), uniforms,
                             {{SceneSlot, inputs.source}, {DepthSlot, view.depth}, {NormalSlot, view.normal},
                              {HistorySlot, resolved.Get()}, {IndirectSlot, inputs.indirect},
-                             {GeometrySceneSlot, inputs.geometryScene}}, sampler);
+                             {GeometrySceneSlot, inputs.geometryScene},
+                             {EnvironmentSpecularSlot, inputs.environmentSpecular ? inputs.environmentSpecular
+                                                                                  : inputs.indirect},
+                             {MaterialSlot, view.material}}, sampler);
         commands.EndGpuScope();
 
         m_historyIndex = 1u - m_historyIndex;
         m_historyValid = true;
         m_previousSettings = settings;
         m_previousView = view.view;
-        return m_composite.Get();
+        return {m_composite.Get(), inputs.indirect,
+                inputs.environmentSpecular ? m_environmentSpecular.Get() : rhi::TextureHandle{}};
     }
 
     void ScreenSpaceAmbientOcclusion::ReleaseTargets() noexcept
     {
         m_raw.Reset();
         m_composite.Reset();
+        m_environmentSpecular.Reset();
         for (auto &target : m_scratch)
             target.Reset();
         for (auto &target : m_history)

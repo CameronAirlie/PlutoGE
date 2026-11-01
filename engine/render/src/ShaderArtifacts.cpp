@@ -155,6 +155,7 @@ namespace PlutoGE::render
             .compactFragments = {Load("BasicLitTerrainColor", "fragment"), Load("BasicLitTerrainColorMotion", "fragment")}};
         result.ssaoDenoise = {Load("SSAODenoise", "vertex"),Load("SSAODenoise", "fragment")};
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
+        result.contactShadows = {Load("ContactShadows", "vertex"), Load("ContactShadows", "fragment")};
         result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};
         result.diffuseProbeComposite = {Load("DiffuseProbeComposite", "vertex"), Load("DiffuseProbeComposite", "fragment")};
         result.backgroundMotion = {Load("BackgroundMotion", "vertex"), Load("BackgroundMotion", "fragment")};

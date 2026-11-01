@@ -26,6 +26,7 @@
 #include "TemporalReconstructionPasses.h"
 #include "screenspace/ScreenSpaceAmbientOcclusion.h"
 #include "screenspace/ScreenSpaceGlobalIllumination.h"
+#include "screenspace/ScreenSpaceContactShadows.h"
 #include "screenspace/ScreenSpaceReflections.h"
 #include "gi/DdgiVolume.h"
 #include "gi/VoxelDdgiRaySource.h"
@@ -183,8 +184,10 @@ namespace PlutoGE::render
             glm::vec4 geometryParameters{}; // Preserve receiver shadow sampling for diagnostic outputs.
             glm::mat4 lightClusterProjection{1.0f}; // LightClusterShading
             glm::vec4 lightClusterDepth{0.0f};
+            std::array<glm::vec4, 32> pointShape{}; // source radius, tube axis times length
+            glm::vec4 contactShadowParameters{0.0f}; // mask present
         };
-        static_assert(sizeof(BasicFrameParameters) == 6096 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) == 6624 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         struct alignas(16) SelectionOutlineParameters
@@ -371,6 +374,15 @@ namespace PlutoGE::render
             voxel.shadowInverseResolutions.fill(glm::vec4(1.0f / 1024));
             voxel.shadowCascadeParameters = glm::vec4(1.0f, 0.0f, 1.0f, 0.0f);
             return voxel;
+        }
+
+        // A local light's emitter shape as the surface shader reads it (SceneLightingParameters.slang pointShape).
+        glm::vec4 PointShape(const BasicPointLight &light)
+        {
+            const auto finite = [](float value) { return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f; };
+            const float axisLength = glm::length(light.sourceAxis);
+            const float length = std::isfinite(axisLength) && axisLength > 1.e-6f ? finite(light.sourceLength) : 0.0f;
+            return {finite(light.sourceRadius), length > 0.0f ? light.sourceAxis / axisLength * length : glm::vec3(0.0f)};
         }
 
         std::uint64_t VctLightingSignature(const BasicLighting &lighting, bool injectLocalLights)
@@ -648,6 +660,7 @@ namespace PlutoGE::render
                 {19, 1, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {21, 1, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {20, 1, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {ContactShadowSlot, 0, ContactShadowSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                 {LightClusterGrid::MasksSlot, 0, 4, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment},
                 // Object parameters stay last: the instanced variant replaces them.
@@ -1313,6 +1326,9 @@ namespace PlutoGE::render
             auto reflections = std::make_unique<ScreenSpaceReflections>();
             if (reflections->Initialize(device, reflectionShaders))
                 m_reflections = std::move(reflections);
+            auto contactShadows = std::make_unique<ScreenSpaceContactShadows>();
+            if (contactShadows->Initialize(device, fullscreen(shaders.contactShadows)))
+                m_contactShadows = std::move(contactShadows);
             auto globalIllumination = std::make_unique<ScreenSpaceGlobalIllumination>();
             if (globalIllumination->Initialize(device, {shaders.ssgiTrace, fullscreen(shaders.ssgiFilter),
                                                         fullscreen(shaders.ssgiTemporal), fullscreen(shaders.ssgiComposite)}))
@@ -1814,6 +1830,7 @@ namespace PlutoGE::render
         if (m_ambientOcclusion) m_ambientOcclusion->ReleaseTargets();
         if (m_reflections) m_reflections->ReleaseTargets();
         if (m_globalIllumination) m_globalIllumination->ReleaseTargets();
+        if (m_contactShadows) m_contactShadows->ReleaseTargets();
         // Probe data is independent of the viewport and survives resizing.
         if (m_ddgi) m_ddgi->ReleaseTargets();
         m_depthTarget = std::move(newDepth);
@@ -2169,7 +2186,7 @@ namespace PlutoGE::render
             geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Albedo;
         if (beforeTemporalResolve || linearOutput)
             geometryInputs = geometryInputs | BasicPostProcessInput::Normal | BasicPostProcessInput::Motion;
-        for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | InputsFor(effect.type);
+        for (const auto &effect : postProcessEffects) geometryInputs = geometryInputs | GeometryInputsFor(effect);
         if (upscalerFrame && m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
             geometryInputs = geometryInputs | BasicPostProcessInput::Motion;
         auto geometryLayout = geometryDebug ? GeometryOutputLayout::Diagnostics :
@@ -2244,6 +2261,12 @@ namespace PlutoGE::render
             deferProbeIrradiance ? 1.0f : 0.0f);
         frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
         frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
+        // Contact shadows trace the coverage depth, so they exist only with it, and only refine directional shadows.
+        const bool contactShadowsActive = depthPrepassActive && m_contactShadows && !geometryDebug &&
+            lighting.shadowsEnabled && lighting.directionalIntensity > 0.0f && lighting.contactShadowLength > 0.0f &&
+            m_contactShadows->Prepare(MakeScreenSpaceView(m_width, m_height),
+                {.towardsLight = -lighting.directionalDirection, .length = lighting.contactShadowLength});
+        frameParameters.contactShadowParameters.x = contactShadowsActive ? 1.0f : 0.0f;
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -2252,6 +2275,7 @@ namespace PlutoGE::render
             const auto &light = lighting.pointLights[index];
             frameParameters.pointPositionRange[index] = {light.position, light.range};
             frameParameters.pointColorIntensity[index] = {light.color, light.intensity};
+            frameParameters.pointShape[index] = PointShape(light);
             // Point matrices use ZO clip depth; legacy OpenGL rasterization
             // maps that depth to [.5, 1] when clip-control is unavailable.
             frameParameters.pointSettings[index] = {-1.0f, m_device->UsesZeroToOneClipDepth() ? 1.0f : 0.5f,
@@ -2275,6 +2299,7 @@ namespace PlutoGE::render
             direction = std::isfinite(lengthSquared) && lengthSquared > 1.e-8f ? glm::normalize(direction) : glm::vec3(0,-1,0);
             frameParameters.pointPositionRange[index] = {spot.light.position, spot.light.range};
             frameParameters.pointColorIntensity[index] = {spot.light.color, spot.light.intensity};
+            frameParameters.pointShape[index] = {PointShape(spot.light).x, 0.0f, 0.0f, 0.0f};
             frameParameters.pointDirectionSpot[index] = {direction, 1};
             const auto cone = spot.cone.Cosines();
             frameParameters.pointSettings[index] = {-1, -1, cone.x, cone.y};
@@ -3082,6 +3107,8 @@ namespace PlutoGE::render
                                  m_shadowSampler.Get());
             commands.BindTexture(19, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
             commands.BindTexture(20, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+            commands.BindTexture(ContactShadowSlot, contactShadowsActive ? m_contactShadows->Mask() : m_fallbackDataTexture.Get(),
+                                 m_shadowSampler.Get());
         };
         const auto recordDraw = [&](rhi::ICommandContext &commands, const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
@@ -3357,6 +3384,9 @@ namespace PlutoGE::render
                 recordingDepth = false;
                 commands.EndRendering();
                 commands.EndGpuScope();
+                // Before shading, which reads the mask.
+                if (contactShadowsActive)
+                    m_contactShadows->Record(commands, MakeScreenSpaceView(m_width, m_height));
                 m_frameStats.geometryDepthDraws = m_frameStats.geometryDraws;
                 m_frameStats.geometryDraws = m_frameStats.geometryInstances = 0;
                 m_frameStats.geometryTriangles = {};
@@ -3376,6 +3406,8 @@ namespace PlutoGE::render
                 commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
                 commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
             }
+            if (contactShadowsActive)
+                commands.BindTexture(ContactShadowSlot, m_contactShadows->Mask(), m_shadowSampler.Get());
             // The legacy simplified occluder pass is two-sided. With material
             // culling it is only safe to use the exact coverage depth produced before.
             occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, commands, draws, occlusionProjection,
@@ -5490,14 +5522,18 @@ namespace PlutoGE::render
             .historyDepthThreshold = effect.parameters[2].x, .historyNormalThreshold = effect.parameters[2].y,
             .estimator = effect.parameters[3].y > 0.5f ? ScreenSpaceAmbientOcclusion::Estimator::Horizon
                                                        : ScreenSpaceAmbientOcclusion::Estimator::Spiral,
+            .specularOcclusion = effect.parameters[2].z,
             .halfResolution = effect.parameters[1].w > 0.5f,
             .aoOnly = effect.parameters[1].y > 0.5f};
         auto *guide = PrepareScreenSpaceGuide(ScreenSpaceAmbientOcclusion::GuideDivisor(settings), m_width, m_height,
                                               commands);
         if (!m_ambientOcclusion || !guide)
             return source;
-        return m_ambientOcclusion->Record(commands, MakeScreenSpaceView(m_width, m_height), settings,
-                                          {source, m_lightingIndirect, m_lightingColor}, *guide);
+        const auto lit = m_ambientOcclusion->Record(commands, MakeScreenSpaceView(m_width, m_height), settings,
+            {source, m_lightingIndirect, m_lightingColor, m_lightingEnvironmentSpecular}, *guide);
+        // SSR falls back to the occluded reflection.
+        m_lightingEnvironmentSpecular = lit.environmentSpecular;
+        return lit.color;
     }
 
     ScreenSpaceGuide *BasicRenderer::PrepareScreenSpaceGuide(std::uint32_t divisor, std::uint32_t width,

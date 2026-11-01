@@ -1,4 +1,6 @@
 #include "SsaoRenderingChecks.h"
+#include "ContactShadowRenderingChecks.h"
+#include "AreaLightRenderingChecks.h"
 #include "IblRenderingChecks.h"
 #include "OrthographicUpscalerChecks.h"
 #include "CameraStackRenderingChecks.h"
@@ -183,6 +185,8 @@ int main(int argc, char **argv)
         shaders.ssaoDenoise.fragment.spirv=ReadSpirv("SSAODenoise.fragment.spv");
         shaders.ssaoUpsample.vertex.spirv=ReadSpirv("SSAOUpsample.vertex.spv");
         shaders.ssaoUpsample.fragment.spirv=ReadSpirv("SSAOUpsample.fragment.spv");
+        shaders.contactShadows.vertex.spirv=ReadSpirv("ContactShadows.vertex.spv");
+        shaders.contactShadows.fragment.spirv=ReadSpirv("ContactShadows.fragment.spv");
         shaders.screenSpaceGuide.spirv = ReadSpirv("ScreenSpaceGuide.compute.spv");
         shaders.screenSpaceGuideHierarchy.spirv = ReadSpirv("ScreenSpaceGuideHierarchy.compute.spv");
         constexpr std::array<const char *, 3> ssaoModules{
@@ -587,6 +591,12 @@ int main(int argc, char **argv)
         CheckLightClusters(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); },
                            device.GetImmediateContext().SupportsAsyncCompute());
         if (argc > 1 && std::string_view(argv[1]) == "--light-clusters")
+            return 0;
+        CheckContactShadows(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--contact-shadows")
+            return 0;
+        CheckAreaLights(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--area-lights")
             return 0;
         CheckGpuDrivenOpaque(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--gpu-driven")

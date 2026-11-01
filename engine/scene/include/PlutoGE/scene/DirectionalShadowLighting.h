@@ -46,5 +46,6 @@ namespace PlutoGE::scene
             settings.screenSpaceFilterNormalSoftness, 0.001f);
         lighting.shadowDistance = settings.maxDistance;
         lighting.shadowCasterDistance = settings.casterDistance;
+        lighting.contactShadowLength = std::clamp(settings.contactShadowLength, 0.0f, 2.0f);
     }
 }

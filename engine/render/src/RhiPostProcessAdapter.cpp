@@ -45,6 +45,8 @@ namespace PlutoGE::render
                 BasicPostProcessEffect result{BasicPostProcessEffectType::ToneMapping};
                 result.exposure = typed.GetExposure();
                 result.gamma = typed.GetGamma();
+                // Lane 0.x: the curve (ColorOperations.slang toneMapCurve).
+                result.parameters[0].x = static_cast<float>(typed.GetCurve());
                 return result;
             });
         }
@@ -193,7 +195,7 @@ namespace PlutoGE::render
                                         config.temporalBlend,
                                         config.halfResolution ? 1.0f : 0.0f};
                 result.parameters[2] = {config.historyDepthThreshold,
-                                        config.historyNormalThreshold, 0.0f, 0.0f};
+                                        config.historyNormalThreshold, config.specularOcclusion, 0.0f};
                 return result;
             });
         }

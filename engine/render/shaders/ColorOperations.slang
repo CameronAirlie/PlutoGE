@@ -10,6 +10,52 @@ float3 aces(float3 value)
     return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
 }
 
+// AgX (Troy Sobotka), in Benjamin Wrensch's polynomial fit of the default look. Bright saturated colours bleach
+// towards white as they would on film, instead of skewing in hue (fire turning yellow, blue lights cyan) as per-channel
+// curves such as the ACES fit do. Returns linear values.
+float3 agx(float3 value)
+{
+    // Inset into AgX's working space, then log2 encoding over [-12.47, 4.03] EV.
+    value = value.r * float3(0.842479062253094, 0.0423282422610123, 0.0423756549057051) +
+            value.g * float3(0.0784335999999992, 0.878468636469772, 0.0784336) +
+            value.b * float3(0.0792237451477643, 0.0791661274605434, 0.879142973793104);
+    const float minimumEv = -12.47393, maximumEv = 4.026069;
+    value = (clamp(log2(max(value, 1.0e-10)), minimumEv, maximumEv) - minimumEv) / (maximumEv - minimumEv);
+    const float3 x2 = value * value, x4 = x2 * x2;
+    value = 15.5 * x4 * x2 - 40.14 * x4 * value + 31.96 * x4 - 6.868 * x2 * value + 0.4298 * x2 +
+            0.1191 * value - 0.00232;
+    // Outset, then from the display encoding (2.2) back to linear, which the gamma stage encodes again.
+    value = value.r * float3(1.19687900512017, -0.0528968517574562, -0.0529716355144438) +
+            value.g * float3(-0.0980208811401368, 1.15190312990417, -0.0980434501171241) +
+            value.b * float3(-0.0990297440797205, -0.0989611768448433, 1.15107367264116);
+    return pow(saturate(value), 2.2);
+}
+
+// Khronos PBR Neutral: reproduces base colours exactly up to 0.76 (so materials look as authored in other viewers)
+// and compresses only highlights, desaturating them as they approach white. Returns linear values.
+float3 pbrNeutral(float3 color)
+{
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    const float minimum = min(color.r, min(color.g, color.b));
+    color -= minimum < 0.08 ? minimum - 6.25 * minimum * minimum : 0.04;
+    const float peak = max(color.r, max(color.g, color.b));
+    if (peak < startCompression) return max(color, 0.0);
+    const float d = 1.0 - startCompression;
+    const float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    color *= newPeak / peak;
+    const float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return lerp(color, newPeak.xxx, g);
+}
+
+// The tone mapping curves (ToneMappingCurve): 0 ACES (Narkowicz fit), 1 AgX, 2 Khronos PBR Neutral.
+float3 toneMapCurve(float3 color, float curve)
+{
+    if (curve > 1.5) return pbrNeutral(max(color, 0.0));
+    if (curve > 0.5) return agx(max(color, 0.0));
+    return aces(color);
+}
+
 uint colorGrainHash(uint value)
 {
     value ^= value >> 16u;

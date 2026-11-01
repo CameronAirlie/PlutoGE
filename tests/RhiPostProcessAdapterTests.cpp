@@ -211,6 +211,15 @@ int main()
     if (!tonePacket || tonePacket->type != BasicPostProcessEffectType::ToneMapping ||
         !Near(tonePacket->exposure, 1.7f) || !Near(tonePacket->gamma, 2.0f))
         return 1;
+    // The curve reaches lane 0.x; presets without it keep ACES, and out-of-range values clamp.
+    if (!Near(tonePacket->parameters[0].x, 0.0f))
+        return 154;
+    toneMapping.SetParameters({PostProcessParameter{.name = "Curve", .value = "1"}});
+    if (toneMapping.GetCurve() != ToneMappingCurve::AgX || !Near(AdaptPostProcessEffect(toneMapping)->parameters[0].x, 1.0f))
+        return 155;
+    toneMapping.SetParameters({PostProcessParameter{.name = "Curve", .value = "9"}});
+    if (toneMapping.GetCurve() != ToneMappingCurve::PbrNeutral)
+        return 156;
 
     GammaCorrectionEffect gammaCorrection(1.8f);
     const auto gammaPacket = AdaptPostProcessEffect(gammaCorrection);
@@ -299,6 +308,23 @@ int main()
         return 11;
 
     SSAOEffect ssao;
+    // Specular occlusion reaches lane 2.z, is on by default and clamps; off, SSAO keeps the narrower layout.
+    {
+        SSAOEffect specular;
+        auto packet = AdaptPostProcessEffect(specular);
+        if (!packet || !Near(packet->parameters[2].z, 1.0f) ||
+            !HasInput(GeometryInputsFor(*packet), BasicPostProcessInput::EnvironmentSpecular))
+            return 157;
+        specular.SetParameters({PostProcessParameter{.name = "Specular Occlusion", .value = "3"}});
+        if (!Near(AdaptPostProcessEffect(specular)->parameters[2].z, 1.0f))
+            return 158;
+        specular.SetParameters({PostProcessParameter{.name = "Specular Occlusion", .value = "0"}});
+        packet = AdaptPostProcessEffect(specular);
+        if (HasInput(GeometryInputsFor(*packet), BasicPostProcessInput::EnvironmentSpecular) ||
+            HasInput(GeometryInputsFor(*packet), BasicPostProcessInput::Material) ||
+            !HasInput(GeometryInputsFor(*packet), BasicPostProcessInput::Indirect))
+            return 159;
+    }
     SSGIEffect ssgi;
     SSREffect ssr;
     VolumetricFogEffect fog;

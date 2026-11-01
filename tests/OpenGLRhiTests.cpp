@@ -1,4 +1,6 @@
 #include "SsaoRenderingChecks.h"
+#include "ContactShadowRenderingChecks.h"
+#include "AreaLightRenderingChecks.h"
 #include "IblRenderingChecks.h"
 #include "FogRenderingChecks.h"
 #include "CloudTransformChecks.h"
@@ -268,6 +270,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.ssaoDenoise.fragment.glsl=ReadText("SSAODenoise.fragment.glsl");
         shaders.ssaoUpsample.vertex.glsl=ReadText("SSAOUpsample.vertex.glsl");
         shaders.ssaoUpsample.fragment.glsl=ReadText("SSAOUpsample.fragment.glsl");
+        shaders.contactShadows.vertex.glsl=ReadText("ContactShadows.vertex.glsl");
+        shaders.contactShadows.fragment.glsl=ReadText("ContactShadows.fragment.glsl");
         shaders.screenSpaceGuide.glsl = ReadText("ScreenSpaceGuide.compute.glsl");
         shaders.screenSpaceGuideHierarchy.glsl = ReadText("ScreenSpaceGuideHierarchy.compute.glsl");
         constexpr std::array<const char *,3> ssaoModules{"SSAO","SSAOResolve","SSAOHorizon"};
@@ -749,6 +753,22 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return pixels;
         });
         if (argc > 1 && std::string_view(argv[1]) == "--light-clusters")
+            return 0;
+        CheckContactShadows(basicRenderer, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return std::vector<std::uint8_t>(pixels.begin(), pixels.end());
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--contact-shadows")
+            return 0;
+        CheckAreaLights(basicRenderer, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--area-lights")
             return 0;
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;

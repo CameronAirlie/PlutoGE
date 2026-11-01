@@ -1239,8 +1239,11 @@ namespace PlutoGE::render
             for (const auto *light : sceneLights)
             {
                 if (!light || light->intensity <= 0 || light->GetRange() <= 0) continue;
-                const BasicPointLight local{light->position, light->GetRange(), light->color,
-                                            light->intensity, light->castsShadows};
+                BasicPointLight local{light->position, light->GetRange(), light->color,
+                                      light->intensity, light->castsShadows};
+                local.sourceRadius = light->sourceRadius;
+                local.sourceLength = light->type == scene::LightType::Point ? light->sourceLength : 0.0f;
+                local.sourceAxis = light->direction;
                 if (light->type == scene::LightType::Point)
                     effectiveLighting.pointLights.push_back(local);
                 else if (light->type == scene::LightType::Spot)

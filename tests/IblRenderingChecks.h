@@ -138,6 +138,18 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     // GGX convolution deliberately mixes cubemap faces at high roughness.
     require(roughReflection.r > reflection.r + .1f && roughReflection.b < reflection.b,
             "Rough IBL convolution does not broaden the reflected lobe");
+    // White furnace: a white metal inside a uniform environment reflects all of it at every roughness. Single
+    // scattering alone reflects under half at roughness 1 (EnvironmentBRDF.slang multipleScatteringResponse).
+    texture->SetCubemapPixels(faces({1,1,1}));
+    for (const float furnaceRoughness : {.3f, .6f, 1.0f})
+    {
+        material.SetRoughness(furnaceRoughness);
+        const auto furnace = frame();
+        if (std::abs(furnace.g - 1.0f) > .06f)
+            throw std::runtime_error("White furnace loses or gains energy at roughness " +
+                                     std::to_string(furnaceRoughness) + ": " + std::to_string(furnace.g));
+    }
+    texture->SetCubemapPixels(directionalFaces);
     material.SetRoughness(.02f);
     material.SetAlphaMode(AlphaMode::Blend);
     require(frame().b > .9f, "Transparent surfaces lost local IBL");

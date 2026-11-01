@@ -199,6 +199,13 @@ namespace PlutoGE::scene
         Initialize();
     }
 
+    void LightComponent::SetSourceShape(float radius, float length)
+    {
+        const auto sanitize = [](float value) { return std::isfinite(value) ? std::max(value, 0.0f) : 0.0f; };
+        m_config.sourceRadius = sanitize(radius);
+        m_config.sourceLength = sanitize(length);
+    }
+
     void LightComponent::SetDirectionalShadowSettings(const DirectionalShadowSettings &settings)
     {
         m_config.directionalShadowSettings = settings;
@@ -245,6 +252,10 @@ namespace PlutoGE::scene
             properties.push_back({"Inner Cone Angle (degrees)", PropertyType::Float, std::to_string(m_config.spotCone.innerAngle)});
             properties.push_back({"Outer Cone Angle (degrees)", PropertyType::Float, std::to_string(m_config.spotCone.outerAngle)});
         }
+        if (m_config.type != LightType::Directional)
+            properties.push_back({"Source Radius", PropertyType::Float, std::to_string(m_config.sourceRadius)});
+        if (m_config.type == LightType::Point)
+            properties.push_back({"Source Length", PropertyType::Float, std::to_string(m_config.sourceLength)});
         if (m_config.type == LightType::Directional)
         {
             properties.push_back({"Shadow Method", PropertyType::Enum,
@@ -276,6 +287,7 @@ namespace PlutoGE::scene
             properties.push_back({"Shadow Filter Min Depth Scale", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterMinDepthScale)});
             properties.push_back({"Shadow Filter Normal Threshold", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterNormalThreshold)});
             properties.push_back({"Shadow Filter Normal Softness", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.screenSpaceFilterNormalSoftness)});
+            properties.push_back({"Contact Shadow Length (0 = Off)", PropertyType::Float, std::to_string(m_config.directionalShadowSettings.contactShadowLength)});
         }
 
         return properties;
@@ -298,6 +310,10 @@ namespace PlutoGE::scene
                 m_config.spotCone.innerAngle = std::stof(property.value);
             else if (property.name == "Outer Cone Angle (degrees)")
                 m_config.spotCone.outerAngle = std::stof(property.value);
+            else if (property.name == "Source Radius")
+                SetSourceShape(std::stof(property.value), m_config.sourceLength);
+            else if (property.name == "Source Length")
+                SetSourceShape(m_config.sourceRadius, std::stof(property.value));
             else if (property.name == "Range")
             {
                 // Legacy scenes may contain Range; intensity now determines the cutoff.
@@ -414,6 +430,11 @@ namespace PlutoGE::scene
             else if (property.name == "Shadow Filter Normal Softness")
             {
                 m_config.directionalShadowSettings.screenSpaceFilterNormalSoftness = std::clamp(std::stof(property.value), 0.001f, 1.0f);
+            }
+            else if (property.name == "Contact Shadow Length (0 = Off)")
+            {
+                const float length = std::stof(property.value);
+                m_config.directionalShadowSettings.contactShadowLength = std::isfinite(length) ? std::clamp(length, 0.0f, 2.0f) : 0.0f;
             }
         }
         m_config.spotCone.Sanitize();

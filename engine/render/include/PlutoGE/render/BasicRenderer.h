@@ -270,7 +270,7 @@ namespace PlutoGE::render
     // they are.
     struct BasicDdgiShaderPackage
     {
-        rhi::ComputePipelineDescriptor::ShaderCode trace, reset, state, blendIrradiance, blendDistance;
+        rhi::ComputePipelineDescriptor::ShaderCode trace, visibility, reset, state, blendIrradiance, blendDistance;
         BasicPostProcessShaderPackage apply, probes;
     };
 

@@ -5,10 +5,13 @@
 //   stateMain            per listed probe, from its fixed rays: relocation away from nearby geometry (or out of it) and
 //                        classification (inactive when inside geometry or with no surface close enough to sample it).
 //   blendIrradianceMain  one group per listed probe: cosine-weighted mean radiance per octahedral texel, blended into
-//                        history. Border texels compute the interior texel they mirror, so bilinear lookups stay
-//                        within the tile without a second pass.
+//                        history more slowly while the change is within the rays' own noise. Border texels compute
+//                        the interior texel they mirror, so bilinear lookups stay within the tile without a second pass.
 //   blendDistanceMain    the same for the visibility moments (mean and mean square hit distance) and the share of rays
-//                        that reached the sky; it also clears the probe's fresh flag once both atlases hold data.
+//                        that reached the sky; it also clears the probe's fresh flag once both atlases hold data and
+//                        counts the updates blended since (PLUTO_DDGI_HISTORY_SHIFT).
+//
+// Probes skip both blends while inactive, and for the update that reactivates them (PLUTO_DDGI_PROBE_PARTIAL_RAYS).
 #include "DDGICommon.slang"
 
 [[vk::binding(1, 0)]] StructuredBuffer<uint> probeList : register(t1, space0);
@@ -106,6 +109,7 @@ void stateMain(uint3 id : SV_DispatchThreadID)
     }
     uint next = (flags & PLUTO_DDGI_PROBE_FRESH) | (inactive ? PLUTO_DDGI_PROBE_INACTIVE : 0u) |
                 (moves << PLUTO_DDGI_RELOCATION_SHIFT);
+    next |= flags & (PLUTO_DDGI_MAX_HISTORY << PLUTO_DDGI_HISTORY_SHIFT);
     // The trace saw this probe inactive and traced only its fixed rays.
     if ((flags & PLUTO_DDGI_PROBE_INACTIVE) != 0)
         next |= PLUTO_DDGI_PROBE_PARTIAL_RAYS;
@@ -158,6 +162,8 @@ void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     const int2 source = borderSource(int2(local.xy), PLUTO_DDGI_IRRADIANCE_TILE);
     const float3 direction = ddgiTexelDirection(source - 1, PLUTO_DDGI_IRRADIANCE_INTERIOR);
     float3 radiance = 0.0;
+    // Weighted sums of the rays' luminance squared and of the squared weights, for the estimate's standard error.
+    float luminanceSquares = 0.0, weightSquares = 0.0;
     float weightSum = 0.0;
     for (uint ray = ddgiRays.x; ray < ddgiRays.w; ++ray)
     {
@@ -165,7 +171,10 @@ void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
         // Rays starting inside geometry see no light; they would only darken the probe.
         if (sample.a < 0.0) continue;
         const float weight = max(dot(direction, sharedDirections[ray]), 0.0);
+        const float luminance = dot(sample.rgb, float3(0.2126, 0.7152, 0.0722));
         radiance += sample.rgb * weight;
+        luminanceSquares += luminance * luminance * weight;
+        weightSquares += weight * weight;
         weightSum += weight;
     }
     const int2 texel = tile * PLUTO_DDGI_IRRADIANCE_TILE + int2(local.xy);
@@ -178,13 +187,22 @@ void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     if (weightSum <= 0.0001) return;
     const float3 current = radiance / weightSum;
     const float3 previous = irradianceAtlas[texel].rgb;
-    // Converge quickly after a large change (a light switched on or off) while averaging away ray noise. Each probe
-    // updates only every few frames, so one update's estimate is noisy: only a change that doubles or halves the
-    // brightness, well beyond that noise, gives up history. A lower threshold lets noise in dim scenes trip it and
-    // makes the lighting shimmer.
+    const float luminanceCurrent = dot(current, float3(0.2126, 0.7152, 0.0722));
     const float luminancePrevious = dot(previous, float3(0.2126, 0.7152, 0.0722));
-    const float luminanceChange = abs(dot(current - previous, float3(0.2126, 0.7152, 0.0722)));
-    const float hysteresis = luminanceChange > max(luminancePrevious, 0.1) ? ddgiBlend.x * 0.5 : ddgiBlend.x;
+    const float luminanceChange = abs(luminanceCurrent - luminancePrevious);
+    // Each update's rays are a fresh random sample, so its estimate differs from the last by noise even in a static
+    // scene. The rays measure that noise themselves: the standard error of their weighted mean luminance is the
+    // spread of their luminance over the square root of their effective count. A change within it is most likely
+    // noise and keeps more history (ddgiTemporal.x); one well beyond it is a real change and converges at the volume's
+    // hysteresis, and one that doubles or halves the brightness (a light switched on or off) at half of that.
+    const float spread = max(luminanceSquares / weightSum - luminanceCurrent * luminanceCurrent, 0.0);
+    const float effectiveRays = weightSum * weightSum / max(weightSquares, 1e-8);
+    const float standardError = sqrt(spread / max(effectiveRays, 1.0));
+    const float noise = 1.0 - smoothstep(ddgiTemporal.y, ddgiTemporal.z, luminanceChange / max(standardError, 1e-6));
+    float hysteresis = lerp(ddgiBlend.x, ddgiTemporal.x, noise);
+    if (luminanceChange > max(luminancePrevious, 0.1))
+        hysteresis = ddgiBlend.x * 0.5;
+    hysteresis = min(hysteresis, ddgiHistoryLimit(state));
     irradianceAtlas[texel] = float4(lerp(current, previous, hysteresis), 1.0);
 }
 
@@ -225,9 +243,14 @@ void blendDistanceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID,
     // Without rays in the lobe nothing is known to occlude the sky.
     const float3 current = float3(currentMoments, skyWeightSum > 1e-12 ? sky / skyWeightSum : 1.0);
     distanceAtlas[texel] = float4(ddgiHasFlag(state, PLUTO_DDGI_PROBE_FRESH)
-        ? current : lerp(current, distanceAtlas[texel].rgb, ddgiBlend.x), 1.0);
+        ? current : lerp(current, distanceAtlas[texel].rgb, min(ddgiBlend.x, ddgiHistoryLimit(state))), 1.0);
     // Both atlases now hold this probe's data (the irradiance blend ran before this dispatch). Every thread read the
-    // state before loadRays' barrier, so clearing the flag here cannot race with those reads.
+    // state before loadRays' barrier, so updating the flags here cannot race with those reads.
     if (threadIndex == 0)
-        probeState[tile] = float4(state.xyz, float(ddgiFlags(state) & ~uint(PLUTO_DDGI_PROBE_FRESH)));
+    {
+        const uint history = ddgiHasFlag(state, PLUTO_DDGI_PROBE_FRESH)
+            ? 1u : min(ddgiHistory(state) + 1u, uint(PLUTO_DDGI_MAX_HISTORY));
+        const uint kept = ddgiFlags(state) & ~uint(PLUTO_DDGI_PROBE_FRESH | (PLUTO_DDGI_MAX_HISTORY << PLUTO_DDGI_HISTORY_SHIFT));
+        probeState[tile] = float4(state.xyz, float(kept | (history << PLUTO_DDGI_HISTORY_SHIFT)));
+    }
 }

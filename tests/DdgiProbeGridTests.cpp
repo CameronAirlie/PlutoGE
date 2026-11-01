@@ -127,6 +127,8 @@ namespace
         settings.voxels.injectLocalLights = false;
         settings.relocation = false;
         settings.relocateFromThinSurfaces = true;
+        settings.stableHysteresis = 0.985f;
+        settings.leakReduction = 0.6f;
         settings.intensity = 1.5f;
         settings.reflectionOcclusion = 0.25f;
         const auto decoded = DecodeDdgiPacket(EncodeDdgiPacket(settings, &settings));
@@ -174,6 +176,39 @@ namespace
         occluded.ApplyParameters(occlusionParameters);
         Check(listed && occluded.GetSettings().reflectionOcclusion == 0.5f &&
                   occluded.GetQuality() == DdgiQuality::Medium, "reflection occlusion parameter");
+
+        // Stable hysteresis is listed, not quality-controlled, and never below the hysteresis.
+        DDGIEffect stable;
+        auto stableParameters = stable.GetParameters();
+        listed = false;
+        for (auto &parameter : stableParameters)
+            if (parameter.name == "Stable Hysteresis")
+            {
+                parameter.value = "0.99";
+                listed = true;
+            }
+        stable.ApplyParameters(stableParameters);
+        Check(listed && stable.GetSettings().stableHysteresis == 0.99f && stable.GetQuality() == DdgiQuality::Medium,
+              "stable hysteresis parameter");
+        DdgiSettings belowHysteresis;
+        belowHysteresis.hysteresis = 0.95f;
+        belowHysteresis.stableHysteresis = 0.5f;
+        Check(belowHysteresis.Sanitized().stableHysteresis == 0.95f, "stable hysteresis is at least the hysteresis");
+
+        // Leak reduction is listed and not quality-controlled; 0 turns it (and the probe occlusion volume) off.
+        DDGIEffect leaks;
+        Check(leaks.GetSettings().leakReduction > 0.0f, "leak reduction defaults on");
+        auto leakParameters = leaks.GetParameters();
+        listed = false;
+        for (auto &parameter : leakParameters)
+            if (parameter.name == "Leak Reduction")
+            {
+                parameter.value = "0";
+                listed = true;
+            }
+        leaks.ApplyParameters(leakParameters);
+        Check(listed && leaks.GetSettings().leakReduction == 0.0f && leaks.GetQuality() == DdgiQuality::Medium,
+              "leak reduction parameter");
 
         // Relocating from thin surfaces is off by default and is not quality-controlled either.
         DDGIEffect thin;

@@ -7,6 +7,9 @@
 //        or minus the distance needed to leave geometry when the probe starts inside it (a backface hit).
 // Inactive probes trace only the fixed rays, which classification and relocation read.
 //
+// visibilityMain traces the probe occlusion volume (DdgiVisibilityInputs): whether each listed probe can see the
+// sub-cells of the cells around it, marching the same voxels.
+//
 // With multiple bounces (ddgiState.w), a hit also reflects the light the volume itself held there at its last update:
 // the voxel's representative albedo times the probes' irradiance. Repeated over updates this carries sky light and
 // every further bounce through the scene, which the voxel field (direct light and one bounce of it) does not hold.
@@ -15,6 +18,8 @@
 [[vk::binding(3, 0)]] Sampler2D probeStateTexture : register(t3, space0);
 [[vk::binding(14, 0)]] Sampler2D irradianceAtlas : register(t14, space0);
 [[vk::binding(15, 0)]] Sampler2D distanceAtlas : register(t15, space0);
+// The probe occlusion volume: read by the multiple-bounce lookups, written by visibilityMain.
+[[vk::binding(16, 0)]] RWStructuredBuffer<uint> ddgiOcclusion : register(u16, space0);
 
 #define PLUTO_DDGI_SAMPLING
 #include "DDGICommon.slang"
@@ -216,6 +221,69 @@ float4 traceRay(float3 origin, float3 direction)
         radiance *= ddgiBlend.y / luminance;
     radiance += transmission * missRadiance(direction);
     return float4(radiance, hitDistance >= 0.0 ? hitDistance : escapeDistance(direction, distance));
+}
+
+// The clear share of the segment from `from` to `to`, marched through the finest voxels holding each point at a
+// quarter voxel per step. Only opacity above one half counts: a sample within half a voxel of a surface layer reads
+// part of it through filtering, so a segment running beside a wall, as one from a lookup near the wall to a probe
+// near it does, would otherwise be blocked by the wall it never crosses. Every layer the segment touches counts,
+// including one an end lies in: voxels are coarser than many rooms, and nothing tells which side of a layer such an
+// end is on, so a sub-cell there sees no probe through it (DDGICommon.slang drops such sub-cells from lookups).
+float segmentVisibility(float3 from, float3 to)
+{
+    const float3 delta = to - from;
+    const float segment = length(delta);
+    if (segment < 0.0001)
+        return 1.0;
+    const float3 direction = delta / segment;
+    float covered, voxelSize;
+    // The voxel at the start sets the step (Slang cannot emit a discarded call result for GLSL, so it is named).
+    const float4 start = sampleScene(from, direction, 0.0, covered, voxelSize);
+    const float step = max(0.25 * voxelSize, segment / 48.0);
+    float transmission = 1.0;
+    for (float travelled = 0.0; travelled <= segment; travelled += step)
+    {
+        float sampleCovered, sampleVoxel;
+        const float opacity = sampleScene(from + direction * travelled, direction, 0.0, sampleCovered, sampleVoxel).a;
+        if (sampleCovered <= 0.0)
+            break;
+        transmission *= 1.0 - saturate(opacity * 2.0 - 1.0);
+        if (transmission < 0.02)
+            return 0.0;
+    }
+    return transmission;
+}
+
+// One group per (cell, listed probe), one thread per sub-cell of the cell (DdgiVisibilityInputs).
+[shader("compute")]
+[numthreads(PLUTO_DDGI_VISIBILITY_GROUP, 1, 1)]
+void visibilityMain(uint3 group : SV_GroupID, uint threadIndex : SV_GroupIndex)
+{
+    const uint slot = group.y;
+    if (slot >= ddgiRays.z)
+        return;
+    const uint storage = probeList[slot];
+    const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
+    if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE))
+        return;
+    const uint cascade = ddgiCascadeOf(storage);
+    const int3 gridCoordinate = ddgiGridFromStorage(cascade, ddgiStorageFromIndex(storage));
+    // The probe is corner `corner` of the cell whose base lies that far below it.
+    const uint corner = group.x;
+    const int3 base = gridCoordinate - int3(corner & 1u, (corner >> 1) & 1u, corner >> 2);
+    if (any(base < 0) || any(base > ddgiCounts.xyz - 2))
+        return;
+    const int subdivision = PLUTO_DDGI_OCCLUSION_SUBDIVISION;
+    const int3 subcell = int3(int(threadIndex) % subdivision, (int(threadIndex) / subdivision) % subdivision,
+                              int(threadIndex) / (subdivision * subdivision));
+    const float3 centre = ddgiCascadeOrigins[cascade].xyz +
+                          (float3(base) + (float3(subcell) + 0.5) / float(subdivision)) * ddgiSpacing(cascade);
+    const float visibility = segmentVisibility(centre, ddgiProbePosition(cascade, gridCoordinate, state));
+    // Other probes write the other nibbles of the same sub-cell concurrently.
+    const uint index = ddgiOcclusionIndex(cascade, base, subcell);
+    const uint shift = ddgiOcclusionShift(corner);
+    InterlockedAnd(ddgiOcclusion[index], ~(15u << shift));
+    InterlockedOr(ddgiOcclusion[index], uint(round(visibility * 15.0)) << shift);
 }
 
 [shader("compute")]

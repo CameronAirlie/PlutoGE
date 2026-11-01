@@ -29,6 +29,8 @@
 [[vk::binding(10, 0)]] Sampler2D distanceAtlas : register(t10, space0);
 // rgb the environment reflection in the scene colour, a its sky share (BasicLit.slang).
 [[vk::binding(11, 0)]] Sampler2D environmentSpecularTexture : register(t11, space0);
+// The probe occlusion volume (DDGICommon.slang).
+[[vk::binding(12, 0)]] StructuredBuffer<uint> ddgiOcclusion : register(t12, space0);
 
 #define PLUTO_DDGI_SAMPLING
 #include "DDGICommon.slang"

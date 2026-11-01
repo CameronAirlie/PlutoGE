@@ -34,6 +34,17 @@
 // This update traced only the fixed rays (the probe was inactive when traced), so its blended rays hold no data even if
 // classification has just reactivated it: the blends skip it until its next update.
 #define PLUTO_DDGI_PROBE_PARTIAL_RAYS 32
+// Updates blended since the probe's history was last replaced, in the flags above these bits, counting up to the
+// maximum (also the count's mask). The first updates average evenly rather than by hysteresis, so a new probe's first
+// noisy estimate does not linger. The highest flag value stays below 2048, which half precision holds exactly.
+#define PLUTO_DDGI_HISTORY_SHIFT 6
+#define PLUTO_DDGI_MAX_HISTORY 15
+
+// Probe occlusion volume (DdgiVolume, DDGICommon.slang): each probe cell is divided into this many sub-cells per axis,
+// and each sub-cell holds the visibility of the cell's eight corner probes from its centre, four bits each (R32UI).
+// Visibility group: one thread per sub-cell of one cell.
+#define PLUTO_DDGI_OCCLUSION_SUBDIVISION 4
+#define PLUTO_DDGI_VISIBILITY_GROUP (PLUTO_DDGI_OCCLUSION_SUBDIVISION * PLUTO_DDGI_OCCLUSION_SUBDIVISION * PLUTO_DDGI_OCCLUSION_SUBDIVISION)
 
 // Compute group sizes.
 #define PLUTO_DDGI_TRACE_GROUP 64

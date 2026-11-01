@@ -29,12 +29,14 @@ namespace PlutoGE::render
         glm::vec4 state{0.0f};
         glm::vec4 apply{0.0f};
         glm::vec4 reflection{0.0f};
+        glm::vec4 temporal{0.0f};
+        glm::vec4 sampling{0.0f};
         glm::uvec4 atlas{0u};
         glm::vec4 sky{0.0f};
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
         glm::vec4 physicalSkySettings{0.0f};
     };
-    static_assert(sizeof(DdgiGpuParameters) == 16 * (14 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT));
+    static_assert(sizeof(DdgiGpuParameters) == 16 * (16 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT));
 
     // What rays that leave the scene see: the physical sky, or the flat ambient term without it. Matches the
     // environment the geometry pass lights surfaces with, so an unoccluded volume reproduces that lighting.
@@ -51,7 +53,8 @@ namespace PlutoGE::render
     //
     //   Update  recentres every cascade (probes that enter one lose their history), lists this frame's probes per
     //           cascade (DdgiProbeScheduler, DdgiGridSettings::CascadeBudget), has the ray source trace them all in one
-    //           dispatch, then relocates and classifies them and blends their rays into the shared irradiance and
+    //           dispatch, then relocates and classifies them, has the ray source trace their visibility into the
+    //           probe occlusion volume (with Leak Reduction), and blends their rays into the shared irradiance and
     //           visibility atlases (DDGIProbeUpdate.slang).
     //   Apply   replaces the diffuse ambient light of every lit opaque pixel with the volume's, and occludes the sky
     //           reflected where the probes see no sky (DDGIApply.slang, DDGIReflection.slang).
@@ -94,6 +97,8 @@ namespace PlutoGE::render
 
     private:
         void EnsureResources(const DdgiGridSettings &grid);
+        // Leak Reduction needs exact visibility; without it the occlusion volume is neither traced nor read.
+        [[nodiscard]] bool OcclusionTraced() const noexcept { return m_settings.leakReduction > 0.0f; }
         [[nodiscard]] DdgiGpuParameters BuildParameters(std::uint32_t listedProbes, float resetProbes) const;
 
         rhi::IRenderDevice *m_device = nullptr;
@@ -101,7 +106,8 @@ namespace PlutoGE::render
         rhi::Sampler m_pointSampler, m_linearSampler;
         ScreenSpaceUniforms m_volumeUniforms, m_screenUniforms;
         rhi::Texture m_irradiance, m_distance, m_states, m_rays;
-        rhi::Buffer m_probeList;
+        // Probe occlusion volume (DDGICommon.slang ddgiOcclusionIndex), traced by the ray source.
+        rhi::Buffer m_probeList, m_occlusion;
         ScreenSpaceTarget m_color, m_indirect, m_environmentSpecular;
         DdgiGridSettings m_grid;
         std::vector<DdgiProbeGrid> m_cascades;

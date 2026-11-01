@@ -36,7 +36,9 @@ namespace PlutoGE::render
         result.grid = grid.Sanitized();
         result.intensity = std::clamp(Finite(intensity, 1.0f), 0.0f, 8.0f);
         result.hysteresis = std::clamp(Finite(hysteresis, 0.97f), 0.0f, 0.99f);
+        result.stableHysteresis = std::clamp(Finite(stableHysteresis, 0.98f), result.hysteresis, 0.99f);
         result.normalBias = std::clamp(Finite(normalBias, 0.2f), 0.0f, 1.0f);
+        result.leakReduction = std::clamp(Finite(leakReduction, 0.3f), 0.0f, 1.0f);
         result.viewBias = std::clamp(Finite(viewBias, 0.3f), 0.0f, 1.0f);
         result.minFrontfaceDistance = std::clamp(Finite(minFrontfaceDistance, 0.2f), 0.0f, 0.45f);
         result.brightnessClamp = std::clamp(Finite(brightnessClamp, 32.0f), 0.1f, 10000.0f);
@@ -80,8 +82,8 @@ namespace PlutoGE::render
     // relocation, classification, debug view; 3 = voxel resolution, cascades, volume size, update speed; 4 = inject
     // local lights, local light bounce, secondary bounce, voxelization command budget; 5.xy = debug probe radius,
     // brightness clamp (5.zw carry the camera's clip planes); 6.x = minimum frontface distance, 6.y = multiple
-    // bounces, 6.z = probe cascades, 6.w = reflection occlusion, 7.x = relocate from thin surfaces. Quality is the
-    // number of blended rays per probe.
+    // bounces, 6.z = probe cascades, 6.w = reflection occlusion, 7.x = relocate from thin surfaces, 7.y = stable
+    // hysteresis, 7.z = leak reduction. Quality is the number of blended rays per probe.
     BasicPostProcessEffect EncodeDdgiPacket(const DdgiSettings &input, const void *historyOwner)
     {
         const auto settings = input.Sanitized();
@@ -103,6 +105,8 @@ namespace PlutoGE::render
         packet.parameters[6].z = static_cast<float>(settings.grid.cascades);
         packet.parameters[6].w = settings.reflectionOcclusion;
         packet.parameters[7].x = settings.relocateFromThinSurfaces ? 1.0f : 0.0f;
+        packet.parameters[7].y = settings.stableHysteresis;
+        packet.parameters[7].z = settings.leakReduction;
         return packet;
     }
 
@@ -136,6 +140,8 @@ namespace PlutoGE::render
         settings.grid.cascades = static_cast<int>(std::lround(lanes[6].z));
         settings.reflectionOcclusion = lanes[6].w;
         settings.relocateFromThinSurfaces = lanes[7].x > 0.5f;
+        settings.stableHysteresis = lanes[7].y;
+        settings.leakReduction = lanes[7].z;
         return settings.Sanitized();
     }
 }

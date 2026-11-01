@@ -69,8 +69,10 @@ namespace PlutoGE::render
             {"Rays Per Probe", PostProcessParameterType::Int, std::to_string(s.grid.blendedRays)},
             {"Probes Per Frame", PostProcessParameterType::Int, std::to_string(s.grid.probesPerFrame)},
             {"Hysteresis", PostProcessParameterType::Float, std::to_string(s.hysteresis)},
+            {"Stable Hysteresis", PostProcessParameterType::Float, std::to_string(s.stableHysteresis)},
             {"Normal Bias", PostProcessParameterType::Float, std::to_string(s.normalBias)},
             {"View Bias", PostProcessParameterType::Float, std::to_string(s.viewBias)},
+            {"Leak Reduction", PostProcessParameterType::Float, std::to_string(s.leakReduction)},
             {"Probe Relocation", PostProcessParameterType::Bool, Bool(s.relocation)},
             {"Relocate From Thin Surfaces", PostProcessParameterType::Bool, Bool(s.relocateFromThinSurfaces)},
             {"Probe Classification", PostProcessParameterType::Bool, Bool(s.classification)},
@@ -116,8 +118,10 @@ namespace PlutoGE::render
             else if (p.name == "Probes Per Frame")
                 s.grid.probesPerFrame = static_cast<std::uint32_t>(std::max(ParseInt(p.value, 1152), 0));
             else if (p.name == "Hysteresis") s.hysteresis = ParseFloat(p.value, s.hysteresis);
+            else if (p.name == "Stable Hysteresis") s.stableHysteresis = ParseFloat(p.value, s.stableHysteresis);
             else if (p.name == "Normal Bias") s.normalBias = ParseFloat(p.value, s.normalBias);
             else if (p.name == "View Bias") s.viewBias = ParseFloat(p.value, s.viewBias);
+            else if (p.name == "Leak Reduction") s.leakReduction = ParseFloat(p.value, s.leakReduction);
             else if (p.name == "Probe Relocation") s.relocation = ParseBool(p.value);
             else if (p.name == "Relocate From Thin Surfaces") s.relocateFromThinSurfaces = ParseBool(p.value);
             else if (p.name == "Probe Classification") s.classification = ParseBool(p.value);

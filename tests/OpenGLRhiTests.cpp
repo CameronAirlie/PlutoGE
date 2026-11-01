@@ -241,6 +241,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.ssgiTemporal = fullscreen("SSGITemporal");
         shaders.ssgiComposite = fullscreen("SSGIComposite");
         shaders.ddgi = {.trace = {.glsl = ReadText("DDGIVoxelTrace.compute.glsl")},
+                        .visibility = {.glsl = ReadText("DDGIVoxelVisibility.compute.glsl")},
                         .reset = {.glsl = ReadText("DDGIProbeReset.compute.glsl")},
                         .state = {.glsl = ReadText("DDGIProbeState.compute.glsl")},
                         .blendIrradiance = {.glsl = ReadText("DDGIBlendIrradiance.compute.glsl")},
@@ -349,6 +350,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")
         {
             CheckDdgiRendering(basicRenderer, device);
+            CheckDdgiProbeReactivation(basicRenderer, device);
+            CheckDdgiLeakage(basicRenderer, device);
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")

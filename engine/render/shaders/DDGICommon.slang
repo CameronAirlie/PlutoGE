@@ -41,6 +41,11 @@
                               // after the listed ones (negative: every probe)
     float4 ddgiReflection;    // x reflection occlusion strength (0: off), y minimum sine of the visibility lookup's
                               // elevation above the receiver's tangent plane, z sky visibility lobe exponent
+    float4 ddgiTemporal;      // x stable hysteresis (changes within the update's ray noise), yz the change, in standard
+                              // errors of that noise, below which the stable hysteresis applies fully and above which
+                              // the hysteresis (ddgiBlend.x) does
+    float4 ddgiSampling;      // x leak reduction: below this share of visible probe weight a lookup fades (ddgiConfidence),
+                              // y 1 while the probe occlusion volume is traced and read
     uint4 ddgiAtlas;         // xy irradiance atlas size, zw distance atlas size
     float4 ddgiSky;           // x physical sky enabled, y flat ambient radiance
     float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
@@ -84,6 +89,20 @@ int3 ddgiGridFromStorage(uint cascade, int3 storage)
     return ddgiPositiveModulo(storage - ddgiCascadeCells[cascade].xyz, ddgiCounts.xyz);
 }
 
+// Probe occlusion volume (DdgiVisibilityInputs): PLUTO_DDGI_OCCLUSION_SUBDIVISION sub-cells per axis for each probe
+// cell, stored like the cell's base corner probe (so scrolling moves no data), cascades stacked along z, one uint per
+// sub-cell holding the visibility of the cell's eight corner probes from its centre, four bits each.
+uint ddgiOcclusionIndex(uint cascade, int3 cellBase, int3 subcell)
+{
+    const int subdivision = PLUTO_DDGI_OCCLUSION_SUBDIVISION;
+    const int3 size = ddgiCounts.xyz * subdivision;
+    const int3 texel = ddgiStorageCoordinate(cascade, cellBase) * subdivision + subcell;
+    return uint(texel.x + size.x * (texel.y + size.y * (texel.z + size.z * int(cascade))));
+}
+
+// The nibble of corner `corner` (0-7, bits x, y, z of its offset from the cell's base) in an occlusion texel.
+uint ddgiOcclusionShift(uint corner) { return corner * 4u; }
+
 int2 ddgiTile(uint storageIndex)
 {
     const uint perRow = uint(ddgiCounts.w);
@@ -97,6 +116,16 @@ bool ddgiIsMiss(float hitDistance) { return hitDistance >= PLUTO_DDGI_MISS_DISTA
 // Probe state: xyz relocation offset in spacing units, w PLUTO_DDGI_PROBE_* flags.
 uint ddgiFlags(float4 state) { return uint(state.w + 0.5); }
 bool ddgiHasFlag(float4 state, uint flag) { return (ddgiFlags(state) & flag) != 0; }
+
+// Updates blended into the probe's history since it was last replaced (saturating at PLUTO_DDGI_MAX_HISTORY).
+uint ddgiHistory(float4 state) { return (ddgiFlags(state) >> PLUTO_DDGI_HISTORY_SHIFT) & PLUTO_DDGI_MAX_HISTORY; }
+
+// The most history an update may keep: an even average over the updates so far, until the count saturates.
+float ddgiHistoryLimit(float4 state)
+{
+    const uint history = ddgiHistory(state);
+    return history >= PLUTO_DDGI_MAX_HISTORY ? 1.0 : float(history) / float(history + 1);
+}
 
 float3 ddgiProbePosition(uint cascade, int3 gridCoordinate, float4 state)
 {
@@ -189,11 +218,50 @@ float ddgiCellCoverage(DdgiCell cell)
     return saturate(min(min(edge.x, edge.y), edge.z));
 }
 
-// The weight of corner probe `corner` (0-7) of `cell` for a surface at `position` facing `normal`: trilinear, a
-// smooth backface term and Chebyshev visibility from the probe's distance moments. Zero for probes without data;
-// `storage` returns the probe's global index.
-float ddgiCornerWeight(uint cascade, DdgiCell cell, int corner, float3 position, float3 normal, out uint storage)
+// The visibility (0-1) of each of `cell`'s corner probes from its lookup, from the probe occlusion volume: the eight
+// sub-cells around the lookup within the cell, interpolated (each holds all eight corners, so eight reads serve every
+// corner). A sub-cell that sees none of its probes lies inside a surface's voxels (DDGIVoxelTrace.slang
+// segmentVisibility) and says nothing about the open space beside it, so it is left out and the others renormalised;
+// only where all eight are inside is nothing visible. Without the volume every probe is visible.
+void ddgiCornerVisibility(uint cascade, DdgiCell cell, out float visibility[8])
 {
+    [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
+        visibility[corner] = 1.0;
+    if (ddgiSampling.y < 0.5)
+        return;
+    const int subdivision = PLUTO_DDGI_OCCLUSION_SUBDIVISION;
+    // Sub-cell centres sit at half-integers of this coordinate; lookups nearer a face than the first centre take it.
+    const float3 coordinate = (cell.local - float3(cell.base)) * float(subdivision) - 0.5;
+    const int3 first = clamp(int3(floor(coordinate)), int3(0), int3(subdivision - 2));
+    const float3 blend = saturate(coordinate - float3(first));
+    [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
+        visibility[corner] = 0.0;
+    float weightSum = 0.0;
+    [ForceUnroll] for (int neighbour = 0; neighbour < 8; ++neighbour)
+    {
+        const uint packed = ddgiOcclusion[ddgiOcclusionIndex(cascade, cell.base, first + int3(neighbour & 1,
+                                                             (neighbour >> 1) & 1, (neighbour >> 2) & 1))];
+        if (packed == 0u)
+            continue;
+        const float3 axes = lerp(1.0 - blend, blend, float3(neighbour & 1, (neighbour >> 1) & 1, (neighbour >> 2) & 1));
+        const float weight = axes.x * axes.y * axes.z;
+        weightSum += weight;
+        [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
+            visibility[corner] += weight * float((packed >> ddgiOcclusionShift(uint(corner))) & 15u) / 15.0;
+    }
+    if (weightSum > 0.0)
+        [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
+            visibility[corner] /= weightSum;
+}
+
+// The weight of corner probe `corner` (0-7) of `cell` for a surface at `position` facing `normal`: trilinear, a
+// smooth backface term, the probe's `visibility` from the occlusion volume and Chebyshev visibility from its distance
+// moments. Zero for probes without data; `storage` returns the probe's global index and `unoccluded` the weight from
+// position and orientation alone (trilinear and backface), which ddgiConfidence compares with what is visible.
+float ddgiCornerWeight(uint cascade, DdgiCell cell, int corner, float3 position, float3 normal, float visibility,
+                       out uint storage, out float unoccluded)
+{
+    unoccluded = 0.0;
     const int3 offset = int3(corner & 1, (corner >> 1) & 1, (corner >> 2) & 1);
     const int3 gridCoordinate = cell.base + offset;
     storage = ddgiStorageIndex(cascade, ddgiStorageCoordinate(cascade, gridCoordinate));
@@ -208,6 +276,7 @@ float ddgiCornerWeight(uint cascade, DdgiCell cell, int corner, float3 position,
     const float3 toProbe = normalize(probePosition - position);
     const float wrap = (dot(toProbe, normal) + 1.0) * 0.5;
     float weight = wrap * wrap + 0.2;
+    unoccluded = weight * trilinear;
     // Chebyshev visibility from the biased point.
     const float3 probeToPoint = cell.biasedPosition - probePosition;
     const float distance = length(probeToPoint);
@@ -227,7 +296,19 @@ float ddgiCornerWeight(uint cascade, DdgiCell cell, int corner, float3 position,
     const float crush = 0.2;
     if (weight < crush)
         weight *= weight * weight / (crush * crush);
-    return weight * trilinear;
+    return weight * visibility * trilinear;
+}
+
+// How much of a lookup's weighted mean to keep, given the share of its probes' unoccluded weight that the occlusion
+// volume finds visible. Normalising by the weights makes a lookup independent of how many probes it sees, which is
+// right while some see it; where none do (every probe around a room smaller than the probe spacing is outside it),
+// the same normalisation would scale the occluded probes' tiny weights back up to their full light and light the room
+// from outside. Below `ddgiSampling.x` of visible weight the light fades with that share instead (normalised
+// convolution with a certainty floor). The share must come from exact visibility: Chebyshev rejects every probe
+// beside a wall at grazing angles, where normalisation is what keeps the wall lit.
+float ddgiConfidence(float visibleSum, float unoccludedSum)
+{
+    return ddgiSampling.x > 0.0 ? saturate(visibleSum / (ddgiSampling.x * unoccludedSum)) : 1.0;
 }
 
 // A probe's cosine-weighted mean radiance arriving from around `direction`.
@@ -252,21 +333,31 @@ float3 ddgiCascadeIrradiance(uint cascade, float3 position, float3 normal, float
     DdgiCell cell;
     if (!ddgiCell(cascade, position, normal, viewDirection, cell))
         return 0.0;
+    float visibility[8];
+    ddgiCornerVisibility(cascade, cell, visibility);
     float3 irradiance = 0.0;
-    float weightSum = 0.0;
+    float weightSum = 0.0, unoccludedSum = 0.0, visibleSum = 0.0;
     [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
     {
         uint storage;
-        const float weight = ddgiCornerWeight(cascade, cell, corner, position, normal, storage);
+        float unoccluded;
+        const float weight = ddgiCornerWeight(cascade, cell, corner, position, normal, visibility[corner], storage,
+                                              unoccluded);
+        unoccludedSum += unoccluded;
+        visibleSum += unoccluded * visibility[corner];
         if (weight <= 0.0)
             continue;
         irradiance += weight * ddgiProbeIrradiance(storage, normal);
         weightSum += weight;
     }
+    // No probe here has data yet: leave the lookup to the next cascade out.
+    if (unoccludedSum <= 0.0)
+        return 0.0;
+    // Probes with data that none can see: the surface is dark, not uncovered.
+    coverage = ddgiCellCoverage(cell);
     if (weightSum <= 0.0)
         return 0.0;
-    coverage = ddgiCellCoverage(cell);
-    return irradiance / weightSum;
+    return irradiance / weightSum * ddgiConfidence(visibleSum, unoccludedSum);
 }
 
 // Irradiance from the finest cascade that covers the surface, blending into the next one out where the finer fades
@@ -333,12 +424,18 @@ DdgiSample ddgiCascadeSample(uint cascade, float3 position, float3 normal, float
     DdgiCell cell;
     if (!ddgiCell(cascade, position, normal, viewDirection, cell))
         return ddgiZeroSample();
+    float visibility[8];
+    ddgiCornerVisibility(cascade, cell, visibility);
     DdgiSample result = ddgiZeroSample();
-    float weightSum = 0.0;
+    float weightSum = 0.0, unoccludedSum = 0.0, visibleSum = 0.0;
     [ForceUnroll] for (int corner = 0; corner < 8; ++corner)
     {
         uint storage;
-        const float weight = ddgiCornerWeight(cascade, cell, corner, position, normal, storage);
+        float unoccluded;
+        const float weight = ddgiCornerWeight(cascade, cell, corner, position, normal, visibility[corner], storage,
+                                              unoccluded);
+        unoccludedSum += unoccluded;
+        visibleSum += unoccluded * visibility[corner];
         if (weight <= 0.0)
             continue;
         DdgiSample probe;
@@ -348,10 +445,13 @@ DdgiSample ddgiCascadeSample(uint cascade, float3 position, float3 normal, float
         result = ddgiAccumulate(result, probe, weight);
         weightSum += weight;
     }
+    if (unoccludedSum <= 0.0)
+        return ddgiZeroSample();
+    // Dark and without sky where no probe sees the surface (ddgiCascadeIrradiance).
+    coverage = ddgiCellCoverage(cell);
     if (weightSum <= 0.0)
         return ddgiZeroSample();
-    coverage = ddgiCellCoverage(cell);
-    return ddgiAccumulate(ddgiZeroSample(), result, 1.0 / weightSum);
+    return ddgiAccumulate(ddgiZeroSample(), result, ddgiConfidence(visibleSum, unoccludedSum) / weightSum);
 }
 
 // ddgiIrradiance, also reading the probes along `reflection`.

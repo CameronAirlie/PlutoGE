@@ -28,9 +28,17 @@ namespace PlutoGE::render
     {
         DdgiGridSettings grid;
         float intensity = 1.0f;
-        // Share of a probe's history kept per update.
+        // Share of a probe's history kept per update when the update's change exceeds its ray noise (real changes).
         float hysteresis = 0.97f;
+        // Share kept while the change is within the noise of the update's own rays: each update's rays are a new random
+        // sample, so these changes are noise and averaging them longer removes shimmer without delaying real changes.
+        // Never below `hysteresis`; equal to it turns the distinction off.
+        float stableHysteresis = 0.98f;
         float normalBias = 0.2f;
+        // How far lookups trust visibility over normalisation (0-1): a lookup whose probes are mostly occluded from it
+        // (all of them outside a room smaller than the probe spacing) fades with the share they see once that share
+        // drops below this, rather than spreading the occluded probes' light over it. 0 is standard DDGI.
+        float leakReduction = 0.3f;
         float viewBias = 0.3f;
         bool relocation = true;
         // Relocation also moves probes out of surfaces thinner than the ray source places surfaces (a probe layer in a

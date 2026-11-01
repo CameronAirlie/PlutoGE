@@ -1319,7 +1319,7 @@ namespace PlutoGE::render
                 m_globalIllumination = std::move(globalIllumination);
             auto ddgi = std::make_unique<DdgiVolume>();
             auto ddgiRays = std::make_unique<VoxelDdgiRaySource>();
-            if (ddgiRays->Initialize(device, shaders.ddgi.trace) &&
+            if (ddgiRays->Initialize(device, shaders.ddgi.trace, shaders.ddgi.visibility) &&
                 ddgi->Initialize(device, {shaders.ddgi.reset, shaders.ddgi.state, shaders.ddgi.blendIrradiance,
                                           shaders.ddgi.blendDistance, fullscreen(shaders.ddgi.apply),
                                           fullscreen(shaders.ddgi.probes)}))

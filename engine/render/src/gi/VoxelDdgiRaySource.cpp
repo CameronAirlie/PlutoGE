@@ -11,7 +11,7 @@ namespace PlutoGE::render
         // DDGIVoxelTrace.slang bindings.
         constexpr std::uint32_t VolumeParametersSlot = 0, ProbeListSlot = 1, RaySlot = 2, ProbeStateSlot = 3,
                                 SceneParametersSlot = 4, FirstSurfaceSlot = 5, FirstAtlasSlot = 8, IrradianceSlot = 14,
-                                DistanceSlot = 15;
+                                DistanceSlot = 15, OcclusionSlot = 16;
 
         // Mirrors VoxelSceneParameters in DDGIVoxelTrace.slang.
         struct alignas(16) VoxelSceneParameters
@@ -28,58 +28,87 @@ namespace PlutoGE::render
         constexpr float ConeSpread = 0.08f;
     }
 
-    bool VoxelDdgiRaySource::Initialize(rhi::IRenderDevice &device, const ScreenSpaceShaderCode &trace)
+    bool VoxelDdgiRaySource::Initialize(rhi::IRenderDevice &device, const ScreenSpaceShaderCode &trace,
+                                        const ScreenSpaceShaderCode &visibility)
     {
-        if (!HasShader(trace))
+        if (!HasShader(trace) || !HasShader(visibility))
             return false;
-        rhi::ComputePipelineDescriptor descriptor;
-        descriptor.computeShader = trace;
-        descriptor.debugName = "DDGI voxel trace";
-        const auto bind = [&](std::uint32_t slot, rhi::ResourceBindingType type)
-        { descriptor.resourceBindings.push_back({slot, 0, slot, type, rhi::ShaderStageMask::Compute}); };
-        bind(VolumeParametersSlot, rhi::ResourceBindingType::UniformBuffer);
-        bind(ProbeListSlot, rhi::ResourceBindingType::StorageBuffer);
-        bind(RaySlot, rhi::ResourceBindingType::StorageImage);
-        bind(ProbeStateSlot, rhi::ResourceBindingType::SampledTexture);
-        bind(SceneParametersSlot, rhi::ResourceBindingType::UniformBuffer);
+        // Both passes read the volume, the listed probes and their states and march the voxel scene.
+        const auto describe = [](const ScreenSpaceShaderCode &shader, const char *name)
+        {
+            rhi::ComputePipelineDescriptor descriptor;
+            descriptor.computeShader = shader;
+            descriptor.debugName = name;
+            const auto bind = [&](std::uint32_t slot, rhi::ResourceBindingType type)
+            { descriptor.resourceBindings.push_back({slot, 0, slot, type, rhi::ShaderStageMask::Compute}); };
+            bind(VolumeParametersSlot, rhi::ResourceBindingType::UniformBuffer);
+            bind(ProbeListSlot, rhi::ResourceBindingType::StorageBuffer);
+            bind(ProbeStateSlot, rhi::ResourceBindingType::SampledTexture);
+            bind(SceneParametersSlot, rhi::ResourceBindingType::UniformBuffer);
+            for (std::uint32_t direction = 0; direction < 6; ++direction)
+                bind(FirstAtlasSlot + direction, rhi::ResourceBindingType::SampledTexture);
+            bind(OcclusionSlot, rhi::ResourceBindingType::StorageBuffer);
+            return descriptor;
+        };
+        auto traceDescriptor = describe(trace, "DDGI voxel trace");
+        const auto bindTrace = [&](std::uint32_t slot, rhi::ResourceBindingType type)
+        { traceDescriptor.resourceBindings.push_back({slot, 0, slot, type, rhi::ShaderStageMask::Compute}); };
+        bindTrace(RaySlot, rhi::ResourceBindingType::StorageImage);
         for (std::uint32_t cascade = 0; cascade < 3; ++cascade)
-            bind(FirstSurfaceSlot + cascade, rhi::ResourceBindingType::StorageImage);
-        for (std::uint32_t direction = 0; direction < 6; ++direction)
-            bind(FirstAtlasSlot + direction, rhi::ResourceBindingType::SampledTexture);
-        bind(IrradianceSlot, rhi::ResourceBindingType::SampledTexture);
-        bind(DistanceSlot, rhi::ResourceBindingType::SampledTexture);
-        m_pipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(descriptor));
+            bindTrace(FirstSurfaceSlot + cascade, rhi::ResourceBindingType::StorageImage);
+        bindTrace(IrradianceSlot, rhi::ResourceBindingType::SampledTexture);
+        bindTrace(DistanceSlot, rhi::ResourceBindingType::SampledTexture);
+        m_pipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(traceDescriptor));
+        m_visibilityPipeline = rhi::GraphicsPipeline(
+            device, device.CreateComputePipeline(describe(visibility, "DDGI voxel probe visibility")));
         m_uniforms.Initialize(device, "DDGI voxel scene parameters");
         m_device = &device;
         return Available();
     }
 
-    void VoxelDdgiRaySource::Trace(rhi::ICommandContext &commands, const DdgiTraceInputs &inputs)
+    void VoxelDdgiRaySource::BindScene(rhi::ICommandContext &commands)
     {
-        if (!Ready() || inputs.probes == 0 || inputs.tracedRays == 0 || !m_scene.surfaceRecords[0])
-            return;
         VoxelSceneParameters parameters;
         parameters.cascades = m_scene.cascades;
         parameters.counts = {m_scene.validCascades, m_scene.atlasCascades, m_scene.resolution,
                              static_cast<std::uint32_t>(std::floor(std::log2(std::max(m_scene.resolution, 1u))))};
         const float outerSize = m_scene.cascades[std::min(m_scene.validCascades, 3u) - 1].w;
         parameters.trace = {ConeSpread, outerSize, 0.0f, 0.0f};
-        m_uniforms.BeginFrame();
-        const auto sceneParameters = m_uniforms.Push(parameters);
+        commands.BindUniformBuffer(SceneParametersSlot, m_uniforms.Push(parameters));
+        for (std::uint32_t direction = 0; direction < 6; ++direction)
+            commands.BindTexture(FirstAtlasSlot + direction, m_scene.atlases[direction], m_scene.sampler);
+    }
 
+    void VoxelDdgiRaySource::Trace(rhi::ICommandContext &commands, const DdgiTraceInputs &inputs)
+    {
+        if (!Ready() || inputs.probes == 0 || inputs.tracedRays == 0 || !m_scene.surfaceRecords[0])
+            return;
         commands.BindPipeline(m_pipeline.Get());
+        BindScene(commands);
         commands.BindUniformBuffer(VolumeParametersSlot, inputs.volumeParameters);
         commands.BindStorageBuffer(ProbeListSlot, inputs.probeList);
         commands.BindStorageImage(RaySlot, inputs.rays);
         commands.BindTexture(ProbeStateSlot, inputs.probeStates, inputs.pointSampler);
-        commands.BindUniformBuffer(SceneParametersSlot, sceneParameters);
         for (std::uint32_t cascade = 0; cascade < 3; ++cascade)
             commands.BindStorageImage(FirstSurfaceSlot + cascade,
                                       m_scene.surfaceRecords[cascade < m_scene.validCascades ? cascade : 0]);
-        for (std::uint32_t direction = 0; direction < 6; ++direction)
-            commands.BindTexture(FirstAtlasSlot + direction, m_scene.atlases[direction], m_scene.sampler);
         commands.BindTexture(IrradianceSlot, inputs.irradiance, inputs.linearSampler);
         commands.BindTexture(DistanceSlot, inputs.distance, inputs.linearSampler);
+        commands.BindStorageBuffer(OcclusionSlot, inputs.occlusion);
         commands.Dispatch((inputs.tracedRays + PLUTO_DDGI_TRACE_GROUP - 1) / PLUTO_DDGI_TRACE_GROUP, inputs.probes, 1);
+    }
+
+    void VoxelDdgiRaySource::TraceVisibility(rhi::ICommandContext &commands, const DdgiVisibilityInputs &inputs)
+    {
+        if (!Ready() || inputs.probes == 0)
+            return;
+        commands.BindPipeline(m_visibilityPipeline.Get());
+        BindScene(commands);
+        commands.BindUniformBuffer(VolumeParametersSlot, inputs.volumeParameters);
+        commands.BindStorageBuffer(ProbeListSlot, inputs.probeList);
+        commands.BindTexture(ProbeStateSlot, inputs.probeStates, inputs.pointSampler);
+        commands.BindStorageBuffer(OcclusionSlot, inputs.occlusion);
+        // Eight cells per probe (DdgiVisibilityInputs).
+        commands.Dispatch(8, inputs.probes, 1);
     }
 }

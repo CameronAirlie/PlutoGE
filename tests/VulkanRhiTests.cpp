@@ -150,6 +150,7 @@ int main(int argc, char **argv)
         shaders.ssgiTemporal = fullscreen("SSGITemporal");
         shaders.ssgiComposite = fullscreen("SSGIComposite");
         shaders.ddgi = {.trace = {.spirv = ReadSpirv("DDGIVoxelTrace.compute.spv")},
+                        .visibility = {.spirv = ReadSpirv("DDGIVoxelVisibility.compute.spv")},
                         .reset = {.spirv = ReadSpirv("DDGIProbeReset.compute.spv")},
                         .state = {.spirv = ReadSpirv("DDGIProbeState.compute.spv")},
                         .blendIrradiance = {.spirv = ReadSpirv("DDGIBlendIrradiance.compute.spv")},
@@ -284,9 +285,16 @@ int main(int argc, char **argv)
             CheckGlobalIlluminationPerformance(renderer, device, {1920, 1080});
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--ddgi-leakage")
+        {
+            CheckDdgiLeakage(renderer, device, true);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")
         {
             CheckDdgiRendering(renderer, device);
+            CheckDdgiProbeReactivation(renderer, device);
+            CheckDdgiLeakage(renderer, device);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ssao-performance")

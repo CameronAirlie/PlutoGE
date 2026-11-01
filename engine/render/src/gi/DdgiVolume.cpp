@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 
 namespace PlutoGE::render
 {
@@ -15,7 +16,7 @@ namespace PlutoGE::render
         // DDGIApply.slang bindings.
         constexpr std::uint32_t ScreenSlot = 1, DepthSlot = 2, NormalSlot = 3, AlbedoSlot = 4, MaterialSlot = 5,
                                 SceneSlot = 6, IndirectSlot = 7, StateTextureSlot = 8, IrradianceTextureSlot = 9,
-                                DistanceTextureSlot = 10, EnvironmentSpecularSlot = 11;
+                                DistanceTextureSlot = 10, EnvironmentSpecularSlot = 11, OcclusionSlot = 12;
         // Sharpness of the visibility moments' cosine lobe (RTXGI's default).
         constexpr float DistanceExponent = 50.0f;
         // Sharpness of the sky visibility lobe (half power at about 17 degrees): wide enough to hold a few rays per
@@ -25,6 +26,10 @@ namespace PlutoGE::render
         // degrees), clearing the sky visibility lobe's half-power width and a texel, so probes do not see the
         // receiver's own surface as an occluder.
         constexpr float ReflectionMinimumElevation = 0.4f;
+        // An irradiance texel's change between updates, in standard errors of the update's own ray estimate, below
+        // which it is treated as noise (stable hysteresis) and above which as a real change (hysteresis). Within one
+        // standard error is noise two times in three; beyond three, one time in a few hundred.
+        constexpr float NoiseChange = 1.0f, RealChange = 3.0f;
 
         rhi::Texture CreateDataTexture(rhi::IRenderDevice &device, glm::uvec2 size, const char *name)
         {
@@ -73,6 +78,8 @@ namespace PlutoGE::render
                                     EnvironmentSpecularSlot})
                 descriptor.resourceBindings.push_back(
                     {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics});
+            descriptor.resourceBindings.push_back(
+                {OcclusionSlot, 0, OcclusionSlot, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment});
             return rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
         }
     }
@@ -124,6 +131,15 @@ namespace PlutoGE::render
         m_probeList = rhi::Buffer(*m_device, m_device->CreateBuffer(
             {(static_cast<std::size_t>(grid.TotalProbes()) + grid.FrameBudget()) * sizeof(std::uint32_t),
              rhi::BufferUsage::Storage, "DDGI probe list"}));
+        // Every probe's visibility is traced before a lookup first weighs it; starting fully visible keeps the
+        // volume defined regardless.
+        const std::vector<std::uint32_t> visible(static_cast<std::size_t>(grid.TotalProbes()) *
+                                                     PLUTO_DDGI_OCCLUSION_SUBDIVISION * PLUTO_DDGI_OCCLUSION_SUBDIVISION *
+                                                     PLUTO_DDGI_OCCLUSION_SUBDIVISION,
+                                                 ~0u);
+        m_occlusion = rhi::Buffer(*m_device, m_device->CreateBuffer(
+            {visible.size() * sizeof(std::uint32_t), rhi::BufferUsage::Storage, "DDGI probe occlusion"},
+            std::as_bytes(std::span(visible))));
         m_resetAll = true;
         m_hasResources = true;
     }
@@ -162,6 +178,9 @@ namespace PlutoGE::render
                             resetProbes};
         parameters.reflection = {m_settings.reflectionOcclusion, ReflectionMinimumElevation, SkyVisibilityExponent,
                                  0.0f};
+        parameters.temporal = {std::max(m_settings.stableHysteresis, m_settings.hysteresis), NoiseChange, RealChange,
+                               0.0f};
+        parameters.sampling = {m_settings.leakReduction, OcclusionTraced() ? 1.0f : 0.0f, 0.0f, 0.0f};
         parameters.atlas = {tiles * glm::uvec2(PLUTO_DDGI_IRRADIANCE_TILE), tiles * glm::uvec2(PLUTO_DDGI_DISTANCE_TILE)};
         // Without the physical sky the geometry pass lights a surface with albedo * ambient, which is irradiance
         // pi * ambient in this volume's convention (cosine-weighted mean radiance times albedo / pi).
@@ -260,9 +279,9 @@ namespace PlutoGE::render
         commands.BeginGpuScope("RHI DDGI / Trace");
         rays.Trace(commands, {.volumeParameters = parameters, .probeList = m_probeList.Get(), .rays = m_rays.Get(),
                               .probeStates = m_states.Get(), .irradiance = m_irradiance.Get(),
-                              .distance = m_distance.Get(), .pointSampler = m_pointSampler.Get(),
-                              .linearSampler = m_linearSampler.Get(), .probes = listed,
-                              .tracedRays = grid.TracedRays()});
+                              .distance = m_distance.Get(), .occlusion = m_occlusion.Get(),
+                              .pointSampler = m_pointSampler.Get(), .linearSampler = m_linearSampler.Get(),
+                              .probes = listed, .tracedRays = grid.TracedRays()});
         const std::array rayImage{m_rays.Get()};
         commands.ComputeImageBarrier(rayImage);
         commands.EndGpuScope();
@@ -272,6 +291,17 @@ namespace PlutoGE::render
         commands.Dispatch((listed + PLUTO_DDGI_STATE_GROUP - 1) / PLUTO_DDGI_STATE_GROUP, 1, 1);
         commands.ComputeImageBarrier(states);
         commands.EndGpuScope();
+
+        // From the probes' new positions; the trace above read the volume, so its reads are ordered first.
+        if (OcclusionTraced())
+        {
+            commands.BeginGpuScope("RHI DDGI / Probe visibility");
+            rays.TraceVisibility(commands, {.volumeParameters = parameters, .probeList = m_probeList.Get(),
+                                            .probeStates = m_states.Get(), .occlusion = m_occlusion.Get(),
+                                            .pointSampler = m_pointSampler.Get(), .probes = listed});
+            commands.ShaderMemoryBarrier();
+            commands.EndGpuScope();
+        }
 
         commands.BeginGpuScope("RHI DDGI / Blend");
         bindUpdate(m_blendIrradiance);
@@ -327,6 +357,7 @@ namespace PlutoGE::render
             commands.BindTexture(IrradianceTextureSlot, m_irradiance.Get(), m_linearSampler.Get());
             commands.BindTexture(DistanceTextureSlot, m_distance.Get(), m_linearSampler.Get());
             commands.BindTexture(EnvironmentSpecularSlot, environmentSpecular, m_pointSampler.Get());
+            commands.BindStorageBuffer(OcclusionSlot, m_occlusion.Get());
         };
 
         commands.BeginGpuScope("RHI DDGI / Apply");

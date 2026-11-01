@@ -40,6 +40,42 @@ namespace GlobalIlluminationChecks
         return renderer.CreateMesh({vertices, indices});
     }
 
+    // An axis-aligned unit cube centred on the origin, faces outwards; scale it with a draw's model matrix.
+    inline BasicMesh MakeCube(BasicRenderer &renderer)
+    {
+        std::vector<BasicVertex> vertices;
+        std::vector<std::uint32_t> indices;
+        for (int axis = 0; axis < 3; ++axis)
+            for (const float side : {-1.0f, 1.0f})
+            {
+                glm::vec3 normal(0.0f), u(0.0f), v(0.0f);
+                normal[axis] = side;
+                u[(axis + 1) % 3] = 0.5f;
+                v[(axis + 2) % 3] = 0.5f;
+                if (side < 0.0f) std::swap(u, v);
+                const glm::vec3 center = normal * 0.5f;
+                const auto base = static_cast<std::uint32_t>(vertices.size());
+                for (const auto &corner : {center - u - v, center + u - v, center + u + v, center - u + v})
+                {
+                    BasicVertex vertex{};
+                    vertex.position = {corner.x, corner.y, corner.z};
+                    vertex.normal = {normal.x, normal.y, normal.z};
+                    vertices.push_back(vertex);
+                }
+                for (const std::uint32_t index : {0u, 1u, 2u, 0u, 2u, 3u}) indices.push_back(base + index);
+            }
+        return renderer.CreateMesh({vertices, indices});
+    }
+
+    // A draw of `cube` (MakeCube) spanning `minimum` to `maximum`.
+    inline BasicDraw Box(const BasicMesh &cube, glm::vec3 minimum, glm::vec3 maximum)
+    {
+        BasicDraw draw{.mesh = &cube};
+        draw.model = glm::scale(glm::translate(glm::mat4(1.0f), (minimum + maximum) * 0.5f), maximum - minimum);
+        draw.baseColor = {0.5f, 0.5f, 0.5f, 1.0f};
+        return draw;
+    }
+
     struct Scene
     {
         BasicRenderer &renderer;
@@ -193,6 +229,31 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
     if (bled <= 50) std::cerr << "DDGI red bleed pixels: " << bled << '\n';
     Require(bled > 50, "DDGI did not bounce the emissive wall onto the floor");
 
+    // Stable hysteresis only holds changes within the rays' noise: switching the emitter off is far beyond it and must
+    // fade as quickly as without it.
+    {
+        const auto fadeFrames = [&](float stableHysteresis)
+        {
+            auto stable = settings;
+            stable.stableHysteresis = stableHysteresis;
+            const auto packet = EncodeDdgiPacket(stable, &stable);
+            (void)scene.Render(bounceScene, std::span(&packet, 1), ConvergenceFrames);
+            auto dark = wall;
+            dark.emission = glm::vec3(0.0f);
+            const std::array darkScene{floor, dark};
+            const auto darkBase = scene.Render(darkScene, {}, 2);
+            int frames = 0;
+            while (frames < 4 * ConvergenceFrames &&
+                   RedBleed(darkBase, scene.Render(darkScene, std::span(&packet, 1), 1)) > 10)
+                ++frames;
+            return frames;
+        };
+        const int responsive = fadeFrames(settings.hysteresis), stable = fadeFrames(0.99f);
+        if (stable > responsive + 2)
+            std::cerr << "DDGI emitter fade frames: " << responsive << " responsive, " << stable << " stable\n";
+        Require(stable <= responsive + 2, "DDGI stable hysteresis delayed a real lighting change");
+    }
+
     // The same scene either side of the world origin, refreshing a sixth of the probes per frame. Probe storage wraps
     // negative cells; every surface must still find its own probes (whole refreshes would hide a wrong lookup).
     {
@@ -324,6 +385,160 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
     std::cout << "DDGI bounce light (" << bled << " pixels), open ambient ratio " << openRatio
               << ", roofed ambient ratio " << roofRatio << ", reflection ratio roofed " << roofedReflection
               << " / open " << openReflection << " and debug views passed\n";
+}
+
+// A probe classified inactive traces only its fixed rays; its other ray slots keep whatever was traced into them
+// before. When geometry appears beside it, classification reactivates it after that partial trace, and it must not
+// blend those slots: they once replaced its history with rays from the scene as it was when the probe last traced
+// them (DDGIProbeUpdate.slang, PLUTO_DDGI_PROBE_PARTIAL_RAYS).
+//
+// The probes high above a red emissive floor trace it once, then go inactive (no surface within reach). The floor
+// stops emitting and everything settles; a grey wall then appears beside those probes. Lighting it with red would be
+// stale rays: nothing in the scene is red any more.
+inline void CheckDdgiProbeReactivation(PlutoGE::render::BasicRenderer &renderer,
+                                       PlutoGE::render::rhi::IRenderDevice &device)
+{
+    using namespace GlobalIlluminationChecks;
+    Require(renderer.Resize(96, 64), "DDGI reactivation viewport resize failed");
+    auto floorMesh = MakeQuad(renderer, {0, 0, 0}, {6, 0, 0}, {0, 0, -6});
+    auto wallMesh = MakeQuad(renderer, {0, 2.2f, -1}, {3, 0, 0}, {0, 0.6f, 0});
+    BasicDraw floor{.mesh = &floorMesh};
+    BasicDraw wall{.mesh = &wallMesh};
+    Scene scene{renderer, device};
+    scene.lighting.shadowsEnabled = false;
+    scene.lighting.directionalIntensity = 0;
+    scene.lighting.ambientIntensity = 1.0f;
+    scene.Look({0, 1.6f, 3.5f}, {0, 2.0f, -1});
+
+    DdgiSettings settings;
+    settings.grid.counts = {16, 6, 24};
+    settings.grid.spacing = 0.75f;
+    settings.grid.blendedRays = 64;
+    settings.grid.probesPerFrame = DdgiGridSettings::MaxProbesPerFrame;
+    settings.hysteresis = 0.5f;
+    settings.stableHysteresis = 0.5f;
+    // Bounces off the floor would carry its red history into the wall's probes legitimately.
+    settings.multipleBounces = false;
+    settings.voxels = {.resolution = 64, .cascades = 2, .volumeSize = 24.0f, .updateSpeed = 4.0f,
+                       .injectLocalLights = false, .secondaryBounce = 0.0f, .commandBudget = 256};
+    const auto ddgi = EncodeDdgiPacket(settings, &settings);
+
+    // Share of the image's light that is red without matching green.
+    const auto redExcess = [](const std::vector<float> &image)
+    {
+        double red = 0.0, total = 0.0;
+        for (std::size_t i = 0; i < image.size(); i += 4)
+        {
+            red += std::max(image[i] - image[i + 1], 0.0f);
+            total += image[i + 1];
+        }
+        return total > 0.0 ? red / total : 0.0;
+    };
+
+    floor.emission = {4.0f, 0.0f, 0.0f};
+    const std::array emitting{floor};
+    (void)scene.Render(emitting, std::span(&ddgi, 1), 8);
+    floor.emission = glm::vec3(0.0f);
+    const std::array settled{floor};
+    const double before = redExcess(scene.Render(settled, std::span(&ddgi, 1), 64));
+    const std::array walled{floor, wall};
+    double peak = 0.0;
+    for (int frame = 0; frame < 24; ++frame)
+        peak = std::max(peak, redExcess(scene.Render(walled, std::span(&ddgi, 1), 1)));
+    // Blending the stale slots peaked at 0.09.
+    if (before >= 0.01 || peak >= 0.01)
+        std::cerr << "DDGI reactivation red share before the wall " << before << ", peak after " << peak << '\n';
+    Require(before < 0.01, "DDGI kept red light after the emitter went dark");
+    Require(peak < 0.01, "DDGI reactivated probes blended rays they did not trace");
+    std::cout << "DDGI probe reactivation passed (red share peak " << peak << ")\n";
+}
+
+namespace GlobalIlluminationChecks
+{
+    // A sealed room under open sky, built as Basin's buildings are: walls, roof and floor 0.3 thick, under a voxel at
+    // the default quality. No light can reach its interior, so the light DDGI gives it is leakage, measured as a share
+    // of the unoccluded ambient light the geometry pass gives it without DDGI. `inner` is the room's half extent in x
+    // and z and its height; `offset` moves it against the probe grid, since leaks depend on where surfaces fall
+    // between probes.
+    inline double MeasureDdgiLeak(Scene &scene, const BasicMesh &cube, const DdgiSettings &settings, glm::vec3 offset,
+                                  glm::vec3 inner)
+    {
+        constexpr float Thickness = 0.3f;
+        constexpr int Frames = 96;
+        const auto at = [&](glm::vec3 minimum, glm::vec3 maximum) { return Box(cube, minimum + offset, maximum + offset); };
+        const std::array room{
+            at({-30, -Thickness, -30}, {30, 0, 30}), // ground and floor
+            at({-inner.x - Thickness, 0, -inner.z - Thickness}, {-inner.x, inner.y, inner.z + Thickness}),
+            at({inner.x, 0, -inner.z - Thickness}, {inner.x + Thickness, inner.y, inner.z + Thickness}),
+            at({-inner.x, 0, -inner.z - Thickness}, {inner.x, inner.y, -inner.z}),
+            at({-inner.x, 0, inner.z}, {inner.x, inner.y, inner.z + Thickness}),
+            at({-inner.x - Thickness, inner.y, -inner.z - Thickness},
+               {inner.x + Thickness, inner.y + Thickness, inner.z + Thickness})}; // roof
+        // From one inside corner towards the opposite one, seeing floor, ceiling and two walls.
+        scene.Look(offset + glm::vec3(-0.75f * inner.x, 0.45f * inner.y, 0.75f * inner.z),
+                   offset + glm::vec3(0.75f * inner.x, 0.35f * inner.y, -0.75f * inner.z));
+        // A frame under another owner discards the probes' history, so each measurement starts from scratch.
+        const auto discard = EncodeDdgiPacket(settings, &scene);
+        (void)scene.Render(room, std::span(&discard, 1), 1);
+        const auto packet = EncodeDdgiPacket(settings, &settings);
+        const auto base = scene.Render(room, {}, 2);
+        const auto means = LitMeans(base, scene.Render(room, std::span(&packet, 1), Frames));
+        return means[1] / means[0];
+    }
+}
+
+// Light leaking into sealed rooms (MeasureDdgiLeak) at the default quality, with walls at several placements against
+// the probe grid. A room wider than two probe spacings keeps probes inside it; one narrower than that (2.4 units
+// against a spacing of 2) has every probe around it outside, where standard DDGI normalisation lit it with 35-65% of
+// the outside light. `report` prints every measurement (PlutoGEVulkanRhiTests --ddgi-leakage).
+inline void CheckDdgiLeakage(PlutoGE::render::BasicRenderer &renderer, PlutoGE::render::rhi::IRenderDevice &device,
+                             bool report = false)
+{
+    using namespace GlobalIlluminationChecks;
+    Require(renderer.Resize(128, 80), "DDGI leakage viewport resize failed");
+    auto cube = MakeCube(renderer);
+    Scene scene{renderer, device};
+    scene.lighting.shadowsEnabled = false;
+    scene.lighting.directionalIntensity = 0;
+    scene.lighting.ambientIntensity = 1.0f;
+    auto settings = ApplyDdgiQuality(DdgiSettings{}, DdgiQuality::Medium);
+    settings.grid.probesPerFrame = DdgiGridSettings::MaxProbesPerFrame;
+    settings.voxels.updateSpeed = 4.0f;
+    settings.voxels.commandBudget = 256;
+    const glm::vec3 wideRoom(4.0f, 3.6f, 4.0f), narrowRoom(1.2f, 2.6f, 1.2f);
+    const std::array offsets{glm::vec3(0.0f), glm::vec3(1.0f), glm::vec3(0.5f, 0.25f, 0.5f),
+                             glm::vec3(1.5f, 1.0f, 0.75f), glm::vec3(0.2f, 1.8f, 1.2f)};
+    double wideWorst = 0.0, narrowMean = 0.0;
+    for (const bool thin : {false, true})
+    {
+        settings.relocateFromThinSurfaces = thin;
+        for (const auto inner : {wideRoom, narrowRoom})
+        {
+            if (report) std::cout << "DDGI leak, room " << 2.0f * inner.x << ", thin relocation " << thin << ':';
+            for (const auto offset : offsets)
+            {
+                const double leak = MeasureDdgiLeak(scene, cube, settings, offset, inner);
+                if (report) std::cout << ' ' << leak;
+                if (inner == wideRoom) wideWorst = std::max(wideWorst, leak);
+                else narrowMean += leak / (2.0 * offsets.size());
+            }
+            if (report) std::cout << '\n';
+        }
+    }
+    // Without leak reduction the narrow room shows what the check guards against.
+    settings.relocateFromThinSurfaces = false;
+    settings.leakReduction = 0.0f;
+    const double unreduced = MeasureDdgiLeak(scene, cube, settings, offsets[0], narrowRoom);
+    // Measured: wide rooms below 0.001 at every placement (thin relocation reached 0.04 before the occlusion volume),
+    // the narrow room 0.05 on average (0.49 without leak reduction).
+    if (wideWorst >= 0.005 || narrowMean >= 0.12 || unreduced <= 0.3)
+        std::cerr << "DDGI leak: wide room worst " << wideWorst << ", narrow room mean " << narrowMean
+                  << ", narrow room without leak reduction " << unreduced << '\n';
+    Require(unreduced > 0.3, "DDGI leak check no longer sees light leak into a narrow room");
+    Require(wideWorst < 0.005, "DDGI leaked light into a sealed room");
+    Require(narrowMean < 0.12, "DDGI leaked light into a sealed room narrower than the probe spacing");
+    std::cout << "DDGI leakage passed (wide room worst " << wideWorst << ", narrow room mean " << narrowMean
+              << ", " << unreduced << " without leak reduction)\n";
 }
 
 // Steady-state GPU timings of SSGI and of DDGI at each quality level, in a lit room with an emissive panel. Stage

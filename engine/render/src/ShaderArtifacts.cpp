@@ -103,7 +103,8 @@ namespace PlutoGE::render
         result.ssgiFilter = {Load("SSGIFilter", "vertex"), Load("SSGIFilter", "fragment")};
         result.ssgiTemporal = {Load("SSGITemporal", "vertex"), Load("SSGITemporal", "fragment")};
         result.ssgiComposite = {Load("SSGIComposite", "vertex"), Load("SSGIComposite", "fragment")};
-        result.ddgi = {.trace = Load("DDGIVoxelTrace", "compute"), .reset = Load("DDGIProbeReset", "compute"),
+        result.ddgi = {.trace = Load("DDGIVoxelTrace", "compute"), .visibility = Load("DDGIVoxelVisibility", "compute"),
+                       .reset = Load("DDGIProbeReset", "compute"),
                        .state = Load("DDGIProbeState", "compute"),
                        .blendIrradiance = Load("DDGIBlendIrradiance", "compute"),
                        .blendDistance = Load("DDGIBlendDistance", "compute"),

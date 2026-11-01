@@ -103,6 +103,18 @@ namespace
                 "Reordering keeps instances");
         Require(!toneMapping->IsEnabled(), "Turning an effect off is applied");
 
+        // A file from an older build: a grading preset chosen, but the sliders still hold the old values.
+        auto stale = MakePreset({"Bloom", "ColorGrading"});
+        SetParameter(stale, 1, "Preset", "2");
+        std::vector<std::unique_ptr<render::IPostProcessEffect>> camera;
+        assets::SyncPostProcessEffects(stale, camera);
+        Require(GetParameter(*camera[1], "Contrast").starts_with("1.12"), "A grading preset in a file applies its look");
+        SetParameter(stale, 0, "Intensity", "2.000000");
+        stale.effects[0].enabled = false;
+        assets::SyncPostProcessEffects(stale, camera);
+        Require(GetParameter(*camera[1], "Contrast").starts_with("1.12") && GetParameter(*camera[1], "Preset") == "2" && !camera[0]->IsEnabled(),
+                "Editing or toggling another effect leaves the grading look alone");
+
         preset.effects.erase(preset.effects.begin());
         preset.effects.push_back({"NoSuchEffect", true, {}});
         preset.effects.push_back(assets::CreateDefaultPostProcessEffectAsset("FXAA"));
@@ -228,6 +240,65 @@ namespace
 
         session.reset();
         Require(!memory->previewing, "Closing without saving ends the preview");
+    }
+
+    // The editor and a camera sharing one preset file, as in the editor: every edit must reach the camera.
+    void TestEditorDrivesCamera()
+    {
+        assets::AssetManager assets;
+        const auto path = std::filesystem::temp_directory_path() / "PlutoGEPostProcessEditorFlow.plutopostprocess";
+        const std::string reference = path.generic_string();
+        std::string error;
+        auto initial = MakePreset({"SSAO", "Bloom", "ToneMapping", "ColorGrading"});
+        initial.effects[1].enabled = false;
+        Require(assets.SavePostProcessPresetAsset(reference, initial, &error), "Saving the flow preset: " + error);
+
+        assets::PostProcessStack camera;
+        Require(camera.SetPreset(assets, reference), "The camera loads the preset");
+        const auto effect = [&](const char *type) -> render::IPostProcessEffect &
+        {
+            const auto found = std::ranges::find_if(camera.GetEffects(), [&](const auto &e) { return e->GetTypeName() == type; });
+            Require(found != camera.GetEffects().end(), std::string("Camera has ") + type);
+            return **found;
+        };
+        Require(!effect("Bloom").IsEnabled() && effect("SSAO").IsEnabled(), "The camera starts with the saved on/off states");
+
+        auto session = ui::PostProcessPresetSession::Open(ui::MakePostProcessPresetAssetStorage(assets, reference), error);
+        Require(session != nullptr, "The editor opens the preset: " + error);
+        const auto edit = [&](const std::function<void(assets::PostProcessPresetAsset &)> &change)
+        {
+            session->Modify(change);
+            session->EndFrame(false);
+            camera.Refresh(assets);
+        };
+
+        edit([](auto &preset) { preset.effects[1].enabled = true; preset.effects[0].enabled = false; });
+        Require(effect("Bloom").IsEnabled() && !effect("SSAO").IsEnabled(), "Turning effects on and off previews on the camera");
+        Require(session->Save(error), "Saving: " + error);
+        camera.Refresh(assets);
+        Require(effect("Bloom").IsEnabled() && !effect("SSAO").IsEnabled(), "Saved on/off states stay on the camera");
+        edit([](auto &preset) { preset.effects[0].enabled = true; });
+        session->Undo();
+        camera.Refresh(assets);
+        Require(!effect("SSAO").IsEnabled(), "Undoing back to the saved state restores it on the camera");
+
+        // Colour grading presets fill in the other settings; the editor must show and keep what the effect uses.
+        edit([](auto &preset) { SetParameter(preset, 3, "Preset", "2"); });
+        const auto &grading = session->GetPreset().effects[3];
+        const auto contrast = std::ranges::find(grading.parameters, std::string("Contrast"), &render::PostProcessParameter::name);
+        Require(contrast != grading.parameters.end() && contrast->value.starts_with("1.12"), "Choosing a grading preset updates its settings in the editor");
+        Require(GetParameter(effect("ColorGrading"), "Contrast").starts_with("1.12") && GetParameter(effect("ColorGrading"), "Preset") == "2",
+                "Choosing a grading preset reaches the camera");
+        edit([](auto &preset) { SetParameter(preset, 3, "Saturation", "0.500000"); });
+        Require(GetParameter(effect("ColorGrading"), "Contrast").starts_with("1.12") && GetParameter(effect("ColorGrading"), "Preset") == "0" &&
+                    session->GetPreset().effects[3].parameters[0].value == "0",
+                "Adjusting a graded look keeps it and switches to Custom");
+        session->Revert();
+        camera.Refresh(assets);
+        Require(GetParameter(effect("ColorGrading"), "Contrast").starts_with("1.0"), "Reverting restores the saved grading");
+
+        session.reset();
+        std::filesystem::remove(path);
     }
 
     void TestAnalysis()
@@ -370,6 +441,31 @@ namespace
         frames(drawEffects);
         capture("effects-disabled");
 
+        // Real clicks on the on/off switches: the row switch, then the one beside the title.
+        const auto click = [&](ImVec2 at)
+        {
+            auto &io = ImGui::GetIO();
+            io.AddMousePosEvent(at.x, at.y);
+            window.Frame(drawEffects);
+            io.AddMouseButtonEvent(0, true);
+            window.Frame(drawEffects);
+            io.AddMouseButtonEvent(0, false);
+            window.Frame(drawEffects);
+            raw->EndFrame(false);
+            window.Frame(drawEffects);
+        };
+        effects.selected = 2; // Bloom
+        frames(drawEffects);
+        click(ImVec2(48.0f, 202.0f)); // TAA's row switch
+        Require(raw->GetPreset().effects[1].enabled, "Clicking a row's switch turns the effect on");
+        Require(effects.selected == 2, "Clicking a row's switch does not change the selection");
+        click(ImVec2(48.0f, 202.0f));
+        Require(!raw->GetPreset().effects[1].enabled, "Clicking it again turns the effect off");
+        click(ImVec2(940.0f, 53.0f)); // Bloom's title switch
+        Require(!raw->GetPreset().effects[2].enabled, "The title switch turns the selected effect off");
+        click(ImVec2(940.0f, 53.0f));
+        Require(raw->GetPreset().effects[2].enabled, "The title switch turns it back on");
+
         raw->Modify([](auto &preset) { preset.effects.erase(preset.effects.begin() + 3); preset.effects.push_back({"NoSuchEffect", true, {}}); });
         raw->EndFrame(false);
         effects.selected = 3;
@@ -395,6 +491,7 @@ int main(int argc, char **argv)
         TestSync();
         TestStackFollowsPreset();
         TestSession();
+        TestEditorDrivesCamera();
         TestAnalysis();
         TestViews(argc > 1 ? argv[1] : "");
     }

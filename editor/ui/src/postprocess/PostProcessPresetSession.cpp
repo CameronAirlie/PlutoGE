@@ -92,6 +92,8 @@ namespace PlutoGE::ui
         std::unique_ptr<PostProcessPresetSession> session(new PostProcessPresetSession(std::move(storage)));
         if (!session->m_storage->Read(session->m_saved, error))
             return nullptr;
+        // Show what renders: fills in settings older files lack and values effects derive or clamp.
+        assets::ResolvePostProcessPreset(session->m_saved);
         session->m_preset = session->m_saved;
         return session;
     }
@@ -111,6 +113,7 @@ namespace PlutoGE::ui
     {
         auto edited = m_preset;
         edit(edited);
+        assets::ResolvePostProcessPresetEdit(m_preset, edited);
         if (edited == m_preset)
             return;
         m_history.Record(std::move(m_preset));

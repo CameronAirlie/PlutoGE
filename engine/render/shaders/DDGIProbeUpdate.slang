@@ -67,16 +67,34 @@ void stateMain(uint3 id : SV_DispatchThreadID)
     const bool inside = float(backfaces) > 0.25 * float(ddgiRays.x);
 
     float3 offset = 0.0;
+    uint moves = (flags >> PLUTO_DDGI_RELOCATION_SHIFT) & PLUTO_DDGI_MAX_RELOCATIONS;
     if (ddgiState.x > 0.5)
     {
-        // Leave geometry by the shortest way out, or keep a minimum distance from the nearest surface.
+        // Leave geometry by the shortest way out, or keep a minimum distance from the nearest surface. A probe whose way
+        // out is within the ray source's surface tolerance (ddgiBias.z) sits in a surface thinner than that, such as
+        // a roof thinner than a voxel: either side is as near, and probes moved out through it lit the join of the
+        // surfaces beneath with noisy light. It stays inside, and inactive, as nothing can separate its sides, unless
+        // the volume relocates from thin surfaces too (ddgiState.x 2): a probe layer in a floor otherwise leaves the
+        // floor without its nearest probes.
         const float minimumFrontface = ddgiState.z * spacing;
+        const float thinSurface = ddgiState.x > 1.5 ? 0.0 : ddgiBias.z;
         offset = state.xyz;
+        float3 move = 0.0;
         if (inside)
-            offset += backfaceDirection * (closestBackface + minimumFrontface * 0.5) / spacing;
+        {
+            if (closestBackface > thinSurface)
+                move = backfaceDirection * (closestBackface + minimumFrontface * 0.5) / spacing;
+        }
         else if (closestFrontface < minimumFrontface)
-            offset -= frontfaceDirection * (minimumFrontface - closestFrontface) / spacing;
-        offset = clamp(offset, -0.45, 0.45);
+            move = -frontfaceDirection * (minimumFrontface - closestFrontface) / spacing;
+        // A probe makes at most PLUTO_DDGI_MAX_RELOCATIONS moves until it is reset, then stays where it is. Settling
+        // can take a few moves that reverse each other (out through the far side of a thin floor, then back up through
+        // it), but near some thin surfaces the moves never settled: the probe moved and snapped back at every update.
+        if (any(move != 0.0) && moves < PLUTO_DDGI_MAX_RELOCATIONS)
+        {
+            offset = clamp(offset + move, -0.45, 0.45);
+            ++moves;
+        }
     }
 
     bool inactive = false;
@@ -86,7 +104,8 @@ void stateMain(uint3 id : SV_DispatchThreadID)
         // inside geometry) the probe cannot contribute, so it traces just its fixed rays until that changes.
         inactive = inside || closestFrontface > spacing * 2.0;
     }
-    uint next = (flags & PLUTO_DDGI_PROBE_FRESH) | (inactive ? PLUTO_DDGI_PROBE_INACTIVE : 0u);
+    uint next = (flags & PLUTO_DDGI_PROBE_FRESH) | (inactive ? PLUTO_DDGI_PROBE_INACTIVE : 0u) |
+                (moves << PLUTO_DDGI_RELOCATION_SHIFT);
     // A reactivated probe's history stopped updating while it was inactive.
     if ((flags & PLUTO_DDGI_PROBE_INACTIVE) != 0 && !inactive)
         next |= PLUTO_DDGI_PROBE_FRESH;

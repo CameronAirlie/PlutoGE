@@ -33,8 +33,9 @@
     float4 ddgiRotation[3];   // rows of this frame's rotation of the blended ray directions
     float4 ddgiBlend;         // x hysteresis, y brightness clamp, z visibility sharpness exponent,
                               // w visibility range (spacing units)
-    float4 ddgiBias;          // x normal bias, y view bias (spacing units), z minimum normal bias (world units)
-    float4 ddgiState;         // x relocation, y classification, z min frontface distance (spacing units),
+    float4 ddgiBias;          // x normal bias, y view bias (spacing units), z minimum normal bias, w minimum view
+                              // bias (world units)
+    float4 ddgiState;         // x relocation (0 off, 1 on, 2 also out of thin surfaces), y classification, z min frontface distance (spacing units),
                               // w multiple-bounce gain (hits reflect the volume's irradiance)
     float4 ddgiApply;         // x intensity, y debug view, z debug probe radius (spacing units), w probes to reset
                               // after the listed ones (negative: every probe)
@@ -175,7 +176,7 @@ bool ddgiCell(uint cascade, float3 position, float3 normal, float3 viewDirection
 {
     const float spacing = ddgiSpacing(cascade);
     cell.biasedPosition = position + normal * max(ddgiBias.x * spacing, ddgiBias.z) +
-                          viewDirection * (ddgiBias.y * spacing);
+                          viewDirection * max(ddgiBias.y * spacing, ddgiBias.w);
     cell.local = (cell.biasedPosition - ddgiCascadeOrigins[cascade].xyz) / spacing;
     cell.base = clamp(int3(floor(cell.local)), int3(0), ddgiCounts.xyz - 2);
     return all(cell.local >= 0.0) && all(cell.local <= float3(ddgiCounts.xyz - 1));

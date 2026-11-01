@@ -61,6 +61,50 @@ namespace PlutoGE::assets
         return effects;
     }
 
+    std::vector<render::PostProcessParameter> ResolvePostProcessParameters(const std::string &typeName,
+                                                                           const std::vector<render::PostProcessParameter> *previous,
+                                                                           const std::vector<render::PostProcessParameter> &edited)
+    {
+        // A throwaway instance, never initialized, so no GPU resources are involved.
+        const auto effect = render::CreatePostProcessEffect(typeName);
+        if (!effect)
+            return edited;
+        // Applying the previous settings first lets the effect tell which setting changed (a new preset versus a
+        // hand-tuned value), exactly as a camera's live instance does.
+        if (previous)
+            effect->ApplyParameters(*previous);
+        effect->ApplyParameters(edited);
+        return effect->GetParameters();
+    }
+
+    void ResolvePostProcessPresetEdit(const PostProcessPresetAsset &before, PostProcessPresetAsset &after)
+    {
+        for (std::size_t index = 0; index < after.effects.size(); ++index)
+        {
+            auto &effect = after.effects[index];
+            // Pair by type and occurrence, so adding, removing and reordering effects still finds the counterpart.
+            const auto occurrence = std::count_if(after.effects.begin(), after.effects.begin() + static_cast<std::ptrdiff_t>(index),
+                                                  [&](const auto &other) { return other.typeName == effect.typeName; });
+            const PostProcessEffectAsset *counterpart = nullptr;
+            std::ptrdiff_t seen = 0;
+            for (const auto &candidate : before.effects)
+                if (candidate.typeName == effect.typeName && seen++ == occurrence)
+                {
+                    counterpart = &candidate;
+                    break;
+                }
+            if (counterpart && counterpart->parameters == effect.parameters)
+                continue;
+            effect.parameters = ResolvePostProcessParameters(effect.typeName, counterpart ? &counterpart->parameters : nullptr, effect.parameters);
+        }
+    }
+
+    void ResolvePostProcessPreset(PostProcessPresetAsset &preset)
+    {
+        for (auto &effect : preset.effects)
+            effect.parameters = ResolvePostProcessParameters(effect.typeName, nullptr, effect.parameters);
+    }
+
     bool SyncPostProcessEffects(const PostProcessPresetAsset &asset, std::vector<std::unique_ptr<render::IPostProcessEffect>> &effects)
     {
         bool changed = false;
@@ -91,10 +135,17 @@ namespace PlutoGE::assets
                 effect->SetEnabled(serialized.enabled);
                 changed = true;
             }
-            if (ParametersDiffer(effect->GetParameters(), serialized.parameters))
+            // Compare against what a freshly loaded effect would use, not the raw list: applying a list over a live
+            // instance can be read differently (a stale value beside a preset counts as a hand-tuned change), and
+            // every camera must render a preset the same way however long it has been running.
+            if (const auto current = effect->GetParameters(); ParametersDiffer(current, serialized.parameters))
             {
-                effect->ApplyParameters(serialized.parameters);
-                changed = true;
+                const auto target = ResolvePostProcessParameters(serialized.typeName, nullptr, serialized.parameters);
+                if (ParametersDiffer(current, target))
+                {
+                    effect->ApplyParameters(target);
+                    changed = true;
+                }
             }
             synced.push_back(std::move(effect));
         }

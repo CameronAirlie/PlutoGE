@@ -33,6 +33,11 @@ namespace PlutoGE::render
         float normalBias = 0.2f;
         float viewBias = 0.3f;
         bool relocation = true;
+        // Relocation also moves probes out of surfaces thinner than the ray source places surfaces (a probe layer in a
+        // floor, a thin roof). Off, those probes stay inside and inactive: probes moved out sit right against the
+        // surface and make its joins with other surfaces leak and flicker, but a floor on a probe layer then loses its
+        // nearest probes.
+        bool relocateFromThinSurfaces = false;
         bool classification = true;
         // A probe keeps at least this distance from surfaces when relocation is on.
         float minFrontfaceDistance = 0.2f;

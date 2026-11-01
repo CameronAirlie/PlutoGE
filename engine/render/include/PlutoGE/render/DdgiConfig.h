@@ -27,6 +27,10 @@
 #define PLUTO_DDGI_PROBE_INACTIVE 1
 // History is invalid (new, or entered the volume by scrolling): the next blend replaces it.
 #define PLUTO_DDGI_PROBE_FRESH 2
+// Relocation moves made since the probe was last reset, in the flags above these bits (state is half precision, so
+// the flags stay small integers). Relocation stops at the maximum, which is also the count's mask.
+#define PLUTO_DDGI_RELOCATION_SHIFT 2
+#define PLUTO_DDGI_MAX_RELOCATIONS 7
 
 // Compute group sizes.
 #define PLUTO_DDGI_TRACE_GROUP 64

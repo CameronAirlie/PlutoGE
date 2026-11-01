@@ -126,6 +126,7 @@ namespace
         settings.debugView = PLUTO_DDGI_VIEW_PROBES;
         settings.voxels.injectLocalLights = false;
         settings.relocation = false;
+        settings.relocateFromThinSurfaces = true;
         settings.intensity = 1.5f;
         settings.reflectionOcclusion = 0.25f;
         const auto decoded = DecodeDdgiPacket(EncodeDdgiPacket(settings, &settings));
@@ -173,6 +174,21 @@ namespace
         occluded.ApplyParameters(occlusionParameters);
         Check(listed && occluded.GetSettings().reflectionOcclusion == 0.5f &&
                   occluded.GetQuality() == DdgiQuality::Medium, "reflection occlusion parameter");
+
+        // Relocating from thin surfaces is off by default and is not quality-controlled either.
+        DDGIEffect thin;
+        Check(!thin.GetSettings().relocateFromThinSurfaces, "thin-surface relocation defaults off");
+        auto thinParameters = thin.GetParameters();
+        listed = false;
+        for (auto &parameter : thinParameters)
+            if (parameter.name == "Relocate From Thin Surfaces")
+            {
+                parameter.value = "true";
+                listed = true;
+            }
+        thin.ApplyParameters(thinParameters);
+        Check(listed && thin.GetSettings().relocateFromThinSurfaces && thin.GetQuality() == DdgiQuality::Medium,
+              "thin-surface relocation parameter");
 
         const auto packet = AdaptPostProcessEffect(effect);
         Check(packet && packet->type == BasicPostProcessEffectType::DDGI && packet->historyOwner == &effect &&

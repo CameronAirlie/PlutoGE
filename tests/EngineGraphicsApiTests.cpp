@@ -251,9 +251,11 @@ int main(int argc, char **argv)
             };
             // Optional arguments after the camera: preset=<project post-process preset> applies its DDGI settings,
             // move=<units per frame> dollies the camera sideways while measuring stability, full=1 measures with the
-            // preset's whole effect stack (TAA, exposure and so on, DDGI in its place), AutoExposure:Name=Value overrides
-            // one auto exposure parameter (after preset=), and Name=Value overrides one DDGI parameter.
+            // preset's whole effect stack (TAA, exposure and so on, DDGI in its place), probeframes=<n> saves n frames
+            // of the probe view, AutoExposure:Name=Value overrides one auto exposure parameter (after preset=), and
+            // Name=Value overrides one DDGI parameter.
             float move = 0.0f;
+            int probeFrames = 0;
             bool full = false;
             std::vector<std::unique_ptr<render::IPostProcessEffect>> presetEffects;
             std::vector<render::IPostProcessEffect *> fullStack;
@@ -291,6 +293,8 @@ int main(int argc, char **argv)
                 }
                 else if (name == "full")
                     full = value == "1";
+                else if (name == "probeframes")
+                    probeFrames = std::stoi(value);
                 else if (name == "move")
                     move = std::stof(value);
                 else
@@ -359,6 +363,12 @@ int main(int argc, char **argv)
             if (!stability({&tone, &gamma}, "off") || !stability({&ddgi, &tone, &gamma}, "on")) return 32;
             ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "2"}});
             if (!stability({&ddgi, &tone, &gamma}, "indirect")) return 32;
+            // Probes that keep relocating show as unstable spheres.
+            ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "3"}});
+            if (!stability({&ddgi, &tone, &gamma}, "probes")) return 32;
+            // probeframes=<n> saves n consecutive frames of the probe view, to follow a probe that keeps moving.
+            for (int frame = 0; frame < probeFrames; ++frame)
+                if (!run({&ddgi, &tone, &gamma}, 1, ("probes-" + std::to_string(frame)).c_str())) return 32;
             for (const auto &[view, name] : {std::pair{"1", "irradiance"}, std::pair{"2", "indirect"}, std::pair{"3", "probes"}})
             {
                 ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, view}});

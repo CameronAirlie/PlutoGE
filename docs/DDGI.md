@@ -33,8 +33,19 @@ Other controls:
   in RocketLeg. Changes that double or halve a probe's brightness (a light switched on) use half the hysteresis, so
   large changes still settle in a few updates.
 - **Normal Bias** and **View Bias** (in probe spacings) move lookups off the surface so probes behind it are not seen.
-  The renderer never uses less than one and a half voxels, which is as sharply as the voxel scene places surfaces.
-- **Probe Relocation** moves probes out of walls and away from nearby surfaces, by up to 0.45 spacings.
+  The renderer never uses less than one and a half voxels for either, which is as sharply as the voxel scene places
+  surfaces. A smaller view offset lit inside corners from probes outside the room (Medium's default view bias is only
+  0.6 units against 0.75-unit voxels).
+- **Probe Relocation** moves probes out of walls and away from nearby surfaces, by up to 0.45 spacings. A probe
+  inside a surface thinner than one and a half voxels (a thin roof or wall) stays there, inactive: either side is as
+  near, and probes moved out through it made the join of that surface and the ones beneath it flicker. A probe moves
+  at most seven times, then stays where it is until it scrolls out of the volume or the volume resets: near some thin
+  surfaces probes never settled and moved and snapped back at every update.
+- **Relocate From Thin Surfaces** (off by default) moves those probes out as well. The voxel scene holds surfaces,
+  not solids, so this covers any probe within about a voxel of a surface, such as a whole probe layer lying in a floor
+  at a multiple of the probe spacing (shown as red probes in the Probes view). Off, surfaces near them use the next
+  probes out, which in Basin's garage changed the floor's light by 1-2%; on, the joins of those surfaces with others
+  can leak and flicker (in Basin's hall the beam under the roof did). Moving the floor off the probe layer avoids both.
 - **Probe Classification** stops tracing all but 16 rays for probes inside geometry or with no surface within two
   spacings, since nothing samples them. This saves a lot in open areas.
 - **Multiple Bounces** (on by default): rays that hit a surface also reflect the volume's own irradiance there. Over a
@@ -151,8 +162,11 @@ See [the measurements](#measurements) below.
 - With Reflection Occlusion on, interior reflections where SSR misses carry the probes' update noise at specular
   gain instead of the noise-free sky term. Under TAA it is not visible (the project stack below flickers less with
   occlusion on); without TAA it shows as grain of about half an 8-bit level.
-- Detail is bounded by the voxel size (0.75 units for Medium's 48-unit, 64-voxel finest cascade). Thin walls can leak,
-  and small emitters contribute through the voxels' coverage.
+- Detail is bounded by the voxel size (0.75 units for Medium's 48-unit, 64-voxel finest cascade). Walls thinner than
+  a voxel fill one voxel layer, which filtered steps of a voxel would sample as half opaque at best; near the probe,
+  where a ray's footprint is one voxel, the trace doubles opacity so such a layer stops it. Some sky light still
+  reaches rooms along wall and roof junctions; a **Voxel Resolution** of 128 (High) halves the voxel and removes most
+  of it. Small emitters contribute through the voxels' coverage.
 - Coverage is the widest cascade around the camera (about 400 units at the defaults); beyond it, surfaces keep the
   geometry pass's ambient light. Detail drops with each cascade's spacing, so distant bounce light is coarse.
 - Changes reach a probe at its next update, so a light switched on takes a sweep (six to eight frames by default) plus

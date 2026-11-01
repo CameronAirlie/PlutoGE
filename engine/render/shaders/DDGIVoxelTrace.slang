@@ -172,9 +172,17 @@ float4 traceRay(float3 origin, float3 direction)
     {
         const float diameter = max(voxelSize, distance * voxelTrace.x);
         float sampleCovered, sampleVoxel;
-        const float4 sample = sampleScene(origin + direction * distance, direction, diameter, sampleCovered, sampleVoxel);
+        float4 sample = sampleScene(origin + direction * distance, direction, diameter, sampleCovered, sampleVoxel);
         if (sampleCovered <= 0.0)
             break;
+        // A wall thinner than a voxel fills one layer, and steps of a voxel sample it filtered between two positions:
+        // one reads at least half opaque, but both together still pass a quarter of the light behind it (sky into
+        // rooms, strongest along edges and corners). Doubling opacity while the footprint is a single voxel makes
+        // that sample opaque; wider footprints are filtered mips whose partial coverage is real.
+        const float solidify = 1.0 + saturate(2.0 - diameter / sampleVoxel);
+        const float solidOpacity = saturate(sample.a * solidify);
+        sample.rgb *= sample.a > 0.0001 ? solidOpacity / sample.a : 1.0;
+        sample.a = solidOpacity;
         radiance += transmission * sample.rgb;
         const float next = transmission * (1.0 - saturate(sample.a));
         // Place the surface where transmission crosses one half between the two samples, not at the step: visibility

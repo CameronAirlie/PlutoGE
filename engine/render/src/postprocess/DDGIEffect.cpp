@@ -72,6 +72,7 @@ namespace PlutoGE::render
             {"Normal Bias", PostProcessParameterType::Float, std::to_string(s.normalBias)},
             {"View Bias", PostProcessParameterType::Float, std::to_string(s.viewBias)},
             {"Probe Relocation", PostProcessParameterType::Bool, Bool(s.relocation)},
+            {"Relocate From Thin Surfaces", PostProcessParameterType::Bool, Bool(s.relocateFromThinSurfaces)},
             {"Probe Classification", PostProcessParameterType::Bool, Bool(s.classification)},
             {"Multiple Bounces", PostProcessParameterType::Bool, Bool(s.multipleBounces)},
             {"Brightness Clamp", PostProcessParameterType::Float, std::to_string(s.brightnessClamp)},
@@ -118,6 +119,7 @@ namespace PlutoGE::render
             else if (p.name == "Normal Bias") s.normalBias = ParseFloat(p.value, s.normalBias);
             else if (p.name == "View Bias") s.viewBias = ParseFloat(p.value, s.viewBias);
             else if (p.name == "Probe Relocation") s.relocation = ParseBool(p.value);
+            else if (p.name == "Relocate From Thin Surfaces") s.relocateFromThinSurfaces = ParseBool(p.value);
             else if (p.name == "Probe Classification") s.classification = ParseBool(p.value);
             else if (p.name == "Multiple Bounces") s.multipleBounces = ParseBool(p.value);
             else if (p.name == "Brightness Clamp") s.brightnessClamp = ParseFloat(p.value, s.brightnessClamp);

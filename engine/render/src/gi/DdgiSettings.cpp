@@ -80,7 +80,8 @@ namespace PlutoGE::render
     // relocation, classification, debug view; 3 = voxel resolution, cascades, volume size, update speed; 4 = inject
     // local lights, local light bounce, secondary bounce, voxelization command budget; 5.xy = debug probe radius,
     // brightness clamp (5.zw carry the camera's clip planes); 6.x = minimum frontface distance, 6.y = multiple
-    // bounces, 6.z = probe cascades, 6.w = reflection occlusion. Quality is the number of blended rays per probe.
+    // bounces, 6.z = probe cascades, 6.w = reflection occlusion, 7.x = relocate from thin surfaces. Quality is the
+    // number of blended rays per probe.
     BasicPostProcessEffect EncodeDdgiPacket(const DdgiSettings &input, const void *historyOwner)
     {
         const auto settings = input.Sanitized();
@@ -101,6 +102,7 @@ namespace PlutoGE::render
         packet.parameters[6].y = settings.multipleBounces ? 1.0f : 0.0f;
         packet.parameters[6].z = static_cast<float>(settings.grid.cascades);
         packet.parameters[6].w = settings.reflectionOcclusion;
+        packet.parameters[7].x = settings.relocateFromThinSurfaces ? 1.0f : 0.0f;
         return packet;
     }
 
@@ -133,6 +135,7 @@ namespace PlutoGE::render
         settings.multipleBounces = lanes[6].y > 0.5f;
         settings.grid.cascades = static_cast<int>(std::lround(lanes[6].z));
         settings.reflectionOcclusion = lanes[6].w;
+        settings.relocateFromThinSurfaces = lanes[7].x > 0.5f;
         return settings.Sanitized();
     }
 }

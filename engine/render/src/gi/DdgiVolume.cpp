@@ -149,9 +149,14 @@ namespace PlutoGE::render
         // clamping keeps them precise.
         parameters.blend = {m_settings.hysteresis, m_settings.brightnessClamp, DistanceExponent, 1.5f * std::sqrt(3.0f)};
         // Lookups must clear the probes embedded in or behind the surface. Visibility separates them only as sharply
-        // as the ray source places surfaces, so the normal offset is at least one and a half times that tolerance.
-        parameters.bias = {m_settings.normalBias, m_settings.viewBias, 1.5f * m_surfaceTolerance, 0.0f};
-        parameters.state = {m_settings.relocation ? 1.0f : 0.0f, m_settings.classification ? 1.0f : 0.0f,
+        // as the ray source places surfaces, so the normal and view offsets are each at least one and a half times that
+        // tolerance. A smaller view offset left lookups beside an inside corner occluded from the room's probes by the
+        // adjacent wall's voxels, and only probes seeing outside lit them.
+        const float minimumBias = 1.5f * m_surfaceTolerance;
+        parameters.bias = {m_settings.normalBias, m_settings.viewBias, minimumBias, minimumBias};
+        // Relocation: 0 off, 1 on, 2 also out of thin surfaces.
+        const float relocation = !m_settings.relocation ? 0.0f : m_settings.relocateFromThinSurfaces ? 2.0f : 1.0f;
+        parameters.state = {relocation, m_settings.classification ? 1.0f : 0.0f,
                             m_settings.minFrontfaceDistance, m_settings.multipleBounces ? 1.0f : 0.0f};
         parameters.apply = {m_settings.intensity, static_cast<float>(m_settings.debugView), m_settings.probeRadius,
                             resetProbes};

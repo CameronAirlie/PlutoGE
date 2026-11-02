@@ -92,6 +92,18 @@ void CheckContactShadows(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
         std::cerr << "Contact shadows: " << darkened << " darkened pixels, bare floor difference " << bareDifference << '\n';
     require(darkened > 40, "Contact shadows did not shadow the floor beside a cube");
     require(bareDifference <= 1, "Contact shadows shadowed a bare floor (self-shadowing)");
+    // A bare floor seen at a grazing angle, lit from beyond it so the rays towards the light run deeper into the
+    // screen: its depth changes by far more than the bias across a texel and must not shadow itself.
+    lighting.directionalDirection = glm::normalize(glm::vec3(0.0f, -0.5f, 1.0f));
+    lighting.cameraPosition = {0.0f, 0.12f, 5.5f};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0.0f, 0.0f, -6.0f), glm::vec3(0, 1, 0));
+    const auto grazingWithout = render(std::span(&floor, 1), 0.0f), grazingWith = render(std::span(&floor, 1), 0.4f);
+    int grazingDifference = 0;
+    for (std::size_t i = 0; i < grazingWith.size(); i += 4)
+        grazingDifference = std::max(grazingDifference, std::abs(grazingWith[i + 1] - grazingWithout[i + 1]));
+    if (grazingDifference > 1)
+        std::cerr << "Contact shadows: grazing bare floor difference " << grazingDifference << '\n';
+    require(grazingDifference <= 1, "Contact shadows shadowed a bare floor seen at a grazing angle");
     std::cout << "Contact shadows: " << darkened << " darkened pixels beside the cube, bare floor unchanged\n";
     require(renderer.Resize(previousWidth, previousHeight), "Contact shadow viewport restore failed");
 }

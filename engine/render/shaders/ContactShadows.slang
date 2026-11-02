@@ -27,6 +27,14 @@ float2 viewToUv(float3 position, out bool inFront)
     return ndc * 0.5 + 0.5;
 }
 
+// Linear depth of a neighbouring texel; the background (no depth) counts as infinitely far.
+float neighbourDepth(int2 pixel, int2 size)
+{
+    const float depth = linearViewDepth(depthTexture.Load(int3(clamp(pixel, int2(0), size - 1), 0)).r,
+                                        pass.projection, pass.zeroToOneDepth);
+    return depth > 0.0 ? depth : 1.e30;
+}
+
 [shader("fragment")]
 float2 fragmentMain(FullscreenVertexOutput input) : SV_Target
 {
@@ -37,6 +45,16 @@ float2 fragmentMain(FullscreenVertexOutput input) : SV_Target
     if (linearDepth <= 0.0) return float2(1.0, deviceDepth);
     const float2 uv = (float2(pixel) + 0.5) * pass.inverseResolution;
     const float3 origin = viewPositionFromLinearDepth(uv, linearDepth, pass);
+    // Samples compare the ray with the depth at their texel's centre, up to half a texel from where the ray
+    // projects. Where the receiver is seen at a grazing angle its depth changes by far more than the bias across
+    // that half texel, so a ray leaving a lit surface would find the surface itself "in front" and shadow it in
+    // dithered streaks. Tolerate the receiver's own depth slope (the smaller one-sided difference on each axis, so
+    // a silhouette beside the pixel does not count).
+    const float slopeX = min(abs(neighbourDepth(pixel + int2(1, 0), size) - linearDepth),
+                             abs(linearDepth - neighbourDepth(pixel - int2(1, 0), size)));
+    const float slopeY = min(abs(neighbourDepth(pixel + int2(0, 1), size) - linearDepth),
+                             abs(linearDepth - neighbourDepth(pixel - int2(0, 1), size)));
+    const float slopeBias = 0.5 * (slopeX + slopeY);
     const float3 towardsLight = pass.parameters[0].xyz;
     const float length = pass.parameters[0].w;
     const float thickness = pass.parameters[1].x;
@@ -59,7 +77,7 @@ float2 fragmentMain(FullscreenVertexOutput input) : SV_Target
         // Behind the depth buffer by more than its precision, and not so far behind that the surface in front is
         // thinner than the ray's distance from it.
         const float behind = rayDepth - sceneDepth;
-        const float bias = 0.0015 * rayDepth + 0.002;
+        const float bias = 0.0015 * rayDepth + 0.002 + slopeBias;
         if (sceneDepth > 0.0 && behind > bias && behind < thickness)
         {
             // Occluders near the ray's end fade, so the shadow has no hard cut-off at its length.

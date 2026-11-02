@@ -10,8 +10,11 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
                              PlutoGE::render::BasicRendererShaderPackage shaders,
@@ -354,5 +357,141 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     lighting.localIblEnabled = true;
     scene.ClearBakedProbeVolume();
     require(glm::length(frame()) < .01f, "Cleared grid remains resident in RHI lighting");
+    renderer.Shutdown();
+}
+
+// Baked environment lighting (docs/BAKED_ENVIRONMENT_LIGHTING.md) through both the forward path and the deferred probe
+// resolve: a live-sky volume follows the current sky, its sky visibility occludes sky reflections, and captures
+// relight from the volume's irradiance.
+inline void CheckBakedEnvironmentRendering(PlutoGE::render::rhi::IRenderDevice &device,
+                                           PlutoGE::render::BasicRendererShaderPackage shaders,
+                                           const std::function<float(PlutoGE::render::rhi::TextureHandle)> &centerAlpha8)
+{
+    using namespace PlutoGE;
+    using namespace render;
+    const auto require = [](bool ok, const std::string &message) { if (!ok) throw std::runtime_error(message); };
+    Material material({.castsShadow=false, .twoSided=true});
+    material.SetMetallic(0); material.SetRoughness(1);
+    MeshConfig config;
+    config.data.vertices = {{{-1,-1,.5f},{0,0,1},{0,0},{1,0,0,1}},
+        {{3,-1,.5f},{0,0,1},{0,0},{1,0,0,1}}, {{-1,3,.5f},{0,0,1},{0,0},{1,0,0,1}}};
+    config.data.indices = {0,1,2};
+    Mesh mesh(config);
+    RenderCommand command; command.mesh = &mesh; command.material = &material; command.castsShadow = false;
+    command.worldBounds = command.previousWorldBounds = mesh.GetBounds();
+    shaders.virtualShadows = {};
+    RhiSceneRenderer renderer;
+    require(renderer.Initialize(device, shaders), "Cannot initialize baked environment renderer");
+    BasicLighting lighting; lighting.shadowsEnabled = false; lighting.directionalIntensity = 0;
+    CameraData camera{glm::mat4(1),glm::mat4(1)};
+    std::vector<BasicPostProcessEffect> atmosphere;
+    scene::Scene scene;
+    const auto frame = [&] {
+        require(renderer.Render(32,32,camera,lighting,std::span(&command,1),{},{},atmosphere,{},
+            PostProcessDebugView::None,true,&scene,std::nullopt,{},true), "Baked environment render failed");
+        const auto image = device.ReadTextureRgbaFloat(renderer.GetColorTexture());
+        require(image.size() == 32*32*4, "Baked environment readback dimensions differ");
+        const auto center = (16*32+16)*4;
+        return glm::vec3(image[center],image[center+1],image[center+2]);
+    };
+    // Unlit SH: every probe's light is the live sky through its visibility.
+    scene::BakedProbeVolume grid;
+    grid.origin = {-2,-2,-2}; grid.size = {4,4,4}; grid.resolution = {2,2,2};
+    grid.irradiance.assign(8, glm::vec3(0));
+    grid.positions.resize(8); grid.sphericalHarmonics.resize(8); grid.visibility.resize(8);
+    for (int i = 0; i < 8; ++i) {
+        grid.positions[i] = glm::vec4(-1+2*(i%2),-1+2*(i/2%2),-1+2*(i/4),1);
+        grid.visibility[i].fill(10);
+    }
+    grid.skyVisibility.assign(8, glm::vec4(0,0,0,1));
+    grid.skyIrradianceScale = 3.14159265f;
+    const auto setGrid = [&](const scene::BakedProbeVolume &volume, float reflectionOcclusion) {
+        scene.SetBakedProbeVolume(volume);
+        scene.GetAmbientLightVolumes().front()->SetReflectionOcclusion(reflectionOcclusion);
+    };
+    // Without a physical sky the live sky is the flat ambient radiance.
+    const auto paths = {BasicPostProcessInput::None, BasicPostProcessInput::Indirect | BasicPostProcessInput::Albedo};
+    std::vector<glm::vec3> pathResults;
+    for (const auto inputs : paths)
+    {
+        const std::string path = inputs == BasicPostProcessInput::None ? " (forward)" : " (deferred)";
+        lighting.requiredGeometryInputs = inputs;
+        material.SetMetallic(0); material.SetRoughness(1);
+        atmosphere.clear();
+        scene.ClearIblCaptureVolumes();
+        lighting.ambientIntensity = 1;
+        setGrid(grid, 1);
+        const auto open = frame();
+        require(open.g > .5f, "A live-sky volume does not receive the current sky" + path);
+        if (inputs != BasicPostProcessInput::None)
+        {
+            // Normal alpha 0 marks the pixel the geometry pass deferred to the probe resolve.
+            require(centerAlpha8(renderer.GetNormalTexture()) < .5f, "The deferred probe resolve did not run");
+        }
+        lighting.ambientIntensity = 2;
+        const auto brighter = frame();
+        require(std::abs(brighter.g - open.g*2) < .03f*open.g, "A live-sky volume does not follow the sky's brightness" + path);
+        lighting.ambientIntensity = 1;
+        auto enclosed = grid; enclosed.skyVisibility.assign(8, glm::vec4(0));
+        setGrid(enclosed, 1);
+        require(glm::length(frame()) < .01f, "Probes that see no sky receive live sky light" + path);
+        auto baked = grid; baked.skyIrradianceScale = 0;
+        setGrid(baked, 1);
+        require(glm::length(frame()) < .01f, "A baked-sky volume adds the live sky" + path);
+        pathResults.push_back(open);
+
+        // Sky reflections: a smooth metal mirrors the physical sky only where the probes see it.
+        PhysicalSkySettings sky;
+        const auto celestial = ResolveCelestialState(sky, glm::normalize(glm::vec3(.3f,.8f,-.2f)));
+        BasicPostProcessEffect skyEffect{BasicPostProcessEffectType::PhysicalSky};
+        skyEffect.exposure = sky.exposure;
+        skyEffect.parameters = PackPhysicalSkyParameters(sky, celestial);
+        skyEffect.worldToLocal = glm::mat4(celestial.worldToCelestial);
+        atmosphere = {skyEffect};
+        lighting.skyIrradiance = ProjectPhysicalSkyIrradiance(sky, celestial);
+        material.SetMetallic(1); material.SetRoughness(.05f);
+        setGrid(baked, 1);
+        const auto skyReflection = frame();
+        require(skyReflection.b > .01f, "The sky reflection test sees no sky" + path);
+        setGrid(enclosed, 1);
+        const auto occluded = frame();
+        require(glm::length(occluded) < .05f*glm::length(skyReflection), "Sky reflections leak into a volume that sees no sky" + path);
+        setGrid(enclosed, 0);
+        require(glm::length(frame() - skyReflection) < .02f*glm::length(skyReflection),
+                "Reflection occlusion strength 0 still occludes" + path);
+        setGrid(enclosed, .5f);
+        require(std::abs(glm::length(frame()) - .5f*glm::length(skyReflection)) < .05f*glm::length(skyReflection),
+                "Half reflection occlusion does not halve the sky reflection" + path);
+        atmosphere.clear();
+        lighting.skyIrradiance.reset();
+
+        // Capture relighting: a capture of uniform radiance 2 has irradiance 2pi; a volume with half that
+        // halves its reflection, unless the capture opts out.
+        std::vector<float> faces(32*32*24);
+        for (std::size_t i = 0; i < faces.size(); i += 4) { faces[i] = faces[i+1] = faces[i+2] = 2; faces[i+3] = 1; }
+        std::unique_ptr<Texture> captureTexture(Texture::CpuColorCubemap(32, faces));
+        scene::IblCaptureVolume capture;
+        capture.origin = {-2,-2,-2}; capture.size = {4,4,4}; capture.blendDistance = 0;
+        capture.environmentMapTexture = captureTexture.get();
+        capture.relightFromAmbient = false;
+        auto halfLit = baked;
+        for (auto &sh : halfLit.sphericalHarmonics) sh[0] = glm::vec3(3.14159265f/.282095f);
+        setGrid(halfLit, 1);
+        scene.AddIblCaptureVolume(capture);
+        const auto unrelit = frame();
+        require(unrelit.g > 1.f, "The capture relighting test sees no capture" + path);
+        scene.ClearIblCaptureVolumes();
+        capture.relightFromAmbient = true;
+        scene.AddIblCaptureVolume(capture);
+        const auto relit = frame();
+        require(std::abs(relit.g - unrelit.g*.5f) < .05f*unrelit.g,
+                "A capture does not relight from the ambient volume: " + std::to_string(relit.g) + " of " +
+                std::to_string(unrelit.g) + path);
+        scene.ClearIblCaptureVolumes();
+    }
+    require(glm::length(pathResults[0] - pathResults[1]) < .02f*glm::length(pathResults[0]),
+            "The deferred probe resolve and the forward path disagree on live sky light");
+    lighting.requiredGeometryInputs = BasicPostProcessInput::None;
+    scene.ClearBakedProbeVolume();
     renderer.Shutdown();
 }

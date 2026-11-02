@@ -693,6 +693,10 @@ add_executable(PlutoGEPhysicalSkyModelTests PhysicalSkyModelTests.cpp)
 pluto_link_engine(PlutoGEPhysicalSkyModelTests)
 add_test(NAME PlutoGEPhysicalSkyModelTests COMMAND PlutoGEPhysicalSkyModelTests)
 
+add_executable(PlutoGEBakedEnvironmentLightingTests BakedEnvironmentLightingTests.cpp)
+pluto_link_engine(PlutoGEBakedEnvironmentLightingTests)
+add_test(NAME PlutoGEBakedEnvironmentLightingTests COMMAND PlutoGEBakedEnvironmentLightingTests)
+
 add_executable(PlutoGEDirectionalShadowReachTests DirectionalShadowReachTests.cpp)
 target_link_libraries(PlutoGEDirectionalShadowReachTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGEDirectionalShadowReachTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)

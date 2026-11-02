@@ -332,6 +332,16 @@ int main(int argc, char **argv)
                 shaders.standardFragment.spirv = ReadSpirv("BasicLitStandard.fragment.spv");
             }
             CheckIblRendering(device, shaders, argc > 2 ? &reference : nullptr);
+            // The deferred probe resolve is exercised only here; other checks keep the forward path.
+            auto resolveShaders = shaders;
+            for (auto [package, name] : {std::pair{&resolveShaders.diffuseProbeTrace, "DiffuseProbeTrace"},
+                                         std::pair{&resolveShaders.diffuseProbeComposite, "DiffuseProbeComposite"},
+                                         std::pair{&resolveShaders.diffuseProbeTraceReflections, "DiffuseProbeTraceReflections"},
+                                         std::pair{&resolveShaders.diffuseProbeCompositeReflections, "DiffuseProbeCompositeReflections"}})
+                *package = {{.spirv = ReadSpirv((std::string(name) + ".vertex.spv").c_str())},
+                            {.spirv = ReadSpirv((std::string(name) + ".fragment.spv").c_str())}};
+            CheckBakedEnvironmentRendering(device, resolveShaders, [&](rhi::TextureHandle texture) {
+                return std::to_integer<unsigned>(device.ReadTextureRgba8(texture).at((16*32+16)*4+3)) / 255.0f; });
             return 0;
         }
         if (argc > 1 && (std::string_view(argv[1]) == "--transparency-only" ||

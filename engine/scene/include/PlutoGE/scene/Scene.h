@@ -58,6 +58,8 @@ namespace PlutoGE::scene
         float blendDistance = 1.0f;
         // Higher priority claims overlapping space first; ties go to the smaller volume.
         int priority = 0;
+        // Scale reflections by the ambient volume's irradiance (IblCaptureComponent::RelightsFromAmbient).
+        bool relightFromAmbient = true;
 
         [[nodiscard]] bool IsValid() const
         {

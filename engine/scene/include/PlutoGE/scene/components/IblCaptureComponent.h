@@ -52,6 +52,11 @@ namespace PlutoGE::scene
         void SetPriority(int priority) { m_priority = priority; }
         int GetResolution() const { return m_resolution; }
         float GetFarPlane() const { return m_farPlane; }
+        // Inside an ambient volume, scale reflections by the volume's irradiance relative to
+        // the capture's own, so they darken where the capture point saw more light and
+        // follow a live sky (BakedEnvironment.slang).
+        bool RelightsFromAmbient() const { return m_relightFromAmbient; }
+        void SetRelightFromAmbient(bool relight) { m_relightFromAmbient = relight; }
         bool IsDirty() const { return m_dirty; }
         render::Texture *GetCaptureTexture() const { return m_captureTexture.get(); }
         render::Texture *EnsureCaptureTexture();
@@ -71,6 +76,7 @@ namespace PlutoGE::scene
         bool m_dirty = true;
         bool m_automaticallyPlaced = false;
         bool m_keepPlacement = false;
+        bool m_relightFromAmbient = true;
         bool m_hasAutomaticPlacement = false;
         glm::vec3 m_automaticPosition{0.0f};
         glm::vec3 m_automaticSize{10.0f};

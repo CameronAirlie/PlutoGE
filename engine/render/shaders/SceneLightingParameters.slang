@@ -63,6 +63,9 @@ cbuffer CameraParameters : register(b0, space0)
     // Contact shadows (BasicLit.slang contactShadowVisibility): xyz the light each mask channel was traced for
     // (-1 none, ContactShadowDirectional, or a local light index); w the mask is present.
     float4 contactShadowParameters;
+    // Live sky irradiance for ambient volumes baked with a live sky (SkyIrradiance.h): cosine-convolved L2 SH of
+    // mean radiance, in AmbientProbeSampling's coefficient order. [0].w is 1 when a physical sky supplied it.
+    float4 skyIrradiance[9];
 };
 
 // Local light types, as BasicRenderer packs them into pointDirectionSpot.w: points, then spots, then rectangles.

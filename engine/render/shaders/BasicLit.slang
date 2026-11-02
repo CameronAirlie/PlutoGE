@@ -88,16 +88,7 @@ struct FragmentOutput
 
 
 #include "AmbientProbeSampling.slang"
-
-float iblWeight(int index, float3 position)
-{
-    if (iblSettings[index].x < 0.5) return 0;
-    const float3 local = position - iblOriginIntensity[index].xyz;
-    const float3 edge = min(local, iblSizeBlend[index].xyz - local);
-    const float distance = min(edge.x, min(edge.y, edge.z));
-    if (distance < 0) return 0;
-    return iblSizeBlend[index].w > 0 ? saturate(distance / iblSizeBlend[index].w) : 1;
-}
+#include "BakedEnvironment.slang"
 
 float3 sampleIblRoughnessLevel(int index, int face, float2 faceUV, float level)
 {
@@ -131,17 +122,6 @@ float3 iblRadiance(int index, float3 position, float3 direction, float roughness
     const float3 radiance = lerp(sampleIblRoughnessLevel(index, face, faceUV, floor(lod)),
                                  sampleIblRoughnessLevel(index, face, faceUV, ceil(lod)), frac(lod));
     return max(radiance, 0.0) * iblOriginIntensity[index].w;
-}
-
-float3 iblDiffuse(int index, float3 n)
-{
-    const float basis[9] = {0.282095, 0.488603*n.y, 0.488603*n.z, 0.488603*n.x,
-        1.092548*n.x*n.y, 1.092548*n.y*n.z, 0.315392*(3*n.z*n.z-1),
-        1.092548*n.x*n.z, 0.546274*(n.x*n.x-n.y*n.y)};
-    float3 irradiance = float3(0);
-    for (int coefficient = 0; coefficient < 9; ++coefficient)
-        irradiance += iblIrradiance[index * 9 + coefficient].rgb * basis[coefficient];
-    return max(irradiance, 0.0) * iblOriginIntensity[index].w;
 }
 
 float3 blendIblReflection(float3 fallback, float3 position, float3 direction, float roughness)
@@ -1476,12 +1456,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // including under captures. Opaque surfaces can defer it to the
     // screen-space resolve (DiffuseProbeResolve.slang), which adds
     // irradiance * diffuse response where normal.a = 0 marks a pending pixel.
+    // The resolve then also applies the grid's reflection terms (BakedEnvironment.slang);
+    // here they apply only where ambientGrid.coverage > 0.
     const int gridVolume = transparentPass || pointParameters.w != 12.0 ? selectDiffuseVolume(input.worldPosition) : -1;
     const bool gridCovered = gridVolume >= 0;
     const bool gridDeferred = gridCovered && !transparentPass && probeAtlasParameters.w > 0.5;
-    const float4 gridIrradiance = gridCovered && !gridDeferred
-        ? sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal) : float4(0);
-    const float3 gridDiffuse = gridIrradiance.rgb * diffuseResponse;
+    DiffuseGridSample ambientGrid = emptyDiffuseGridSample();
+    if (gridCovered && !gridDeferred)
+        ambientGrid = sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal);
+    const float3 gridDiffuse = ambientGrid.irradiance * diffuseResponse;
+    const float3 reflectionDirection = reflect(-viewDirection, normal);
     float3 ambient = 0.0;
     float3 environmentSpecular = 0.0;
     // The share of environmentSpecular that reflects the sky rather than captures.
@@ -1499,12 +1483,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                        sheenEnvironmentResponse(layers, ndotv) * PI) * cameraPositionAmbient.w;
         if (skyLighting)
         {
-            environmentSpecular = samplePhysicalSkySpecular(reflect(-viewDirection, normal), materialRoughness) *
-                                  iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z * layerBaseScale;
+            // Inside a volume, each lobe reflects only the sky its probes see.
+            const float skyVisibility = bakedSkyReflectionVisibility(ambientGrid, reflectionDirection, normal, materialRoughness);
+            environmentSpecular = samplePhysicalSkySpecular(reflectionDirection, materialRoughness) *
+                                  iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z * layerBaseScale *
+                                  skyVisibility;
             if (layers.clearCoatActive)
-                environmentSpecular += samplePhysicalSkySpecular(reflect(-viewDirection, normal), layers.clearCoatRoughness) *
-                                       coatResponse * physicalSkySettings.z;
-            skySpecularShare = 1.0 - captureCoverage;
+                environmentSpecular += samplePhysicalSkySpecular(reflectionDirection, layers.clearCoatRoughness) *
+                                       coatResponse * physicalSkySettings.z *
+                                       bakedSkyReflectionVisibility(ambientGrid, reflectionDirection, normal, layers.clearCoatRoughness);
+            skySpecularShare = (1.0 - captureCoverage) * skyVisibility;
         }
     }
     if (captureWeightSum > 0)
@@ -1515,11 +1503,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         {
             if (captureWeights[i] <= 0) continue;
             const float3 diffuse = gridCovered ? gridDiffuse : iblDiffuse(i, normal) * diffuseResponse;
-            float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) *
+            float3 specular = iblRadiance(i, input.worldPosition, reflectionDirection, materialRoughness) *
                               iblSpecularResponse(f0, materialRoughness, ndotv) * layerBaseScale;
             if (layers.clearCoatActive)
-                specular += iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), layers.clearCoatRoughness) *
+                specular += iblRadiance(i, input.worldPosition, reflectionDirection, layers.clearCoatRoughness) *
                             coatResponse;
+            if (ambientGrid.coverage > 0)
+                specular *= iblRelightFactor(i, normal, ambientGrid.irradiance);
             capturedAmbient += diffuse * captureWeights[i];
             capturedSpecular += specular * captureWeights[i];
         }
@@ -1569,7 +1559,6 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float3 absorption = exp(log(clamp(attenuationColorDistance.rgb, 0.0001, 1.0)) *
                                        pathLength / max(attenuationColorDistance.w, 0.0001));
         const float3 viewFresnel = float3(dielectricFresnel(ndotv, glassParameters.z));
-        const float3 reflectionDirection = reflect(-viewDirection, normal);
         const float3 fallbackEnvironment = physicalSkySettings.x > 0.5
             ? samplePhysicalSkySpecular(reflectionDirection, materialRoughness) * physicalSkySettings.z
             : float3(cameraPositionAmbient.w);
@@ -1600,7 +1589,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (shaderGraph.header.y != 0) output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
     // Diffuse AO must not alter the replaceable specular fallback used by SSR.
     // Specular visibility requires its own directional occlusion model: DDGI's
-    // reflection occlusion (DDGIReflection.slang) scales the sky share in alpha.
+    // reflection occlusion (DDGIReflection.slang) scales the sky share in alpha,
+    // which already excludes what a baked volume occluded (BakedEnvironment.slang).
     output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, skySpecularShare);
     // Alpha 1 marks a surface lit by diffuse ambient light, which DDGI and SSGI may replace (unlit and glass are 0).
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 1.0);

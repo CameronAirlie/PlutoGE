@@ -1,5 +1,6 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/PhysicalSkyModel.h"
+#include "PlutoGE/render/SkyIrradiance.h"
 #include "PlutoGE/scene/DirectionalShadowLighting.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
@@ -149,6 +150,9 @@ namespace PlutoGE::render
                 lighting.directionalDirection = light.direction;
                 lighting.directionalColor = light.color;
                 lighting.directionalIntensity = light.intensity;
+                // Per thread, so views built concurrently never share it; reprojects only when the sky changes.
+                thread_local PhysicalSkyIrradianceCache skyIrradiance;
+                lighting.skyIrradiance = skyIrradiance.Get(settings, celestial);
             }
         }
 

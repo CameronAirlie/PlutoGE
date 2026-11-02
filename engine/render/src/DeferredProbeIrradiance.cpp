@@ -9,16 +9,19 @@ namespace PlutoGE::render
     namespace
     {
         constexpr rhi::Format IrradianceFormat = rhi::Format::R16G16B16A16Float;
+        constexpr rhi::Format SkyVisibilityFormat = rhi::Format::R16G16B16A16Float;
         // Must match the geometry targets the composite blends into.
         constexpr rhi::Format SceneColorFormat = rhi::Format::R16G16B16A16Float;
         constexpr rhi::Format IndirectFormat = rhi::Format::R16G16B16A16Float;
+        constexpr rhi::Format EnvironmentSpecularFormat = rhi::Format::R16G16B16A16Float;
         // Bindings declared by DiffuseProbeResolve.slang and SceneLightingParameters.slang.
         constexpr std::uint32_t SceneParametersSlot = 0, ResolveParametersSlot = 1, DepthSlot = 2, NormalSlot = 3,
-                                AlbedoSlot = 4, MaterialSlot = 5, ReducedSlot = 7, ProbeAtlasSlot = 31;
+                                AlbedoSlot = 4, MaterialSlot = 5, ReducedSlot = 7, ReducedSkyVisibilitySlot = 8,
+                                EnvironmentSpecularSlot = 9, ProbeAtlasSlot = 31;
 
         rhi::GraphicsPipelineDescriptor FullscreenPipeline(const DeferredProbeIrradiance::Shaders &shaders,
                                                            const rhi::GraphicsPipelineDescriptor::ShaderCode &fragment,
-                                                           const char *name)
+                                                           const char *name, bool reflections)
         {
             rhi::GraphicsPipelineDescriptor descriptor;
             descriptor.vertexShader = shaders.vertex;
@@ -34,6 +37,9 @@ namespace PlutoGE::render
                 {ProbeAtlasSlot, 0, ProbeAtlasSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
             for (const auto slot : {DepthSlot, NormalSlot, AlbedoSlot, MaterialSlot, ReducedSlot})
                 descriptor.resourceBindings.push_back({slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+            if (reflections)
+                for (const auto slot : {ReducedSkyVisibilitySlot, EnvironmentSpecularSlot})
+                    descriptor.resourceBindings.push_back({slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
             return descriptor;
         }
 
@@ -44,9 +50,9 @@ namespace PlutoGE::render
     {
         if (!Present(shaders.vertex) || !Present(shaders.trace) || !Present(shaders.composite))
             return false;
-        auto trace = FullscreenPipeline(shaders, shaders.trace, "Deferred probe irradiance trace");
+        auto trace = FullscreenPipeline(shaders, shaders.trace, "Deferred probe irradiance trace", false);
         trace.colorFormat = IrradianceFormat;
-        auto composite = FullscreenPipeline(shaders, shaders.composite, "Deferred probe irradiance composite");
+        auto composite = FullscreenPipeline(shaders, shaders.composite, "Deferred probe irradiance composite", false);
         composite.colorFormats = {SceneColorFormat, IndirectFormat};
         // Premultiplied blending with zero source alpha adds the irradiance and
         // keeps the indirect target's deferral marker.
@@ -54,6 +60,20 @@ namespace PlutoGE::render
         composite.blend.preserveDestinationAlpha = true;
         m_trace = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(trace));
         m_composite = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(composite));
+        if (Present(shaders.traceReflections) && Present(shaders.compositeReflections))
+        {
+            auto traceReflections = FullscreenPipeline(shaders, shaders.traceReflections,
+                                                       "Deferred probe irradiance trace (reflections)", true);
+            traceReflections.colorFormats = {IrradianceFormat, SkyVisibilityFormat};
+            auto compositeReflections = FullscreenPipeline(shaders, shaders.compositeReflections,
+                                                           "Deferred probe irradiance composite (reflections)", true);
+            compositeReflections.colorFormats = {SceneColorFormat, IndirectFormat, EnvironmentSpecularFormat};
+            // Zero source alpha still adds to colour and indirect and keeps their alpha. The
+            // reflection target is cleared to zero, so its rgb and alpha store unchanged.
+            compositeReflections.blend.enabled = true;
+            m_traceReflections = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(traceReflections));
+            m_compositeReflections = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(compositeReflections));
+        }
         m_parameters = rhi::Buffer(device, device.CreateBuffer(
             {sizeof(BasicPostProcessParameters), rhi::BufferUsage::Uniform, "Deferred probe irradiance parameters"}));
         m_device = &device;
@@ -63,20 +83,35 @@ namespace PlutoGE::render
     void DeferredProbeIrradiance::ReleaseTargets()
     {
         m_reducedIrradiance.Reset();
-        m_reducedWidth = m_reducedHeight = 0;
+        m_reducedSkyVisibility.Reset();
+        m_environmentSpecular.Reset();
+        m_reducedWidth = m_reducedHeight = m_width = m_height = 0;
     }
 
-    void DeferredProbeIrradiance::Record(const Frame &frame)
+    rhi::TextureHandle DeferredProbeIrradiance::Record(const Frame &frame)
     {
         if (!Available() || frame.width == 0 || frame.height == 0)
-            return;
+            return {};
+        const bool reflections = frame.environmentSpecular && ReflectionsAvailable();
         const std::uint32_t reducedWidth = (frame.width + 1) / 2, reducedHeight = (frame.height + 1) / 2;
         if (!m_reducedIrradiance || reducedWidth != m_reducedWidth || reducedHeight != m_reducedHeight)
         {
             m_reducedIrradiance = rhi::Texture(*m_device, m_device->CreateTexture(
                 {reducedWidth, reducedHeight, IrradianceFormat, rhi::TextureUsage::ColorAttachment, "Deferred probe irradiance", true}));
+            m_reducedSkyVisibility.Reset();
             m_reducedWidth = reducedWidth;
             m_reducedHeight = reducedHeight;
+        }
+        if (reflections && !m_reducedSkyVisibility)
+            m_reducedSkyVisibility = rhi::Texture(*m_device, m_device->CreateTexture(
+                {reducedWidth, reducedHeight, SkyVisibilityFormat, rhi::TextureUsage::ColorAttachment, "Deferred probe sky visibility", true}));
+        if (reflections && (!m_environmentSpecular || frame.width != m_width || frame.height != m_height))
+        {
+            m_environmentSpecular = rhi::Texture(*m_device, m_device->CreateTexture(
+                {frame.width, frame.height, EnvironmentSpecularFormat, rhi::TextureUsage::ColorAttachment,
+                 "Deferred probe environment specular", true}));
+            m_width = frame.width;
+            m_height = frame.height;
         }
 
         BasicPostProcessParameters parameters;
@@ -105,33 +140,58 @@ namespace PlutoGE::render
             commands.BeginGpuScope("RHI Deferred probe irradiance / Trace");
             rhi::RenderingInfo info;
             info.colorAttachments = {m_reducedIrradiance.Get()};
+            if (reflections) info.colorAttachments.push_back(m_reducedSkyVisibility.Get());
             info.width = reducedWidth;
             info.height = reducedHeight;
             info.clearDepth = false;
             commands.BeginRendering(info);
-            commands.BindPipeline(m_trace.Get());
+            commands.BindPipeline(reflections ? m_traceReflections.Get() : m_trace.Get());
             bindInputs();
-            // The trace never samples its own target; bind a valid texture to the slot.
+            // The trace never samples its own targets; bind valid textures to their slots.
             commands.BindTexture(ReducedSlot, frame.depth, frame.screenSampler);
+            if (reflections)
+            {
+                commands.BindTexture(ReducedSkyVisibilitySlot, frame.depth, frame.screenSampler);
+                commands.BindTexture(EnvironmentSpecularSlot, frame.environmentSpecular, frame.screenSampler);
+            }
             commands.Draw(3);
             commands.EndRendering();
             commands.EndGpuScope();
+        }
+        if (reflections)
+        {
+            // Zero rgb and alpha, so the composite's blended output stores unchanged.
+            rhi::RenderingInfo info;
+            info.colorAttachments = {m_environmentSpecular.Get()};
+            info.width = frame.width;
+            info.height = frame.height;
+            info.clearDepth = false;
+            info.clearColorValue[3] = 0.0f;
+            commands.BeginRendering(info);
+            commands.EndRendering();
         }
         {
             commands.BeginGpuScope("RHI Deferred probe irradiance / Composite");
             rhi::RenderingInfo info;
             info.colorAttachments = {frame.color, frame.indirect};
+            if (reflections) info.colorAttachments.push_back(m_environmentSpecular.Get());
             info.width = frame.width;
             info.height = frame.height;
             info.clearColor = info.clearDepth = false;
             commands.BeginRendering(info);
-            commands.BindPipeline(m_composite.Get());
+            commands.BindPipeline(reflections ? m_compositeReflections.Get() : m_composite.Get());
             bindInputs();
             commands.BindTexture(ReducedSlot, m_reducedIrradiance.Get(), frame.screenSampler);
+            if (reflections)
+            {
+                commands.BindTexture(ReducedSkyVisibilitySlot, m_reducedSkyVisibility.Get(), frame.screenSampler);
+                commands.BindTexture(EnvironmentSpecularSlot, frame.environmentSpecular, frame.screenSampler);
+            }
             commands.Draw(3);
             commands.EndRendering();
             commands.EndGpuScope();
         }
         commands.EndGpuScope();
+        return reflections ? m_environmentSpecular.Get() : rhi::TextureHandle{};
     }
 }

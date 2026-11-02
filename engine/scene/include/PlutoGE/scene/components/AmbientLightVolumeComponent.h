@@ -5,6 +5,16 @@
 
 namespace PlutoGE::scene
 {
+    // How a volume's bake treats light that arrives straight from the sky.
+    enum class AmbientSkyLighting : std::uint8_t
+    {
+        // Bake sky visibility only; the renderer applies the current physical sky,
+        // so time of day lights the volume without a rebake.
+        Live,
+        // Bake the sky as it was. Environment-map skies are always baked.
+        Baked,
+    };
+
     // Oriented bake bounds follow the owner and its parent transforms.
     // Moving the bounds invalidates the bake; baked radiance belongs to static geometry.
     class AmbientLightVolumeComponent : public TypedComponent<AmbientLightVolumeComponent>
@@ -31,6 +41,15 @@ namespace PlutoGE::scene
         void SetPriority(int priority);
         float GetBlendDistance() const { return m_blendDistance; }
         void SetBlendDistance(float distance);
+        // Takes effect at the next bake.
+        AmbientSkyLighting GetSkyLighting() const { return m_skyLighting; }
+        void SetSkyLighting(AmbientSkyLighting mode) { m_skyLighting = mode; }
+        // 0..1: how strongly the probes' sky visibility darkens reflections of the
+        // sky. Applies without a rebake; bakes without sky visibility ignore it.
+        float GetReflectionOcclusion() const { return m_reflectionOcclusion; }
+        void SetReflectionOcclusion(float strength);
+        // The bake predates sky visibility or was made in the other sky mode.
+        bool SkyLightingNeedsRebake() const;
         bool HasUsableBake() const;
         const BakedProbeVolume &GetBakedVolume() const { return m_baked; }
         void SetBakedVolume(BakedProbeVolume volume);
@@ -44,6 +63,8 @@ namespace PlutoGE::scene
         int m_directions = 128;
         int m_priority = 0;
         float m_blendDistance = 1.0f;
+        float m_reflectionOcclusion = 1.0f;
+        AmbientSkyLighting m_skyLighting = AmbientSkyLighting::Live;
         std::uint64_t m_revision = 0;
         BakedProbeVolume m_baked;
     };

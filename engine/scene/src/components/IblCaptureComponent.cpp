@@ -293,6 +293,7 @@ namespace PlutoGE::scene
             .intensity = m_intensity,
             .blendDistance = m_blendDistance,
             .priority = m_priority,
+            .relightFromAmbient = m_relightFromAmbient,
         };
     }
 
@@ -354,6 +355,7 @@ namespace PlutoGE::scene
             {"Priority", PropertyType::Int, std::to_string(m_priority)},
             {"Resolution", PropertyType::Int, std::to_string(m_resolution)},
             {"Far Plane", PropertyType::Float, std::to_string(m_farPlane)},
+            {"Relight From Ambient Volume", PropertyType::Bool, m_relightFromAmbient ? "true" : "false"},
             {"Dirty", PropertyType::Bool, m_dirty ? "true" : "false"},
         };
     }
@@ -397,6 +399,10 @@ namespace PlutoGE::scene
             else if (property.name == "Far Plane")
             {
                 SetFarPlane(std::stof(property.value));
+            }
+            else if (property.name == "Relight From Ambient Volume")
+            {
+                m_relightFromAmbient = property.value == "true";
             }
             else if (property.name == "Dirty")
             {

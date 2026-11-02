@@ -54,9 +54,15 @@ namespace PlutoGE::scene
         return true;
     }
     void AmbientLightVolumeComponent::SetBakedVolume(BakedProbeVolume volume) {
-        m_baked=std::move(volume); m_baked.blendDistance=m_blendDistance; m_revision=revision.fetch_add(1);
+        m_baked=std::move(volume); m_baked.blendDistance=m_blendDistance; m_baked.reflectionOcclusion=m_reflectionOcclusion;
+        m_revision=revision.fetch_add(1);
     }
-    // Both change the packed volume order or parameters, so they bump the revision.
+    bool AmbientLightVolumeComponent::SkyLightingNeedsRebake() const {
+        // A Live request baked without a physical sky stays baked by design (see AmbientSkyLighting).
+        return m_baked.IsValid() && (!m_baked.HasSkyVisibility() ||
+            (m_skyLighting==AmbientSkyLighting::Baked && m_baked.HasLiveSky()));
+    }
+    // These change the packed volume order or parameters, so they bump the revision.
     void AmbientLightVolumeComponent::SetPriority(int priority) {
         if (priority==m_priority) return;
         m_priority=priority; m_revision=revision.fetch_add(1);
@@ -66,22 +72,32 @@ namespace PlutoGE::scene
         if (distance==m_blendDistance) return;
         m_blendDistance=m_baked.blendDistance=distance; m_revision=revision.fetch_add(1);
     }
+    void AmbientLightVolumeComponent::SetReflectionOcclusion(float strength) {
+        strength=std::isfinite(strength) ? std::clamp(strength,0.0f,1.0f) : 1.0f;
+        if (strength==m_reflectionOcclusion) return;
+        m_reflectionOcclusion=m_baked.reflectionOcclusion=strength; m_revision=revision.fetch_add(1);
+    }
     void AmbientLightVolumeComponent::ClearBake() { SetBakedVolume({}); }
     std::vector<Property> AmbientLightVolumeComponent::SerializeEditableProperties() const {
         std::ostringstream size; size << m_size.x << ',' << m_size.y << ',' << m_size.z;
         return {{"Size",PropertyType::Vec3,size.str()}, {"Probe Spacing",PropertyType::Float,std::to_string(m_spacing)},
             {"Surface Clearance",PropertyType::Float,std::to_string(m_clearance)}, {"Probe Budget",PropertyType::Int,std::to_string(m_budget)},
             {"Direction Count",PropertyType::Int,std::to_string(m_directions)},
-            {"Priority",PropertyType::Int,std::to_string(m_priority)}, {"Blend Distance",PropertyType::Float,std::to_string(m_blendDistance)}};
+            {"Priority",PropertyType::Int,std::to_string(m_priority)}, {"Blend Distance",PropertyType::Float,std::to_string(m_blendDistance)},
+            {"Sky Lighting",PropertyType::Enum,std::to_string(static_cast<int>(m_skyLighting)),{"Live","Baked"}},
+            {"Reflection Occlusion",PropertyType::Float,std::to_string(m_reflectionOcclusion)}};
     }
     std::vector<Property> AmbientLightVolumeComponent::Serialize() const {
         auto properties=SerializeEditableProperties();
         if (!m_baked.IsValid()) return properties;
         std::ostringstream out; out << std::setprecision(std::numeric_limits<float>::max_digits10);
         const bool directional=m_baked.HasDirectionalData(), normals=m_baked.visibilityNormals.size()==m_baked.irradiance.size();
-        out << 2 << ' '; Write(out,m_baked.origin); Write(out,m_baked.size);
+        const bool sky=m_baked.HasSkyVisibility();
+        // Version 3 appends sky visibility and the live sky scale; 1 and 2 remain readable.
+        out << 3 << ' '; Write(out,m_baked.origin); Write(out,m_baked.size);
         for (int axis=0;axis<3;++axis) Write(out,m_baked.gridBasis[axis]);
         out << m_baked.resolution.x << ' ' << m_baked.resolution.y << ' ' << m_baked.resolution.z << ' ' << directional << ' ' << normals << ' ';
+        out << sky << ' ' << (sky ? m_baked.skyIrradianceScale : 0.0f) << ' ';
         for (std::size_t i=0; i<m_baked.irradiance.size(); ++i) {
             Write(out,m_baked.irradiance[i]);
             if (!directional) continue;
@@ -89,6 +105,7 @@ namespace PlutoGE::scene
             for (auto v:m_baked.sphericalHarmonics[i]) Write(out,v);
             for (float d:m_baked.visibility[i]) out << d << ' ';
             if (normals) for (auto n:m_baked.visibilityNormals[i]) Write(out,n);
+            if (sky) { Write(out,glm::vec3(m_baked.skyVisibility[i])); out << m_baked.skyVisibility[i].w << ' '; }
         }
         properties.push_back({"Baked Data",PropertyType::String,out.str()});
         return properties;
@@ -103,23 +120,30 @@ namespace PlutoGE::scene
                 else if (p.name=="Direction Count") m_directions=std::stoi(p.value);
                 else if (p.name=="Priority") SetPriority(std::stoi(p.value));
                 else if (p.name=="Blend Distance") SetBlendDistance(std::stof(p.value));
+                else if (p.name=="Sky Lighting") m_skyLighting=std::stoi(p.value)==1 ? AmbientSkyLighting::Baked : AmbientSkyLighting::Live;
+                else if (p.name=="Reflection Occlusion") SetReflectionOcclusion(std::stof(p.value));
                 else if (p.name=="Baked Data") {
-                    std::istringstream in(p.value); BakedProbeVolume v; int version=0; bool directional=false,normals=false;
+                    std::istringstream in(p.value); BakedProbeVolume v; int version=0; bool directional=false,normals=false,sky=false;
                     in >> version; Read(in,v.origin); Read(in,v.size);
-                    if (version==2) for (int axis=0;axis<3;++axis) Read(in,v.gridBasis[axis]);
+                    if (version>=2) for (int axis=0;axis<3;++axis) Read(in,v.gridBasis[axis]);
                     in >> v.resolution.x >> v.resolution.y >> v.resolution.z >> directional >> normals;
+                    if (version>=3) in >> sky >> v.skyIrradianceScale;
                     const auto r=v.resolution;
-                    if (!in || (version!=1 && version!=2) || glm::any(glm::lessThan(r,glm::ivec3(1))) || glm::any(glm::greaterThan(r,glm::ivec3(128)))) continue;
+                    if (!in || version<1 || version>3 || glm::any(glm::lessThan(r,glm::ivec3(1))) || glm::any(glm::greaterThan(r,glm::ivec3(128)))) continue;
                     const std::size_t count=std::size_t(r.x)*r.y*r.z;
                     if (count>16384) continue;
+                    sky=sky && directional;
+                    if (!sky || !std::isfinite(v.skyIrradianceScale)) v.skyIrradianceScale=0;
                     v.irradiance.resize(count);
                     if (directional) { v.positions.resize(count); v.sphericalHarmonics.resize(count); v.visibility.resize(count); if(normals) v.visibilityNormals.resize(count); }
+                    if (sky) v.skyVisibility.resize(count);
                     for (std::size_t i=0;i<count;++i) {
                         Read(in,v.irradiance[i]); if (!directional) continue;
                         glm::vec3 position; Read(in,position); float valid=0; in >> valid; v.positions[i]=glm::vec4(position,valid);
                         for (auto &sh:v.sphericalHarmonics[i]) Read(in,sh);
                         for (float &d:v.visibility[i]) in >> d;
                         if (normals) for (auto &n:v.visibilityNormals[i]) Read(in,n);
+                        if (sky) { glm::vec3 gradient; Read(in,gradient); float share=0; in >> share; v.skyVisibility[i]=glm::vec4(gradient,share); }
                     }
                     if (in) SetBakedVolume(std::move(v));
                 }

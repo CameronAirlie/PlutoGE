@@ -21,13 +21,25 @@ namespace PlutoGE::scene
         std::vector<std::array<glm::vec3, 9>> sphericalHarmonics;
         std::vector<std::array<float, 64>> visibility; // 8x8 octahedral ray distances
         std::vector<std::array<glm::vec3, 64>> visibilityNormals; // Geometric hit normals; zero for misses
-        // Authoring setting mirrored from the owning component, not bake output:
-        // world distance over which this volume fades into the next one.
+        // Optional sky visibility (render/SkyIrradiance.h): the cosine-weighted share of
+        // the sky a surface facing n sees from each probe, as w + dot(xyz, n). Bakes
+        // before it existed have none and never occlude reflections.
+        std::vector<glm::vec4> skyVisibility;
+        // Non-zero when the bake left the sky out of sphericalHarmonics: the shader
+        // adds skyIrradianceScale * visibility * the current sky's irradiance instead,
+        // so the volume follows time of day. Zero keeps the sky as baked.
+        float skyIrradianceScale = 0.0f;
+        // Authoring settings mirrored from the owning component, not bake output:
+        // world distance over which this volume fades into the next one, and how
+        // strongly its sky visibility occludes reflections of the sky.
         float blendDistance = 1.0f;
+        float reflectionOcclusion = 1.0f;
         bool HasDirectionalData() const {
             return IsValid() && positions.size() == irradiance.size() &&
                 sphericalHarmonics.size() == irradiance.size() && visibility.size() == irradiance.size();
         }
+        bool HasSkyVisibility() const { return HasDirectionalData() && skyVisibility.size() == irradiance.size(); }
+        bool HasLiveSky() const { return HasSkyVisibility() && skyIrradianceScale > 0.0f; }
 
         [[nodiscard]] bool IsValid() const
         {

@@ -191,8 +191,10 @@ namespace PlutoGE::render
             glm::vec4 lightClusterDepth{0.0f};
             std::array<glm::vec4, 32> pointShape{}; // source radius, tube axis times length
             glm::vec4 contactShadowParameters{0.0f}; // each channel's light id, mask present
+            // Live sky for ambient volumes (SkyIrradiance.h): rgb SH coefficients, [0].w 1 when present.
+            std::array<glm::vec4, 9> skyIrradiance{};
         };
-        static_assert(sizeof(BasicFrameParameters) == 6624 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) == 6768 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         struct alignas(16) SelectionOutlineParameters
@@ -1380,7 +1382,9 @@ namespace PlutoGE::render
             if (skinning->Initialize(device, shaders.skinning)) m_gpuSkinning = std::move(skinning);
             auto probeIrradiance = std::make_unique<DeferredProbeIrradiance>();
             if (probeIrradiance->Initialize(device, {shaders.diffuseProbeTrace.vertex, shaders.diffuseProbeTrace.fragment,
-                                                     shaders.diffuseProbeComposite.fragment}))
+                                                     shaders.diffuseProbeComposite.fragment,
+                                                     shaders.diffuseProbeTraceReflections.fragment,
+                                                     shaders.diffuseProbeCompositeReflections.fragment}))
                 m_deferredProbeIrradiance = std::move(probeIrradiance);
             auto backgroundMotion = std::make_unique<BackgroundMotion>();
             if (backgroundMotion->Initialize(device, {shaders.backgroundMotion.vertex, shaders.backgroundMotion.fragment}))
@@ -2297,6 +2301,11 @@ namespace PlutoGE::render
             !HasInput(geometryInputs, BasicPostProcessInput::Normal | BasicPostProcessInput::Material | BasicPostProcessInput::Albedo))
             geometryLayout = HasInput(geometryInputs, BasicPostProcessInput::Motion) ? GeometryOutputLayout::ColorMotion : GeometryOutputLayout::Color;
         if (HasInput(geometryInputs, BasicPostProcessInput::EnvironmentSpecular) && !geometryDebug) geometryLayout = GeometryOutputLayout::SurfaceReflections;
+        // A deferred probe grid also adjusts reflections (BakedEnvironment.slang), which needs the
+        // geometry pass's environment reflection; the forward path applies them itself.
+        if (geometryLayout == GeometryOutputLayout::SurfaceAllIndirect && lighting.diffuseProbeReflections &&
+            m_deferredProbeIrradiance && m_deferredProbeIrradiance->ReflectionsAvailable())
+            geometryLayout = GeometryOutputLayout::SurfaceReflections;
         BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
@@ -2341,8 +2350,15 @@ namespace PlutoGE::render
             frameParameters.iblOriginIntensity[i] = glm::vec4(capture.origin, capture.atlas ? capture.intensity : 0);
             frameParameters.iblSizeBlend[i] = glm::vec4(capture.size, capture.blendDistance);
             frameParameters.iblSettings[i] = glm::vec4(capture.atlas ? 1 : 0, capture.resolution,
-                std::floor(std::log2(std::max(capture.resolution, 1.0f))), 0);
+                std::floor(std::log2(std::max(capture.resolution, 1.0f))), capture.relightFromAmbient ? 1 : 0);
             std::copy(capture.irradiance.begin(), capture.irradiance.end(), frameParameters.iblIrradiance.begin() + i * 9);
+        }
+        // Only a sky the camera renders lights live-sky volumes; otherwise they fall back to flat ambient.
+        if (lighting.physicalSkyEnabled && lighting.skyIrradiance)
+        {
+            for (std::size_t i = 0; i < frameParameters.skyIrradiance.size(); ++i)
+                frameParameters.skyIrradiance[i] = glm::vec4(lighting.skyIrradiance->coefficients[i], 0.0f);
+            frameParameters.skyIrradiance[0].w = 1.0f;
         }
         frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
         frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
@@ -3736,12 +3752,16 @@ namespace PlutoGE::render
             m_timingStats.shadowRecordingMs += recording.JobMilliseconds()[job];
         geometryScope.End();
         // Before decals, which relight from the composed surface colour.
+        // With reflections, it returns the adjusted environment reflection later passes read.
+        rhi::TextureHandle deferredEnvironmentSpecular;
         if (deferProbeIrradiance)
-            m_deferredProbeIrradiance->Record({
+            deferredEnvironmentSpecular = m_deferredProbeIrradiance->Record({
                 .sceneParameters = m_cameraBuffer.Get(),
                 .probeAtlas = lighting.diffuseProbeAtlas, .probeSampler = m_vctVolumeSampler.Get(), .screenSampler = m_screenSampler.Get(),
                 .depth = m_depthTarget.Get(), .normal = m_normalTarget.Get(), .albedo = m_albedoTarget.Get(),
                 .material = m_materialTarget.Get(), .indirect = m_indirectTarget.Get(), .color = m_colorTarget.Get(),
+                .environmentSpecular = lighting.diffuseProbeReflections && geometryLayout == GeometryOutputLayout::SurfaceReflections
+                    ? m_environmentSpecularTarget.Get() : rhi::TextureHandle{},
                 .width = m_width, .height = m_height, .inverseViewProjection = m_inverseViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});
         // Temporal reconstruction reads motion for every pixel, including background.
@@ -4266,7 +4286,8 @@ namespace PlutoGE::render
         // Ambient lighting as the geometry pass left it; DDGI and SSGI replace it in turn and SSAO attenuates the result.
         m_lightingColor = m_outputColor;
         m_lightingIndirect = m_indirectTarget ? m_indirectTarget.Get() : rhi::TextureHandle{};
-        m_lightingEnvironmentSpecular = geometryLayout == GeometryOutputLayout::SurfaceReflections && m_environmentSpecularTarget
+        m_lightingEnvironmentSpecular = deferredEnvironmentSpecular ? deferredEnvironmentSpecular :
+                                        geometryLayout == GeometryOutputLayout::SurfaceReflections && m_environmentSpecularTarget
                                             ? m_environmentSpecularTarget.Get() : rhi::TextureHandle{};
         // DDGI and SSGI also read this frame's albedo and material, which only these layouts write with the indirect term.
         m_ambientRelightingTargets = geometryLayout == GeometryOutputLayout::SurfaceAllIndirect ||

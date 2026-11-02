@@ -73,7 +73,8 @@ from visible lit surfaces; sealed rooms without emissive or local light sources
 remain dark. Sky misses include broad atmospheric radiance; direct
 lighting owns the solar disk. Retained HDR cubemap pixels are also supported as an
 environment source. Geometry and lighting changes require another bake; this is
-baked lighting, not continuously updated GI. The grid currently captures one diffuse
+baked lighting, not continuously updated GI (a **Live** sky is the exception: see
+[BAKED_ENVIRONMENT_LIGHTING.md](BAKED_ENVIRONMENT_LIGHTING.md)). The grid currently captures one diffuse
 bounce, independently of the lightmap bounce-count setting.
 
 With **Automatic Reflection Captures** enabled, baking also places sparse 128px HDR

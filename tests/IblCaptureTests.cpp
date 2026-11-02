@@ -6,6 +6,7 @@
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
+#include "PlutoGE/render/SkyIrradiance.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -353,6 +354,9 @@ int main(int argc, char **argv) try
         for (const auto &coefficient : roomAmbient->GetBakedVolume().sphericalHarmonics[i])
             if (glm::length(coefficient) > .00001f)
                 throw std::runtime_error("Sun or sky leaks into a sealed unlit room");
+        // Nor can a live sky reach it later.
+        if (render::EvaluateSkyVisibility(roomAmbient->GetBakedVolume().skyVisibility[i],{0,1,0}) > .02f)
+            throw std::runtime_error("A sealed room's probes see the sky");
     }
     if (!sealedValid) throw std::runtime_error("Sealed room has no valid probes");
     // Remove the ceiling: the same dynamic sun now reaches the floor and
@@ -473,13 +477,56 @@ int main(int argc, char **argv) try
     auto skyEntity = std::make_unique<scene::Entity>();
     skyEntity->AddComponent(new scene::PhysicalSkyComponent());
     outdoor.AddEntity(std::move(skyEntity));
+    // A live sky (the default) stays out of the SH: the probes store how much sky
+    // they see, and the renderer multiplies that by the current sky.
+    const auto liveResult = scene::SceneBaker().Bake(outdoor,settings);
+    const auto live = outdoor.GetBakedProbeVolume();
+    if (!liveResult.succeeded || !live.HasLiveSky() || std::abs(live.skyIrradianceScale - settings.probeBounceStrength*3.14159265f) > 1e-4f)
+        throw std::runtime_error("A live-sky bake did not store sky visibility and its irradiance scale");
+    // The volume fits the floor, so probes lie on both sides of it; it is finite, so
+    // those beside it see sky in every direction. Each sees the open side completely.
+    const float floorY = meshes[6]->GetBounds().center.y;
+    bool floorBlocksSky = false;
+    for (std::size_t i=0;i<live.positions.size();++i) {
+        if (live.positions[i].w < .5f) continue;
+        if (glm::length(live.sphericalHarmonics[i][0]) > 1e-5f)
+            throw std::runtime_error("A live-sky bake kept sky radiance in an unlit outdoor probe");
+        const float y = live.positions[i].y;
+        const float up = render::EvaluateSkyVisibility(live.skyVisibility[i],{0,1,0});
+        const float down = render::EvaluateSkyVisibility(live.skyVisibility[i],{0,-1,0});
+        if ((y > floorY && up < .9f) || (y < floorY && down < .9f))
+            throw std::runtime_error("Probe sky visibility does not see the open side of a floor");
+        floorBlocksSky = floorBlocksSky || std::abs(up - down) > .4f;
+    }
+    if (!floorBlocksSky) throw std::runtime_error("Probe sky visibility ignores the floor");
+    // Baked, the same probes keep the sky; facing up (all of it visible), the live
+    // reconstruction from visibility and the projected sky must match.
+    auto *skyVolume=outdoor.GetAmbientLightVolumes().front();
+    skyVolume->SetSkyLighting(scene::AmbientSkyLighting::Baked);
+    if (!skyVolume->SkyLightingNeedsRebake()) throw std::runtime_error("Changing the sky mode does not ask for a rebake");
     const auto skyResult = scene::SceneBaker().Bake(outdoor,settings);
+    const auto &baked = outdoor.GetBakedProbeVolume();
+    if (!skyResult.succeeded || baked.HasLiveSky() || !baked.HasSkyVisibility() || skyVolume->SkyLightingNeedsRebake())
+        throw std::runtime_error("A baked-sky bake did not keep sky visibility for reflections");
+    const auto skySettings = outdoor.GetPhysicalSkyComponents().front()->GetSettings();
+    const auto skyIrradiance = render::ProjectPhysicalSkyIrradiance(skySettings,
+        render::ResolveCelestialState(skySettings, glm::normalize(glm::vec3(-.4f,.8f,-.3f))));
     float skyLight = 0;
-    for (const auto &sh : outdoor.GetBakedProbeVolume().sphericalHarmonics) skyLight += glm::length(sh[0]);
-    if (!skyResult.succeeded || skyLight <= 0) throw std::runtime_error("Unoccluded diffuse probes discard physical sky radiance");
+    for (std::size_t i=0;i<baked.positions.size();++i) {
+        if (baked.positions[i].w < .5f) continue;
+        skyLight += glm::length(baked.sphericalHarmonics[i][0]);
+        if (baked.positions[i].y < floorY) continue; // Facing up, these see the floor.
+        // The SH basis at n = +Y: only the constant, y, 3z^2-1 and x^2-y^2 terms remain.
+        const auto &sh = baked.sphericalHarmonics[i];
+        const float bakedUp = sh[0].g*.282095f + sh[1].g*.488603f - sh[6].g*.315392f - sh[8].g*.546274f;
+        const float liveUp = live.skyIrradianceScale * render::EvaluateSkyVisibility(live.skyVisibility[i],{0,1,0}) *
+            skyIrradiance.Evaluate({0,1,0}).g;
+        if (std::abs(bakedUp-liveUp) > .1f*std::max(bakedUp,.001f))
+            throw std::runtime_error("Live sky does not reproduce the baked sky: " + std::to_string(liveUp) + " vs " + std::to_string(bakedUp));
+    }
+    if (skyLight <= 0) throw std::runtime_error("Unoccluded diffuse probes discard physical sky radiance");
     // A per-volume direction override must sample exactly the same sky as
     // the equivalent global setting, rather than reusing another quadrature.
-    auto *skyVolume=outdoor.GetAmbientLightVolumes().front();
     skyVolume->Configure(1,.02f,64,128);
     auto overridden=settings; overridden.probeDirectionCount=64;
     if (!scene::SceneBaker().Bake(outdoor,overridden).succeeded)
@@ -537,6 +584,8 @@ int main(int argc, char **argv) try
     if (glm::length(sphereFrame()-background) > .02f) throw std::runtime_error("Disabled probe spheres remain in the viewport");
     scene::IblCaptureComponent previewCapture;
     previewCapture.SetResolution(32);
+    // Shown raw: relighting from the green preview grid would scale this blue capture.
+    previewCapture.SetRelightFromAmbient(false);
     std::vector<float> blueFaces(32*32*24,0);
     for (std::size_t i=0; i<blueFaces.size(); i+=4) {
         blueFaces[i+2]=(i/(32*32*4)==4) ? 0.8f : 0.0f; blueFaces[i+3]=1;

@@ -6,6 +6,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/SkyIrradiance.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -385,6 +386,8 @@ namespace PlutoGE::scene
             bool gpuBakeActive = false;
             bool gpuGiActive = false;
             bool shouldStoreProbeVolume = false;
+            // The probe environment is a physical sky, which the renderer can re-evaluate live.
+            bool physicalSkyEnvironment = false;
         };
 
         struct CompletedBakeLightmap
@@ -3335,6 +3338,12 @@ namespace PlutoGE::scene
             probeVolume.sphericalHarmonics.resize(probeCount);
             probeVolume.visibility.resize(probeCount);
             probeVolume.visibilityNormals.resize(probeCount);
+            probeVolume.skyVisibility.assign(probeCount, glm::vec4(0.0f));
+            // A live sky leaves sky radiance out of the SH; the renderer adds the current
+            // sky times the baked visibility (render/SkyIrradiance.h). The scale converts
+            // mean radiance back to the irradiance these SH hold, bounce strength included.
+            const bool liveSky = settings.probeLiveSky;
+            probeVolume.skyIrradianceScale = liveSky ? settings.probeBounceStrength * 3.14159265f : 0.0f;
             const float clearance = std::clamp(settings.probeSurfaceClearance, 0.001f, std::min(.05f, spacing * 0.1f));
             const float maxRay = glm::length(probeVolume.size);
 
@@ -3419,6 +3428,7 @@ namespace PlutoGE::scene
                 std::size_t dominantTriangle=0; float dominantEnergy=0;
                 glm::vec3 dominantHit(0);
                 int escapeRays=0;
+                render::SkyVisibilityAccumulator skyVisibility;
                 float totalWeight = 0.0f;
                 std::size_t directionIndex = 0;
                 const auto accumulateSh = [&](glm::vec3 radiance, glm::vec3 direction) {
@@ -3439,11 +3449,13 @@ namespace PlutoGE::scene
                     const glm::vec3 environmentRadiance = directionIndex < environment.size() ? environment[directionIndex] : glm::vec3(0);
                     ++directionIndex;
                     const auto hit = TraceScene(probePosition, direction, std::numeric_limits<float>::max(), triangles, acceleration, &textureCache);
+                    skyVisibility.Add(direction, !hit.has_value());
                     if (!hit.has_value()) {
                         if (settings.logProbeDiagnostics) { environmentSum+=environmentRadiance*3.14159265f; ++escapeRays; }
+                        totalWeight += 1;
+                        if (liveSky) continue;
                         accumulateSh(environmentRadiance * 3.14159265f, direction);
                         accumulatedIrradiance += environmentRadiance * 3.14159265f * settings.probeBounceStrength;
-                        totalWeight += 1;
                         continue;
                     }
 
@@ -3483,6 +3495,7 @@ namespace PlutoGE::scene
                 {
                     probeVolume.irradiance[flatten(x, y, z)] = accumulatedIrradiance / totalWeight;
                 }
+                probeVolume.skyVisibility[probeIndex] = skyVisibility.Result();
                 if (settings.logProbeDiagnostics) {
                     const auto luminance=[](glm::vec3 value){ return glm::dot(value,glm::vec3(.2126f,.7152f,.0722f)); };
                     const auto factor=settings.probeBounceStrength/static_cast<float>(probeDirections.size());
@@ -3521,6 +3534,8 @@ namespace PlutoGE::scene
                 const PhysicalSkyComponent *sky = nullptr;
                 for (const auto *candidate : scene.GetPhysicalSkyComponents())
                     if (candidate && candidate->IsEnabled() && candidate->GetOwner() && candidate->GetOwner()->IsActive()) { sky = candidate; break; }
+                preparedBake.physicalSkyEnvironment = sky != nullptr;
+                preparedBake.settings.probeLiveSky = settings.probeLiveSky && sky != nullptr;
                 glm::vec3 sun = glm::normalize(glm::vec3(-0.4f,0.8f,-0.3f));
                 float brightest = -1;
                 for (const auto &light : SnapshotStaticLights(scene, true))
@@ -3633,6 +3648,7 @@ namespace PlutoGE::scene
                 local.probeVolumeOrigin=layout.origin; local.probeVolumeSize=layout.size; local.probeGridBasis=layout.gridBasis;
                 local.probeSpacing=volume->GetProbeSpacing(); local.probeSurfaceClearance=volume->GetSurfaceClearance();
                 local.maxProbeCount=volume->GetProbeBudget(); local.probeDirectionCount=volume->GetDirectionCount();
+                local.probeLiveSky=volume->GetSkyLighting()==AmbientSkyLighting::Live && preparedBake.physicalSkyEnvironment;
                 preparedBake.probeRequests.push_back({volume->GetOwner()->GetID(),local});
             }
             const bool hasComponents=!scene.GetAmbientLightVolumes().empty();

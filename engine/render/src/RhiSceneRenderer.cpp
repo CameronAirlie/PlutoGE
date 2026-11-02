@@ -51,6 +51,14 @@ namespace PlutoGE::render
     {
         std::atomic_uint64_t g_nextUpscalerContextId{1};
 
+        // An ambient volume's live sky scale and reflection occlusion strength, as
+        // AmbientProbeSampling.slang reads them (AmbientProbeVolumeParameters).
+        glm::vec2 AmbientVolumeSky(const scene::BakedProbeVolume &volume)
+        {
+            return {volume.HasLiveSky() ? volume.skyIrradianceScale : 0.0f,
+                    volume.HasSkyVisibility() ? std::clamp(volume.reflectionOcclusion, 0.0f, 1.0f) : 0.0f};
+        }
+
         // DDGI's lighting and reflection views replace the image; its probe view draws over the scene.
         bool IsDdgiTerminalView(const BasicPostProcessEffect &effect)
         {
@@ -1297,6 +1305,7 @@ namespace PlutoGE::render
             effectiveLighting.diffuseProbeAtlas = {};
             effectiveLighting.diffuseProbeHitPointRow = effectiveLighting.diffuseProbeSummaryRow = 0;
             effectiveLighting.diffuseProbeVolumesPrepared = false;
+            effectiveLighting.diffuseProbeReflections = false;
         }
         // One scene walk: HasBakedProbeVolume() would collect the same volumes again.
         auto volumes = scene && effectiveLighting.localIblEnabled
@@ -1327,13 +1336,20 @@ namespace PlutoGE::render
                     at(v,2)=glm::vec4(glm::vec3(volume.resolution),static_cast<float>(base));
                     const auto inverseBasis=glm::inverse(volume.gridBasis);
                     for (int axis=0;axis<3;++axis) at(v,3+axis)=glm::vec4(inverseBasis[0][axis],inverseBasis[1][axis],inverseBasis[2][axis],0);
+                    const auto sky=AmbientVolumeSky(volume);
+                    at(v,3).w=sky.x; at(v,4).w=sky.y;
                     const bool directional=volume.HasDirectionalData();
                     const bool normals=directional && volume.visibilityNormals.size()==volume.irradiance.size();
+                    const bool skyVisibility=volume.HasSkyVisibility();
                     for (std::size_t i=0;i<volume.irradiance.size();++i) {
                         const int x=static_cast<int>(i%volume.resolution.x), y=static_cast<int>(i/volume.resolution.x%volume.resolution.y), z=static_cast<int>(i/(volume.resolution.x*volume.resolution.y));
                         at(base+i,0)=directional ? volume.positions[i] : glm::vec4(volume.GridToWorld((glm::vec3(x,y,z)+.5f)/glm::vec3(volume.resolution)),1);
                         for (int c=0;c<9;++c) at(base+i,1+c)=glm::vec4(directional ? volume.sphericalHarmonics[i][c] : c==0 ? volume.irradiance[i]/.282095f : glm::vec3(0),0);
                         at(base+i,1).w=normals ? 1.0f : 0.0f;
+                        // Sky visibility in the spare .w of SH rows 2-5 (AmbientProbeSampling.slang
+                        // evaluateProbeLighting): share, then gradient. Without it: fully open.
+                        const glm::vec4 visible=skyVisibility ? volume.skyVisibility[i] : glm::vec4(0,0,0,1);
+                        at(base+i,2).w=visible.w; at(base+i,3).w=visible.x; at(base+i,4).w=visible.y; at(base+i,5).w=visible.z;
                         for (int t=0;t<PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS;++t)
                         {
                             const float depth = directional ? volume.visibility[i][t] : glm::length(volume.size);
@@ -1395,6 +1411,10 @@ namespace PlutoGE::render
                 const auto inverseBasis = glm::inverse(volume.gridBasis);
                 for (int axis = 0; axis < 3; ++axis)
                     parameters.worldToGridRows[axis] = glm::vec4(inverseBasis[0][axis], inverseBasis[1][axis], inverseBasis[2][axis], 0);
+                const auto sky = AmbientVolumeSky(volume);
+                parameters.worldToGridRows[0].w = sky.x;
+                parameters.worldToGridRows[1].w = sky.y;
+                effectiveLighting.diffuseProbeReflections = effectiveLighting.diffuseProbeReflections || sky.y > 0.0f;
                 base += volume.irradiance.size();
             }
         }
@@ -1481,7 +1501,10 @@ namespace PlutoGE::render
                 unsigned atlasResolution = 1;
                 while (atlasResolution < static_cast<unsigned>(resolution)) atlasResolution *= 2;
                 effectiveLighting.iblCaptures[index++] = {cached.atlas.Get(), capture.origin, capture.size,
-                    capture.intensity, capture.blendDistance, static_cast<float>(atlasResolution), cached.irradiance};
+                    capture.intensity, capture.blendDistance, static_cast<float>(atlasResolution), cached.irradiance,
+                    capture.relightFromAmbient};
+                effectiveLighting.diffuseProbeReflections = effectiveLighting.diffuseProbeReflections ||
+                    (capture.relightFromAmbient && !volumes.empty());
             }
         }
         // Camera-relative lighting consumers (surface cascade selection,

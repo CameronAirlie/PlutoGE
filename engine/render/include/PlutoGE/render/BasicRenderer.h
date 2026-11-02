@@ -10,6 +10,7 @@
 #include "PlutoGE/render/TerrainLayerLimits.h"
 #include "PlutoGE/render/OceanParameters.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
+#include "PlutoGE/render/SkyIrradiance.h"
 
 #include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/VctRelighting.h"
@@ -349,6 +350,8 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage contactShadows;
         // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
         BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
+        // Optional: the resolve that also applies baked reflection terms (DiffuseProbeResolve.slang).
+        BasicPostProcessShaderPackage diffuseProbeTraceReflections, diffuseProbeCompositeReflections;
         // Temporal reconstruction inputs/outputs: background camera motion and upscaler sharpening.
         BasicPostProcessShaderPackage backgroundMotion, upscalerSharpening;
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 5> vctCompute;
@@ -601,11 +604,15 @@ namespace PlutoGE::render
         glm::vec3 origin{0}, size{1};
         float intensity = 0, blendDistance = 0, resolution = 1;
         std::array<glm::vec4, 9> irradiance{};
+        // Scale reflections by the ambient volume's irradiance relative to the capture's own.
+        bool relightFromAmbient = false;
     };
 
     struct alignas(16) AmbientProbeVolumeParameters
     {
         glm::vec4 origin{}, size{}, resolutionBase{};
+        // xyz world-to-grid rows. w: [0] live sky scale (BakedProbeVolume::skyIrradianceScale),
+        // [1] reflection occlusion strength (0 without sky visibility), [2] unused.
         std::array<glm::vec4, 3> worldToGridRows{};
     };
     static_assert(sizeof(AmbientProbeVolumeParameters) == 96);
@@ -634,12 +641,18 @@ namespace PlutoGE::render
         int diffuseProbeHitPointRow = 0, diffuseProbeSummaryRow = 0;
         // Prepared atlases provide typed volume descriptors.
         bool diffuseProbeVolumesPrepared = false;
+        // A volume occludes sky reflections or a capture relights from volumes
+        // (BakedEnvironment.slang); a deferred grid then needs the reflection target.
+        bool diffuseProbeReflections = false;
         // Directional environment used by the RHI PBR path. Physical sky
         // parameters share the layout used by the sky post-process pass so
         // the background and surface lighting cannot drift apart.
         bool physicalSkyEnabled = false;
         float physicalSkyExposure = 1.0f;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
+        // The physical sky's current irradiance, for ambient volumes baked with a live sky
+        // (SkyIrradiance.h). Unset without a physical sky: such volumes fall back to flat ambient.
+        std::optional<SkyIrradianceSH> skyIrradiance;
         // A physical sky may hand the directional light to the moon at night.
         // Atmosphere passes still need the sun: zero means the directional
         // light is the sun, so sunDirection is -directionalDirection.

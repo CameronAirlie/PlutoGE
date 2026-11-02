@@ -29,6 +29,9 @@ namespace PlutoGE::scene
         int indirectBounceCount = 2;
         int indirectDenoisePassCount = 2;
         bool bakeProbeVolume = true;
+        // Leave direct sky light out of probe SH and store sky visibility instead, so the
+        // renderer applies the current physical sky. Ignored without a physical sky.
+        bool probeLiveSky = true;
         bool probesOnly = false;
         bool logProbeDiagnostics = false; // Read-only source attribution for bake troubleshooting.
         bool bakeIndirectBounce = true;

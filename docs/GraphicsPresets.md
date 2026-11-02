@@ -19,6 +19,10 @@ Engine defaults retain scene-authored quality. Presets survive scene loads witho
 
 High/Ultra retain authored virtual-shadow budgets. Local shadows, texture residency, particles and mesh LOD are unchanged. Tone mapping, grading, exposure, sky and antialiasing are preserved. Low tiers trade indirect lighting and atmospheric fidelity for reduced GPU work; representative low-end hardware still needs benchmarking.
 
+Baked ambient volumes and reflection captures are not effects, so every tier keeps them, including their live sky,
+sky reflection occlusion and capture relighting. Low therefore still has ambient light, reflections and occlusion
+([BAKED_ENVIRONMENT_LIGHTING.md](BAKED_ENVIRONMENT_LIGHTING.md)).
+
 ## Scripting
 
 ```csharp

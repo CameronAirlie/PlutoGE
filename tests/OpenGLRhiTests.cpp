@@ -365,6 +365,19 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string_view(argv[1]) == "--ibl-only")
         {
             CheckIblRendering(device, shaders);
+            // The deferred probe resolve is exercised only here; other checks keep the forward path.
+            auto resolveShaders = shaders;
+            for (auto [package, name] : {std::pair{&resolveShaders.diffuseProbeTrace, "DiffuseProbeTrace"},
+                                         std::pair{&resolveShaders.diffuseProbeComposite, "DiffuseProbeComposite"},
+                                         std::pair{&resolveShaders.diffuseProbeTraceReflections, "DiffuseProbeTraceReflections"},
+                                         std::pair{&resolveShaders.diffuseProbeCompositeReflections, "DiffuseProbeCompositeReflections"}})
+                *package = {{.glsl = ReadText((std::string(name) + ".vertex.glsl").c_str())},
+                            {.glsl = ReadText((std::string(name) + ".fragment.glsl").c_str())}};
+            CheckBakedEnvironmentRendering(device, resolveShaders, [&](render::rhi::TextureHandle texture) {
+                std::vector<unsigned char> pixels(32 * 32 * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels[(16 * 32 + 16) * 4 + 3] / 255.0f; });
             return 0;
         }
         if (argc > 1 && (std::string_view(argv[1]) == "--transparency-only" ||

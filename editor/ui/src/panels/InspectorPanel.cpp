@@ -2798,6 +2798,14 @@ namespace PlutoGE::ui
                                 ImGui::Text("Baked spacing X/Y/Z: %.3f / %.3f / %.3f",cell.x,cell.y,cell.z);
                                 if ((std::max)({cell.x,cell.y,cell.z})>volume->GetProbeSpacing()*1.1f)
                                     ImGui::TextWrapped("The probe budget or axis limit increased spacing. Use a higher budget or a smaller volume for more detail.");
+                                if (volume->SkyLightingNeedsRebake())
+                                    ImGui::TextWrapped("Sky: rebake to apply the Sky Lighting mode and reflection occlusion.");
+                                else if (baked.HasLiveSky())
+                                    ImGui::TextWrapped("Sky: live. The volume follows the current sky and time of day.");
+                                else if (volume->GetSkyLighting()==scene::AmbientSkyLighting::Live)
+                                    ImGui::TextWrapped("Sky: baked. Live sky needs an active Physical Sky when baking.");
+                                else
+                                    ImGui::TextWrapped("Sky: baked as it was when baking.");
                             }
                             ImGui::TextWrapped("Use a smaller volume and spacing for stairs and narrow passages. Moving or resizing the volume requires rebaking.");
                             if (ImGui::Button("Bake Volume")) editorShell.RequestAmbientBake(entity->GetID());

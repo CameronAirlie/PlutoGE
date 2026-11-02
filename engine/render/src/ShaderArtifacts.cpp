@@ -160,6 +160,8 @@ namespace PlutoGE::render
         result.contactShadows = {Load("ContactShadows", "vertex"), Load("ContactShadows", "fragment")};
         result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};
         result.diffuseProbeComposite = {Load("DiffuseProbeComposite", "vertex"), Load("DiffuseProbeComposite", "fragment")};
+        result.diffuseProbeTraceReflections = {Load("DiffuseProbeTraceReflections", "vertex"), Load("DiffuseProbeTraceReflections", "fragment")};
+        result.diffuseProbeCompositeReflections = {Load("DiffuseProbeCompositeReflections", "vertex"), Load("DiffuseProbeCompositeReflections", "fragment")};
         result.backgroundMotion = {Load("BackgroundMotion", "vertex"), Load("BackgroundMotion", "fragment")};
         result.upscalerSharpening = {Load("UpscalerSharpening", "vertex"), Load("UpscalerSharpening", "fragment")};
         result.occlusion = {Load("OcclusionDepth", "vertex"), Load("OcclusionDepth", "fragment"),

@@ -63,6 +63,8 @@ namespace PlutoGE::render
         float latitude = 40.0f;     // Elevation of the celestial pole above north.
         float northAzimuth = 0.0f;  // World heading of north, from -Z toward +X.
         float starRotation = 0.0f;  // Sidereal offset of the stars from the sun (season).
+
+        bool operator==(const PhysicalSkySettings &) const = default;
     };
 
     // Positions and brightness of the celestial bodies for one sun direction.

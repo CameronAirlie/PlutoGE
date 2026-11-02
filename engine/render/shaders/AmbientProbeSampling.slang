@@ -143,20 +143,78 @@ float probeVisibility(int index, float3 direction, float receiverDistance, float
     return receiverDistance <= visibleDistance + bias ? 1 : 0;
 }
 
+// Sky visibility (render/SkyIrradiance.h) as a linear function of direction:
+// the cosine-weighted share of the sky a surface facing `direction` sees.
+float evaluateSkyVisibility(float4 visibility, float3 direction)
+{
+    return saturate(visibility.w + dot(visibility.xyz, direction));
+}
+
+struct ProbeLighting
+{
+    float3 irradiance;
+    float4 skyVisibility; // xyz gradient, w share (evaluateSkyVisibility)
+};
+
 // Explicit fixed addresses avoid dynamically indexing a per-fragment SH array.
 // Retain the reference's accumulation order and all nine directional terms.
-float3 evaluateProbeIrradiance(int index, float3 normal)
+// Sky visibility rides in the .w of SH rows 2-5 (RhiSceneRenderer packs it), so
+// it costs no extra loads: share, then the x, y and z gradient.
+ProbeLighting evaluateProbeLighting(int index, float3 normal)
 {
-    float3 light = probeTexel(index, 1).rgb * 0.282095;
-    light += probeTexel(index, 2).rgb * (0.488603 * normal.y);
-    light += probeTexel(index, 3).rgb * (0.488603 * normal.z);
-    light += probeTexel(index, 4).rgb * (0.488603 * normal.x);
-    light += probeTexel(index, 5).rgb * (1.092548 * normal.x * normal.y);
+    const float4 c0 = probeTexel(index, 1), c1 = probeTexel(index, 2), c2 = probeTexel(index, 3), c3 = probeTexel(index, 4);
+    float3 light = c0.rgb * 0.282095;
+    light += c1.rgb * (0.488603 * normal.y);
+    light += c2.rgb * (0.488603 * normal.z);
+    light += c3.rgb * (0.488603 * normal.x);
+    const float4 c4 = probeTexel(index, 5);
+    light += c4.rgb * (1.092548 * normal.x * normal.y);
     light += probeTexel(index, 6).rgb * (1.092548 * normal.y * normal.z);
     light += probeTexel(index, 7).rgb * (0.315392 * (3 * normal.z * normal.z - 1));
     light += probeTexel(index, 8).rgb * (1.092548 * normal.x * normal.z);
     light += probeTexel(index, 9).rgb * (0.546274 * (normal.x * normal.x - normal.y * normal.y));
-    return light;
+    ProbeLighting result;
+    result.irradiance = light;
+    result.skyVisibility = float4(c2.w, c3.w, c4.w, c1.w);
+    return result;
+}
+
+float3 evaluateProbeIrradiance(int index, float3 normal) { return evaluateProbeLighting(index, normal).irradiance; }
+
+// The current sky's cosine-weighted mean radiance (SkyIrradiance.h), for volumes
+// baked with a live sky. Without a physical sky this is the flat ambient radiance.
+float3 liveSkyRadiance(float3 n)
+{
+    if (skyIrradiance[0].w < 0.5) return float3(cameraPositionAmbient.w);
+    float3 radiance = skyIrradiance[0].rgb * 0.282095;
+    radiance += skyIrradiance[1].rgb * (0.488603 * n.y);
+    radiance += skyIrradiance[2].rgb * (0.488603 * n.z);
+    radiance += skyIrradiance[3].rgb * (0.488603 * n.x);
+    radiance += skyIrradiance[4].rgb * (1.092548 * n.x * n.y);
+    radiance += skyIrradiance[5].rgb * (1.092548 * n.y * n.z);
+    radiance += skyIrradiance[6].rgb * (0.315392 * (3 * n.z * n.z - 1));
+    radiance += skyIrradiance[7].rgb * (1.092548 * n.x * n.z);
+    radiance += skyIrradiance[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
+    return max(radiance, 0.0) * physicalSkySettings.z;
+}
+
+// One volume's lighting at a receiver, or several volumes' composited.
+struct DiffuseGridSample
+{
+    float3 irradiance;    // Including the live sky.
+    // Interpolated sky visibility, already weakened by each volume's reflection
+    // occlusion strength: evaluate it along a reflection to occlude the sky there.
+    float4 skyVisibility;
+    float coverage;       // 0 outside every volume.
+};
+
+DiffuseGridSample emptyDiffuseGridSample()
+{
+    DiffuseGridSample sample;
+    sample.irradiance = float3(0);
+    sample.skyVisibility = float4(0, 0, 0, 1);
+    sample.coverage = 0;
+    return sample;
 }
 
 // Eight cell neighbours, visibility rejection, normal weighting and normalized
@@ -164,14 +222,16 @@ float3 evaluateProbeIrradiance(int index, float3 normal)
 // positionError is the receiver's reconstruction uncertainty (0 for exact
 // rasterized positions); depth-reconstructed receivers far from the camera
 // need a matching bias or entire visibility texels read as occluded.
-float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal, float3 uvw, float3 size, float3 res, int base, bool preparedNormals, float positionError)
+// sky: the volume's live sky scale and reflection occlusion strength (volumeSky).
+DiffuseGridSample sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal, float3 uvw, float3 size, float3 res, int base, bool preparedNormals, float positionError, float2 sky)
 {
-    if (any(uvw < 0) || any(uvw > 1)) return float4(0);
+    if (any(uvw < 0) || any(uvw > 1)) return emptyDiffuseGridSample();
     const int3 resolution = int3(res);
     const float3 grid = uvw * res - 0.5;
     const int3 cell = int3(floor(grid));
     const float3 fraction = frac(grid);
     float3 irradiance = float3(0);
+    float4 skyVisibility = float4(0);
     float sum = 0;
     const float spacing = min(size.x/res.x, min(size.y/res.y, size.z/res.z));
     const float bias = max(min(0.002, spacing * 0.01), min(positionError, spacing * 0.25));
@@ -193,18 +253,34 @@ float4 sampleDiffuseVolume(float3 position, float3 normal, float3 receiverNormal
         if (visibility <= 0) continue;
         const float3 w = lerp(1-fraction, fraction, float3(x,y,z));
         const float weight = w.x*w.y*w.z * max(0.05, dot(receiverNormal, -direction)) * visibility;
-        const float3 light = evaluateProbeIrradiance(index, normal);
-        irradiance += max(light,0.0) * weight;
+        const ProbeLighting light = evaluateProbeLighting(index, normal);
+        irradiance += max(light.irradiance,0.0) * weight;
+        skyVisibility += light.skyVisibility * weight;
         sum += weight;
     }
     // Within the baked volume, missing visibility means darkness, not fallback
     // sky lighting, which would otherwise reintroduce leaks through solid walls.
-    return float4(irradiance / max(sum,0.00001), 1);
+    DiffuseGridSample sample;
+    sample.irradiance = irradiance / max(sum,0.00001);
+    skyVisibility /= max(sum,0.00001);
+    // Visibility is linear in its coefficients, so interpolating them interpolates
+    // it in every direction; the live sky factorises as visibility * irradiance.
+    if (sky.x > 0.0) sample.irradiance += sky.x * evaluateSkyVisibility(skyVisibility, normal) * liveSkyRadiance(normal);
+    sample.skyVisibility = lerp(float4(0, 0, 0, 1), skyVisibility, sky.y);
+    sample.coverage = 1;
+    return sample;
 }
 
 float4 volumeOrigin(int index) { return probeAtlasParameters.y > 0.5 ? probeVolumes[index].origin : probeTexel(index, 0); }
 float4 volumeSize(int index) { return probeAtlasParameters.y > 0.5 ? probeVolumes[index].size : probeTexel(index, 1); }
 float4 volumeResolution(int index) { return probeAtlasParameters.y > 0.5 ? probeVolumes[index].resolutionBase : probeTexel(index, 2); }
+// Live sky scale and reflection occlusion strength (AmbientProbeVolumeParameters).
+float2 volumeSky(int index)
+{
+    return probeAtlasParameters.y > 0.5
+        ? float2(probeVolumes[index].worldToGridRows[0].w, probeVolumes[index].worldToGridRows[1].w)
+        : float2(probeTexel(index, 3).w, probeTexel(index, 4).w);
+}
 
 float3 diffuseVolumeCoordinates(int index, float3 position)
 {
@@ -236,27 +312,34 @@ float diffuseVolumeEdgeWeight(int index, float3 uvw)
     return blend > 0 ? saturate(distance / blend) : 1;
 }
 
-float4 sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
+DiffuseGridSample sampleDiffuseVolumeAt(int volume, float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
 {
-    if (volume<0) return float4(0);
+    if (volume<0) return emptyDiffuseGridSample();
     const float4 resolution = volumeResolution(volume);
     return sampleDiffuseVolume(position,normal,receiverNormal,diffuseVolumeCoordinates(volume,position),
-        volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5, positionError);
+        volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5, positionError, volumeSky(volume));
 }
 
 // Composites overlapping volumes front to back: each claims only the coverage
 // earlier ones left. The result is normalized, so the outermost face of the
 // combined volumes stays a hard boundary, as with a single volume.
-float4 sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
+DiffuseGridSample sampleDiffuseGrid(float3 position, float3 normal, float3 receiverNormal, float positionError = 0.0)
 {
-    float3 irradiance = float3(0);
+    DiffuseGridSample result = emptyDiffuseGridSample();
+    result.skyVisibility = float4(0);
     float coverage = 0;
     for (int i=0; i<int(probeOrigin.w) && coverage<0.999; ++i) {
         const float3 uvw = diffuseVolumeCoordinates(i,position);
         if (any(uvw<0) || any(uvw>1)) continue;
         const float weight = max(diffuseVolumeEdgeWeight(i,uvw), 0.0001) * (1-coverage);
-        irradiance += sampleDiffuseVolumeAt(i,position,normal,receiverNormal,positionError).rgb * weight;
+        const DiffuseGridSample volume = sampleDiffuseVolumeAt(i,position,normal,receiverNormal,positionError);
+        result.irradiance += volume.irradiance * weight;
+        result.skyVisibility += volume.skyVisibility * weight;
         coverage += weight;
     }
-    return coverage > 0 ? float4(irradiance / coverage, 1) : float4(0);
+    if (coverage <= 0) return emptyDiffuseGridSample();
+    result.irradiance /= coverage;
+    result.skyVisibility /= coverage;
+    result.coverage = 1;
+    return result;
 }

@@ -34,6 +34,7 @@ add_library(PlutoGERender
     src/GeometryArena.cpp
     src/SceneEnvironment.cpp
     src/PhysicalSkyModel.cpp
+    src/SkyIrradiance.cpp
     src/RhiRenderService.cpp
     src/LoadingScreenRenderer.cpp
     src/RmlLoadingDocument.cpp
@@ -162,6 +163,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^DiffuseProbe")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BakedEnvironment.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
         endif()
@@ -174,6 +176,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BindlessMaterials.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BakedEnvironment.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceBrdf.slang"
@@ -375,6 +378,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(ContactShadows "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ContactShadows.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(DiffuseProbeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceMain)
     pluto_add_slang_graphics_shader(DiffuseProbeComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain compositeMain)
+    pluto_add_slang_graphics_shader(DiffuseProbeTraceReflections "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceReflectionsMain)
+    pluto_add_slang_graphics_shader(DiffuseProbeCompositeReflections "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain compositeReflectionsMain)
     pluto_add_slang_compute_shader(ScreenSpaceGuide "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuide.slang" buildMain)
     pluto_add_slang_compute_shader(ScreenSpaceGuideHierarchy "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideHierarchy.slang" buildMain)
     pluto_add_slang_graphics_shader(BasicLitIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang" vertexMain indirectMain)

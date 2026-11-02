@@ -67,6 +67,10 @@ Other controls:
   scene's single **Secondary Bounce** is not gathered, since it would count that bounce twice.
 - **Brightness Clamp** limits the luminance one ray gathers from the scene, so small, bright emitters do not flicker
   through single rays. Sky light is never clamped.
+- **Ray Source** (Auto by default): what probe rays trace. **Voxels** marches the voxel scene, on every GPU.
+  **Hardware** traces the scene's triangles with ray queries, on Vulkan GPUs with hardware ray tracing (see
+  [Hardware ray tracing](#hardware-ray-tracing)); elsewhere it falls back to voxels. **Auto** uses hardware where the
+  device has it.
 - **Reflection Occlusion** (default 1) is how much of the sky reflection the probes may remove where they see no sky
   along the reflection, replacing it with their own light from that direction. At 0, surfaces reflect the sky
   wherever SSR finds no hit, as without DDGI. Reflection captures are never occluded: only the sky's share of a
@@ -190,13 +194,33 @@ pass omits.
 
 ### Replacing the ray source
 
-`DdgiVolume` depends only on `IDdgiRaySource`. A hardware ray-query source would implement `Trace` with the same
-bindings and output (see `DDGIVoxelTrace.slang`): negative distances for rays that start inside geometry, and
-`SurfaceTolerance()` near zero, and `PLUTO_DDGI_MISS_DISTANCE` (`DdgiConfig.h`) for rays that see the sky, which
-reflection occlusion counts. Rays that leave the scene below the horizon should report a finite distance instead.
-It also implements `TraceVisibility`, writing each listed probe's visibility from the sub-cells around it into the
-probe occlusion volume (`DdgiVisibilityInputs` documents the layout); ray queries along the same segments would make
-it exact. Scheduling, blending, relocation, classification, sampling and the editor need no changes.
+`DdgiVolume` depends only on `IDdgiRaySource`; `BasicRenderer::RenderDdgi` picks the source each frame. A source
+implements `Trace` with the bindings and output of `DDGIVoxelTrace.slang`: negative distances for rays that start
+inside geometry, `PLUTO_DDGI_MISS_DISTANCE` (`DdgiConfig.h`) for rays that see the sky, which reflection occlusion
+counts, and a finite distance for rays that leave the scene below the horizon. It also implements `TraceVisibility`,
+writing each listed probe's visibility from the sub-cells around it into the probe occlusion volume
+(`DdgiVisibilityInputs` documents the layout). The voxel and hardware sources (above) are the two implementations;
+scheduling, blending, relocation, classification, sampling and the editor are shared.
+
+## Hardware ray tracing
+
+`RayQueryDdgiRaySource` traces probe rays against triangles with inline ray queries (`DDGIRayQueryTrace.slang`),
+in place of the voxel march. Geometry is exact: no voxel leaks through thin walls, no sky through roof junctions, and
+probe visibility for leak reduction is an exact segment test. `SurfaceTolerance` is a centimetre instead of a voxel.
+
+- **Scene** (`raytracing/RayTracingScene`): one bottom-level acceleration structure per mesh range and geometry
+  revision, built when first seen (at most 64 per frame) and released after 240 frames unused; a top-level structure
+  rebuilt every frame over the GI draw list. GPU-skinned and transparent geometry is left out, as from voxel GI.
+- **Hits** are shaded from their material's constant colour (times one minus metallic) and emission: textures are not
+  sampled. They receive the directional light, shadowed by a second ray, local lights (unshadowed; a rectangle as a
+  cosine emitter at its centre) and, with **Multiple Bounces**, the volume's own irradiance. Normals come from the hit
+  triangle's positions. A probe whose ray first meets a back face is inside geometry (negative distance), so meshes
+  need consistent winding for relocation and classification to see that.
+- **Misses** see the physical sky, or report the distance travelled below the horizon, exactly as the voxel source.
+
+It needs Vulkan with `VK_KHR_acceleration_structure`, `VK_KHR_ray_query` and `VK_KHR_ray_tracing_position_fetch`
+(`IRenderDevice::GetRayTracingSupport` names what is missing; `PLUTO_VULKAN_RAY_TRACING=0` turns it off). Frame stats
+report `ddgiHardwareRays` and `rayTracedInstances`; the profiler shows **RHI DDGI / Acceleration structures**.
 
 ## Cost
 

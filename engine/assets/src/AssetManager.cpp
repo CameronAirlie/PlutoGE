@@ -2431,10 +2431,46 @@ namespace PlutoGE::assets
                     {
                         config.flipNormalY = value == "true" || value == "1";
                     }
-                    else if (key == "EmissionTexture")
+                    else if (const auto *slot = render::FindMaterialTextureSlotByAssetKey(key))
                     {
+                        // Emission is reloaded below in linear space when its channels turn out to be masks.
                         const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.emissionTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str(), render::TextureColorSpace::SRGB);
+                        config.*slot->texture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str(), slot->colorSpace);
+                    }
+                    else if (const auto *channelSlot = render::FindMaterialTextureSlotByChannelKey(key))
+                    {
+                        try
+                        {
+                            config.*channelSlot->channel = static_cast<render::TextureChannel>(std::clamp(std::stoi(value), 0, 3));
+                        }
+                        catch (...)
+                        {
+                        }
+                    }
+                    else if (key == "OcclusionStrength")
+                    {
+                        ParseFloat(value, config.occlusionStrength);
+                        config.occlusionStrength = std::clamp(config.occlusionStrength, 0.0f, 1.0f);
+                    }
+                    else if (key == "ClearCoat")
+                    {
+                        ParseFloat(value, config.clearCoat);
+                        config.clearCoat = std::clamp(config.clearCoat, 0.0f, 1.0f);
+                    }
+                    else if (key == "ClearCoatRoughness")
+                    {
+                        ParseFloat(value, config.clearCoatRoughness);
+                        config.clearCoatRoughness = std::clamp(config.clearCoatRoughness, 0.0f, 1.0f);
+                    }
+                    else if (key == "SheenColor")
+                    {
+                        ParseVec3(value, config.sheenColor);
+                        config.sheenColor = glm::clamp(config.sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
+                    }
+                    else if (key == "SheenRoughness")
+                    {
+                        ParseFloat(value, config.sheenRoughness);
+                        config.sheenRoughness = std::clamp(config.sheenRoughness, 0.0f, 1.0f);
                     }
                     else if (key == "EmissionChannelMask")
                         config.emissionChannelMask = value == "true" || value == "1";
@@ -2446,48 +2482,6 @@ namespace PlutoGE::assets
                     else if (key == "EmissionTexCoord")
                     {
                         config.emissionTexCoord = value == "1" ? 1 : 0;
-                    }
-                    else if (key == "AlbedoTexture")
-                    {
-                        const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.albedoTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str(), render::TextureColorSpace::SRGB);
-                    }
-                    else if (key == "NormalTexture")
-                    {
-                        const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.normalTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str());
-                    }
-                    else if (key == "MetallicTexture")
-                    {
-                        const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.metallicTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str());
-                    }
-                    else if (key == "MetallicTextureChannel")
-                    {
-                        try
-                        {
-                            const int channel = std::stoi(value);
-                            config.metallicTextureChannel = static_cast<render::TextureChannel>(std::clamp(channel, 0, 3));
-                        }
-                        catch (...)
-                        {
-                        }
-                    }
-                    else if (key == "RoughnessTexture")
-                    {
-                        const std::string texturePath = ResolveMaterialTexturePath(value);
-                        config.roughnessTexture = texturePath.empty() ? nullptr : LoadTextureResource(texturePath.c_str());
-                    }
-                    else if (key == "RoughnessTextureChannel")
-                    {
-                        try
-                        {
-                            const int channel = std::stoi(value);
-                            config.roughnessTextureChannel = static_cast<render::TextureChannel>(std::clamp(channel, 0, 3));
-                        }
-                        catch (...)
-                        {
-                        }
                     }
                     else if (key == "ShaderGraph")
                     {
@@ -2609,13 +2603,9 @@ namespace PlutoGE::assets
         {
             return texture ? PersistMaterialTexturePath(texture->GetFilePath()) : std::string{};
         };
-        const MaterialTextureReferences textures{
-            .albedo = textureReference(config.albedoTexture),
-            .normal = textureReference(config.normalTexture),
-            .metallic = textureReference(config.metallicTexture),
-            .roughness = textureReference(config.roughnessTexture),
-            .emission = textureReference(config.emissionTexture),
-        };
+        MaterialTextureReferences textures;
+        for (const auto &slot : render::MaterialTextureSlots())
+            textures[slot.slot] = textureReference(config.*slot.texture);
         auto persistedConfig = config;
         persistedConfig.shaderGraphReference = PersistDependencyReference(persistedConfig.shaderGraphReference);
         for (auto &texture : persistedConfig.shaderGraphTextures)
@@ -2656,11 +2646,8 @@ namespace PlutoGE::assets
                 return textureIt->second;
             };
 
-            cachedConfig.albedoTexture = reloadTexture(config.albedoTexture, render::TextureColorSpace::SRGB);
-            cachedConfig.normalTexture = reloadTexture(config.normalTexture, render::TextureColorSpace::Linear);
-            cachedConfig.metallicTexture = reloadTexture(config.metallicTexture, render::TextureColorSpace::Linear);
-            cachedConfig.emissionTexture = reloadTexture(config.emissionTexture, config.emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB);
-            cachedConfig.roughnessTexture = reloadTexture(config.roughnessTexture, render::TextureColorSpace::Linear);
+            for (const auto &slot : render::MaterialTextureSlots())
+                cachedConfig.*slot.texture = reloadTexture(config.*slot.texture, render::GetMaterialTextureColorSpace(config, slot.slot));
             cachedConfig.lightmapTexture = nullptr;
             if (cachedConfig.shaderGraphReference.empty())
             {

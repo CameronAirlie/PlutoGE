@@ -56,7 +56,9 @@ namespace PlutoGE::render::rhi
         UniformBuffer,
         SampledTexture,
         StorageImage,
-        StorageBuffer
+        StorageBuffer,
+        // A top-level acceleration structure for ray queries (IRenderDevice::GetRayTracingSupport).
+        AccelerationStructure
     };
     enum class PrimitiveTopology : std::uint8_t
     {
@@ -170,6 +172,7 @@ namespace PlutoGE::render::rhi
     using TextureHandle = Handle<struct TextureTag>;
     using SamplerHandle = Handle<struct SamplerTag>;
     using PipelineHandle = Handle<struct PipelineTag>;
+    using AccelerationStructureHandle = Handle<struct AccelerationStructureTag>;
 
     // Bindless textures: a device-wide table of sampled textures that shaders index directly (see
     // IRenderDevice::RegisterBindlessTexture). Shaders declare it as `Sampler2D[]` in this descriptor set.
@@ -341,6 +344,54 @@ namespace PlutoGE::render::rhi
         ShaderCode computeShader;
         std::vector<ResourceBinding> resourceBindings;
         std::string debugName;
+    };
+
+    // Hardware ray tracing: inline ray queries against acceleration structures, from compute and fragment shaders
+    // (Slang RayQuery, compiled to SPIR-V 1.4), with the committed hit's triangle positions readable
+    // (CommittedGetIntersectionTriangleVertexPositions). Devices without it report why.
+    struct RayTracingSupport
+    {
+        bool supported = false;
+        std::string reason;
+    };
+
+    // One triangle mesh of a bottom-level acceleration structure. Positions are three floats at the start of each
+    // `vertexStride`-byte vertex from `vertexOffset`; indices are 32-bit from `indexOffset` (bytes) and relative to
+    // the first vertex. The buffers are Vertex, Index or VertexStorage buffers of a device that supports ray tracing,
+    // and stay alive while the structure exists.
+    struct AccelerationStructureGeometry
+    {
+        BufferHandle vertices;
+        std::size_t vertexOffset = 0;
+        std::uint32_t vertexStride = 0;
+        std::uint32_t vertexCount = 0;
+        BufferHandle indices;
+        std::size_t indexOffset = 0;
+        std::uint32_t indexCount = 0;
+        // Opaque geometry skips any-hit processing; ray queries see every triangle as a hit.
+        bool opaque = true;
+    };
+
+    struct BottomLevelAccelerationStructureDescriptor
+    {
+        std::vector<AccelerationStructureGeometry> geometries;
+        std::string debugName;
+    };
+
+    struct TopLevelAccelerationStructureDescriptor
+    {
+        std::uint32_t maxInstances = 0;
+        std::string debugName;
+    };
+
+    // A bottom-level structure placed in a top-level one. `transform` is the object-to-world matrix's top three rows,
+    // row-major. Shaders read `customIndex` (24 bits) as the hit's instance ID.
+    struct AccelerationStructureInstance
+    {
+        AccelerationStructureHandle bottomLevel;
+        std::array<float, 12> transform{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+        std::uint32_t customIndex = 0;
+        std::uint8_t mask = 0xFF;
     };
 
     struct SamplerDescriptor

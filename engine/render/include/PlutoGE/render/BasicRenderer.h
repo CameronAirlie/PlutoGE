@@ -46,6 +46,8 @@ namespace PlutoGE::render
     class ScreenSpaceContactShadows;
     class DdgiVolume;
     class VoxelDdgiRaySource;
+    class RayQueryDdgiRaySource;
+    class RayTracingScene;
     struct ScreenSpaceView;
     struct RhiGpuSkinningSource;
     struct RhiGpuSkinningState;
@@ -276,6 +278,8 @@ namespace PlutoGE::render
     {
         rhi::ComputePipelineDescriptor::ShaderCode trace, visibility, reset, state, blendIrradiance, blendDistance;
         BasicPostProcessShaderPackage apply, probes;
+        // The hardware ray tracing source (DDGIRayQueryTrace.slang): SPIR-V only.
+        rhi::ComputePipelineDescriptor::ShaderCode rayQueryTrace, rayQueryVisibility;
     };
 
     struct BasicSelectionOutline
@@ -381,6 +385,14 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::BufferHandle VertexBuffer() const noexcept { return m_vertexBuffer; }
         [[nodiscard]] rhi::BufferHandle IndexBuffer() const noexcept { return m_indexBuffer; }
         [[nodiscard]] std::uint32_t BaseIndex() const noexcept { return m_baseIndex; }
+        // The mesh's first vertex in VertexBuffer, and how many it has.
+        [[nodiscard]] std::uint32_t BaseVertex() const noexcept { return m_baseVertex; }
+        [[nodiscard]] std::size_t VertexCount() const noexcept { return m_vertexCount; }
+        // Whether the GPU vertices hold the mesh's geometry and keep it: uploaded, and not rewritten by skinning.
+        [[nodiscard]] bool HasStaticGpuVertices() const noexcept
+        {
+            return m_pendingVertices.empty() && !m_pendingSharedVertices && !m_gpuSkinningState;
+        }
 
     private:
         friend class BasicRenderer;
@@ -417,6 +429,20 @@ namespace PlutoGE::render
         bool operator==(const BasicTerrainLayers &) const = default;
     };
 
+    // Optional material maps beyond the core set (base colour, normal, metallic, roughness, emission). They bind
+    // as a group from BasicRenderer::SurfaceTextureSlot (set 1 bindings from 26 in BasicLit.slang); the material
+    // parameters record which are present and which channel each samples. Append new maps before Count.
+    enum class BasicSurfaceTexture : std::uint8_t
+    {
+        Occlusion,
+        ClearCoat,
+        ClearCoatRoughness,
+        SheenColor,
+        SheenRoughness,
+        Count,
+    };
+    inline constexpr std::size_t BasicSurfaceTextureCount = static_cast<std::size_t>(BasicSurfaceTexture::Count);
+
     struct BasicDraw
     {
         const BasicMesh *mesh = nullptr;
@@ -428,6 +454,14 @@ namespace PlutoGE::render
         rhi::TextureHandle metallicTexture;
         rhi::TextureHandle roughnessTexture;
         rhi::TextureHandle emissionTexture;
+        std::array<rhi::TextureHandle, BasicSurfaceTextureCount> surfaceTextures{};
+        std::array<std::uint32_t, BasicSurfaceTextureCount> surfaceTextureChannels{};
+        float occlusionStrength = 1.0f;
+        // Layers over the base (SurfaceLayers.slang): none while clearCoat is 0 and sheenColor black.
+        float clearCoat = 0.0f;
+        float clearCoatRoughness = 0.0f;
+        glm::vec3 sheenColor{0.0f};
+        float sheenRoughness = 0.5f;
         int emissionTexCoord = 0;
         bool emissionChannelMask = false;
         // RGB selects output colour; W is independent channel intensity.
@@ -544,6 +578,20 @@ namespace PlutoGE::render
         float sourceRadius = 0.0f;
         float sourceLength = 0.0f;
         glm::vec3 sourceAxis{0.0f, -1.0f, 0.0f};
+        // World length of screen-space contact shadows towards the light (ScreenSpaceContactShadows); 0 disables
+        // them. Lights compete for the pass's slots (BasicRenderer::ContactShadowLights).
+        float contactShadowLength = 0.0f;
+    };
+
+    // A one-sided rectangle emitting along `direction` (Lambertian), shaded with linearly transformed cosines
+    // (LtcAreaLights.slang). `light.intensity` is its luminous intensity along the normal, so from afar it lights
+    // like a point with a cosine falloff; its radiance is that over its area. Sphere and tube shape fields are unused.
+    struct BasicRectLight
+    {
+        BasicPointLight light;
+        glm::vec3 direction{0.0f, -1.0f, 0.0f};
+        glm::vec3 right{1.0f, 0.0f, 0.0f};
+        float width = 1.0f, height = 1.0f;
     };
 
 
@@ -572,6 +620,7 @@ namespace PlutoGE::render
         // Spot sources for voxel GI; direct surface lighting has its own light path.
         struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; SpotCone cone; };
         std::vector<SpotLight> spotLights;
+        std::vector<BasicRectLight> rectLights;
         glm::vec3 cameraPosition{0.0f};
         glm::mat4 view{1.0f};
         float ambientIntensity = 0.3f;
@@ -636,7 +685,8 @@ namespace PlutoGE::render
         float shadowDistance = 150.0f;
         float shadowCasterDistance = 0.0f;
         // World length of the screen-space contact shadow rays towards the directional light; 0 disables them.
-        // They need the depth prepass and directional shadows (ScreenSpaceContactShadows.h).
+        // Contact shadows (local lights' too: BasicPointLight::contactShadowLength) need the depth prepass and
+        // shadowsEnabled (ScreenSpaceContactShadows.h).
         float contactShadowLength = 0.0f;
     };
 
@@ -686,6 +736,9 @@ namespace PlutoGE::render
         // DDGI probes traced and reset this frame, the rays scheduled for them (inactive probes trace fewer), and the
         // frames one sweep of the whole volume takes.
         std::uint32_t ddgiProbesTraced = 0, ddgiProbesReset = 0, ddgiRaysScheduled = 0, ddgiFramesPerSweep = 0;
+        // True when DDGI traced with hardware ray queries this frame, with this many instances.
+        bool ddgiHardwareRays = false;
+        std::size_t rayTracedInstances = 0;
         std::size_t geometryDepthDraws = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
@@ -757,8 +810,16 @@ namespace PlutoGE::render
         // texture slots from TerrainTextureSlot, the layer parameters in a uniform slot.
         static constexpr std::uint32_t TerrainTextureSlot = 3;
         static constexpr std::uint32_t TerrainParameterSlot = 4;
-        // The directional contact shadow mask (BasicLit.slang contactShadowMask, set 0 binding 7).
+        // The contact shadow mask (BasicLit.slang contactShadowMask, set 0 binding 7).
         static constexpr std::uint32_t ContactShadowSlot = 7;
+        // contactShadowParameters' light id for the directional light (BasicLit.slang ContactShadowDirectional).
+        static constexpr float ContactShadowDirectional = 32.0f;
+        // The first optional surface texture (BasicSurfaceTexture); each further one takes the next slot. On OpenGL
+        // these are the texture units after the glass reflection's 32 (NormalizeOpenGLShader.cmake).
+        static constexpr std::uint32_t SurfaceTextureSlot = 33;
+        // The rectangle-light LTC table (LtcAreaLights.slang ltcTable, set 0 binding 8).
+        static constexpr std::uint32_t LtcTableSlot = 8;
+        static constexpr std::uint32_t SurfaceTextureBinding = 26;
 
         // Runs outside a rendering pass with command recording open. The
         // callback may append camera work, but must not begin or submit a frame.
@@ -1011,6 +1072,9 @@ namespace PlutoGE::render
         std::unique_ptr<ScreenSpaceContactShadows> m_contactShadows;
         std::unique_ptr<DdgiVolume> m_ddgi;
         std::unique_ptr<VoxelDdgiRaySource> m_ddgiRays;
+        // Hardware ray tracing (DdgiRaySource::Hardware): the traced scene and its DDGI source, when the device has it.
+        std::unique_ptr<RayTracingScene> m_rayTracingScene;
+        std::unique_ptr<RayQueryDdgiRaySource> m_rayQueryDdgiRays;
         const void *m_ddgiOwner = nullptr;
         // This frame's scene colour and the ambient light it holds, as DDGI and SSGI leave them; SSAO attenuates
         // that indirect term and SSR replaces the environment reflection where it finds hits. Starts as the geometry
@@ -1104,6 +1168,7 @@ namespace PlutoGE::render
         rhi::Texture m_fallbackTexture;
         rhi::Texture m_fallbackNormalTexture;
         rhi::Texture m_fallbackDataTexture;
+        rhi::Texture m_ltcTable;
         rhi::Sampler m_fallbackSampler;
         std::array<rhi::Sampler,4> m_graphSamplers;
         rhi::Sampler m_screenSampler;

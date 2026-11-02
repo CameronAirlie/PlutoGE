@@ -10,6 +10,10 @@
 #include "PointShadowLayers.h"
 #include "LightClusterGrid.h"
 #include "GpuDrivenOpaque.h"
+#include "LtcTable.h"
+#include "gi/RayQueryDdgiRaySource.h"
+#include "raytracing/RayTracingScene.h"
+#include "BasicSurfaceParameters.h"
 #include "PlutoGE/render/RenderGraph.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/VctVolumePlacement.h"
@@ -105,8 +109,9 @@ namespace PlutoGE::render
             glm::vec4 shaderGraphFrame{0};
             glm::uvec4 emissionParameters{0};
             std::array<glm::vec4, 3> emissionChannels{};
+            BasicSurfaceParameters surface; // BasicSurfaceParameters.h
         };
-        static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 80);
+        static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 80 + sizeof(BasicSurfaceParameters));
 
         struct alignas(16) GlassReflectionParameters
         {
@@ -185,7 +190,7 @@ namespace PlutoGE::render
             glm::mat4 lightClusterProjection{1.0f}; // LightClusterShading
             glm::vec4 lightClusterDepth{0.0f};
             std::array<glm::vec4, 32> pointShape{}; // source radius, tube axis times length
-            glm::vec4 contactShadowParameters{0.0f}; // mask present
+            glm::vec4 contactShadowParameters{0.0f}; // each channel's light id, mask present
         };
         static_assert(sizeof(BasicFrameParameters) == 6624 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
@@ -363,6 +368,8 @@ namespace PlutoGE::render
                 };
                 for (const auto &light : injectionLight.pointLights) appendLight(light, glm::vec4(0));
                 for (const auto &spot : injectionLight.spotLights) appendLight(spot.light, glm::vec4(spot.direction, 1), spot.cone.Cosines());
+                // Voxel lighting has no area lights: a rectangle lights as a spot spanning its front hemisphere.
+                for (const auto &rect : injectionLight.rectLights) appendLight(rect.light, glm::vec4(rect.direction, 1), glm::vec2(0.0f));
             }
             voxel.shadowMatrices.fill(shadowMatrix);
             voxel.view = glm::mat4(1.0f);
@@ -385,6 +392,71 @@ namespace PlutoGE::render
             return {finite(light.sourceRadius), length > 0.0f ? light.sourceAxis / axisLength * length : glm::vec3(0.0f)};
         }
 
+        // How many of each local light type the frame packs, in order: points, spots, then rectangles in the slots
+        // left (SceneLightingParameters.slang). A packed light's index is its shader light id.
+        struct PackedLocalLightCounts { std::size_t points, spots, rects; };
+        PackedLocalLightCounts PackLocalLightCounts(const BasicLighting &lighting)
+        {
+            const auto points = std::min<std::size_t>(lighting.pointLights.size(), 16);
+            const auto spots = std::min<std::size_t>(lighting.spotLights.size(), 16);
+            return {points, spots, std::min<std::size_t>(lighting.rectLights.size(), PLUTO_MAX_LOCAL_LIGHTS - points - spots)};
+        }
+
+        // The lights contact shadows trace this frame, at most ScreenSpaceContactShadows::SlotCount of them: the
+        // directional light, then the local lights with a contact shadow length that reach the camera, brightest
+        // there first. Each carries the id surfaces look its mask channel up by.
+        struct ContactShadowLight { ScreenSpaceContactShadows::Light light; float id = -1.0f; };
+        std::vector<ContactShadowLight> ContactShadowLights(const BasicLighting &lighting)
+        {
+            using Kind = ScreenSpaceContactShadows::Light::Kind;
+            std::vector<ContactShadowLight> lights;
+            if (!lighting.shadowsEnabled)
+                return lights;
+            if (lighting.directionalIntensity > 0.0f && lighting.contactShadowLength > 0.0f)
+                lights.push_back({{Kind::Directional, -lighting.directionalDirection, lighting.contactShadowLength},
+                                  BasicRenderer::ContactShadowDirectional});
+            struct Candidate { float score; std::size_t index; const BasicPointLight *light; };
+            std::vector<Candidate> candidates;
+            const auto consider = [&](const BasicPointLight &light, std::size_t index)
+            {
+                const float distance = glm::length(light.position - lighting.cameraPosition);
+                if (light.contactShadowLength > 0.0f && light.intensity > 0.0f && distance < light.range)
+                    candidates.push_back({light.intensity / (1.0f + distance * distance), index, &light});
+            };
+            const auto counts = PackLocalLightCounts(lighting);
+            for (std::size_t i = 0; i < counts.points; ++i) consider(lighting.pointLights[i], i);
+            for (std::size_t i = 0; i < counts.spots; ++i) consider(lighting.spotLights[i].light, counts.points + i);
+            for (std::size_t i = 0; i < counts.rects; ++i)
+                consider(lighting.rectLights[i].light, counts.points + counts.spots + i);
+            std::stable_sort(candidates.begin(), candidates.end(),
+                             [](const Candidate &a, const Candidate &b) { return a.score > b.score; });
+            for (const auto &candidate : candidates)
+            {
+                if (lights.size() == ScreenSpaceContactShadows::SlotCount)
+                    break;
+                lights.push_back({{Kind::Local, candidate.light->position, std::min(candidate.light->contactShadowLength, 2.0f)},
+                                  static_cast<float>(candidate.index)});
+            }
+            return lights;
+        }
+
+        // A rectangle light's orthonormal frame and sanitised size: `right` is made perpendicular to `forward`.
+        struct RectBasis { glm::vec3 forward, right; float width, height; };
+        RectBasis RectLightBasis(const BasicRectLight &rect)
+        {
+            const auto finiteSize = [](float value) { return std::isfinite(value) ? std::max(value, 0.001f) : 1.0f; };
+            glm::vec3 forward = rect.direction;
+            const float forwardLength = glm::dot(forward, forward);
+            forward = std::isfinite(forwardLength) && forwardLength > 1.e-8f ? glm::normalize(forward) : glm::vec3(0, -1, 0);
+            glm::vec3 right = rect.right - forward * glm::dot(rect.right, forward);
+            const float rightLength = glm::dot(right, right);
+            if (!std::isfinite(rightLength) || rightLength < 1.e-8f)
+                right = glm::normalize(glm::cross(std::abs(forward.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0), forward));
+            else
+                right = glm::normalize(right);
+            return {forward, right, finiteSize(rect.width), finiteSize(rect.height)};
+        }
+
         std::uint64_t VctLightingSignature(const BasicLighting &lighting, bool injectLocalLights)
         {
             std::uint64_t hash = 14695981039346656037ull;
@@ -399,6 +471,8 @@ namespace PlutoGE::render
                 for (const auto &light : lighting.pointLights) hashLight(light);
                 HashVctValue(hash, lighting.spotLights.size());
                 for (const auto &spot : lighting.spotLights) { hashLight(spot.light); HashVctValue(hash, spot.direction); HashVctValue(hash, spot.cone.Cosines()); }
+                HashVctValue(hash, lighting.rectLights.size());
+                for (const auto &rect : lighting.rectLights) { hashLight(rect.light); HashVctValue(hash, rect.direction); }
             }
             HashVctValue(hash, lighting.directionalDirection);
             HashVctValue(hash, lighting.directionalColor);
@@ -426,12 +500,14 @@ namespace PlutoGE::render
             BasicLighting result = lighting;
             for (auto &light : result.pointLights) light.intensity *= gain;
             for (auto &spot : result.spotLights) spot.light.intensity *= gain;
+            for (auto &rect : result.rectLights) rect.light.intensity *= gain;
             const auto outside = [&](const BasicPointLight &light) {
                 return light.range <= 0 || light.intensity <= 0 ||
                     glm::length(light.position - glm::clamp(light.position, origin, origin + size)) >= light.range;
             };
             std::erase_if(result.pointLights, outside);
             std::erase_if(result.spotLights, [&](const auto &spot) { return outside(spot.light); });
+            std::erase_if(result.rectLights, [&](const auto &rect) { return outside(rect.light); });
             return result;
         }
 
@@ -661,11 +737,16 @@ namespace PlutoGE::render
                 {21, 1, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {20, 1, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {ContactShadowSlot, 0, ContactShadowSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {LtcTableSlot, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                 {LightClusterGrid::MasksSlot, 0, 4, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment},
                 // Object parameters stay last: the instanced variant replaces them.
                 {16, 2, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex},
             };
+            for (std::uint32_t index = 0; index < BasicSurfaceTextureCount; ++index)
+                descriptor.resourceBindings.insert(descriptor.resourceBindings.end() - 1,
+                    {SurfaceTextureSlot + index, 1, SurfaceTextureBinding + index, rhi::ResourceBindingType::SampledTexture,
+                     rhi::ShaderStageMask::Fragment});
             descriptor.vertexLayout = {
                 .stride = sizeof(BasicVertex),
                 .attributes = {
@@ -1342,6 +1423,14 @@ namespace PlutoGE::render
             {
                 m_ddgi = std::move(ddgi);
                 m_ddgiRays = std::move(ddgiRays);
+                auto rayTracingScene = std::make_unique<RayTracingScene>();
+                auto rayQueryRays = std::make_unique<RayQueryDdgiRaySource>();
+                if (rayTracingScene->Initialize(device) &&
+                    rayQueryRays->Initialize(device, shaders.ddgi.rayQueryTrace, shaders.ddgi.rayQueryVisibility))
+                {
+                    m_rayTracingScene = std::move(rayTracingScene);
+                    m_rayQueryDdgiRays = std::move(rayQueryRays);
+                }
             }
             auto upscalerSharpening = std::make_unique<UpscalerSharpening>();
             if (upscalerSharpening->Initialize(device, {shaders.upscalerSharpening.vertex, shaders.upscalerSharpening.fragment}))
@@ -1377,6 +1466,12 @@ namespace PlutoGE::render
             m_fallbackDataTexture = rhi::Texture(device, device.CreateTexture({1, 1, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::Sampled, "BasicRenderer neutral material data"}, Bytes(std::span(neutralData))));
             m_fallbackSampler = rhi::Sampler(device, device.CreateSampler(
                                                         {true, true, "BasicRenderer material sampler", true, 0.0f, 16.0f}));
+            {
+                const auto ltc = BuildLtcTableImage();
+                m_ltcTable = rhi::Texture(device, device.CreateTexture(
+                    {ltc.width, ltc.height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::Sampled,
+                     "Rectangle light LTC table"}, Bytes(std::span(ltc.texels))));
+            }
             for(unsigned i=0;i<4;++i)m_graphSamplers[i]=rhi::Sampler(device,device.CreateSampler({(i&1)==0,(i&2)==0,"Graph texture sampler"}));
             // Bindless materials stand in the fallback maps for absent ones, so they start once those exist.
             m_bindlessShaders = shaders.bindless;
@@ -1494,6 +1589,8 @@ namespace PlutoGE::render
         m_reflections.reset();
         m_globalIllumination.reset();
         m_ddgi.reset();
+        m_rayQueryDdgiRays.reset();
+        m_rayTracingScene.reset();
         m_ddgiRays.reset();
         for (auto &guide : m_screenSpaceGuides)
             guide.reset();
@@ -2234,9 +2331,8 @@ namespace PlutoGE::render
             BuildCloudOcclusion(postProcessEffects),
             temporalClipOffset,
         };
-        const auto pointCount = std::min<std::size_t>(lighting.pointLights.size(), 16);
-        const auto spotCount = std::min<std::size_t>(lighting.spotLights.size(), 16);
-        frameParameters.pointParameters = {static_cast<float>(pointCount + spotCount),
+        const auto [pointCount, spotCount, rectCount] = PackLocalLightCounts(lighting);
+        frameParameters.pointParameters = {static_cast<float>(pointCount + spotCount + rectCount),
                                            m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 512.0f,
                                            static_cast<float>(geometryMode)};
         for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
@@ -2261,12 +2357,21 @@ namespace PlutoGE::render
             deferProbeIrradiance ? 1.0f : 0.0f);
         frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
         frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
-        // Contact shadows trace the coverage depth, so they exist only with it, and only refine directional shadows.
-        const bool contactShadowsActive = depthPrepassActive && m_contactShadows && !geometryDebug &&
-            lighting.shadowsEnabled && lighting.directionalIntensity > 0.0f && lighting.contactShadowLength > 0.0f &&
-            m_contactShadows->Prepare(MakeScreenSpaceView(m_width, m_height),
-                {.towardsLight = -lighting.directionalDirection, .length = lighting.contactShadowLength});
-        frameParameters.contactShadowParameters.x = contactShadowsActive ? 1.0f : 0.0f;
+        // Contact shadows trace the coverage depth, so they exist only with it.
+        const auto contactLights = ContactShadowLights(lighting);
+        bool contactShadowsActive = false;
+        frameParameters.contactShadowParameters = glm::vec4(-1.0f, -1.0f, -1.0f, 0.0f);
+        if (depthPrepassActive && m_contactShadows && !geometryDebug)
+        {
+            ScreenSpaceContactShadows::Settings settings;
+            for (std::size_t slot = 0; slot < contactLights.size(); ++slot)
+            {
+                settings.lights[slot] = contactLights[slot].light;
+                frameParameters.contactShadowParameters[static_cast<glm::length_t>(slot)] = contactLights[slot].id;
+            }
+            contactShadowsActive = m_contactShadows->Prepare(MakeScreenSpaceView(m_width, m_height), settings);
+        }
+        frameParameters.contactShadowParameters.w = contactShadowsActive ? 1.0f : 0.0f;
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -2306,9 +2411,22 @@ namespace PlutoGE::render
             if (virtualShadowsActive && spot.light.castsShadows && spot.light.range > 0.02f && spotShadowCount < PLUTO_VSM_SPOT_COUNT)
                 frameParameters.pointSettings[index].y = static_cast<float>(PLUTO_VSM_DIRECTIONAL_LEVELS + spotShadowCount++);
         }
+        // Rectangles take the slots points and spots leave: forward and type 2 in pointDirectionSpot, half-height
+        // and the right axis times half-width in pointShape (SceneLightingParameters.slang).
+        for (std::size_t rectIndex = 0; rectIndex < rectCount; ++rectIndex)
+        {
+            const auto &rect = lighting.rectLights[rectIndex];
+            const auto index = pointCount + spotCount + rectIndex;
+            const auto basis = RectLightBasis(rect);
+            frameParameters.pointPositionRange[index] = {rect.light.position, rect.light.range};
+            frameParameters.pointColorIntensity[index] = {rect.light.color, rect.light.intensity};
+            frameParameters.pointShape[index] = {0.5f * basis.height, basis.right * (0.5f * basis.width)};
+            frameParameters.pointDirectionSpot[index] = {basis.forward, 2.0f};
+            frameParameters.pointSettings[index] = {-1.0f, -1.0f, 0.0f, 0.0f};
+        }
         {
             std::array<LocalLightBounds, PLUTO_MAX_LOCAL_LIGHTS> localLights;
-            const auto localLightCount = pointCount + spotCount;
+            const auto localLightCount = pointCount + spotCount + rectCount;
             for (std::size_t index = 0; index < localLightCount; ++index)
                 localLights[index] = {glm::vec3(frameParameters.pointPositionRange[index]),
                                       frameParameters.pointPositionRange[index].w};
@@ -3072,6 +3190,7 @@ namespace PlutoGE::render
         std::array<rhi::TextureHandle, 4> previousGraphTextures{};
         std::array<rhi::SamplerHandle, 4> previousGraphSamplers{};
         rhi::TextureHandle previousEmissionTexture;
+        std::array<rhi::TextureHandle, BasicSurfaceTextureCount> previousSurfaceTextures{};
         rhi::PipelineHandle boundDrawPipeline;
         const BasicMesh *boundDrawMesh = nullptr;
         rhi::BufferHandle drawCameraBuffer = m_cameraBuffer.Get();
@@ -3093,6 +3212,7 @@ namespace PlutoGE::render
             commands.BindUniformBuffer(0, drawCameraBuffer);
             commands.BindStorageBuffer(LightClusterGrid::MasksSlot, m_lightClusters->Masks());
             commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
+            commands.BindTexture(LtcTableSlot, m_ltcTable.Get(), m_screenSampler.Get());
             for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
                 commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
         };
@@ -3200,6 +3320,7 @@ namespace PlutoGE::render
                                   m_device->GetApi() == rhi::GraphicsApi::Vulkan ? 1.0f : 0.0f, 0.0f)};
                     materialParameters.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
                     materialParameters.emissionChannels = draw.emissionChannels;
+                    materialParameters.surface = MakeBasicSurfaceParameters(draw);
                     if (draw.shaderGraphProgram)
                     {
                         materialParameters.shaderGraph = draw.shaderGraphProgram->data;
@@ -3255,6 +3376,14 @@ namespace PlutoGE::render
                     if (!geometryResourcesBound || previousEmissionTexture != emissionTexture)
                         commands.BindTexture(26, emissionTexture, m_fallbackSampler.Get());
                     previousEmissionTexture = emissionTexture;
+                    for (std::size_t index = 0; index < BasicSurfaceTextureCount; ++index)
+                    {
+                        const auto texture = draw.surfaceTextures[index] ? draw.surfaceTextures[index] : m_fallbackDataTexture.Get();
+                        if (!geometryResourcesBound || previousSurfaceTextures[index] != texture)
+                            commands.BindTexture(SurfaceTextureSlot + static_cast<std::uint32_t>(index), texture,
+                                                 m_fallbackSampler.Get());
+                        previousSurfaceTextures[index] = texture;
+                    }
                     if (const auto *terrain = draw.terrainLayers.get(); terrain && m_terrainShaders.Available())
                         BindTerrainLayers(commands, *terrain);
                 }
@@ -4729,6 +4858,7 @@ namespace PlutoGE::render
         auto relevant = VctRelevantLighting(lighting, cascade.pendingOrigin, cascade.pendingSize, localLightBounce);
         cascade.pendingLighting.pointLights = std::move(relevant.pointLights);
         cascade.pendingLighting.spotLights = std::move(relevant.spotLights);
+        cascade.pendingLighting.rectLights = std::move(relevant.rectLights);
         const auto params = VctLightingParameters(cascade.pendingLighting, cascade.pendingInjectLocalLights,
             cascade.pendingOrigin, cascade.pendingSize, resolution, cascade.pendingShadowMatrix,
             m_device->GetApi() == rhi::GraphicsApi::Vulkan, m_device->UsesZeroToOneClipDepth());
@@ -5612,8 +5742,24 @@ namespace PlutoGE::render
             m_ddgi->InvalidateHistory();
             m_ddgiOwner = effect.historyOwner;
         }
+        const auto settings = DecodeDdgiPacket(effect);
+        // Hardware rays when asked for (or on Auto) and the device has them; voxels otherwise, and whenever the traced
+        // scene is empty this frame.
+        IDdgiRaySource *rays = m_ddgiRays.get();
+        m_frameStats.ddgiHardwareRays = false;
+        if (settings.raySource != DdgiRaySource::Voxels && m_rayTracingScene && m_rayQueryDdgiRays)
+        {
+            const ScopedGpuTiming buildTiming(commands, "RHI DDGI / Acceleration structures");
+            if (m_rayTracingScene->Update(commands, draws))
+            {
+                m_rayQueryDdgiRays->SetScene(*m_rayTracingScene, lighting);
+                rays = m_rayQueryDdgiRays.get();
+                m_frameStats.ddgiHardwareRays = true;
+            }
+            m_frameStats.rayTracedInstances = m_rayTracingScene->InstanceCount();
+        }
         DdgiVoxelScene scene;
-        if (m_frameVoxelScene)
+        if (m_frameVoxelScene && rays == m_ddgiRays.get())
         {
             scene.validCascades = UpdateVoxelScene(*m_frameVoxelScene, lighting, draws, commands);
             for (std::size_t direction = 0; direction < scene.atlases.size(); ++direction)
@@ -5634,7 +5780,7 @@ namespace PlutoGE::render
                                           .ambientIntensity = lighting.ambientIntensity};
         {
             const ScopedGpuTiming updateTiming(commands, "RHI DDGI / Probe update");
-            m_ddgi->Update(commands, DecodeDdgiPacket(effect), environment, lighting.cameraPosition, *m_ddgiRays);
+            m_ddgi->Update(commands, settings, environment, lighting.cameraPosition, *rays);
         }
         const auto &stats = m_ddgi->FrameStats();
         m_frameStats.ddgiProbesTraced = stats.probesTraced;

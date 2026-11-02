@@ -109,7 +109,9 @@ namespace PlutoGE::render
                        .blendIrradiance = Load("DDGIBlendIrradiance", "compute"),
                        .blendDistance = Load("DDGIBlendDistance", "compute"),
                        .apply = {Load("DDGIApply", "vertex"), Load("DDGIApply", "fragment")},
-                       .probes = {Load("DDGIProbes", "vertex"), Load("DDGIProbes", "fragment")}};
+                       .probes = {Load("DDGIProbes", "vertex"), Load("DDGIProbes", "fragment")},
+                       .rayQueryTrace = Load("DDGIRayQueryTrace", "compute"),
+                       .rayQueryVisibility = Load("DDGIRayQueryVisibility", "compute")};
         const auto addPostProcess = [&](BasicPostProcessEffectType type, std::string_view module)
         {
             result.postProcess[static_cast<std::size_t>(type)] = {

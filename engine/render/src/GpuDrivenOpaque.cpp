@@ -59,6 +59,7 @@ namespace PlutoGE::render
             record.emissionParameters = {draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u,
                                          draw.emissionChannelMask ? 1u : 0u, 0u};
             record.emissionChannels = draw.emissionChannels;
+            record.surface = MakeBasicSurfaceParameters(draw);
             return record;
         }
     }
@@ -97,12 +98,14 @@ namespace PlutoGE::render
     std::uint32_t BindlessMaterialTable::Acquire(rhi::IRenderDevice &device, const BasicDraw &draw)
     {
         auto record = MaterialValues(draw);
-        const std::array<rhi::TextureHandle, 5> textures{
+        std::array<rhi::TextureHandle, BindlessMaterialTextureCount> textures{
             draw.baseColorTexture ? draw.baseColorTexture : m_fallbacks.baseColor,
             draw.normalTexture ? draw.normalTexture : m_fallbacks.normal,
             draw.metallicTexture ? draw.metallicTexture : m_fallbacks.data,
             draw.roughnessTexture ? draw.roughnessTexture : m_fallbacks.data,
             draw.emissionTexture ? draw.emissionTexture : m_fallbacks.baseColor};
+        for (std::size_t index = 0; index < BasicSurfaceTextureCount; ++index)
+            textures[5 + index] = draw.surfaceTextures[index] ? draw.surfaceTextures[index] : m_fallbacks.data;
         // Consecutive draws often share a material (submeshes, repeated props).
         if (m_lastSlot != rhi::InvalidBindlessIndex && m_lastTextures == textures &&
             std::memcmp(&m_lastValues, &record, sizeof(record)) == 0)
@@ -125,14 +128,14 @@ namespace PlutoGE::render
             auto &entry = m_entries[found->second];
             auto values = entry.record;
             values.textures = {};
-            values.emissionTexture = {};
+            values.extraTextures = {};
             if (entry.textures == textures && std::memcmp(&values, &record, sizeof(record)) == 0)
             {
                 entry.lastUsed = m_frame;
                 return remember(found->second);
             }
         }
-        std::array<std::uint32_t, 5> indices{};
+        std::array<std::uint32_t, BindlessMaterialTextureCount> indices{};
         for (std::size_t texture = 0; texture < textures.size(); ++texture)
         {
             indices[texture] = AcquireTexture(device, textures[texture]);
@@ -145,7 +148,8 @@ namespace PlutoGE::render
         }
         const auto values = record;
         record.textures = {indices[0], indices[1], indices[2], indices[3]};
-        record.emissionTexture = {indices[4], 0u, 0u, 0u};
+        for (std::size_t index = 4; index < indices.size(); ++index)
+            record.extraTextures[(index - 4) / 4][(index - 4) % 4] = indices[index];
         std::uint32_t slot;
         if (!m_free.empty())
         {

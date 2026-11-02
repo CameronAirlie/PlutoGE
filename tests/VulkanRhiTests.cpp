@@ -1,6 +1,10 @@
 #include "SsaoRenderingChecks.h"
 #include "ContactShadowRenderingChecks.h"
 #include "AreaLightRenderingChecks.h"
+#include "MaterialOcclusionRenderingChecks.h"
+#include "SurfaceLayerRenderingChecks.h"
+#include "RectLightRenderingChecks.h"
+#include "RayTracingChecks.h"
 #include "IblRenderingChecks.h"
 #include "OrthographicUpscalerChecks.h"
 #include "CameraStackRenderingChecks.h"
@@ -157,7 +161,9 @@ int main(int argc, char **argv)
                         .state = {.spirv = ReadSpirv("DDGIProbeState.compute.spv")},
                         .blendIrradiance = {.spirv = ReadSpirv("DDGIBlendIrradiance.compute.spv")},
                         .blendDistance = {.spirv = ReadSpirv("DDGIBlendDistance.compute.spv")},
-                        .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes")};
+                        .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes"),
+                        .rayQueryTrace = {.spirv = ReadSpirv("DDGIRayQueryTrace.compute.spv")},
+                        .rayQueryVisibility = {.spirv = ReadSpirv("DDGIRayQueryVisibility.compute.spv")}};
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         loadPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
@@ -597,6 +603,18 @@ int main(int argc, char **argv)
             return 0;
         CheckAreaLights(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--area-lights")
+            return 0;
+        CheckMaterialOcclusion(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--material-occlusion")
+            return 0;
+        CheckSurfaceLayers(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--surface-layers")
+            return 0;
+        CheckRectLights(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--rect-lights")
+            return 0;
+        CheckRayTracing(device, {.spirv = ReadSpirv("RayQueryProbe.compute.spv")});
+        if (argc > 1 && std::string_view(argv[1]) == "--ray-tracing")
             return 0;
         CheckGpuDrivenOpaque(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--gpu-driven")

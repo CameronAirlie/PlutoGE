@@ -65,6 +65,29 @@ namespace PlutoGE::render
         // RGB selects output colour; W is independent channel intensity.
         std::array<glm::vec4, 3> emissionChannels{{{1,0,0,1}, {0,1,0,1}, {0,0,1,1}}};
 
+        // Ambient occlusion authored into the surface (cavities, crevices): darkens indirect light and
+        // micro-shadows direct light. Strength 0 ignores the map.
+        Texture *occlusionTexture = nullptr;
+        TextureChannel occlusionTextureChannel = TextureChannel::Red;
+        float occlusionStrength = 1.0f;
+
+        // Clear coat: a thin, smooth dielectric layer over the base (lacquer, car paint, varnish); 0 leaves none.
+        // Each texture scales its factor (glTF packs the coat in red and its roughness in green).
+        float clearCoat = 0.0f;
+        Texture *clearCoatTexture = nullptr;
+        TextureChannel clearCoatTextureChannel = TextureChannel::Red;
+        float clearCoatRoughness = 0.0f;
+        Texture *clearCoatRoughnessTexture = nullptr;
+        TextureChannel clearCoatRoughnessTextureChannel = TextureChannel::Green;
+
+        // Sheen: back-scattering fibres over the base (cloth, velvet, dust); black leaves none. The colour texture
+        // (sRGB) and the roughness texture (glTF: alpha) scale their factors.
+        glm::vec3 sheenColor{0.0f};
+        Texture *sheenColorTexture = nullptr;
+        float sheenRoughness = 0.5f;
+        Texture *sheenRoughnessTexture = nullptr;
+        TextureChannel sheenRoughnessTextureChannel = TextureChannel::Alpha;
+
         float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface
         float subsurfaceRadius = 1.0f;                   // Relative scattering distance/profile width
@@ -134,6 +157,13 @@ namespace PlutoGE::render
         void SetEmissionTexture(Texture *texture) { if (m_config.emissionTexture != (texture)) { m_config.emissionTexture = texture; Touch(); } }
         void SetEmissionTexCoord(int texCoord) { if (m_config.emissionTexCoord != (texCoord == 1 ? 1 : 0)) { m_config.emissionTexCoord = texCoord == 1 ? 1 : 0; Touch(); } }
         void SetEmission(const glm::vec3 &emission) { if (m_config.emission != (emission)) { m_config.emission = emission; Touch(); } }
+        void SetOcclusionTexture(Texture *texture) { if (m_config.occlusionTexture != (texture)) { m_config.occlusionTexture = texture; Touch(); } }
+        void SetOcclusionTextureChannel(TextureChannel channel) { if (m_config.occlusionTextureChannel != (channel)) { m_config.occlusionTextureChannel = channel; Touch(); } }
+        void SetOcclusionStrength(float strength) { if (m_config.occlusionStrength != (strength)) { m_config.occlusionStrength = strength; Touch(); } }
+        void SetClearCoat(float clearCoat) { if (m_config.clearCoat != (clearCoat)) { m_config.clearCoat = clearCoat; Touch(); } }
+        void SetClearCoatRoughness(float roughness) { if (m_config.clearCoatRoughness != (roughness)) { m_config.clearCoatRoughness = roughness; Touch(); } }
+        void SetSheenColor(const glm::vec3 &color) { if (m_config.sheenColor != (color)) { m_config.sheenColor = color; Touch(); } }
+        void SetSheenRoughness(float roughness) { if (m_config.sheenRoughness != (roughness)) { m_config.sheenRoughness = roughness; Touch(); } }
         void SetSubsurface(float subsurface) { if (m_config.subsurface != (subsurface)) { m_config.subsurface = subsurface; Touch(); } }
         void SetSubsurfaceColor(const glm::vec3 &color) { if (m_config.subsurfaceColor != (color)) { m_config.subsurfaceColor = color; Touch(); } }
         void SetSubsurfaceRadius(float radius) { if (m_config.subsurfaceRadius != (radius)) { m_config.subsurfaceRadius = radius; Touch(); } }

@@ -1,6 +1,7 @@
 // Shared AO encodings. Raw AO targets hold visibility and packed edges; history holds visibility, linear view depth
 // and the octahedral normal (half-float precision is sufficient for relative history rejection).
 #include "ScreenSpaceGuideCommon.slang"
+#include "AmbientOcclusion.slang"
 
 // Four edge-stopping weights (left, right, top, bottom) quantised to two bits each, stored as an exact integer in a
 // half-float channel (XeGTAO's packing).
@@ -19,12 +20,10 @@ float4 unpackEdges(float packed)
 // AO is visibility of indirect illumination, not a multiplier on direct light.
 // Include additive lighting composites since geometry (SSGI/VCTGI) along with
 // geometry's diffuse ambient; the original scene retains direct/emissive light.
-// The share of a GGX reflection lobe that ambient occlusion `ao` leaves visible, from the cone of directions AO
-// implies (Lagarde and de Rousiers, "Moving Frostbite to PBR", 2014). Smooth lobes are occluded only where AO is low
-// and the view is grazing; rough lobes follow AO.
+// Screen-space AO occludes reflections with the same lobe model as material occlusion (AmbientOcclusion.slang).
 float ssaoSpecularOcclusion(float ao, float ndotv, float roughness)
 {
-    return saturate(pow(ndotv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+    return specularOcclusion(ao, ndotv, roughness);
 }
 
 float4 ssaoComposite(float4 scene, float3 indirect, float ao, bool diagnostic)

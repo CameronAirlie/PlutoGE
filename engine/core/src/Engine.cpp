@@ -164,6 +164,18 @@ namespace PlutoGE::core
                     HashValue(fingerprint, material.metallicRoughnessTextureIndex);
                     HashValue(fingerprint, material.metallicRoughnessTextureHasMetallicChannel);
                     HashValue(fingerprint, material.flipNormalY);
+                    HashValue(fingerprint, material.occlusionTextureIndex);
+                    HashValue(fingerprint, material.occlusionStrength);
+                    HashValue(fingerprint, material.clearCoat);
+                    HashValue(fingerprint, material.clearCoatRoughness);
+                    HashValue(fingerprint, material.clearCoatTextureIndex);
+                    HashValue(fingerprint, material.clearCoatRoughnessTextureIndex);
+                    HashValue(fingerprint, material.sheenColor.r);
+                    HashValue(fingerprint, material.sheenColor.g);
+                    HashValue(fingerprint, material.sheenColor.b);
+                    HashValue(fingerprint, material.sheenRoughness);
+                    HashValue(fingerprint, material.sheenColorTextureIndex);
+                    HashValue(fingerprint, material.sheenRoughnessTextureIndex);
                 }
             }
 
@@ -429,40 +441,11 @@ namespace PlutoGE::core
                 const auto materialCreateStart = ImportClock::now();
                 for (const auto &material : *importedMeshAsset.materials)
                 {
-                    render::MaterialConfig config;
-                    config.color = material.color;
-                    config.surfaceType = material.surfaceType;
-                    config.alphaMode = material.alphaMode;
-                    config.alphaCutoff = material.alphaCutoff;
-                    config.castsShadow = material.castsShadow;
-                    config.twoSided = material.twoSided;
-                    config.metallic = material.metallic;
-                    config.roughness = material.roughness;
-                    config.emission = material.emission;
-                    config.subsurface = material.subsurface;
-                    config.subsurfaceColor = material.subsurfaceColor;
-                    config.subsurfaceRadius = material.subsurfaceRadius;
-                    config.transmission = material.transmission;
-                    config.ior = material.ior;
-                    config.thickness = material.thickness;
-                    config.attenuationColor = material.attenuationColor;
-                    config.attenuationDistance = material.attenuationDistance;
-                    config.emissionTexture = loadImportedTexture(material.emissionTextureIndex);
-                    config.emissionTexCoord = material.emissionTexCoord;
-                    config.albedoTexture = loadImportedTexture(material.albedoTextureIndex);
-                    config.normalTexture = loadImportedTexture(material.normalTextureIndex);
-                    config.flipNormalY = material.flipNormalY;
-                    if (material.metallicRoughnessTextureIndex >= 0)
-                    {
-                        auto *packedTexture = loadImportedTexture(material.metallicRoughnessTextureIndex);
-                        config.roughnessTexture = packedTexture;
-                        config.roughnessTextureChannel = render::TextureChannel::Green;
-                        if (material.metallicRoughnessTextureHasMetallicChannel)
-                        {
-                            config.metallicTexture = packedTexture;
-                            config.metallicTextureChannel = render::TextureChannel::Blue;
-                        }
-                    }
+                    const auto definition = assetimport::DescribeImportedMaterial(material);
+                    render::MaterialConfig config = definition.config;
+                    for (const auto &slot : render::MaterialTextureSlots())
+                        if (const int index = definition.TextureIndex(slot.slot); index >= 0)
+                            config.*slot.texture = loadImportedTexture(index);
                     importedMaterials.push_back(std::make_unique<render::Material>(config));
                 }
                 profile.materialCreateMs = ElapsedMilliseconds(materialCreateStart);

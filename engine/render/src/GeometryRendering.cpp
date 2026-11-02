@@ -238,7 +238,9 @@ namespace PlutoGE::render
         std::erase_if(descriptor.resourceBindings, [](const auto &binding)
         {
             return binding.type == rhi::ResourceBindingType::UniformBuffer ? binding.slot == 8 || binding.slot == 16
-                : binding.type == rhi::ResourceBindingType::SampledTexture && (binding.slot >= 9 && binding.slot <= 12 || binding.slot == 26);
+                : binding.type == rhi::ResourceBindingType::SampledTexture &&
+                    (binding.slot >= 9 && binding.slot <= 12 || binding.slot == 26 ||
+                     (binding.slot >= SurfaceTextureSlot && binding.slot < SurfaceTextureSlot + BasicSurfaceTextureCount));
         });
         descriptor.resourceBindings.push_back({GpuDrivenOpaque::InstancesSlot, 2, 1, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Vertex});
         descriptor.resourceBindings.push_back({GpuDrivenOpaque::MaterialsSlot, 2, 2, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment});

@@ -13,11 +13,15 @@
 namespace PlutoGE::scene
 {
 
+    // Serialized by value: append new types only.
     enum class LightType
     {
         Point,
         Directional,
-        Spot
+        Spot,
+        // A one-sided rectangle (sourceWidth x sourceHeight) facing `direction`, shaded with linearly transformed
+        // cosines; it casts no shadow maps, only contact shadows.
+        Rect
     };
 
     inline constexpr int kMaxDirectionalShadowCascades = 4;
@@ -74,6 +78,13 @@ namespace PlutoGE::scene
         // Zero is an ideal point. Shapes change specular only; falloff and shadows stay those of the centre.
         float sourceRadius = 0.0f;
         float sourceLength = 0.0f;
+        // Rect lights: the emitter's size in metres along `right` (the transform's x axis) and up (its y axis).
+        float sourceWidth = 1.0f;
+        float sourceHeight = 1.0f;
+        glm::vec3 right{1.0f, 0.0f, 0.0f};
+        // Point, spot and rect lights: world length of screen-space contact shadows towards the light; 0 disables
+        // them. Directional lights use directionalShadowSettings.contactShadowLength.
+        float contactShadowLength = 0.0f;
         std::unique_ptr<render::Texture> shadowMap; // Owned shadow map texture (if any)
         glm::mat4 shadowMatrix{1.0f};               // Light-space matrix for projected shadow maps
         std::array<std::unique_ptr<render::Texture>, kMaxDirectionalShadowCascades> shadowCascadeMaps;
@@ -120,6 +131,8 @@ namespace PlutoGE::scene
         void SetStatic(bool isStatic);
         void SetCastsShadows(bool castsShadows);
         void SetSourceShape(float radius, float length);
+        void SetRectSize(float width, float height);
+        void SetContactShadowLength(float length);
         void SetDirectionalShadowSettings(const DirectionalShadowSettings &settings);
         void MarkDirty();
         void ClearDirty();

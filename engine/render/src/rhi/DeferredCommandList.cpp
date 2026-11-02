@@ -97,6 +97,23 @@ namespace PlutoGE::render::rhi
     {
         return m_replayTarget && m_replayTarget->SupportsGpuDrivenShadows();
     }
+    void DeferredCommandList::BuildBottomLevelAccelerationStructure(AccelerationStructureHandle structure)
+    {
+        Record([structure](ICommandContext &target) { target.BuildBottomLevelAccelerationStructure(structure); });
+    }
+
+    void DeferredCommandList::BuildTopLevelAccelerationStructure(AccelerationStructureHandle structure,
+                                                                 std::span<const AccelerationStructureInstance> instances)
+    {
+        Record([structure, copy = std::vector<AccelerationStructureInstance>(instances.begin(), instances.end())](
+                   ICommandContext &target) { target.BuildTopLevelAccelerationStructure(structure, copy); });
+    }
+
+    void DeferredCommandList::BindAccelerationStructure(std::uint32_t slot, AccelerationStructureHandle structure)
+    {
+        Record([slot, structure](ICommandContext &target) { target.BindAccelerationStructure(slot, structure); });
+    }
+
     void DeferredCommandList::BindStorageBuffer(std::uint32_t slot, BufferHandle buffer)
     {
         Record([slot, buffer](ICommandContext &target) { target.BindStorageBuffer(slot, buffer); });

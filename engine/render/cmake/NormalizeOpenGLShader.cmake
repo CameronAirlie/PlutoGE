@@ -84,6 +84,11 @@ string(REPLACE "gl_InstanceIndex" "gl_InstanceID" shader_source "${shader_source
 # Glass SSR uses one extra immutable opaque-scene sampler. Slots 27..31
 # already belong to reflection probes, so flatten this binding to slot 32.
 string(REGEX REPLACE "binding[ \t]*=[ \t]*19,[ \t]*set[ \t]*=[ \t]*1" "binding = 32" shader_source "${shader_source}")
+# Optional surface textures (BasicRenderer::SurfaceTextureSlot): set-1 bindings 26.. follow the glass reflection's 32.
+foreach(surface_binding RANGE 26 31)
+    math(EXPR flattened_binding "${surface_binding} + 7")
+    string(REGEX REPLACE "binding[ \t]*=[ \t]*${surface_binding},[ \t]*set[ \t]*=[ \t]*1" "binding = ${flattened_binding}" shader_source "${shader_source}")
+endforeach()
 # Slang derives the GLSL image qualifier from the source value type. Some
 # resources intentionally store 32-bit shader values into 16-bit float images;
 # OpenGL requires the declaration to match the bound image's internal format.

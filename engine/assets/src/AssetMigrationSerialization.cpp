@@ -1,6 +1,7 @@
 #include "PlutoGE/assets/AssetMigrationSerialization.h"
 #include "PlutoGE/assets/AssetReference.h"
 #include "PlutoGE/assets/AssetReferences.h"
+#include "PlutoGE/render/MaterialTextureSlotKeys.h"
 #include "ShaderGraphReferenceFields.h"
 #include <map>
 #include <span>
@@ -65,8 +66,7 @@ namespace PlutoGE::assets
                         const auto key = line.substr(0, equals);
                         auto value = line.substr(equals + 1);
                         std::size_t valueStart = equals + 1;
-                        const bool texture = key == "AlbedoTexture" || key == "NormalTexture" ||
-                            key == "MetallicTexture" || key == "RoughnessTexture" || key == "EmissionTexture";
+                        const bool texture = render::IsMaterialTextureAssetKey(key);
                         if (shaderGraph)
                         {
                             std::size_t valueSize = 0;

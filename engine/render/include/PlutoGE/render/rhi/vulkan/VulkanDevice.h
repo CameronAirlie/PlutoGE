@@ -92,6 +92,12 @@ namespace PlutoGE::render::rhi::vulkan
         [[nodiscard]] std::uint32_t BindlessTextureCapacity() const noexcept override;
         [[nodiscard]] std::uint32_t RegisterBindlessTexture(TextureHandle texture, SamplerHandle sampler) override;
         void ReleaseBindlessTexture(std::uint32_t index) override;
+        [[nodiscard]] RayTracingSupport GetRayTracingSupport() const override;
+        [[nodiscard]] AccelerationStructureHandle CreateBottomLevelAccelerationStructure(
+            const BottomLevelAccelerationStructureDescriptor &descriptor) override;
+        [[nodiscard]] AccelerationStructureHandle CreateTopLevelAccelerationStructure(
+            const TopLevelAccelerationStructureDescriptor &descriptor) override;
+        void DestroyAccelerationStructure(AccelerationStructureHandle structure) override;
 
         // Test/editor migration bridge. Pixels are returned in RGBA8 order.
         [[nodiscard]] std::vector<std::byte> ReadTextureRgba8(TextureHandle texture);

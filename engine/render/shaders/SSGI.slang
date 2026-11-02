@@ -255,9 +255,9 @@ CompositeOutput compositeMain(FullscreenVertexOutput input)
     // Silhouettes without a matching reduced texel keep the ambient they have.
     gathered = weightSum > 0.0001 ? gathered / weightSum : 0.0;
     const float3 viewDirection = -normalize(position);
-    const float2 metallicRoughness = materialTexture.Load(int3(pixel, 0)).xy;
-    const float3 response = ambientDiffuseResponse(albedoTexture.Load(int3(pixel, 0)).rgb, saturate(metallicRoughness.x),
-        saturate(metallicRoughness.y), receiver.normal, viewDirection);
+    const float4 material = saturate(materialTexture.Load(int3(pixel, 0)));
+    const float3 response = ambientDiffuseResponse(albedoTexture.Load(int3(pixel, 0)).rgb, material.x, material.y,
+        receiver.normal, viewDirection, material.a);
     const float3 indirect = max(output.indirect.rgb +
         intensity() * (response * gathered.rgb - saturate(gathered.a) * output.indirect.rgb), 0.0);
     if (debugView == 1)

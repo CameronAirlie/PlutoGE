@@ -83,7 +83,7 @@ namespace PlutoGE::render
     // local lights, local light bounce, secondary bounce, voxelization command budget; 5.xy = debug probe radius,
     // brightness clamp (5.zw carry the camera's clip planes); 6.x = minimum frontface distance, 6.y = multiple
     // bounces, 6.z = probe cascades, 6.w = reflection occlusion, 7.x = relocate from thin surfaces, 7.y = stable
-    // hysteresis, 7.z = leak reduction. Quality is the number of blended rays per probe.
+    // hysteresis, 7.z = leak reduction, 7.w = ray source. Quality is the number of blended rays per probe.
     BasicPostProcessEffect EncodeDdgiPacket(const DdgiSettings &input, const void *historyOwner)
     {
         const auto settings = input.Sanitized();
@@ -107,6 +107,7 @@ namespace PlutoGE::render
         packet.parameters[7].x = settings.relocateFromThinSurfaces ? 1.0f : 0.0f;
         packet.parameters[7].y = settings.stableHysteresis;
         packet.parameters[7].z = settings.leakReduction;
+        packet.parameters[7].w = static_cast<float>(settings.raySource);
         return packet;
     }
 
@@ -142,6 +143,7 @@ namespace PlutoGE::render
         settings.relocateFromThinSurfaces = lanes[7].x > 0.5f;
         settings.stableHysteresis = lanes[7].y;
         settings.leakReduction = lanes[7].z;
+        settings.raySource = static_cast<DdgiRaySource>(std::clamp(static_cast<int>(std::lround(lanes[7].w)), 0, 2));
         return settings.Sanitized();
     }
 }

@@ -9,8 +9,18 @@ namespace PlutoGE::render
     {
         // Bindings declared by ContactShadows.slang.
         constexpr std::uint32_t DepthSlot = 2;
-        constexpr rhi::Format MaskFormat = rhi::Format::R32G32Float;
+        constexpr rhi::Format MaskFormat = rhi::Format::R32G32B32A32Float;
         constexpr std::uint32_t MaxSteps = 32;
+        static_assert(2 * ScreenSpaceContactShadows::SlotCount + 1 <= PLUTO_POST_PROCESS_LANES,
+                      "Each slot takes two lanes and the frame one more");
+
+        bool Traces(const ScreenSpaceContactShadows::Light &light)
+        {
+            using Kind = ScreenSpaceContactShadows::Light::Kind;
+            const float vectorSquared = glm::dot(light.vector, light.vector);
+            return light.kind != Kind::None && light.length > 0.0f && std::isfinite(light.length) &&
+                   std::isfinite(vectorSquared) && (light.kind == Kind::Local || vectorSquared > 1.e-8f);
+        }
     }
 
     bool ScreenSpaceContactShadows::Initialize(rhi::IRenderDevice &device, const ScreenSpaceFullscreenShader &shader)
@@ -26,18 +36,27 @@ namespace PlutoGE::render
     bool ScreenSpaceContactShadows::Prepare(const ScreenSpaceView &view, const Settings &settings)
     {
         m_parameters = {};
-        const float lengthSquared = glm::dot(settings.towardsLight, settings.towardsLight);
-        if (!Available() || !(settings.length > 0.0f) || !std::isfinite(settings.length) ||
-            !(lengthSquared > 1.e-8f) || !std::isfinite(lengthSquared) || view.width == 0 || view.height == 0)
+        if (!Available() || view.width == 0 || view.height == 0 ||
+            std::none_of(settings.lights.begin(), settings.lights.end(), Traces))
             return false;
         m_mask.Ensure(*m_device, {.width = view.width, .height = view.height, .format = MaskFormat,
             .usage = rhi::TextureUsage::ColorAttachment, .debugName = "Contact shadow mask", .sampled = true});
         m_uniforms.BeginFrame();
+        // Per slot: lane 2i the view-space direction towards the light (directional) or its view-space position
+        // (local) and the ray length; lane 2i + 1 the kind (0 none, 1 directional, 2 local) and occluder thickness.
         std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> lanes{};
-        const glm::vec3 towardsLight = glm::normalize(glm::mat3(view.view) * settings.towardsLight);
-        lanes[0] = {towardsLight, settings.length};
-        lanes[1] = {std::max(settings.thickness, 0.01f) * settings.length,
-                    static_cast<float>(view.frameIndex % 64u), 0.0f, 0.0f};
+        for (std::size_t slot = 0; slot < SlotCount; ++slot)
+        {
+            const auto &light = settings.lights[slot];
+            if (!Traces(light))
+                continue;
+            const bool directional = light.kind == Light::Kind::Directional;
+            const glm::vec3 vector = directional ? glm::normalize(glm::mat3(view.view) * light.vector)
+                                                 : glm::vec3(view.view * glm::vec4(light.vector, 1.0f));
+            lanes[2 * slot] = {vector, light.length};
+            lanes[2 * slot + 1] = {directional ? 1.0f : 2.0f, std::max(settings.thickness, 0.01f) * light.length, 0.0f, 0.0f};
+        }
+        lanes[2 * SlotCount] = {static_cast<float>(view.frameIndex % 64u), 0.0f, 0.0f, 0.0f};
         m_parameters = m_uniforms.Push(MakeScreenSpaceParameters(view, std::clamp(settings.steps, 1u, MaxSteps), lanes));
         return true;
     }

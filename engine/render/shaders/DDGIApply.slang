@@ -72,7 +72,8 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
     const float3 normal = decodeNormal(normalTexture.Load(int3(pixel, 0)).xyz);
     const float3 viewDirection = normalize(pass.cameraPosition.xyz - position);
     const float3 albedo = albedoTexture.Load(int3(pixel, 0)).rgb;
-    const float2 metallicRoughness = saturate(materialTexture.Load(int3(pixel, 0)).xy);
+    const float4 material = saturate(materialTexture.Load(int3(pixel, 0)));
+    const float2 metallicRoughness = material.xy;
     float coverage;
     DdgiSample probes;
     if (ddgiReflectionOcclusionEnabled() || view == PLUTO_DDGI_VIEW_SKY_VISIBILITY)
@@ -83,7 +84,7 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
         probes = ddgiIrradianceOnly(ddgiIrradiance(position, normal, viewDirection, coverage));
 
     const float3 response = ambientDiffuseResponse(albedo, metallicRoughness.x, metallicRoughness.y, normal,
-                                                   viewDirection);
+                                                   viewDirection, material.a);
     const float3 replaced = lerp(output.indirect.rgb, probes.irradiance * response * ddgiApply.x, coverage);
     float3 specular = output.environmentSpecular.rgb;
     float occlusion = 0.0;

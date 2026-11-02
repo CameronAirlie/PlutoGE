@@ -15,6 +15,7 @@
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"
 #include "SceneLightingParameters.slang"
+#include "DiffuseResponse.slang"
 #include "AmbientProbeSampling.slang"
 
 #ifndef PI
@@ -84,16 +85,12 @@ float3 gridIrradianceAt(ResolveSurface surface)
     return max(sampleDiffuseGrid(surface.position, surface.normal, surface.receiverNormal, surface.positionError).rgb, 0.0);
 }
 
-// Matches BasicLit's diffuse environment response for opaque surfaces.
+// Matches BasicLit's diffuse environment response for opaque surfaces, including material occlusion.
 float3 diffuseResponseAt(int2 texel, ResolveSurface surface)
 {
-    const float3 albedo = albedoTexture.Load(int3(texel, 0)).rgb;
-    const float2 metallicRoughness = materialTexture.Load(int3(texel, 0)).xy;
-    const float3 viewDirection = normalize(cameraPositionAmbient.xyz - surface.position);
-    const float ndotv = max(saturate(dot(surface.normal, viewDirection)), 0.0001);
-    const float3 f0 = lerp(float3(0.04), albedo, metallicRoughness.x);
-    const float3 fresnel = f0 + (max(float3(1.0 - metallicRoughness.y), f0) - f0) * pow(1.0 - ndotv, 5.0);
-    return albedo * (1.0 - fresnel) * (1.0 - metallicRoughness.x) / PI;
+    const float4 material = materialTexture.Load(int3(texel, 0));
+    return ambientDiffuseResponse(albedoTexture.Load(int3(texel, 0)).rgb, material.x, material.y, surface.normal,
+                                  normalize(cameraPositionAmbient.xyz - surface.position), material.a);
 }
 
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }

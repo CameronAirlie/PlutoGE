@@ -23,6 +23,11 @@ namespace PlutoGE::render
         bool operator==(const DdgiVoxelSettings &) const = default;
     };
 
+    // What DDGI's probe rays trace: the voxel scene (every GPU) or triangles with hardware ray queries (GPUs with
+    // ray tracing). Auto uses hardware when the device has it.
+    enum class DdgiRaySource : std::uint8_t { Auto, Voxels, Hardware };
+    inline constexpr std::array<std::string_view, 3> DdgiRaySourceNames{"Auto", "Voxels", "Hardware"};
+
     // Dynamic diffuse GI (docs/DDGI.md). Biases and the debug radius are in units of probe spacing.
     struct DdgiSettings
     {
@@ -60,6 +65,7 @@ namespace PlutoGE::render
         // PLUTO_DDGI_VIEW_* (DdgiConfig.h).
         int debugView = 0;
         float probeRadius = 0.15f;
+        DdgiRaySource raySource = DdgiRaySource::Auto;
         DdgiVoxelSettings voxels;
 
         [[nodiscard]] DdgiSettings Sanitized() const;

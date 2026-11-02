@@ -2,6 +2,7 @@
 #include "PlutoGE/assets/AssetReference.h"
 #include "PlutoGE/assets/ManagedAssetFieldMetadata.h"
 #include "PlutoGE/assets/SceneModelInstanceRecord.h"
+#include "PlutoGE/render/MaterialTextureSlotKeys.h"
 #include <unordered_map>
 #include "ShaderGraphReferenceFields.h"
 
@@ -465,7 +466,7 @@ namespace PlutoGE::assets
             const auto key = line.substr(0, equals);
             const auto value = line.substr(equals + 1);
             if ((extension == ".plutomaterial" || extension == ".mat") &&
-                (key == "AlbedoTexture" || key == "NormalTexture" || key == "MetallicTexture" || key == "RoughnessTexture" || key == "EmissionTexture"))
+                render::IsMaterialTextureAssetKey(key))
             {
                 if (!value.empty() && value.find("://") == std::string_view::npos &&
                     !std::filesystem::path(value).is_absolute())

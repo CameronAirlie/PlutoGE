@@ -138,6 +138,19 @@ namespace PlutoGE::ui
             return entity;
         }
 
+        scene::Entity *CreateRectLight(const EntityPresetContext &context)
+        {
+            auto *entity = AddEntity(context.scene, context.parent, "Rect Light", glm::vec3(0.0f, 2.0f, 0.0f));
+            if (auto *light = entity ? entity->CreateComponent<scene::LightComponent>() : nullptr)
+            {
+                light->SetLightType(scene::LightType::Rect);
+                light->SetIntensity(20.0f);
+                light->SetRectSize(1.0f, 0.5f);
+                light->SetDirection(glm::vec3(0.0f, -1.0f, 0.0f));
+            }
+            return entity;
+        }
+
         scene::Entity *CreateSky(const EntityPresetContext &context)
         {
             auto *entity = AddEntityWith<scene::PhysicalSkyComponent>(context, "Sky");
@@ -172,6 +185,7 @@ namespace PlutoGE::ui
             EntityPresetDefinition{"Camera", "Create Camera", false, &CreateCamera},
             EntityPresetDefinition{"Directional Light", "Create Directional Light", false, &CreateDirectionalLight},
             EntityPresetDefinition{"Point Light", "Create Point Light", false, &CreatePointLight},
+            EntityPresetDefinition{"Rect Light", "Create Rect Light", false, &CreateRectLight},
             EntityPresetDefinition{"Sky", "Create Sky", true, &CreateSky},
             EntityPresetDefinition{"Ocean", "Create Ocean", false,
                                    [](const EntityPresetContext &c) { return AddEntityWith<scene::OceanComponent>(c, "Ocean"); }},

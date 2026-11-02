@@ -24,6 +24,10 @@ namespace PlutoGE::render
             && a.normalTexture == b.normalTexture
             && a.metallicTexture == b.metallicTexture
             && a.roughnessTexture == b.roughnessTexture
+            && a.surfaceTextures == b.surfaceTextures && a.surfaceTextureChannels == b.surfaceTextureChannels
+            && a.occlusionStrength == b.occlusionStrength
+            && a.clearCoat == b.clearCoat && a.clearCoatRoughness == b.clearCoatRoughness
+            && a.sheenColor == b.sheenColor && a.sheenRoughness == b.sheenRoughness
             && a.graphTextures==b.graphTextures && a.graphSamplers==b.graphSamplers
             && a.graphPassOrder == b.graphPassOrder
             && a.metallic == b.metallic
@@ -138,6 +142,16 @@ namespace PlutoGE::render
         HashBatchValue(hash, draw.normalTexture);
         HashBatchValue(hash, draw.metallicTexture);
         HashBatchValue(hash, draw.roughnessTexture);
+        for (std::size_t index = 0; index < BasicSurfaceTextureCount; ++index)
+        {
+            HashBatchValue(hash, draw.surfaceTextures[index]);
+            HashBatchValue(hash, draw.surfaceTextureChannels[index]);
+        }
+        HashBatchValue(hash, draw.occlusionStrength);
+        HashBatchValue(hash, draw.clearCoat);
+        HashBatchValue(hash, draw.clearCoatRoughness);
+        HashBatchValue(hash, draw.sheenColor);
+        HashBatchValue(hash, draw.sheenRoughness);
         HashBatchValue(hash, draw.metallic);
         HashBatchValue(hash, draw.roughness);
         HashBatchValue(hash, draw.emission);

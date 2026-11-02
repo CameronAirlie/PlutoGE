@@ -3,6 +3,8 @@
 #include "PlutoGE/assets/AssetStorageMap.h"
 #include "PlutoGE/platform/Window.h"
 #include "EmissionMaterialChecks.h"
+#include "OcclusionMaterialChecks.h"
+#include "LayerMaterialChecks.h"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -94,7 +96,9 @@ int main() try
     require(assets.LoadMaterialAsset(generationA.string()) != borrowed,
         "Old physical generation still aliases the new material");
     CheckEmissionMaterial(assets, root);
-    std::cout << "Material reload and emissive import checks passed\n";
+    CheckOcclusionMaterial(assets, root);
+    CheckLayerMaterial(assets, root);
+    std::cout << "Material reload, emissive, occlusion and layer import checks passed\n";
     return 0;
 }
 catch (const std::exception &error)

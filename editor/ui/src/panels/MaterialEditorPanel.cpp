@@ -187,6 +187,52 @@ namespace PlutoGE::ui
         m_dirty = false;
     }
 
+    void MaterialEditorPanel::ApplyTextures(render::MaterialConfig &config)
+    {
+        for (const auto &slot : render::MaterialTextureSlots())
+        {
+            config.*slot.texture = LoadMaterialEditorTexture(TexturePath(slot.slot),
+                                                             render::GetMaterialTextureColorSpace(config, slot.slot));
+            if (slot.channel) config.*slot.channel = TextureChannel(slot.slot);
+        }
+    }
+
+    bool MaterialEditorPanel::RenderSlotTextureControls(render::MaterialTextureSlot slot)
+    {
+        const auto &info = render::GetMaterialTextureSlotInfo(slot);
+        bool changed = RenderTextureReferenceControl((std::string(info.displayName) + " Texture").c_str(), TexturePath(slot));
+        if (info.channel && !TexturePath(slot).empty())
+            changed |= RenderTextureChannelCombo((std::string(info.displayName) + " Channel").c_str(), TextureChannel(slot));
+        return changed;
+    }
+
+    bool MaterialEditorPanel::RenderLayerControls()
+    {
+        bool changed = false;
+        ImGui::SeparatorText("Clear Coat");
+        changed |= ImGui::SliderFloat("Strength##ClearCoat", &m_clearCoat, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("A thin, smooth transparent layer over the surface, such as lacquer, varnish or car paint.");
+        if (m_clearCoat > 0.0f)
+        {
+            changed |= ImGui::SliderFloat("Roughness##ClearCoat", &m_clearCoatRoughness, 0.0f, 1.0f, "%.2f");
+            changed |= RenderSlotTextureControls(render::MaterialTextureSlot::ClearCoat);
+            changed |= RenderSlotTextureControls(render::MaterialTextureSlot::ClearCoatRoughness);
+        }
+        ImGui::SeparatorText("Sheen");
+        changed |= ImGui::ColorEdit3("Color##Sheen", &m_sheenColor.x, ImGuiColorEditFlags_Float);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Soft light scattered back by fibres at grazing angles, such as cloth, velvet or dust.\n"
+                              "Black turns sheen off.");
+        if (m_sheenColor != glm::vec3(0.0f))
+        {
+            changed |= ImGui::SliderFloat("Roughness##Sheen", &m_sheenRoughness, 0.0f, 1.0f, "%.2f");
+            changed |= RenderSlotTextureControls(render::MaterialTextureSlot::SheenColor);
+            changed |= RenderSlotTextureControls(render::MaterialTextureSlot::SheenRoughness);
+        }
+        return changed;
+    }
+
     void MaterialEditorPanel::LoadActiveMaterial()
     {
         auto &editorShell = EditorShell::GetInstance();
@@ -207,19 +253,19 @@ namespace PlutoGE::ui
             m_alphaCutoff = 0.5f;
             m_castsShadow = true;
             m_twoSided = false;
-            m_albedoTexturePath.clear();
-            m_normalTexturePath.clear();
+            m_texturePaths = {};
+            m_textureChannels = {};
             m_metallic = 0.0f;
-            m_metallicTexturePath.clear();
-            m_metallicTextureChannel = render::TextureChannel::Red;
             m_roughness = 0.55f;
+            m_occlusionStrength = 1.0f;
+            m_clearCoat = 0.0f;
+            m_clearCoatRoughness = 0.0f;
+            m_sheenColor = glm::vec3(0.0f);
+            m_sheenRoughness = 0.5f;
             m_emission = glm::vec3(0.0f);
-            m_emissionTexturePath.clear();
             m_emissionTexCoord = 0;
             m_emissionChannelMask = false;
             m_emissionChannels = {{{1,0,0,1},{0,1,0,1},{0,0,1,1}}};
-            m_roughnessTexturePath.clear();
-            m_roughnessTextureChannel = render::TextureChannel::Red;
             m_transmission = 0.0f;
             m_ior = 1.45f;
             m_thickness = 0.01f;
@@ -256,19 +302,22 @@ namespace PlutoGE::ui
         m_alphaCutoff = config.alphaCutoff;
         m_castsShadow = config.castsShadow;
         m_twoSided = config.twoSided;
-        m_albedoTexturePath = textureReference(config.albedoTexture);
-        m_normalTexturePath = textureReference(config.normalTexture);
+        for (const auto &slot : render::MaterialTextureSlots())
+        {
+            TexturePath(slot.slot) = textureReference(config.*slot.texture);
+            TextureChannel(slot.slot) = slot.channel ? config.*slot.channel : render::TextureChannel::Red;
+        }
         m_metallic = config.metallic;
-        m_metallicTexturePath = textureReference(config.metallicTexture);
-        m_metallicTextureChannel = config.metallicTextureChannel;
         m_roughness = config.roughness;
+        m_occlusionStrength = config.occlusionStrength;
+        m_clearCoat = config.clearCoat;
+        m_clearCoatRoughness = config.clearCoatRoughness;
+        m_sheenColor = config.sheenColor;
+        m_sheenRoughness = config.sheenRoughness;
         m_emission = config.emission;
-        m_emissionTexturePath = textureReference(config.emissionTexture);
         m_emissionTexCoord = config.emissionTexCoord;
         m_emissionChannelMask = config.emissionChannelMask;
         m_emissionChannels = config.emissionChannels;
-        m_roughnessTexturePath = textureReference(config.roughnessTexture);
-        m_roughnessTextureChannel = config.roughnessTextureChannel;
         m_transmission = config.transmission;
         m_ior = config.ior;
         m_thickness = config.thickness;
@@ -309,18 +358,17 @@ namespace PlutoGE::ui
         previewConfig.surfaceType = m_surfaceType;
         previewConfig.alphaMode = m_alphaMode;
         previewConfig.twoSided = m_twoSided;
-        previewConfig.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath, render::TextureColorSpace::SRGB);
-        previewConfig.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath, render::TextureColorSpace::Linear);
         previewConfig.metallic = m_metallic;
-        previewConfig.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath, render::TextureColorSpace::Linear);
-        previewConfig.metallicTextureChannel = m_metallicTextureChannel;
         previewConfig.roughness = m_roughness;
-        previewConfig.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath, render::TextureColorSpace::Linear);
-        previewConfig.roughnessTextureChannel = m_roughnessTextureChannel;
+        previewConfig.occlusionStrength = m_occlusionStrength;
+        previewConfig.clearCoat = m_clearCoat;
+        previewConfig.clearCoatRoughness = m_clearCoatRoughness;
+        previewConfig.sheenColor = m_sheenColor;
+        previewConfig.sheenRoughness = m_sheenRoughness;
         previewConfig.emission = m_emission;
-        previewConfig.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, m_emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB);
         previewConfig.emissionTexCoord = m_emissionTexCoord;
         previewConfig.emissionChannelMask = m_emissionChannelMask;
+        ApplyTextures(previewConfig);
         previewConfig.emissionChannels = m_emissionChannels;
         previewConfig.transmission = m_transmission;
         previewConfig.subsurface = m_subsurface;
@@ -338,19 +386,19 @@ namespace PlutoGE::ui
         for (const float value : {m_color.r, m_color.g, m_color.b, m_color.a, m_metallic, m_roughness,
                                   m_emission.r, m_emission.g, m_emission.b, m_uvScale.x, m_uvScale.y,
                                   m_subsurface, m_subsurfaceColor.r, m_subsurfaceColor.g, m_subsurfaceColor.b, m_subsurfaceRadius,
-                                  m_transmission, m_ior, m_attenuationColor.r, m_attenuationColor.g, m_attenuationColor.b})
+                                  m_transmission, m_ior, m_attenuationColor.r, m_attenuationColor.g, m_attenuationColor.b,
+                                  m_occlusionStrength, m_clearCoat, m_clearCoatRoughness, m_sheenColor.r, m_sheenColor.g,
+                                  m_sheenColor.b, m_sheenRoughness})
             HashPreviewValue(previewRevision, value);
-        HashPreviewValue(previewRevision, m_albedoTexturePath);
-        HashPreviewValue(previewRevision, m_normalTexturePath);
-        HashPreviewValue(previewRevision, m_metallicTexturePath);
-        HashPreviewValue(previewRevision, m_roughnessTexturePath);
-        HashPreviewValue(previewRevision, m_emissionTexturePath);
+        for (std::size_t slot = 0; slot < render::MaterialTextureSlotCount; ++slot)
+        {
+            HashPreviewValue(previewRevision, m_texturePaths[slot]);
+            HashPreviewValue(previewRevision, static_cast<int>(m_textureChannels[slot]));
+        }
         HashPreviewValue(previewRevision, m_emissionTexCoord);
         HashPreviewValue(previewRevision, m_emissionChannelMask);
         for (const auto &channel : m_emissionChannels)
             for (int i=0;i<4;++i) HashPreviewValue(previewRevision, channel[i]);
-        HashPreviewValue(previewRevision, static_cast<int>(m_metallicTextureChannel));
-        HashPreviewValue(previewRevision, static_cast<int>(m_roughnessTextureChannel));
         HashPreviewValue(previewRevision, m_flipNormalY);
         HashPreviewValue(previewRevision, m_twoSided);
         if (previewConfig.shaderGraphProgram)
@@ -380,11 +428,11 @@ namespace PlutoGE::ui
                                                                                                                        : "Opaque",
                             m_metallic,
                             m_roughness);
-        ImGui::TextDisabled("Textures: Albedo %s | Normal %s | Metallic %s | Roughness %s",
-                            m_albedoTexturePath.empty() ? "none" : "set",
-                            m_normalTexturePath.empty() ? "none" : "set",
-                            m_metallicTexturePath.empty() ? "none" : "set",
-                            m_roughnessTexturePath.empty() ? "none" : "set");
+        std::string textureSummary;
+        for (const auto &slot : render::MaterialTextureSlots())
+            textureSummary += (textureSummary.empty() ? "" : " | ") + std::string(slot.displayName) +
+                              (TexturePath(slot.slot).empty() ? " none" : " set");
+        ImGui::TextDisabled("Textures: %s", textureSummary.c_str());
 
         ImGui::Separator();
         if (engineMaterial)
@@ -484,11 +532,11 @@ namespace PlutoGE::ui
         }
 
         ImGui::SeparatorText("Textures");
-        if (RenderTextureReferenceControl("Albedo", m_albedoTexturePath))
+        if (RenderTextureReferenceControl("Albedo", TexturePath(render::MaterialTextureSlot::Albedo)))
         {
             m_dirty = true;
         }
-        if (RenderTextureReferenceControl("Normal", m_normalTexturePath))
+        if (RenderTextureReferenceControl("Normal", TexturePath(render::MaterialTextureSlot::Normal)))
         {
             m_dirty = true;
         }
@@ -497,11 +545,11 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
-        if (RenderTextureReferenceControl("Metallic Texture", m_metallicTexturePath))
+        if (RenderTextureReferenceControl("Metallic Texture", TexturePath(render::MaterialTextureSlot::Metallic)))
         {
             m_dirty = true;
         }
-        if (RenderTextureChannelCombo("Metallic Channel", m_metallicTextureChannel))
+        if (RenderTextureChannelCombo("Metallic Channel", TextureChannel(render::MaterialTextureSlot::Metallic)))
         {
             m_dirty = true;
         }
@@ -510,7 +558,7 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
-        if (RenderTextureReferenceControl("Emission Texture", m_emissionTexturePath))
+        if (RenderTextureReferenceControl("Emission Texture", TexturePath(render::MaterialTextureSlot::Emission)))
             m_dirty = true;
         const char *emissionUvs[] = {"UV 0 (primary)", "UV 1 (secondary)"};
         if (ImGui::Combo("Emission UV Set", &m_emissionTexCoord, emissionUvs, 2))
@@ -537,18 +585,33 @@ namespace PlutoGE::ui
             m_emission = glm::max(glm::vec3(emission[0], emission[1], emission[2]), glm::vec3(0.0f));
             m_dirty = true;
         }
-        if (RenderTextureReferenceControl("Roughness Texture", m_roughnessTexturePath))
+        if (RenderTextureReferenceControl("Roughness Texture", TexturePath(render::MaterialTextureSlot::Roughness)))
         {
             m_dirty = true;
         }
-        if (RenderTextureChannelCombo("Roughness Channel", m_roughnessTextureChannel))
+        if (RenderTextureChannelCombo("Roughness Channel", TextureChannel(render::MaterialTextureSlot::Roughness)))
         {
             m_dirty = true;
+        }
+        if (RenderTextureReferenceControl("Occlusion Texture", TexturePath(render::MaterialTextureSlot::Occlusion)))
+            m_dirty = true;
+        if (!TexturePath(render::MaterialTextureSlot::Occlusion).empty())
+        {
+            if (RenderTextureChannelCombo("Occlusion Channel", TextureChannel(render::MaterialTextureSlot::Occlusion)))
+                m_dirty = true;
+            if (ImGui::SliderFloat("Occlusion Strength", &m_occlusionStrength, 0.0f, 1.0f, "%.2f"))
+                m_dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Darkens ambient light and reflections in cavities, and shadows direct light\n"
+                                  "arriving from outside a cavity's opening. glTF packs it in the red channel.");
         }
         if (RenderVector2Control("UV Scale", m_uvScale, 0.2f))
         {
             m_dirty = true;
         }
+
+        if (RenderLayerControls())
+            m_dirty = true;
 
         ImGui::SeparatorText("Subsurface Scattering");
         if (ImGui::SliderFloat("Strength##Subsurface", &m_subsurface, 0.0f, 1.0f, "%.2f"))
@@ -627,22 +690,21 @@ namespace PlutoGE::ui
             config.alphaCutoff = (std::clamp)(m_alphaCutoff, 0.0f, 1.0f);
             config.castsShadow = m_castsShadow;
             config.twoSided = m_twoSided;
-            config.albedoTexture = LoadMaterialEditorTexture(m_albedoTexturePath, render::TextureColorSpace::SRGB);
-            config.normalTexture = LoadMaterialEditorTexture(m_normalTexturePath, render::TextureColorSpace::Linear);
             config.metallic = (std::clamp)(m_metallic, 0.0f, 1.0f);
-            config.metallicTexture = LoadMaterialEditorTexture(m_metallicTexturePath, render::TextureColorSpace::Linear);
-            config.metallicTextureChannel = m_metallicTextureChannel;
             config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
+            config.occlusionStrength = (std::clamp)(m_occlusionStrength, 0.0f, 1.0f);
+            config.clearCoat = (std::clamp)(m_clearCoat, 0.0f, 1.0f);
+            config.clearCoatRoughness = (std::clamp)(m_clearCoatRoughness, 0.0f, 1.0f);
+            config.sheenColor = glm::clamp(m_sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
+            config.sheenRoughness = (std::clamp)(m_sheenRoughness, 0.0f, 1.0f);
             config.emission = glm::max(m_emission, glm::vec3(0.0f));
-            config.emissionTexture = LoadMaterialEditorTexture(m_emissionTexturePath, m_emissionChannelMask ? render::TextureColorSpace::Linear : render::TextureColorSpace::SRGB);
             config.emissionTexCoord = m_emissionTexCoord;
             config.emissionChannelMask = m_emissionChannelMask;
+            ApplyTextures(config);
             config.emissionChannels = m_emissionChannels;
             config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
             config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
             config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);
-            config.roughnessTexture = LoadMaterialEditorTexture(m_roughnessTexturePath, render::TextureColorSpace::Linear);
-            config.roughnessTextureChannel = m_roughnessTextureChannel;
             config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);
             config.ior = (std::clamp)(m_ior, 1.0f, 2.5f);
             config.thickness = (std::max)(m_thickness, 0.0f);

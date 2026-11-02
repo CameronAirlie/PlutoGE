@@ -206,6 +206,19 @@ namespace PlutoGE::scene
         m_config.sourceLength = sanitize(length);
     }
 
+    void LightComponent::SetRectSize(float width, float height)
+    {
+        // A rectangle needs some extent; a millimetre is effectively a point.
+        const auto sanitize = [](float value) { return std::isfinite(value) ? std::max(value, 0.001f) : 1.0f; };
+        m_config.sourceWidth = sanitize(width);
+        m_config.sourceHeight = sanitize(height);
+    }
+
+    void LightComponent::SetContactShadowLength(float length)
+    {
+        m_config.contactShadowLength = std::isfinite(length) ? std::clamp(length, 0.0f, 2.0f) : 0.0f;
+    }
+
     void LightComponent::SetDirectionalShadowSettings(const DirectionalShadowSettings &settings)
     {
         m_config.directionalShadowSettings = settings;
@@ -243,7 +256,7 @@ namespace PlutoGE::scene
             {"Intensity", PropertyType::Float, std::to_string(m_config.intensity)},
             {"CastsShadows", PropertyType::Bool, m_config.castsShadows ? "true" : "false"},
             {"Direction", PropertyType::Vec3, std::to_string(m_config.direction.x) + "," + std::to_string(m_config.direction.y) + "," + std::to_string(m_config.direction.z)},
-            {"LightType", PropertyType::Enum, std::to_string(static_cast<int>(m_config.type)), {"Point", "Directional", "Spot"}},
+            {"LightType", PropertyType::Enum, std::to_string(static_cast<int>(m_config.type)), {"Point", "Directional", "Spot", "Rect"}},
             {"Static", PropertyType::Bool, m_config.isStatic ? "true" : "false"},
         };
 
@@ -252,8 +265,15 @@ namespace PlutoGE::scene
             properties.push_back({"Inner Cone Angle (degrees)", PropertyType::Float, std::to_string(m_config.spotCone.innerAngle)});
             properties.push_back({"Outer Cone Angle (degrees)", PropertyType::Float, std::to_string(m_config.spotCone.outerAngle)});
         }
-        if (m_config.type != LightType::Directional)
+        if (m_config.type == LightType::Point || m_config.type == LightType::Spot)
             properties.push_back({"Source Radius", PropertyType::Float, std::to_string(m_config.sourceRadius)});
+        if (m_config.type == LightType::Rect)
+        {
+            properties.push_back({"Source Width", PropertyType::Float, std::to_string(m_config.sourceWidth)});
+            properties.push_back({"Source Height", PropertyType::Float, std::to_string(m_config.sourceHeight)});
+        }
+        if (m_config.type != LightType::Directional)
+            properties.push_back({"Contact Shadow Length (0 = Off)", PropertyType::Float, std::to_string(m_config.contactShadowLength)});
         if (m_config.type == LightType::Point)
             properties.push_back({"Source Length", PropertyType::Float, std::to_string(m_config.sourceLength)});
         if (m_config.type == LightType::Directional)
@@ -314,6 +334,10 @@ namespace PlutoGE::scene
                 SetSourceShape(std::stof(property.value), m_config.sourceLength);
             else if (property.name == "Source Length")
                 SetSourceShape(m_config.sourceRadius, std::stof(property.value));
+            else if (property.name == "Source Width")
+                SetRectSize(std::stof(property.value), m_config.sourceHeight);
+            else if (property.name == "Source Height")
+                SetRectSize(m_config.sourceWidth, std::stof(property.value));
             else if (property.name == "Range")
             {
                 // Legacy scenes may contain Range; intensity now determines the cutoff.
@@ -433,8 +457,10 @@ namespace PlutoGE::scene
             }
             else if (property.name == "Contact Shadow Length (0 = Off)")
             {
+                // One property for every type; the light type may be read after it.
                 const float length = std::stof(property.value);
                 m_config.directionalShadowSettings.contactShadowLength = std::isfinite(length) ? std::clamp(length, 0.0f, 2.0f) : 0.0f;
+                SetContactShadowLength(length);
             }
         }
         m_config.spotCone.Sanitize();
@@ -449,7 +475,7 @@ namespace PlutoGE::scene
 
     void LightComponent::Initialize()
     {
-        if (!m_config.castsShadows || (m_config.type == LightType::Directional &&
+        if (!m_config.castsShadows || m_config.type == LightType::Rect || (m_config.type == LightType::Directional &&
             m_config.directionalShadowSettings.method == render::ShadowMethod::Virtual))
         {
             // VSM resources belong to the RHI renderer. Do not allocate or
@@ -565,6 +591,7 @@ namespace PlutoGE::scene
         {
             const glm::vec3 previousPosition = m_config.position;
             const glm::vec3 previousDirection = m_config.direction;
+            const glm::vec3 previousRight = m_config.right;
 
             m_config.position = owner->GetWorldPosition();
 
@@ -577,9 +604,16 @@ namespace PlutoGE::scene
             {
                 m_config.direction = glm::normalize(worldForward);
             }
+            // Rect lights also need roll: their width runs along the transform's x axis.
+            const glm::vec3 worldRight = glm::vec3(owner->GetWorldTransform()[0]);
+            if (glm::dot(worldRight, worldRight) > 0.000001f)
+            {
+                m_config.right = glm::normalize(worldRight);
+            }
 
             if (!ApproximatelyEqual(m_config.position, previousPosition) ||
-                !ApproximatelyEqual(m_config.direction, previousDirection))
+                !ApproximatelyEqual(m_config.direction, previousDirection) ||
+                !ApproximatelyEqual(m_config.right, previousRight))
             {
                 MarkDirty();
             }

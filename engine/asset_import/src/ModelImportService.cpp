@@ -409,42 +409,11 @@ namespace PlutoGE::assetimport
                 for (std::size_t index = 0; index < imported.materials.size(); ++index)
                 {
                     progress("Writing materials");
-                    const auto &material = imported.materials[index];
-                    render::MaterialConfig config;
-                    config.color = material.color;
-                    config.surfaceType = material.surfaceType;
-                    config.alphaMode = material.alphaMode;
-                    config.alphaCutoff = material.alphaCutoff;
-                    config.castsShadow = material.castsShadow;
-                    config.twoSided = material.twoSided;
-                    config.metallic = material.metallic;
-                    config.roughness = material.roughness;
-                    config.emission = material.emission;
-                    config.emissionTexCoord = material.emissionTexCoord;
-                    config.subsurface = material.subsurface;
-                    config.subsurfaceColor = material.subsurfaceColor;
-                    config.subsurfaceRadius = material.subsurfaceRadius;
-                    config.transmission = material.transmission;
-                    config.ior = material.ior;
-                    config.thickness = material.thickness;
-                    config.attenuationColor = material.attenuationColor;
-                    config.attenuationDistance = material.attenuationDistance;
-                    config.flipNormalY = material.flipNormalY;
-                    assets::MaterialTextureReferences textures{
-                        .albedo = textureReference(material.albedoTextureIndex),
-                        .normal = textureReference(material.normalTextureIndex),
-                        .emission = textureReference(material.emissionTextureIndex),
-                    };
-                    textures.roughness = textureReference(material.metallicRoughnessTextureIndex);
-                    if (!textures.roughness.empty())
-                    {
-                        config.roughnessTextureChannel = render::TextureChannel::Green;
-                        if (material.metallicRoughnessTextureHasMetallicChannel)
-                        {
-                            textures.metallic = textures.roughness;
-                            config.metallicTextureChannel = render::TextureChannel::Blue;
-                        }
-                    }
+                    const auto definition = assetimport::DescribeImportedMaterial(imported.materials[index]);
+                    const auto &config = definition.config;
+                    assets::MaterialTextureReferences textures;
+                    for (const auto &slot : render::MaterialTextureSlots())
+                        textures[slot.slot] = textureReference(definition.TextureIndex(slot.slot));
                     const auto name = "M_" + sourcePath.stem().string() + "_" + std::to_string(index);
                     const auto destination = importDirectory / (name + ".plutomaterial");
                     std::ofstream output(stage(destination));

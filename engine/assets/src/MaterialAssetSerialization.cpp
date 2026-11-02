@@ -14,9 +14,9 @@ namespace PlutoGE::assets
             if (errorMessage) *errorMessage = "Invalid material serialization fields or stream write failure.";
             return false;
         };
-        for (const auto *reference : {&textures.albedo, &textures.normal, &textures.metallic, &textures.roughness,
-                                     &textures.emission, &config.shaderGraphReference})
-            if (reference->find_first_of("\r\n\0", 0, 3) != std::string::npos) return fail();
+        for (const auto &reference : textures.paths)
+            if (reference.find_first_of("\r\n\0", 0, 3) != std::string::npos) return fail();
+        if (config.shaderGraphReference.find_first_of("\r\n\0", 0, 3) != std::string::npos) return fail();
         std::unordered_set<std::string> textureNames;
         for (const auto &texture : config.shaderGraphTextures)
             if (texture.name.empty() || !textureNames.insert(texture.name).second ||
@@ -35,7 +35,6 @@ namespace PlutoGE::assets
         output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";
-        output << "EmissionTexture=" << textures.emission << "\n";
         output << "EmissionChannelMask=" << (config.emissionChannelMask ? "true" : "false") << "\n";
         const char *emissionChannelNames[]{"EmissionRed", "EmissionGreen", "EmissionBlue"};
         for (int i = 0; i < 3; ++i)
@@ -54,12 +53,16 @@ namespace PlutoGE::assets
         output << "AttenuationColor=" << config.attenuationColor.r << "," << config.attenuationColor.g << "," << config.attenuationColor.b << "\n";
         output << "AttenuationDistance=" << config.attenuationDistance << "\n";
         output << "FlipNormalY=" << (config.flipNormalY ? "true" : "false") << "\n";
-        output << "AlbedoTexture=" << textures.albedo << "\n";
-        output << "NormalTexture=" << textures.normal << "\n";
-        output << "MetallicTexture=" << textures.metallic << "\n";
-        output << "MetallicTextureChannel=" << static_cast<int>(config.metallicTextureChannel) << "\n";
-        output << "RoughnessTexture=" << textures.roughness << "\n";
-        output << "RoughnessTextureChannel=" << static_cast<int>(config.roughnessTextureChannel) << "\n";
+        output << "OcclusionStrength=" << config.occlusionStrength << "\n";
+        output << "ClearCoat=" << config.clearCoat << "\n";
+        output << "ClearCoatRoughness=" << config.clearCoatRoughness << "\n";
+        output << "SheenColor=" << config.sheenColor.r << "," << config.sheenColor.g << "," << config.sheenColor.b << "\n";
+        output << "SheenRoughness=" << config.sheenRoughness << "\n";
+        for (const auto &slot : render::MaterialTextureSlots())
+        {
+            output << slot.assetKey << "=" << textures[slot.slot] << "\n";
+            if (slot.channel) output << slot.channelKey << "=" << static_cast<int>(config.*slot.channel) << "\n";
+        }
         output << "ShaderGraph=" << (config.shaderGraphReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : config.shaderGraphReference) << "\n";
         for(const auto &t:config.shaderGraphTextures)output<<"ShaderGraphTexture="<<t.name<<'|'<<t.reference<<'\n';
         for (const auto &variable : config.shaderGraphVariables)

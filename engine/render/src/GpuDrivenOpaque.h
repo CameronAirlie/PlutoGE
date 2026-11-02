@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BasicSurfaceParameters.h"
 #include "ChangedBufferRecords.h"
 #include "PlutoGE/render/rhi/Resource.h"
 
@@ -31,9 +32,15 @@ namespace PlutoGE::render
         glm::uvec4 emissionParameters{0u};
         std::array<glm::vec4, 3> emissionChannels{};
         glm::uvec4 textures{0u}; // bindless indices: base colour, normal, metallic, roughness
-        glm::uvec4 emissionTexture{0u};
+        // Bindless indices: emission, then each BasicSurfaceTexture in order.
+        std::array<glm::uvec4, 2> extraTextures{};
+        BasicSurfaceParameters surface;
     };
-    static_assert(sizeof(BindlessMaterialRecord) == 14 * 16);
+    static_assert(sizeof(BindlessMaterialRecord) == 15 * 16 + sizeof(BasicSurfaceParameters));
+
+    // Every texture a bindless record references: the four in `textures`, then those in `extraTextures`.
+    inline constexpr std::size_t BindlessMaterialTextureCount = 5 + BasicSurfaceTextureCount;
+    static_assert(BindlessMaterialTextureCount <= 4 + 8, "extraTextures holds the emission and seven surface textures");
 
     // Matches BindlessMaterials.slang's BindlessInstance.
     struct alignas(16) BindlessInstanceRecord
@@ -79,7 +86,7 @@ namespace PlutoGE::render
         struct Entry
         {
             BindlessMaterialRecord record; // texture members hold bindless indices
-            std::array<rhi::TextureHandle, 5> textures{};
+            std::array<rhi::TextureHandle, BindlessMaterialTextureCount> textures{};
             std::size_t key = 0;
             std::uint64_t lastUsed = 0;
             bool live = false;
@@ -97,7 +104,7 @@ namespace PlutoGE::render
         // The last record acquired, by its values without texture indices and its textures.
         std::uint32_t m_lastSlot = rhi::InvalidBindlessIndex;
         BindlessMaterialRecord m_lastValues;
-        std::array<rhi::TextureHandle, 5> m_lastTextures{};
+        std::array<rhi::TextureHandle, BindlessMaterialTextureCount> m_lastTextures{};
         GpuRecordTable m_records{"Bindless materials"};
         std::uint64_t m_frame = 0;
     };

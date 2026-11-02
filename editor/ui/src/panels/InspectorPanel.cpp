@@ -36,6 +36,7 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -4695,10 +4696,11 @@ namespace PlutoGE::ui
                         editorShell.MarkSceneDirty();
                     }
 
-                    ImGui::Text("Textures: Albedo %s | Normal %s | Metallic/Roughness %s",
-                                materialConfig.albedoTexture ? "yes" : "no",
-                                materialConfig.normalTexture ? "yes" : "no",
-                                materialConfig.metallicTexture || materialConfig.roughnessTexture ? "yes" : "no");
+                    std::string textureSummary;
+                    for (const auto &slot : render::MaterialTextureSlots())
+                        if (materialConfig.*slot.texture)
+                            textureSummary += (textureSummary.empty() ? "" : ", ") + std::string(slot.displayName);
+                    ImGui::Text("Textures: %s", textureSummary.empty() ? "none" : textureSummary.c_str());
 
                     auto &lightmapPathBuffer = GetLightmapPathBuffer(entity, static_cast<uint32_t>(submeshIndex));
                     ImGui::InputText("Lightmap Path", lightmapPathBuffer.data(), lightmapPathBuffer.size());

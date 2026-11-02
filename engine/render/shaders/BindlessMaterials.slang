@@ -18,7 +18,11 @@ struct BindlessMaterial
     uint4 emissionParameters;
     float4 emissionChannels[3];
     uint4 textures;    // base colour, normal, metallic, roughness
-    uint4 emissionTexture;
+    uint4 extraTextures[2]; // emission, then each BasicSurfaceTexture in order
+    uint4 surfaceTextureParameters;
+    float4 occlusionParameters;
+    float4 clearCoatParameters;
+    float4 sheenParameters;
 };
 
 struct BindlessInstance
@@ -77,7 +81,12 @@ static ShaderGraphData shaderGraph;
 static float4 shaderGraphFrame;
 static uint4 emissionParameters;
 static float4 emissionChannels[3];
+static uint4 surfaceTextureParameters;
+static float4 occlusionParameters;
+static float4 clearCoatParameters;
+static float4 sheenParameters;
 static BindlessTexture baseColorTexture, normalTexture, metallicTexture, roughnessTexture, emissionTexture;
+static BindlessTexture occlusionTexture, clearCoatTexture, clearCoatRoughnessTexture, sheenColorTexture, sheenRoughnessTexture;
 
 void loadBindlessMaterial(uint index)
 {
@@ -114,5 +123,14 @@ void loadBindlessMaterial(uint index)
     normalTexture.index = material.textures.y;
     metallicTexture.index = material.textures.z;
     roughnessTexture.index = material.textures.w;
-    emissionTexture.index = material.emissionTexture.x;
+    emissionTexture.index = material.extraTextures[0].x;
+    surfaceTextureParameters = material.surfaceTextureParameters;
+    occlusionParameters = material.occlusionParameters;
+    clearCoatParameters = material.clearCoatParameters;
+    sheenParameters = material.sheenParameters;
+    occlusionTexture.index = material.extraTextures[0].y;
+    clearCoatTexture.index = material.extraTextures[0].z;
+    clearCoatRoughnessTexture.index = material.extraTextures[0].w;
+    sheenColorTexture.index = material.extraTextures[1].x;
+    sheenRoughnessTexture.index = material.extraTextures[1].y;
 }

@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 
 #include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/Texture.h"
 
 #include "PlutoGE/core/Engine.h"
@@ -204,8 +205,16 @@ namespace PlutoGE::scene
             bool hasExtendedVersion = false;
             std::optional<std::string> materialAsset;
             std::optional<std::string> albedoPath;
-            std::optional<std::string> normalPath, metallicPath, roughnessPath;
-            std::optional<render::TextureChannel> metallicChannel, roughnessChannel;
+            // Version 2 texture slots ("<slot>Path", "<slot>Channel"); albedo and emission predate it and have their
+            // own fields.
+            std::array<std::optional<std::string>, render::MaterialTextureSlotCount> slotPaths;
+            std::array<std::optional<render::TextureChannel>, render::MaterialTextureSlotCount> slotChannels;
+
+            bool HasSlotFields() const
+            {
+                return std::ranges::any_of(slotPaths, [](const auto &path) { return path.has_value(); }) ||
+                       std::ranges::any_of(slotChannels, [](const auto &channel) { return channel.has_value(); });
+            }
             std::optional<std::string> shaderGraphPath;
             std::optional<std::size_t> graphVariableCount, graphTextureCount;
             std::map<std::size_t, render::ShaderGraphVariable> graphVariables;
@@ -225,6 +234,9 @@ namespace PlutoGE::scene
             std::optional<bool> emissionChannelMask;
             std::array<std::optional<glm::vec4>,3> emissionChannels;
             std::optional<float> subsurface;
+            std::optional<float> occlusionStrength;
+            std::optional<float> clearCoat, clearCoatRoughness, sheenRoughness;
+            std::optional<glm::vec3> sheenColor;
             std::optional<glm::vec3> subsurfaceColor;
             std::optional<float> subsurfaceRadius;
             std::optional<float> transmission;
@@ -237,6 +249,24 @@ namespace PlutoGE::scene
             std::optional<glm::vec4> lightmapUvTransform;
         };
 
+        bool IsExtendedInlineTextureSlot(render::MaterialTextureSlot slot)
+        {
+            return slot != render::MaterialTextureSlot::Albedo && slot != render::MaterialTextureSlot::Emission;
+        }
+
+        // The version 2 slot whose path (or, setting `channel`, whose channel) property is `fieldName`.
+        const render::MaterialTextureSlotInfo *FindInlineTextureSlot(std::string_view fieldName, bool &channel)
+        {
+            for (const auto &slot : render::MaterialTextureSlots())
+            {
+                if (!IsExtendedInlineTextureSlot(slot.slot) || !fieldName.starts_with(slot.propertyName)) continue;
+                const auto suffix = fieldName.substr(slot.propertyName.size());
+                if (suffix == "Path") { channel = false; return &slot; }
+                if (suffix == "Channel" && slot.channel) { channel = true; return &slot; }
+            }
+            return nullptr;
+        }
+
         void SerializeInlineMaterialProperties(std::vector<Property> &properties, const std::string &prefix, const render::MaterialConfig &config, bool extended)
         {
             properties.push_back({prefix + "Color", PropertyType::String, SerializeVec4(config.color)});
@@ -244,12 +274,23 @@ namespace PlutoGE::scene
             if (extended)
             {
                 properties.push_back({prefix + "InlineMaterialVersion", PropertyType::String, "2"});
-                properties.push_back({prefix + "NormalPath", PropertyType::String, config.normalTexture ? config.normalTexture->GetFilePath() : std::string{}});
-                properties.push_back({prefix + "MetallicPath", PropertyType::String, config.metallicTexture ? config.metallicTexture->GetFilePath() : std::string{}});
-                properties.push_back({prefix + "RoughnessPath", PropertyType::String, config.roughnessTexture ? config.roughnessTexture->GetFilePath() : std::string{}});
-                properties.push_back({prefix + "MetallicChannel", PropertyType::String, std::to_string(static_cast<int>(config.metallicTextureChannel))});
-                properties.push_back({prefix + "RoughnessChannel", PropertyType::String, std::to_string(static_cast<int>(config.roughnessTextureChannel))});
+                for (const auto &slot : render::MaterialTextureSlots())
+                {
+                    if (!IsExtendedInlineTextureSlot(slot.slot)) continue;
+                    const auto *texture = config.*slot.texture;
+                    properties.push_back({prefix + std::string(slot.propertyName) + "Path", PropertyType::String,
+                                          texture ? texture->GetFilePath() : std::string{}});
+                }
+                for (const auto &slot : render::MaterialTextureSlots())
+                    if (IsExtendedInlineTextureSlot(slot.slot) && slot.channel)
+                        properties.push_back({prefix + std::string(slot.propertyName) + "Channel", PropertyType::String,
+                                              std::to_string(static_cast<int>(config.*slot.channel))});
                 properties.push_back({prefix + "ShaderGraphPath", PropertyType::String, config.shaderGraphReference});
+                properties.push_back({prefix + "OcclusionStrength", PropertyType::Float, std::to_string(config.occlusionStrength)});
+                properties.push_back({prefix + "ClearCoat", PropertyType::Float, std::to_string(config.clearCoat)});
+                properties.push_back({prefix + "ClearCoatRoughness", PropertyType::Float, std::to_string(config.clearCoatRoughness)});
+                properties.push_back({prefix + "SheenColor", PropertyType::String, SerializeVec3(config.sheenColor)});
+                properties.push_back({prefix + "SheenRoughness", PropertyType::Float, std::to_string(config.sheenRoughness)});
                 properties.push_back({prefix + "GraphVariableCount", PropertyType::String, std::to_string(config.shaderGraphVariables.size())});
                 properties.push_back({prefix + "GraphTextureCount", PropertyType::String, std::to_string(config.shaderGraphTextures.size())});
                 for (std::size_t i = 0; i < config.shaderGraphVariables.size(); ++i)
@@ -322,11 +363,12 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.albedoPath = value;
             }
-            else if (fieldName == "NormalPath") serializedMaterial.normalPath = value;
-            else if (fieldName == "MetallicPath") serializedMaterial.metallicPath = value;
-            else if (fieldName == "RoughnessPath") serializedMaterial.roughnessPath = value;
-            else if (fieldName == "MetallicChannel") serializedMaterial.metallicChannel = static_cast<render::TextureChannel>(ParseMaterialIndex(value, 3));
-            else if (fieldName == "RoughnessChannel") serializedMaterial.roughnessChannel = static_cast<render::TextureChannel>(ParseMaterialIndex(value, 3));
+            else if (bool channel = false; const auto *slot = FindInlineTextureSlot(fieldName, channel))
+            {
+                const auto index = static_cast<std::size_t>(slot->slot);
+                if (channel) serializedMaterial.slotChannels[index] = static_cast<render::TextureChannel>(ParseMaterialIndex(value, 3));
+                else serializedMaterial.slotPaths[index] = value;
+            }
             else if (fieldName == "ShaderGraphPath") serializedMaterial.shaderGraphPath = value;
             else if (fieldName == "GraphVariableCount") serializedMaterial.graphVariableCount = ParseMaterialIndex(value, 4096);
             else if (fieldName == "GraphTextureCount") serializedMaterial.graphTextureCount = ParseMaterialIndex(value, 4096);
@@ -409,6 +451,16 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.emission = ParseVec3(value);
             }
+            else if (fieldName == "OcclusionStrength")
+                serializedMaterial.occlusionStrength = std::clamp(std::stof(value), 0.0f, 1.0f);
+            else if (fieldName == "ClearCoat")
+                serializedMaterial.clearCoat = std::clamp(std::stof(value), 0.0f, 1.0f);
+            else if (fieldName == "ClearCoatRoughness")
+                serializedMaterial.clearCoatRoughness = std::clamp(std::stof(value), 0.0f, 1.0f);
+            else if (fieldName == "SheenColor")
+                serializedMaterial.sheenColor = glm::clamp(ParseVec3(value), glm::vec3(0.0f), glm::vec3(1.0f));
+            else if (fieldName == "SheenRoughness")
+                serializedMaterial.sheenRoughness = std::clamp(std::stof(value), 0.0f, 1.0f);
             else if (fieldName == "Subsurface")
             {
                 serializedMaterial.subsurface = std::stof(value);
@@ -470,11 +522,17 @@ namespace PlutoGE::scene
                 const auto path = manager.ResolveAssetPath(*reference);
                 return manager.LoadTexture(path.c_str(), render::TextureColorSpace::Linear);
             };
-            if (serializedMaterial.normalPath) material.SetNormalTexture(texture(serializedMaterial.normalPath));
-            if (serializedMaterial.metallicPath) material.SetMetallicTexture(texture(serializedMaterial.metallicPath));
-            if (serializedMaterial.roughnessPath) material.SetRoughnessTexture(texture(serializedMaterial.roughnessPath));
-            if (serializedMaterial.metallicChannel) material.SetMetallicTextureChannel(*serializedMaterial.metallicChannel);
-            if (serializedMaterial.roughnessChannel) material.SetRoughnessTextureChannel(*serializedMaterial.roughnessChannel);
+            if (serializedMaterial.HasSlotFields())
+            {
+                auto config = material.ReadConfig();
+                for (const auto &slot : render::MaterialTextureSlots())
+                {
+                    const auto index = static_cast<std::size_t>(slot.slot);
+                    if (serializedMaterial.slotPaths[index]) config.*slot.texture = texture(serializedMaterial.slotPaths[index]);
+                    if (serializedMaterial.slotChannels[index]) config.*slot.channel = *serializedMaterial.slotChannels[index];
+                }
+                material.SetConfig(std::move(config));
+            }
             if (serializedMaterial.color.has_value())
             {
                 material.SetColor(*serializedMaterial.color);
@@ -524,6 +582,12 @@ namespace PlutoGE::scene
             {
                 material.SetEmission(*serializedMaterial.emission);
             }
+            if (serializedMaterial.occlusionStrength.has_value())
+                material.SetOcclusionStrength(*serializedMaterial.occlusionStrength);
+            if (serializedMaterial.clearCoat) material.SetClearCoat(*serializedMaterial.clearCoat);
+            if (serializedMaterial.clearCoatRoughness) material.SetClearCoatRoughness(*serializedMaterial.clearCoatRoughness);
+            if (serializedMaterial.sheenColor) material.SetSheenColor(*serializedMaterial.sheenColor);
+            if (serializedMaterial.sheenRoughness) material.SetSheenRoughness(*serializedMaterial.sheenRoughness);
             if (serializedMaterial.subsurface.has_value())
             {
                 material.SetSubsurface(*serializedMaterial.subsurface);
@@ -1211,8 +1275,8 @@ namespace PlutoGE::scene
         // load the effective reference independently of where it came from.
         const auto validateVersion = [&](const SerializedMaterialData &material)
         {
-            if (manager.GetAssetPipelineVersion() < 5 && (material.hasExtendedVersion || material.normalPath || material.metallicPath ||
-                material.roughnessPath || material.metallicChannel || material.roughnessChannel || material.shaderGraphPath ||
+            if (manager.GetAssetPipelineVersion() < 5 && (material.hasExtendedVersion || material.HasSlotFields() || material.occlusionStrength || material.clearCoat ||
+                material.clearCoatRoughness || material.sheenColor || material.sheenRoughness || material.shaderGraphPath ||
                 material.graphVariableCount || material.graphTextureCount || !material.graphVariables.empty() || !material.graphTextures.empty()))
                 throw std::invalid_argument("Complete inline material persistence requires project version 5.");
         };

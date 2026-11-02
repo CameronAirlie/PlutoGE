@@ -236,6 +236,33 @@ namespace PlutoGE::render::rhi::vulkan
             BufferUsage usage{};
         };
 
+        // Top-level instance inputs are rewritten each frame into one of this many regions: the frames in flight.
+        constexpr std::size_t AccelerationInstanceFrames = 3;
+
+        // A buffer with a device address: acceleration structure storage, build scratch and instance inputs.
+        struct AddressedBuffer
+        {
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            VkDeviceAddress address = 0;
+            void *mapped = nullptr;
+            VkDeviceSize size = 0;
+        };
+
+        struct AccelerationStructureResource
+        {
+            VkAccelerationStructureKHR structure = VK_NULL_HANDLE;
+            AddressedBuffer storage;
+            AddressedBuffer scratch;
+            // Top level: AccelerationInstanceFrames regions of maxInstances instances, one written per frame, so a rebuild never
+            // overwrites inputs a frame in flight still builds from.
+            AddressedBuffer instances;
+            bool topLevel = false;
+            std::uint32_t maxInstances = 0;
+            std::vector<AccelerationStructureGeometry> geometries; // bottom level
+            std::string debugName;
+        };
+
         struct TextureResource
         {
             VkImage image = VK_NULL_HANDLE;
@@ -1040,14 +1067,16 @@ namespace PlutoGE::render::rhi::vulkan
 
     namespace
     {
-        VkDescriptorPool CreateDescriptorPool(VkDevice device, const char *what)
+        VkDescriptorPool CreateDescriptorPool(VkDevice device, const char *what, bool accelerationStructures)
         {
-            std::array<VkDescriptorPoolSize, 4> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
+            std::array<VkDescriptorPoolSize, 5> sizes{{{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384},
                                                        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16384},
-                                                       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16384}}};
+                                                       {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 4096}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16384},
+                                                       {VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR, 1024}}};
             VkDescriptorPoolCreateInfo descriptors{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             descriptors.maxSets = 32768;
-            descriptors.poolSizeCount = static_cast<std::uint32_t>(sizes.size());
+            // The acceleration structure type exists only with VK_KHR_acceleration_structure enabled.
+            descriptors.poolSizeCount = static_cast<std::uint32_t>(sizes.size() - (accelerationStructures ? 0 : 1));
             descriptors.pPoolSizes = sizes.data();
             VkDescriptorPool pool = VK_NULL_HANDLE;
             Check(vkCreateDescriptorPool(device, &descriptors, nullptr, &pool), what);
@@ -1256,6 +1285,54 @@ namespace PlutoGE::render::rhi::vulkan
         std::vector<DeferredResource<TextureResource>> deferredTextures;
         std::vector<DeferredResource<SamplerResource>> deferredSamplers;
         std::vector<DeferredResource<PipelineResource>> deferredPipelines;
+        // Hardware ray tracing: acceleration structures, ray queries and hit triangle positions, enabled when the
+        // device has them all and PLUTO_VULKAN_RAY_TRACING is not "0"; otherwise the reason it is off.
+        bool rayTracing = false;
+        std::string rayTracingReason = "The Vulkan device has not been created";
+        VkDeviceSize accelerationScratchAlignment = 256;
+        detail::HandleRegistry<AccelerationStructureHandle, AccelerationStructureResource> accelerationStructures;
+        std::vector<DeferredResource<AccelerationStructureResource>> deferredAccelerationStructures;
+
+        AddressedBuffer CreateAddressedBuffer(VkDeviceSize size, VkBufferUsageFlags usage, bool hostVisible,
+                                              VkDeviceSize alignment = 0)
+        {
+            AddressedBuffer result;
+            result.size = std::max<VkDeviceSize>(size, 4);
+            VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+            info.size = result.size;
+            info.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+            VmaAllocationCreateInfo allocation{};
+            allocation.usage = VMA_MEMORY_USAGE_AUTO;
+            if (hostVisible)
+                allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo allocated{};
+            Check(vmaCreateBufferWithAlignment(allocator, &info, &allocation, alignment, &result.buffer, &result.allocation,
+                                               &allocated), "vmaCreateBufferWithAlignment(acceleration structure)");
+            result.mapped = allocated.pMappedData;
+            result.address = BufferAddress(result.buffer);
+            return result;
+        }
+        void DestroyAddressedBuffer(AddressedBuffer &buffer)
+        {
+            if (buffer.buffer)
+                vmaDestroyBuffer(allocator, buffer.buffer, buffer.allocation);
+            buffer = {};
+        }
+        VkDeviceAddress BufferAddress(VkBuffer buffer) const
+        {
+            VkBufferDeviceAddressInfo info{VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO};
+            info.buffer = buffer;
+            return vkGetBufferDeviceAddress(device, &info);
+        }
+        void DestroyAccelerationStructureResource(AccelerationStructureResource &resource)
+        {
+            if (resource.structure)
+                vkDestroyAccelerationStructureKHR(device, resource.structure, nullptr);
+            DestroyAddressedBuffer(resource.storage);
+            DestroyAddressedBuffer(resource.scratch);
+            DestroyAddressedBuffer(resource.instances);
+            resource.structure = VK_NULL_HANDLE;
+        }
         VulkanLayoutCache layoutCache;
         std::unique_ptr<VulkanCommandContext> context;
 #if PLUTO_HAS_STREAMLINE
@@ -1416,6 +1493,8 @@ namespace PlutoGE::render::rhi::vulkan
                         if (resource.view) vkDestroyImageView(device, resource.view, nullptr);
                         if (resource.image) vmaDestroyImage(allocator, resource.image, resource.allocation);
                     });
+            // Before buffers: bottom levels reference geometry buffers destroyed in the same collection.
+            collect(deferredAccelerationStructures, [&](auto &resource) { DestroyAccelerationStructureResource(resource); });
             collect(deferredBuffers, [&](auto &resource)
                     { FreePersistentUniform(resource); if (resource.buffer) vmaDestroyBuffer(allocator, resource.buffer, resource.allocation); });
             {
@@ -1951,6 +2030,116 @@ namespace PlutoGE::render::rhi::vulkan
             return features.shaderClipDistance == VK_TRUE && properties.limits.maxClipDistances >= 4 &&
                    properties.limits.maxPerStageDescriptorStorageBuffers >= 6;
         }
+        void BindAccelerationStructure(std::uint32_t slot, AccelerationStructureHandle handle) override
+        {
+            auto *structure = m_impl.accelerationStructures.Get(handle);
+            if (slot >= MaxResourceSlots || !structure || !structure->topLevel)
+                throw std::invalid_argument("Invalid Vulkan top-level acceleration structure");
+            if (m_accelerationStructures[slot] != handle)
+                MarkDescriptorBindingDirty(ResourceBindingType::AccelerationStructure, slot);
+            m_accelerationStructures[slot] = handle;
+        }
+        // Orders acceleration structure builds against everything that may touch their inputs or results: uploads
+        // and compute writes to geometry before, ray queries and further builds after. Coarse, as builds are rare.
+        void AccelerationStructureBarrier()
+        {
+            VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT |
+                                    VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+            barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR |
+                                    VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR;
+            const VkPipelineStageFlags stages = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR;
+            vkCmdPipelineBarrier(CommandBuffer(), stages, stages, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+        }
+        void BuildBottomLevelAccelerationStructure(AccelerationStructureHandle handle) override
+        {
+            auto *structure = m_impl.accelerationStructures.Get(handle);
+            if (m_rendering || !structure || structure->topLevel)
+                throw std::logic_error("Vulkan bottom-level builds need a bottom-level structure outside rendering");
+            FlushBufferUploads();
+            std::vector<VkAccelerationStructureGeometryKHR> geometries;
+            std::vector<VkAccelerationStructureBuildRangeInfoKHR> ranges;
+            for (const auto &source : structure->geometries)
+            {
+                auto *vertices = m_impl.buffers.Get(source.vertices);
+                auto *indices = m_impl.buffers.Get(source.indices);
+                if (!vertices || !indices)
+                    throw std::logic_error("Vulkan bottom-level geometry buffer was destroyed");
+                VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+                geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+                geometry.flags = source.opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
+                auto &triangles = geometry.geometry.triangles;
+                triangles = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
+                triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+                triangles.vertexData.deviceAddress = m_impl.BufferAddress(vertices->buffer) + source.vertexOffset;
+                triangles.vertexStride = source.vertexStride;
+                triangles.maxVertex = source.vertexCount > 0 ? source.vertexCount - 1 : 0;
+                triangles.indexType = VK_INDEX_TYPE_UINT32;
+                triangles.indexData.deviceAddress = m_impl.BufferAddress(indices->buffer) + source.indexOffset;
+                geometries.push_back(geometry);
+                ranges.push_back({source.indexCount / 3, 0, 0, 0});
+            }
+            VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+            build.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+            build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+            build.dstAccelerationStructure = structure->structure;
+            build.geometryCount = static_cast<std::uint32_t>(geometries.size());
+            build.pGeometries = geometries.data();
+            build.scratchData.deviceAddress = structure->scratch.address;
+            const auto *rangePointer = ranges.data();
+            AccelerationStructureBarrier();
+            vkCmdBuildAccelerationStructuresKHR(CommandBuffer(), 1, &build, &rangePointer);
+            AccelerationStructureBarrier();
+        }
+        void BuildTopLevelAccelerationStructure(AccelerationStructureHandle handle,
+                                                std::span<const AccelerationStructureInstance> instances) override
+        {
+            auto *structure = m_impl.accelerationStructures.Get(handle);
+            if (m_rendering || !structure || !structure->topLevel || instances.size() > structure->maxInstances)
+                throw std::logic_error("Vulkan top-level builds need a top-level structure large enough, outside rendering");
+            FlushBufferUploads();
+            const auto region = static_cast<VkDeviceSize>(m_impl.activeFrameIndex % AccelerationInstanceFrames) * structure->maxInstances;
+            auto *written = static_cast<VkAccelerationStructureInstanceKHR *>(structure->instances.mapped) + region;
+            for (std::size_t index = 0; index < instances.size(); ++index)
+            {
+                const auto &instance = instances[index];
+                auto *bottom = m_impl.accelerationStructures.Get(instance.bottomLevel);
+                if (!bottom || bottom->topLevel)
+                    throw std::logic_error("Vulkan top-level instance names no bottom-level structure");
+                VkAccelerationStructureDeviceAddressInfoKHR addressInfo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+                addressInfo.accelerationStructure = bottom->structure;
+                VkAccelerationStructureInstanceKHR record{};
+                std::memcpy(record.transform.matrix, instance.transform.data(), sizeof(record.transform.matrix));
+                record.instanceCustomIndex = instance.customIndex & 0xFFFFFFu;
+                record.mask = instance.mask;
+                record.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
+                record.accelerationStructureReference = vkGetAccelerationStructureDeviceAddressKHR(m_impl.device, &addressInfo);
+                written[index] = record;
+            }
+            vmaFlushAllocation(m_impl.allocator, structure->instances.allocation,
+                               region * sizeof(VkAccelerationStructureInstanceKHR),
+                               instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
+            VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+            geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+            geometry.geometry.instances = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR};
+            geometry.geometry.instances.data.deviceAddress =
+                structure->instances.address + region * sizeof(VkAccelerationStructureInstanceKHR);
+            VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+            build.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+            build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+            build.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR;
+            build.dstAccelerationStructure = structure->structure;
+            build.geometryCount = 1;
+            build.pGeometries = &geometry;
+            build.scratchData.deviceAddress = structure->scratch.address;
+            const VkAccelerationStructureBuildRangeInfoKHR range{static_cast<std::uint32_t>(instances.size()), 0, 0, 0};
+            const auto *rangePointer = &range;
+            AccelerationStructureBarrier();
+            vkCmdBuildAccelerationStructuresKHR(CommandBuffer(), 1, &build, &rangePointer);
+            AccelerationStructureBarrier();
+        }
         void BindStorageBuffer(std::uint32_t slot, BufferHandle handle) override
         {
             auto *buffer = m_impl.buffers.Get(handle);
@@ -2203,9 +2392,10 @@ namespace PlutoGE::render::rhi::vulkan
     protected:
         static constexpr std::size_t FrameCount = 3;
         static constexpr std::size_t MaxDescriptorSets = 32;
-        static constexpr std::size_t MaxDescriptorBindings = 40;
-        // Slots 0..31 cover existing lighting; slot 32 is glass's opaque SSR snapshot.
-        static constexpr std::size_t MaxResourceSlots = 33;
+        static constexpr std::size_t MaxDescriptorBindings = 48;
+        // Slots 0..31 cover existing lighting; slot 32 is glass's opaque SSR snapshot; 33 onwards the lit
+        // pipelines' optional surface textures (BasicRenderer::SurfaceTextureSlot) and area-light tables.
+        static constexpr std::size_t MaxResourceSlots = 48;
         static constexpr std::size_t MaxCachedDescriptorSetsPerFrame = 8192;
         static constexpr std::uint32_t MaxTimestampQueries = 256;
         static constexpr std::size_t MaxInlineUploadBytes = 65536; // vkCmdUpdateBuffer's limit
@@ -2252,7 +2442,7 @@ namespace PlutoGE::render::rhi::vulkan
         {
             VkDescriptorSetLayout layout = VK_NULL_HANDLE;
             // Each of the 32 supported bindings may contribute a texture and sampler.
-            std::array<std::uint64_t, 64> resources{};
+            std::array<std::uint64_t, 80> resources{};
             std::uint8_t resourceCount = 0;
             // Entries past resourceCount are unused and excluded, matching the hash.
             bool operator==(const DescriptorSetKey &other) const noexcept
@@ -2351,13 +2541,25 @@ namespace PlutoGE::render::rhi::vulkan
                     else if (binding.type == ResourceBindingType::StorageBuffer)
                     {
                         if (binding.slot >= MaxResourceSlots || !m_storageBuffers[binding.slot])
-                            throw std::logic_error("Vulkan draw has an incomplete storage buffer binding");
+                            throw std::logic_error("Vulkan draw has an incomplete storage buffer binding (slot " +
+                                                   std::to_string(binding.slot) + ", pipeline '" +
+                                                   m_pipeline->descriptor.debugName + "')");
                         key.resources[key.resourceCount++] = EncodeHandle(m_storageBuffers[binding.slot]);
+                    }
+                    else if (binding.type == ResourceBindingType::AccelerationStructure)
+                    {
+                        if (binding.slot >= MaxResourceSlots || !m_accelerationStructures[binding.slot])
+                            throw std::logic_error("Vulkan draw has an incomplete acceleration structure binding (slot " +
+                                                   std::to_string(binding.slot) + ", pipeline '" +
+                                                   m_pipeline->descriptor.debugName + "')");
+                        key.resources[key.resourceCount++] = EncodeHandle(m_accelerationStructures[binding.slot]);
                     }
                     else if (binding.type == ResourceBindingType::SampledTexture)
                     {
                         if (binding.slot >= MaxResourceSlots || !m_sampledTextures[binding.slot] || !m_samplers[binding.slot])
-                            throw std::logic_error("Vulkan draw has an incomplete texture binding");
+                            throw std::logic_error("Vulkan draw has an incomplete texture binding (slot " +
+                                                   std::to_string(binding.slot) + ", pipeline '" +
+                                                   m_pipeline->descriptor.debugName + "')");
                         if (key.resourceCount + 2 > key.resources.size())
                             throw std::logic_error("Vulkan descriptor set exceeds fixed cache key capacity");
                         key.resources[key.resourceCount++] = EncodeHandle(m_sampledTextures[binding.slot]);
@@ -2414,7 +2616,9 @@ namespace PlutoGE::render::rhi::vulkan
             std::array<VkDescriptorBufferInfo, MaxDescriptorBindings> buffers{};
             std::array<VkDescriptorImageInfo, MaxDescriptorBindings> images{};
             std::array<VkWriteDescriptorSet, MaxDescriptorBindings> writes{};
-            std::size_t bufferCount = 0, imageCount = 0, writeCount = 0;
+            std::array<VkWriteDescriptorSetAccelerationStructureKHR, MaxDescriptorBindings> structureWrites{};
+            std::array<VkAccelerationStructureKHR, MaxDescriptorBindings> structures{};
+            std::size_t bufferCount = 0, imageCount = 0, writeCount = 0, structureCount = 0;
             for (std::size_t setIndex = 0; setIndex < setCount; ++setIndex)
             {
                 if (!newlyAllocated[setIndex])
@@ -2438,6 +2642,16 @@ namespace PlutoGE::render::rhi::vulkan
                         buffers[bufferCount] = {buffer->buffer, 0, buffer->size};
                         write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
                         write.pBufferInfo = &buffers[bufferCount++];
+                    }
+                    else if (binding.type == ResourceBindingType::AccelerationStructure)
+                    {
+                        structures[structureCount] = m_impl.accelerationStructures.Get(m_accelerationStructures[binding.slot])->structure;
+                        auto &structureWrite = structureWrites[structureCount];
+                        structureWrite = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR};
+                        structureWrite.accelerationStructureCount = 1;
+                        structureWrite.pAccelerationStructures = &structures[structureCount++];
+                        write.descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+                        write.pNext = &structureWrite;
                     }
                     else if (binding.type == ResourceBindingType::SampledTexture)
                     {
@@ -2558,6 +2772,7 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<std::uint32_t, MaxResourceSlots> m_uniformDynamicOffsets{};
         std::array<TextureHandle, MaxResourceSlots> m_sampledTextures{};
         std::array<BufferHandle, MaxResourceSlots> m_storageBuffers{};
+        std::array<AccelerationStructureHandle, MaxResourceSlots> m_accelerationStructures{};
         std::array<TextureHandle, MaxResourceSlots> m_storageImages{};
         std::array<std::uint32_t, MaxResourceSlots> m_storageMipLevels{};
         std::array<SamplerHandle, MaxResourceSlots> m_samplers{};
@@ -2611,7 +2826,7 @@ namespace PlutoGE::render::rhi::vulkan
                 pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
                 pool.queueFamilyIndex = m_impl.queueFamily;
                 Check(vkCreateCommandPool(m_impl.device, &pool, nullptr, &slot.commandPool), "vkCreateCommandPool(segment)");
-                slot.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(segment)");
+                slot.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(segment)", m_impl.rayTracing);
             }
         }
 
@@ -2776,7 +2991,7 @@ namespace PlutoGE::render::rhi::vulkan
                 pool.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
                 pool.queueFamilyIndex = m_impl.sharedQueueFamilies[1];
                 Check(vkCreateCommandPool(m_impl.device, &pool, nullptr, &slot.commandPool), "vkCreateCommandPool(async compute)");
-                slot.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(async compute)");
+                slot.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(async compute)", m_impl.rayTracing);
             }
         }
 
@@ -2922,7 +3137,7 @@ namespace PlutoGE::render::rhi::vulkan
                 command.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
                 command.commandBufferCount = 1;
                 Check(vkAllocateCommandBuffers(m_impl.device, &command, &frame.commandBuffer), "vkAllocateCommandBuffers(frame)");
-                frame.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(frame)");
+                frame.descriptorPool = CreateDescriptorPool(m_impl.device, "vkCreateDescriptorPool(frame)", m_impl.rayTracing);
                 VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
                 fence.flags = VK_FENCE_CREATE_SIGNALED_BIT;
                 Check(vkCreateFence(m_impl.device, &fence, nullptr, &frame.fence), "vkCreateFence(frame)");
@@ -4197,6 +4412,56 @@ namespace PlutoGE::render::rhi::vulkan
                     enabledDeviceExtensions.push_back(extension);
 #endif
 
+        // Hardware ray tracing needs acceleration structures, ray queries and hit triangle positions (normals at
+        // hits come from them), all of which are optional extensions.
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR supportedStructures{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+        VkPhysicalDeviceRayQueryFeaturesKHR supportedRayQuery{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+        VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR supportedPositionFetch{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR};
+        bool rayTracingRequested = true;
+        {
+            std::uint32_t extensionCount = 0;
+            vkEnumerateDeviceExtensionProperties(m_impl->physicalDevice, nullptr, &extensionCount, nullptr);
+            std::vector<VkExtensionProperties> extensions(extensionCount);
+            vkEnumerateDeviceExtensionProperties(m_impl->physicalDevice, nullptr, &extensionCount, extensions.data());
+            const auto has = [&](const char *name)
+            {
+                return std::ranges::any_of(extensions, [name](const auto &extension)
+                                           { return std::strcmp(extension.extensionName, name) == 0; });
+            };
+            if (const char *setting = std::getenv("PLUTO_VULKAN_RAY_TRACING"); setting && std::string_view(setting) == "0")
+            {
+                rayTracingRequested = false;
+                m_impl->rayTracingReason = "Disabled by PLUTO_VULKAN_RAY_TRACING=0";
+            }
+            else if (!has(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) || !has(VK_KHR_RAY_QUERY_EXTENSION_NAME) ||
+                     !has(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME))
+            {
+                rayTracingRequested = false;
+                m_impl->rayTracingReason = "The Vulkan device has no acceleration structure or ray query extension";
+            }
+            else if (!has(VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME))
+            {
+                rayTracingRequested = false;
+                m_impl->rayTracingReason = "The Vulkan device cannot fetch hit triangle positions "
+                                           "(VK_KHR_ray_tracing_position_fetch)";
+            }
+            if (rayTracingRequested)
+            {
+                supportedStructures.pNext = &supportedRayQuery;
+                supportedRayQuery.pNext = &supportedPositionFetch;
+                VkPhysicalDeviceFeatures2 rayTracingFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};
+                rayTracingFeatures.pNext = &supportedStructures;
+                vkGetPhysicalDeviceFeatures2(m_impl->physicalDevice, &rayTracingFeatures);
+                if (!supportedStructures.accelerationStructure || !supportedRayQuery.rayQuery ||
+                    !supportedPositionFetch.rayTracingPositionFetch)
+                {
+                    rayTracingRequested = false;
+                    m_impl->rayTracingReason = "The Vulkan device lacks a ray tracing feature";
+                }
+            }
+        }
         VkPhysicalDeviceVulkan12Features requested12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
         VkPhysicalDeviceVulkan13Features requested13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
 #if PLUTO_HAS_STREAMLINE
@@ -4261,6 +4526,32 @@ namespace PlutoGE::render::rhi::vulkan
             requested12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         }
         requested12.pNext = &requested13;
+        VkPhysicalDeviceAccelerationStructureFeaturesKHR requestedStructures{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR};
+        VkPhysicalDeviceRayQueryFeaturesKHR requestedRayQuery{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR};
+        VkPhysicalDeviceRayTracingPositionFetchFeaturesKHR requestedPositionFetch{
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_POSITION_FETCH_FEATURES_KHR};
+        if (rayTracingRequested && supported12.bufferDeviceAddress)
+        {
+            requested12.bufferDeviceAddress = VK_TRUE;
+            requestedStructures.accelerationStructure = VK_TRUE;
+            requestedRayQuery.rayQuery = VK_TRUE;
+            requestedPositionFetch.rayTracingPositionFetch = VK_TRUE;
+            requestedStructures.pNext = &requestedRayQuery;
+            requestedRayQuery.pNext = &requestedPositionFetch;
+            requestedPositionFetch.pNext = requested13.pNext;
+            requested13.pNext = &requestedStructures;
+            for (const char *extension : {VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, VK_KHR_RAY_QUERY_EXTENSION_NAME,
+                                          VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+                                          VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME})
+                if (std::ranges::none_of(enabledDeviceExtensions, [extension](const char *existing)
+                                         { return std::strcmp(existing, extension) == 0; }))
+                    enabledDeviceExtensions.push_back(extension);
+            m_impl->rayTracing = true;
+            m_impl->rayTracingReason.clear();
+        }
+        else if (rayTracingRequested)
+            m_impl->rayTracingReason = "The Vulkan device has no buffer device addresses";
         VkDeviceCreateInfo deviceInfo{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
         deviceInfo.pNext = &requested12;
         deviceInfo.pEnabledFeatures = &enabledFeatures;
@@ -4296,6 +4587,17 @@ namespace PlutoGE::render::rhi::vulkan
         functions.vkGetDeviceProcAddr = vkGetDeviceProcAddr;
         VmaAllocatorCreateInfo allocator{};
         allocator.flags = VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+        if (m_impl->rayTracing)
+        {
+            allocator.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR structureProperties{
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_PROPERTIES_KHR};
+            VkPhysicalDeviceProperties2 rayTracingProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+            rayTracingProperties.pNext = &structureProperties;
+            vkGetPhysicalDeviceProperties2(m_impl->physicalDevice, &rayTracingProperties);
+            m_impl->accelerationScratchAlignment =
+                std::max<VkDeviceSize>(structureProperties.minAccelerationStructureScratchOffsetAlignment, 1);
+        }
         allocator.vulkanApiVersion = VK_API_VERSION_1_3;
         allocator.instance = m_impl->instance;
         allocator.physicalDevice = m_impl->physicalDevice;
@@ -4374,6 +4676,7 @@ namespace PlutoGE::render::rhi::vulkan
                                  { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
         m_impl->textures.ForEach([&](auto &r)
                                  { vkDestroyImageView(m_impl->device, r.view, nullptr); vmaDestroyImage(m_impl->allocator, r.image, r.allocation); });
+        m_impl->accelerationStructures.ForEach([&](auto &r) { m_impl->DestroyAccelerationStructureResource(r); });
         m_impl->buffers.ForEach([&](auto &r)
                                 {
             if (r.buffer)
@@ -4418,6 +4721,11 @@ namespace PlutoGE::render::rhi::vulkan
         VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
         info.size = descriptor.size;
         info.usage = BufferUsageFlags(descriptor.usage) | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        // Geometry may feed acceleration structure builds, which read it by device address.
+        if (m_impl->rayTracing && (descriptor.usage == BufferUsage::Vertex || descriptor.usage == BufferUsage::Index ||
+                                   descriptor.usage == BufferUsage::VertexStorage))
+            info.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+                          VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR;
         VmaAllocationCreateInfo allocation{};
         allocation.usage = VMA_MEMORY_USAGE_AUTO;
         allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
@@ -4840,7 +5148,9 @@ namespace PlutoGE::render::rhi::vulkan
                                                       ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
                                                       : binding.type == ResourceBindingType::SampledTexture
                                                             ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                                            : binding.type == ResourceBindingType::StorageBuffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+                                                            : binding.type == ResourceBindingType::StorageBuffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                                            : binding.type == ResourceBindingType::AccelerationStructure ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
+                                            : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
                                                   1, stages, nullptr});
         }
         resource.setLayouts.resize(bindingsBySet.size());
@@ -4997,7 +5307,9 @@ namespace PlutoGE::render::rhi::vulkan
                                             ? VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
                                         : binding.type == ResourceBindingType::SampledTexture
                                             ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-                                            : binding.type == ResourceBindingType::StorageBuffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+                                            : binding.type == ResourceBindingType::StorageBuffer ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                                            : binding.type == ResourceBindingType::AccelerationStructure ? VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
+                                            : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             nativeBindings[binding.set].push_back(
                 {binding.binding, descriptorType, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr});
             resource.bindingsBySet[binding.set].push_back(binding);
@@ -5197,6 +5509,120 @@ namespace PlutoGE::render::rhi::vulkan
                 m_impl->CollectDeferredResources(0);
         }
     }
+    RayTracingSupport VulkanDevice::GetRayTracingSupport() const
+    {
+        return {m_impl->rayTracing, m_impl->rayTracingReason};
+    }
+
+    AccelerationStructureHandle VulkanDevice::CreateBottomLevelAccelerationStructure(
+        const BottomLevelAccelerationStructureDescriptor &descriptor)
+    {
+        if (!m_impl->rayTracing || descriptor.geometries.empty())
+            return {};
+        std::lock_guard lock(m_impl->sharedMutex);
+        // Sizes only depend on counts and formats; addresses are filled at build time.
+        std::vector<VkAccelerationStructureGeometryKHR> geometries;
+        std::vector<std::uint32_t> primitiveCounts;
+        for (const auto &source : descriptor.geometries)
+        {
+            if (!m_impl->buffers.Get(source.vertices) || !m_impl->buffers.Get(source.indices) || source.indexCount < 3 ||
+                source.vertexStride < 12)
+                throw std::invalid_argument("Invalid Vulkan bottom-level geometry");
+            VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+            geometry.geometryType = VK_GEOMETRY_TYPE_TRIANGLES_KHR;
+            geometry.flags = source.opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0;
+            geometry.geometry.triangles = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR};
+            geometry.geometry.triangles.vertexFormat = VK_FORMAT_R32G32B32_SFLOAT;
+            geometry.geometry.triangles.vertexStride = source.vertexStride;
+            geometry.geometry.triangles.maxVertex = source.vertexCount > 0 ? source.vertexCount - 1 : 0;
+            geometry.geometry.triangles.indexType = VK_INDEX_TYPE_UINT32;
+            geometries.push_back(geometry);
+            primitiveCounts.push_back(source.indexCount / 3);
+        }
+        VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+        build.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        build.geometryCount = static_cast<std::uint32_t>(geometries.size());
+        build.pGeometries = geometries.data();
+        VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+        vkGetAccelerationStructureBuildSizesKHR(m_impl->device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build,
+                                                primitiveCounts.data(), &sizes);
+        AccelerationStructureResource resource;
+        resource.geometries = descriptor.geometries;
+        resource.debugName = descriptor.debugName;
+        resource.storage = m_impl->CreateAddressedBuffer(sizes.accelerationStructureSize,
+                                                         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, false);
+        resource.scratch = m_impl->CreateAddressedBuffer(sizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false,
+                                                         m_impl->accelerationScratchAlignment);
+        VkAccelerationStructureCreateInfoKHR create{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+        create.buffer = resource.storage.buffer;
+        create.size = sizes.accelerationStructureSize;
+        create.type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR;
+        if (vkCreateAccelerationStructureKHR(m_impl->device, &create, nullptr, &resource.structure) != VK_SUCCESS)
+        {
+            m_impl->DestroyAccelerationStructureResource(resource);
+            throw std::runtime_error("vkCreateAccelerationStructureKHR(bottom level) failed");
+        }
+        return m_impl->accelerationStructures.Insert(std::move(resource));
+    }
+
+    AccelerationStructureHandle VulkanDevice::CreateTopLevelAccelerationStructure(
+        const TopLevelAccelerationStructureDescriptor &descriptor)
+    {
+        if (!m_impl->rayTracing || descriptor.maxInstances == 0)
+            return {};
+        std::lock_guard lock(m_impl->sharedMutex);
+        VkAccelerationStructureGeometryKHR geometry{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR};
+        geometry.geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR;
+        geometry.geometry.instances = {VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR};
+        VkAccelerationStructureBuildGeometryInfoKHR build{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR};
+        build.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        build.flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR;
+        build.geometryCount = 1;
+        build.pGeometries = &geometry;
+        VkAccelerationStructureBuildSizesInfoKHR sizes{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR};
+        vkGetAccelerationStructureBuildSizesKHR(m_impl->device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &build,
+                                                &descriptor.maxInstances, &sizes);
+        AccelerationStructureResource resource;
+        resource.topLevel = true;
+        resource.maxInstances = descriptor.maxInstances;
+        resource.debugName = descriptor.debugName;
+        resource.storage = m_impl->CreateAddressedBuffer(sizes.accelerationStructureSize,
+                                                         VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR, false);
+        resource.scratch = m_impl->CreateAddressedBuffer(sizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, false,
+                                                         m_impl->accelerationScratchAlignment);
+        resource.instances = m_impl->CreateAddressedBuffer(
+            VkDeviceSize(AccelerationInstanceFrames) * descriptor.maxInstances * sizeof(VkAccelerationStructureInstanceKHR),
+            VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, true, 16);
+        VkAccelerationStructureCreateInfoKHR create{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR};
+        create.buffer = resource.storage.buffer;
+        create.size = sizes.accelerationStructureSize;
+        create.type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR;
+        if (vkCreateAccelerationStructureKHR(m_impl->device, &create, nullptr, &resource.structure) != VK_SUCCESS)
+        {
+            m_impl->DestroyAccelerationStructureResource(resource);
+            throw std::runtime_error("vkCreateAccelerationStructureKHR(top level) failed");
+        }
+        return m_impl->accelerationStructures.Insert(std::move(resource));
+    }
+
+    void VulkanDevice::DestroyAccelerationStructure(AccelerationStructureHandle h)
+    {
+        if (DefersToRecordingThread())
+        {
+            Defer([this, h] { DestroyAccelerationStructure(h); });
+            return;
+        }
+        std::lock_guard lock(m_impl->sharedMutex);
+        if (auto r = m_impl->accelerationStructures.Remove(h))
+        {
+            const auto retireAfter = m_impl->context ? m_impl->context->RetirementSubmission() : 0u;
+            m_impl->deferredAccelerationStructures.push_back({retireAfter, std::move(*r)});
+            if (retireAfter == 0)
+                m_impl->CollectDeferredResources(0);
+        }
+    }
+
     void VulkanDevice::DestroyTexture(TextureHandle h)
     {
         if (DefersToRecordingThread())

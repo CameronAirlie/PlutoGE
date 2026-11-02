@@ -105,5 +105,41 @@ void CheckContactShadows(PlutoGE::render::BasicRenderer &renderer, ReadPixels re
         std::cerr << "Contact shadows: grazing bare floor difference " << grazingDifference << '\n';
     require(grazingDifference <= 1, "Contact shadows shadowed a bare floor seen at a grazing angle");
     std::cout << "Contact shadows: " << darkened << " darkened pixels beside the cube, bare floor unchanged\n";
+
+    // Local lights, which cast no shadow maps here: a point light, then a rectangle facing the cube, low on its +x
+    // side. Only with their contact shadow length set must the floor at the cube's -x side darken.
+    lighting.directionalIntensity = 0.0f;
+    lighting.contactShadowLength = 0.0f;
+    lighting.cameraPosition = {-0.2f, 1.1f, 1.5f};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(-0.3f, 0.1f, 0.0f), glm::vec3(0, 1, 0));
+    const BasicPointLight lamp{.position = {0.9f, 0.3f, 0.0f}, .range = 10.0f, .color = glm::vec3(1.0f), .intensity = 3.0f};
+    const auto localDarkened = [&](bool rect)
+    {
+        const auto renderLocal = [&](float length)
+        {
+            auto light = lamp;
+            light.contactShadowLength = length;
+            lighting.pointLights.clear();
+            lighting.rectLights.clear();
+            if (rect) lighting.rectLights = {{light, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f}, 0.2f, 0.2f}};
+            else lighting.pointLights = {light};
+            return render(scene, 0.0f);
+        };
+        const auto off = renderLocal(0.0f), on = renderLocal(0.4f);
+        std::size_t count = 0;
+        for (std::size_t i = 0; i < on.size(); i += 4)
+        {
+            require(on[i + 1] <= off[i + 1] + 1, "Local contact shadows brightened a surface");
+            count += off[i + 1] > 40 && on[i + 1] * 10 < off[i + 1] * 7;
+        }
+        return count;
+    };
+    const auto pointDarkened = localDarkened(false), rectDarkened = localDarkened(true);
+    lighting.pointLights.clear();
+    lighting.rectLights.clear();
+    std::cout << "Contact shadows (local lights): point " << pointDarkened << ", rectangle " << rectDarkened
+              << " darkened pixels beside the cube\n";
+    require(pointDarkened > 40, "A point light's contact shadow did not shadow the floor beside a cube");
+    require(rectDarkened > 40, "A rectangle light's contact shadow did not shadow the floor beside a cube");
     require(renderer.Resize(previousWidth, previousHeight), "Contact shadow viewport restore failed");
 }

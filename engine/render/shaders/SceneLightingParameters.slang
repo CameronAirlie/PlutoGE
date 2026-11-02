@@ -41,6 +41,7 @@ cbuffer CameraParameters : register(b0, space0)
     float4 pointPositionRange[32];
     float4 pointColorIntensity[32];
     float4 pointSettings[32];
+    // xyz: spot or rectangle direction; w: local light type (localLightType).
     float4 pointDirectionSpot[32];
     column_major float4x4 pointShadowMatrices[24];
     float4 pointParameters;
@@ -56,8 +57,16 @@ cbuffer CameraParameters : register(b0, space0)
     // log-depth unit, farthest light reach, enabled.
     column_major float4x4 lightClusterProjection;
     float4 lightClusterDepth;
-    // Local light emitter shapes (SurfaceBrdf.slang brdfAreaLight): sphere radius, tube axis times length.
+    // Local light emitter shapes. Points and spots (SurfaceBrdf.slang brdfAreaLight): sphere radius, tube axis times
+    // length. Rectangles (LtcAreaLights.slang): half-height, right axis times half-width.
     float4 pointShape[32];
-    // x: the directional contact shadow mask (BasicLit.slang contactShadowVisibility) is present.
+    // Contact shadows (BasicLit.slang contactShadowVisibility): xyz the light each mask channel was traced for
+    // (-1 none, ContactShadowDirectional, or a local light index); w the mask is present.
     float4 contactShadowParameters;
 };
+
+// Local light types, as BasicRenderer packs them into pointDirectionSpot.w: points, then spots, then rectangles.
+static const uint LocalLightPoint = 0;
+static const uint LocalLightSpot = 1;
+static const uint LocalLightRect = 2;
+uint localLightType(uint light) { return uint(pointDirectionSpot[light].w + 0.5); }

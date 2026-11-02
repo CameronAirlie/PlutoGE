@@ -627,6 +627,30 @@ namespace PlutoGE::render
                 uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, "Scene metallic");
             draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
                                                   m_textureCache->linear, "Scene roughness");
+            const auto setSurfaceTexture = [&](BasicSurfaceTexture slot, Texture *texture, TextureChannel channel,
+                                               const char *label, bool srgb = false)
+            {
+                const auto index = static_cast<std::size_t>(slot);
+                draw.surfaceTextures[index] = srgb
+                    ? uploadTexture(texture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, label)
+                    : uploadTexture(texture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, label);
+                draw.surfaceTextureChannels[index] = static_cast<std::uint32_t>(channel);
+            };
+            setSurfaceTexture(BasicSurfaceTexture::Occlusion, material.occlusionTexture,
+                              material.occlusionTextureChannel, "Scene occlusion");
+            draw.occlusionStrength = std::clamp(material.occlusionStrength, 0.0f, 1.0f);
+            setSurfaceTexture(BasicSurfaceTexture::ClearCoat, material.clearCoatTexture,
+                              material.clearCoatTextureChannel, "Scene clear coat");
+            setSurfaceTexture(BasicSurfaceTexture::ClearCoatRoughness, material.clearCoatRoughnessTexture,
+                              material.clearCoatRoughnessTextureChannel, "Scene clear coat roughness");
+            setSurfaceTexture(BasicSurfaceTexture::SheenColor, material.sheenColorTexture, TextureChannel::Red,
+                              "Scene sheen colour", true);
+            setSurfaceTexture(BasicSurfaceTexture::SheenRoughness, material.sheenRoughnessTexture,
+                              material.sheenRoughnessTextureChannel, "Scene sheen roughness");
+            draw.clearCoat = std::clamp(material.clearCoat, 0.0f, 1.0f);
+            draw.clearCoatRoughness = std::clamp(material.clearCoatRoughness, 0.0f, 1.0f);
+            draw.sheenColor = glm::clamp(material.sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
+            draw.sheenRoughness = std::clamp(material.sheenRoughness, 0.0f, 1.0f);
             draw.terrainLayers = prepareTerrainLayers(material);
             if (entry.revision == 0 || !SameBasicDrawSurface(entry.draw, draw))
             {
@@ -639,7 +663,14 @@ namespace PlutoGE::render
             entry.sourceIdentity = source->GetIdentity();
             const bool pendingTexture = (material.albedoTexture && !entry.draw.baseColorTexture) ||
                 (material.normalTexture && !entry.draw.normalTexture) || (material.metallicTexture && !entry.draw.metallicTexture) ||
-                (material.roughnessTexture && !entry.draw.roughnessTexture) || (material.emissionTexture && !entry.draw.emissionTexture);
+                (material.roughnessTexture && !entry.draw.roughnessTexture) || (material.emissionTexture && !entry.draw.emissionTexture) ||
+                (material.occlusionTexture && !entry.draw.surfaceTextures[static_cast<std::size_t>(BasicSurfaceTexture::Occlusion)]) ||
+                (material.clearCoatTexture && !entry.draw.surfaceTextures[static_cast<std::size_t>(BasicSurfaceTexture::ClearCoat)]) ||
+                (material.clearCoatRoughnessTexture &&
+                 !entry.draw.surfaceTextures[static_cast<std::size_t>(BasicSurfaceTexture::ClearCoatRoughness)]) ||
+                (material.sheenColorTexture && !entry.draw.surfaceTextures[static_cast<std::size_t>(BasicSurfaceTexture::SheenColor)]) ||
+                (material.sheenRoughnessTexture &&
+                 !entry.draw.surfaceTextures[static_cast<std::size_t>(BasicSurfaceTexture::SheenRoughness)]);
             bool pendingTerrain = material.terrainLayers && !material.terrainLayers->layers.empty() && !entry.draw.terrainLayers;
             for (std::size_t index = 0; !pendingTerrain && entry.draw.terrainLayers && index < kTerrainWeightMaps; ++index)
                 pendingTerrain = material.terrainLayers->weightMaps[index] && !entry.draw.terrainLayers->weights[index];
@@ -654,7 +685,8 @@ namespace PlutoGE::render
 
         const bool localShadows = hasSceneLights
             ? std::ranges::any_of(sceneLights, [](const auto *light) {
-                return light && light->type != scene::LightType::Directional && light->castsShadows;
+                return light && light->type != scene::LightType::Directional && light->type != scene::LightType::Rect &&
+                       light->castsShadows;
             })
             : std::ranges::any_of(lighting.spotLights, [](const auto &spot) { return spot.light.castsShadows; }) ||
               std::ranges::any_of(lighting.pointLights, [](const auto &light) { return light.castsShadows; });
@@ -1236,6 +1268,7 @@ namespace PlutoGE::render
         {
             effectiveLighting.pointLights.clear();
             effectiveLighting.spotLights.clear();
+            effectiveLighting.rectLights.clear();
             for (const auto *light : sceneLights)
             {
                 if (!light || light->intensity <= 0 || light->GetRange() <= 0) continue;
@@ -1244,10 +1277,18 @@ namespace PlutoGE::render
                 local.sourceRadius = light->sourceRadius;
                 local.sourceLength = light->type == scene::LightType::Point ? light->sourceLength : 0.0f;
                 local.sourceAxis = light->direction;
+                local.contactShadowLength = light->contactShadowLength;
                 if (light->type == scene::LightType::Point)
                     effectiveLighting.pointLights.push_back(local);
                 else if (light->type == scene::LightType::Spot)
                     effectiveLighting.spotLights.push_back({local, light->direction, light->spotCone});
+                else if (light->type == scene::LightType::Rect)
+                {
+                    local.castsShadows = false;
+                    local.sourceRadius = 0.0f;
+                    effectiveLighting.rectLights.push_back(
+                        {local, light->direction, light->right, light->sourceWidth, light->sourceHeight});
+                }
             }
         }
         if (scene || !effectiveLighting.localIblEnabled) effectiveLighting.iblCaptures = {};

@@ -173,7 +173,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 38;
+        constexpr uint32_t kCookedMeshCacheVersion = 40;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -189,6 +189,13 @@ namespace PlutoGE::assetimport
                    a.albedoTextureIndex == b.albedoTextureIndex && a.normalTextureIndex == b.normalTextureIndex &&
                    a.metallicRoughnessTextureIndex == b.metallicRoughnessTextureIndex &&
                    a.metallicRoughnessTextureHasMetallicChannel == b.metallicRoughnessTextureHasMetallicChannel &&
+                   a.occlusionTextureIndex == b.occlusionTextureIndex && a.occlusionStrength == b.occlusionStrength &&
+                   a.clearCoat == b.clearCoat && a.clearCoatRoughness == b.clearCoatRoughness &&
+                   a.clearCoatTextureIndex == b.clearCoatTextureIndex &&
+                   a.clearCoatRoughnessTextureIndex == b.clearCoatRoughnessTextureIndex &&
+                   a.sheenColor == b.sheenColor && a.sheenRoughness == b.sheenRoughness &&
+                   a.sheenColorTextureIndex == b.sheenColorTextureIndex &&
+                   a.sheenRoughnessTextureIndex == b.sheenRoughnessTextureIndex &&
                    a.flipNormalY == b.flipNormalY;
         }
 
@@ -530,6 +537,18 @@ namespace PlutoGE::assetimport
             WritePod(output, material.metallicRoughnessTextureIndex);
             WriteBool(output, material.metallicRoughnessTextureHasMetallicChannel);
             WriteBool(output, material.flipNormalY);
+            WritePod(output, material.occlusionTextureIndex);
+            WritePod(output, material.occlusionStrength);
+            WritePod(output, material.clearCoat);
+            WritePod(output, material.clearCoatRoughness);
+            WritePod(output, material.clearCoatTextureIndex);
+            WritePod(output, material.clearCoatRoughnessTextureIndex);
+            WritePod(output, material.sheenColor.r);
+            WritePod(output, material.sheenColor.g);
+            WritePod(output, material.sheenColor.b);
+            WritePod(output, material.sheenRoughness);
+            WritePod(output, material.sheenColorTextureIndex);
+            WritePod(output, material.sheenRoughnessTextureIndex);
         }
 
         ImportedMaterialData ReadImportedMaterial(std::istream &input)
@@ -565,6 +584,18 @@ namespace PlutoGE::assetimport
             material.metallicRoughnessTextureIndex = ReadPod<int>(input);
             material.metallicRoughnessTextureHasMetallicChannel = ReadBool(input);
             material.flipNormalY = ReadBool(input);
+            material.occlusionTextureIndex = ReadPod<int>(input);
+            material.occlusionStrength = ReadPod<float>(input);
+            material.clearCoat = ReadPod<float>(input);
+            material.clearCoatRoughness = ReadPod<float>(input);
+            material.clearCoatTextureIndex = ReadPod<int>(input);
+            material.clearCoatRoughnessTextureIndex = ReadPod<int>(input);
+            material.sheenColor.r = ReadPod<float>(input);
+            material.sheenColor.g = ReadPod<float>(input);
+            material.sheenColor.b = ReadPod<float>(input);
+            material.sheenRoughness = ReadPod<float>(input);
+            material.sheenColorTextureIndex = ReadPod<int>(input);
+            material.sheenRoughnessTextureIndex = ReadPod<int>(input);
             return material;
         }
 
@@ -1257,6 +1288,41 @@ namespace PlutoGE::assetimport
 
                 parsedMaterial.metallicRoughnessTextureHasMetallicChannel = *cachedHasMetallicChannel;
             }
+
+            // Occlusion is linear and always in red; packed ORM textures resolve to the metallic-roughness entry.
+            parsedMaterial.occlusionTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures, ResolveImageIndex(model, material.occlusionTexture.index),
+                ImportedTextureColorSpace::Linear, textureVariantByCacheKey);
+            parsedMaterial.occlusionStrength = std::clamp(static_cast<float>(material.occlusionTexture.strength), 0.0f, 1.0f);
+
+            // A texture an extension references ({"index": n} under `propertyName`), as an imported texture index.
+            const auto readExtensionTexture = [&](const char *extensionName, const char *propertyName,
+                                                  ImportedTextureColorSpace colorSpace)
+            {
+                const auto extensionIt = material.extensions.find(extensionName);
+                if (extensionIt == material.extensions.end() || !extensionIt->second.IsObject() ||
+                    !extensionIt->second.Has(propertyName))
+                    return -1;
+                const auto &info = extensionIt->second.Get(propertyName);
+                if (!info.IsObject() || !info.Has("index") || !info.Get("index").IsInt()) return -1;
+                return ResolveImportedTextureColorSpaceIndex(textures, ResolveImageIndex(model, info.Get("index").Get<int>()),
+                                                             colorSpace, textureVariantByCacheKey);
+            };
+            parsedMaterial.clearCoat = std::clamp(readExtensionNumber("KHR_materials_clearcoat", "clearcoatFactor", 0.0f), 0.0f, 1.0f);
+            parsedMaterial.clearCoatRoughness = std::clamp(
+                readExtensionNumber("KHR_materials_clearcoat", "clearcoatRoughnessFactor", 0.0f), 0.0f, 1.0f);
+            parsedMaterial.clearCoatTextureIndex = readExtensionTexture("KHR_materials_clearcoat", "clearcoatTexture",
+                                                                        ImportedTextureColorSpace::Linear);
+            parsedMaterial.clearCoatRoughnessTextureIndex = readExtensionTexture(
+                "KHR_materials_clearcoat", "clearcoatRoughnessTexture", ImportedTextureColorSpace::Linear);
+            parsedMaterial.sheenColor = glm::clamp(readExtensionVec3("KHR_materials_sheen", "sheenColorFactor", glm::vec3(0.0f)),
+                                                   glm::vec3(0.0f), glm::vec3(1.0f));
+            parsedMaterial.sheenRoughness = std::clamp(readExtensionNumber("KHR_materials_sheen", "sheenRoughnessFactor", 0.0f),
+                                                       0.0f, 1.0f);
+            parsedMaterial.sheenColorTextureIndex = readExtensionTexture("KHR_materials_sheen", "sheenColorTexture",
+                                                                         ImportedTextureColorSpace::SRGB);
+            parsedMaterial.sheenRoughnessTextureIndex = readExtensionTexture("KHR_materials_sheen", "sheenRoughnessTexture",
+                                                                             ImportedTextureColorSpace::Linear);
 
             const bool hasExplicitMetallicFactor = material.values.find("metallicFactor") != material.values.end();
             parsedMaterial.metallic = static_cast<float>(material.pbrMetallicRoughness.metallicFactor);
@@ -3585,6 +3651,12 @@ namespace PlutoGE::assetimport
                 textureIndexByKey,
                 textures);
             importedMaterial.metallicRoughnessTextureHasMetallicChannel = importedMaterial.metallicRoughnessTextureIndex >= 0;
+            importedMaterial.occlusionTextureIndex = ResolveImportedTextureColorSpaceIndex(
+                textures,
+                FindAssimpMaterialTexture(scene, material, filePath, {aiTextureType_AMBIENT_OCCLUSION, aiTextureType_LIGHTMAP},
+                                          textureIndexByKey, textures),
+                ImportedTextureColorSpace::Linear,
+                textureIndexByKey);
 
             importedMaterial.albedoTextureIndex = ResolveImportedTextureColorSpaceIndex(
                 textures,

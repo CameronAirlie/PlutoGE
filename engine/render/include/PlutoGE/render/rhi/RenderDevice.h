@@ -151,6 +151,15 @@ namespace PlutoGE::render::rhi
         // Backends without resource-scoped barriers may use the broad fallback.
         virtual void ComputeImageBarrier(std::span<const TextureHandle>) { ShaderMemoryBarrier(); }
         virtual void ClearStorageImageUint(TextureHandle, std::uint32_t = 0) {}
+        // Hardware ray tracing (IRenderDevice::GetRayTracingSupport). Builds outside rendering, from the geometry the
+        // buffers hold when the build executes; later builds and shader reads in this context see the result. A
+        // top-level build takes at most its descriptor's maxInstances instances, whose bottom levels are built.
+        virtual void BuildBottomLevelAccelerationStructure(AccelerationStructureHandle)
+        { throw std::logic_error("Acceleration structures are unsupported"); }
+        virtual void BuildTopLevelAccelerationStructure(AccelerationStructureHandle, std::span<const AccelerationStructureInstance>)
+        { throw std::logic_error("Acceleration structures are unsupported"); }
+        virtual void BindAccelerationStructure(std::uint32_t, AccelerationStructureHandle)
+        { throw std::logic_error("Acceleration structures are unsupported"); }
         // Parallel recording. BeginParallelRecording returns `count` contexts (at most
         // MaxParallelRecordingContexts) whose commands execute in that order, after
         // everything recorded on this context so far and before anything it records
@@ -258,6 +267,17 @@ namespace PlutoGE::render::rhi
             return false;
         }
         virtual void ReleaseTemporalUpscalerContext(std::uint64_t) {}
+        // Hardware ray tracing. Unsupported devices return invalid handles from the creation calls.
+        [[nodiscard]] virtual RayTracingSupport GetRayTracingSupport() const
+        {
+            return {false, "Hardware ray tracing is not implemented by this render device"};
+        }
+        [[nodiscard]] virtual AccelerationStructureHandle CreateBottomLevelAccelerationStructure(
+            const BottomLevelAccelerationStructureDescriptor &) { return {}; }
+        [[nodiscard]] virtual AccelerationStructureHandle CreateTopLevelAccelerationStructure(
+            const TopLevelAccelerationStructureDescriptor &) { return {}; }
+        // Deferred until work submitted while it existed completes, like buffers.
+        virtual void DestroyAccelerationStructure(AccelerationStructureHandle) {}
         // Bindless textures. Zero capacity means the device has no table and pipelines must bind textures to
         // slots. A registration takes one table slot and returns its index (InvalidBindlessIndex when the table is
         // full or the texture is not an initialized, sampled-only texture). Release every slot before destroying its

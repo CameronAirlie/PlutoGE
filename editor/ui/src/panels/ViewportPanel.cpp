@@ -916,6 +916,22 @@ namespace PlutoGE::ui
                 DrawWorldLine(drawList, center - direction * 0.75f, center + direction * 1.5f, cameraData, viewportMin, viewportSize, color, 2.0f);
                 return;
             }
+            if (light.type == scene::LightType::Rect)
+            {
+                // The emitter's outline, and its normal out of the emitting side.
+                glm::vec3 right = light.right - direction * glm::dot(light.right, direction);
+                right = glm::dot(right, right) > 0.000001f ? glm::normalize(right) : glm::vec3(1.0f, 0.0f, 0.0f);
+                const glm::vec3 halfRight = right * (0.5f * light.sourceWidth);
+                const glm::vec3 halfUp = glm::normalize(glm::cross(right, direction)) * (0.5f * light.sourceHeight);
+                const std::array corners{center - halfRight - halfUp, center + halfRight - halfUp,
+                                         center + halfRight + halfUp, center - halfRight + halfUp};
+                for (std::size_t corner = 0; corner < corners.size(); ++corner)
+                    DrawWorldLine(drawList, corners[corner], corners[(corner + 1) % corners.size()], cameraData,
+                                  viewportMin, viewportSize, color, 2.0f);
+                DrawWorldLine(drawList, center, center + direction * std::min(visible, 2.0f), cameraData, viewportMin,
+                              viewportSize, color);
+                return;
+            }
 
             const glm::vec3 referenceUp = std::abs(direction.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
             const glm::vec3 tangent = glm::normalize(glm::cross(referenceUp, direction));

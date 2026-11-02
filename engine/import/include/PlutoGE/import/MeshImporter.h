@@ -4,6 +4,7 @@
 #include "PlutoGE/import/ImportedModelHierarchy.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/MaterialTextureSlots.h"
 
 #include <glm/glm.hpp>
 #include <memory>
@@ -57,8 +58,31 @@ namespace PlutoGE::assetimport
         int normalTextureIndex = -1;
         int metallicRoughnessTextureIndex = -1;
         bool metallicRoughnessTextureHasMetallicChannel = true;
+        int occlusionTextureIndex = -1; // occlusion in red, as glTF; may be the metallic-roughness texture (ORM)
+        float occlusionStrength = 1.0f;
+        float clearCoat = 0.0f;              // KHR_materials_clearcoat
+        float clearCoatRoughness = 0.0f;
+        int clearCoatTextureIndex = -1;      // red
+        int clearCoatRoughnessTextureIndex = -1; // green
+        glm::vec3 sheenColor{0.0f};          // KHR_materials_sheen
+        float sheenRoughness = 0.0f;
+        int sheenColorTextureIndex = -1;     // sRGB colour
+        int sheenRoughnessTextureIndex = -1; // alpha
         bool flipNormalY = false;
     };
+
+    // The material an imported description becomes: every non-texture setting (including the channels packed
+    // textures are read from) and, per texture slot, the index of its source texture (-1 for none). Callers turn the
+    // indices into textures or asset references, so importers fill both kinds of material identically.
+    struct ImportedMaterialDefinition
+    {
+        render::MaterialConfig config;
+        std::array<int, render::MaterialTextureSlotCount> textureIndices;
+
+        int TextureIndex(render::MaterialTextureSlot slot) const { return textureIndices[static_cast<std::size_t>(slot)]; }
+    };
+
+    ImportedMaterialDefinition DescribeImportedMaterial(const ImportedMaterialData &material);
 
     struct ImportedMeshAsset
     {

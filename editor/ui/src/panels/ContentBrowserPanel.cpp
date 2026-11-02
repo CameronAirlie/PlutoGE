@@ -27,6 +27,7 @@
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/asset_import/ModelImportService.h"
 #include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RenderTexture.h"
@@ -117,9 +118,9 @@ namespace PlutoGE::ui
               if (preloadedMaterial)
               {
                   const auto &config = preloadedMaterial->GetConfig();
-                  for (const render::Texture *texture :
-                       {config.albedoTexture, config.normalTexture, config.metallicTexture, config.roughnessTexture, config.emissionTexture})
+                  for (const auto &slot : render::MaterialTextureSlots())
                   {
+                      const render::Texture *texture = config.*slot.texture;
                       if (!texture)
                           continue;
                       std::error_code error;

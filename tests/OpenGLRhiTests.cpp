@@ -1,6 +1,10 @@
 #include "SsaoRenderingChecks.h"
 #include "ContactShadowRenderingChecks.h"
 #include "AreaLightRenderingChecks.h"
+#include "MaterialOcclusionRenderingChecks.h"
+#include "SurfaceLayerRenderingChecks.h"
+#include "RectLightRenderingChecks.h"
+#include "RayTracingChecks.h"
 #include "IblRenderingChecks.h"
 #include "FogRenderingChecks.h"
 #include "CloudTransformChecks.h"
@@ -769,6 +773,33 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return pixels;
         });
         if (argc > 1 && std::string_view(argv[1]) == "--area-lights")
+            return 0;
+        CheckMaterialOcclusion(basicRenderer, device, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--material-occlusion")
+            return 0;
+        CheckSurfaceLayers(basicRenderer, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--surface-layers")
+            return 0;
+        CheckRectLights(basicRenderer, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--rect-lights")
+            return 0;
+        CheckRayTracing(device, {});
+        if (argc > 1 && std::string_view(argv[1]) == "--ray-tracing")
             return 0;
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;

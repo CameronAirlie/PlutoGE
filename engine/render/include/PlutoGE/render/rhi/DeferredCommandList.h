@@ -63,6 +63,10 @@ namespace PlutoGE::render::rhi
         void ShaderMemoryBarrier() override;
         void ComputeImageBarrier(std::span<const TextureHandle> textures) override;
         void ClearStorageImageUint(TextureHandle texture, std::uint32_t value = 0) override;
+        void BuildBottomLevelAccelerationStructure(AccelerationStructureHandle structure) override;
+        void BuildTopLevelAccelerationStructure(AccelerationStructureHandle structure,
+                                                std::span<const AccelerationStructureInstance> instances) override;
+        void BindAccelerationStructure(std::uint32_t slot, AccelerationStructureHandle structure) override;
         std::span<ICommandContext *const> BeginParallelRecording(std::uint32_t count) override;
         void Submit() override;
         void RecoverInterruptedFrame() override;

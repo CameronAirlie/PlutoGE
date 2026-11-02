@@ -54,4 +54,5 @@ namespace PlutoGE::render::rhi
     using Texture = UniqueResource<TextureHandle, &IRenderDevice::DestroyTexture>;
     using Sampler = UniqueResource<SamplerHandle, &IRenderDevice::DestroySampler>;
     using GraphicsPipeline = UniqueResource<PipelineHandle, &IRenderDevice::DestroyPipeline>;
+    using AccelerationStructure = UniqueResource<AccelerationStructureHandle, &IRenderDevice::DestroyAccelerationStructure>;
 }

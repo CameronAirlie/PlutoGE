@@ -76,6 +76,8 @@ namespace PlutoGE::render
             {"Probe Relocation", PostProcessParameterType::Bool, Bool(s.relocation)},
             {"Relocate From Thin Surfaces", PostProcessParameterType::Bool, Bool(s.relocateFromThinSurfaces)},
             {"Probe Classification", PostProcessParameterType::Bool, Bool(s.classification)},
+            {"Ray Source", PostProcessParameterType::Enum, std::to_string(static_cast<int>(s.raySource)),
+             {std::string(DdgiRaySourceNames[0]), std::string(DdgiRaySourceNames[1]), std::string(DdgiRaySourceNames[2])}},
             {"Multiple Bounces", PostProcessParameterType::Bool, Bool(s.multipleBounces)},
             {"Brightness Clamp", PostProcessParameterType::Float, std::to_string(s.brightnessClamp)},
             {"Reflection Occlusion", PostProcessParameterType::Float, std::to_string(s.reflectionOcclusion)},
@@ -126,6 +128,8 @@ namespace PlutoGE::render
             else if (p.name == "Relocate From Thin Surfaces") s.relocateFromThinSurfaces = ParseBool(p.value);
             else if (p.name == "Probe Classification") s.classification = ParseBool(p.value);
             else if (p.name == "Multiple Bounces") s.multipleBounces = ParseBool(p.value);
+            else if (p.name == "Ray Source")
+                s.raySource = static_cast<DdgiRaySource>(std::clamp(ParseInt(p.value, 0), 0, 2));
             else if (p.name == "Brightness Clamp") s.brightnessClamp = ParseFloat(p.value, s.brightnessClamp);
             else if (p.name == "Reflection Occlusion")
                 s.reflectionOcclusion = ParseFloat(p.value, s.reflectionOcclusion);

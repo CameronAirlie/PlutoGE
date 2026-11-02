@@ -25,20 +25,24 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 #include "LightClusters.slang"
 
 #ifndef PLUTO_GLASS
-// Directional contact shadows (ContactShadows.slang): visibility and the device depth it was traced for.
+// Contact shadows (ContactShadows.slang): up to three lights' visibilities and the device depth they were traced for.
 [[vk::binding(7, 0)]] Sampler2D contactShadowMask : register(t7, space0);
 #endif
 
-// The contact shadow at this fragment: the mask's visibility where it was traced for this surface, else 1 (draws
-// absent from the coverage depth, transparent surfaces, or no mask this frame).
-float contactShadowVisibility(float4 fragmentPosition, bool transparentPass)
+// contactShadowParameters' id for the directional light (local lights use their index).
+static const float ContactShadowDirectional = 32.0;
+
+// The contact shadow of light `lightId` at this fragment: its mask channel where the mask was traced for this
+// surface, else 1 (lights without a channel, draws absent from the coverage depth, transparent surfaces, no mask).
+float contactShadowVisibility(float4 fragmentPosition, bool transparentPass, float lightId)
 {
 #ifdef PLUTO_GLASS
     return 1.0;
 #else
-    if (transparentPass || contactShadowParameters.x < 0.5) return 1.0;
-    const float2 mask = contactShadowMask.Load(int3(int2(fragmentPosition.xy), 0)).xy;
-    return abs(mask.y - fragmentPosition.z) <= 0.0001 * fragmentPosition.z + 1.e-7 ? mask.x : 1.0;
+    if (transparentPass || contactShadowParameters.w < 0.5 || all(contactShadowParameters.xyz != lightId)) return 1.0;
+    const float4 mask = contactShadowMask.Load(int3(int2(fragmentPosition.xy), 0));
+    if (abs(mask.a - fragmentPosition.z) > 0.0001 * fragmentPosition.z + 1.e-7) return 1.0;
+    return contactShadowParameters.x == lightId ? mask.r : contactShadowParameters.y == lightId ? mask.g : mask.b;
 #endif
 }
 
@@ -205,9 +209,19 @@ cbuffer MaterialParameters : register(b0, space1)
     float4 shaderGraphFrame;
     uint4 emissionParameters; // map present, UV set, RGB channel masks
     float4 emissionChannels[3];
+    uint4 surfaceTextureParameters; // BasicSurfaceParameters.h: x presence bits, y channels
+    float4 occlusionParameters;     // x strength
+    float4 clearCoatParameters;     // x factor, y roughness
+    float4 sheenParameters;         // rgb colour, a roughness
 };
 
 [[vk::binding(18, 1)]] Sampler2D emissionTexture : register(t18, space1);
+// Optional surface textures (BasicSurfaceTexture), from set 1 binding 26 (BasicRenderer::SurfaceTextureBinding).
+[[vk::binding(26, 1)]] Sampler2D occlusionTexture : register(t26, space1);
+[[vk::binding(27, 1)]] Sampler2D clearCoatTexture : register(t27, space1);
+[[vk::binding(28, 1)]] Sampler2D clearCoatRoughnessTexture : register(t28, space1);
+[[vk::binding(29, 1)]] Sampler2D sheenColorTexture : register(t29, space1);
+[[vk::binding(30, 1)]] Sampler2D sheenRoughnessTexture : register(t30, space1);
 
 [[vk::binding(1, 1)]]
 Sampler2D baseColorTexture : register(t1, space1);
@@ -218,6 +232,16 @@ Sampler2D metallicTexture : register(t3, space1);
 [[vk::binding(4, 1)]]
 Sampler2D roughnessTexture : register(t4, space1);
 #endif
+
+// Optional surface textures, indexed as BasicSurfaceTexture (BasicRenderer.h).
+static const uint SurfaceTextureOcclusion = 0;
+static const uint SurfaceTextureClearCoat = 1;
+static const uint SurfaceTextureClearCoatRoughness = 2;
+static const uint SurfaceTextureSheenColor = 3;
+static const uint SurfaceTextureSheenRoughness = 4;
+bool surfaceTexturePresent(uint texture) { return (surfaceTextureParameters.x & (1u << texture)) != 0u; }
+uint surfaceTextureChannel(uint texture) { return (surfaceTextureParameters.y >> (2u * texture)) & 3u; }
+#include "AmbientOcclusion.slang"
 [[vk::binding(5, 1)]]
 Sampler2D directionalShadowTexture : register(t5, space1);
 [[vk::binding(6, 1)]]
@@ -885,6 +909,8 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBia
 }
 
 #include "SurfaceBrdf.slang"
+#include "SurfaceLayers.slang"
+#include "LtcAreaLights.slang"
 
 #ifdef PLUTO_GLASS
 // Integrate only camera-to-pane fog. The scene snapshot already contains
@@ -1127,6 +1153,32 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         sampledRoughness = roughnessTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)[roughnessChannel];
     float materialMetallic = glass ? 0.0 : saturate(metallic * sampledMetallic);
     float materialRoughness = clamp(roughness * sampledRoughness, 0.04, 1.0);
+    // Material ambient occlusion (AmbientOcclusion.slang): ambient light, reflections and, as micro-shadowing,
+    // direct light. Glass transmits rather than occludes.
+    float materialOcclusion = 1.0;
+    if (!glass && surfaceTexturePresent(SurfaceTextureOcclusion) && !skipDetailTextures)
+        materialOcclusion = lerp(1.0, occlusionTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)
+            [surfaceTextureChannel(SurfaceTextureOcclusion)], saturate(occlusionParameters.x));
+    // Clear coat and sheen layers (SurfaceLayers.slang), each map scaling its factor. Glass has neither.
+    float layerClearCoat = glass ? 0.0 : clearCoatParameters.x;
+    float layerClearCoatRoughness = clearCoatParameters.y;
+    float3 layerSheenColor = glass ? float3(0.0) : sheenParameters.rgb;
+    float layerSheenRoughness = sheenParameters.a;
+    if (!skipDetailTextures)
+    {
+        const float2 layerUv = input.uv * uvScale;
+        if (layerClearCoat > 0.0 && surfaceTexturePresent(SurfaceTextureClearCoat))
+            layerClearCoat *= clearCoatTexture.SampleGrad(layerUv, derivatives.uvDx, derivatives.uvDy)
+                [surfaceTextureChannel(SurfaceTextureClearCoat)];
+        if (layerClearCoat > 0.0 && surfaceTexturePresent(SurfaceTextureClearCoatRoughness))
+            layerClearCoatRoughness *= clearCoatRoughnessTexture.SampleGrad(layerUv, derivatives.uvDx, derivatives.uvDy)
+                [surfaceTextureChannel(SurfaceTextureClearCoatRoughness)];
+        if (any(layerSheenColor > 0.0) && surfaceTexturePresent(SurfaceTextureSheenColor))
+            layerSheenColor *= sheenColorTexture.SampleGrad(layerUv, derivatives.uvDx, derivatives.uvDy).rgb;
+        if (any(layerSheenColor > 0.0) && surfaceTexturePresent(SurfaceTextureSheenRoughness))
+            layerSheenRoughness *= sheenRoughnessTexture.SampleGrad(layerUv, derivatives.uvDx, derivatives.uvDy)
+                [surfaceTextureChannel(SurfaceTextureSheenRoughness)];
+    }
 #ifdef PLUTO_TERRAIN_LAYERS
     // The layers replace the material maps; the material colour still tints the result. Beyond the detail distance
     // the material's own albedo (the terrain's macro colour, sampled above) stands in for them.
@@ -1181,7 +1233,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         FragmentOutput output = (FragmentOutput)0;
         output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
         output.normal = float4(normal * 0.5 + 0.5, 1.0);
-        output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
+        output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), 1.0);
         output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
                                input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0.0, 1.0);
         output.albedo = sampledColor;
@@ -1195,7 +1247,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         FragmentOutput output = (FragmentOutput)0;
         output.color = float4(sampledColor.rgb + surfaceEmission, sampledColor.a);
         output.normal = float4(normal * 0.5 + 0.5, 1);
-        output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
+        output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), 1.0);
         output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
                                input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0, 1);
         output.albedo = sampledColor;
@@ -1210,8 +1262,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const BrdfSurface brdf = brdfSurface(normal, viewDirection, sampledColor.rgb, materialMetallic, materialRoughness,
                                          f0, glass ? glassParameters.z : 0.0);
     const float ndotv = brdf.ndotv;
+    const SurfaceLayers layers = surfaceLayers(brdf, layerClearCoat, layerClearCoatRoughness, layerSheenColor,
+                                               layerSheenRoughness);
     float3 directDiffuse, specular;
     brdfEvaluate(brdf, brdfPointLight(lightDirection), ndotl, directDiffuse, specular);
+    layersEvaluate(brdf, layers, brdfPointLight(lightDirection), ndotl, directDiffuse, specular);
     const float3 direct = (directDiffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
     float3 pointLighting = 0.0;
     float3 pointSpecularLighting = 0.0;
@@ -1228,6 +1283,32 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float distance = length(offset);
         const float range = pointPositionRange[light].w;
         if (range <= 0.0 || distance >= range) continue;
+        if (localLightType(light) == LocalLightRect)
+        {
+            // A one-sided rectangle facing pointDirectionSpot.xyz (LtcAreaLights.slang). Its intensity is along the
+            // normal, so its radiance is intensity over area; corners are relative to the surface.
+            const float3 forward = pointDirectionSpot[light].xyz;
+            const float3 rightHalf = pointShape[light].yzw;
+            const float3 upHalf = normalize(cross(rightHalf, forward)) * pointShape[light].x;
+            const float3 corners[4] = {offset - rightHalf - upHalf, offset + rightHalf - upHalf,
+                                       offset + rightHalf + upHalf, offset - rightHalf + upHalf};
+            float3 diffuseRect, specularRect;
+            ltcRectLight(brdf, layers, corners, diffuseRect, specularRect);
+            const float area = max(4.0 * length(rightHalf) * pointShape[light].x, 1e-6);
+            const float window = 1.0 - smoothstep(range * 0.9, range, distance);
+            const float3 toCentre = offset / max(distance, 0.0001);
+            const float rectVisibility = microShadowing(materialOcclusion, dot(normal, toCentre)) *
+                                         contactShadowVisibility(input.position, transparentPass, float(light));
+            const float3 intensity = pointColorIntensity[light].rgb * pointColorIntensity[light].w;
+            const float3 rectRadiance = intensity / area * window * rectVisibility;
+            if (customLighting)
+                // Graph lighting takes one direction: the rectangle as a cosine emitter at its centre.
+                pointLighting += evaluateShaderGraphLighting(shaderGraph, graphState, toCentre, intensity,
+                    window * saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001), rectVisibility);
+            else pointLighting += (diffuseRect + specularRect) * rectRadiance;
+            pointSpecularLighting += specularRect * rectRadiance;
+            continue;
+        }
         // Source shape (SceneLightingParameters.slang): sphere radius, tube axis times length.
         const float tubeLength = length(pointShape[light].yzw);
         float3 l;
@@ -1236,6 +1317,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float nl = saturate(dot(normal, l));
         float3 diffusePoint, specularPoint;
         brdfEvaluate(brdf, shape, nl, diffusePoint, specularPoint);
+        layersEvaluate(brdf, layers, shape, nl, diffusePoint, specularPoint);
         float visibility = 1.0;
         // Standard lighting scales by nl, so surfaces facing away from the
         // light need no shadow lookup. Custom graph lighting receives visibility.
@@ -1245,13 +1327,15 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal, pointSettings[light].yz);
         }
         float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
-        if (pointDirectionSpot[light].w > 0.5)
+        if (localLightType(light) == LocalLightSpot)
         {
             attenuation *= smoothstep(pointSettings[light].z, max(pointSettings[light].w, pointSettings[light].z + 0.000001), dot(-l, pointDirectionSpot[light].xyz));
             if (attenuation > 0 && pointSettings[light].y >= 0)
                 visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition,
                     pointReceiverNormal, l, pointWorldDx, pointWorldDy);
         }
+        visibility *= microShadowing(materialOcclusion, nl) *
+                      contactShadowVisibility(input.position, transparentPass, float(light));
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * attenuation * visibility;
         if(customLighting)
             pointLighting += evaluateShaderGraphLighting(shaderGraph,graphState,l,
@@ -1363,12 +1447,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         }
     }
     if (shadowsEnabled != 0 && needsDirectionalShadow)
-        shadowVisibility *= contactShadowVisibility(input.position, transparentPass);
+        shadowVisibility *= contactShadowVisibility(input.position, transparentPass, ContactShadowDirectional);
+    shadowVisibility *= microShadowing(materialOcclusion, dot(normal, lightDirection));
     // Environment lighting layers, most specific first: reflection captures,
     // then the baked diffuse grid, then the physical sky, then flat ambient.
     // A layer below full capture coverage is only evaluated where it shows.
     const float3 ambientFresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
-    const float3 diffuseResponse = sampledColor.rgb * (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI;
+    const float layerBaseScale = layersEnvironmentBaseScale(layers);
+    const float3 coatResponse = coatEnvironmentResponse(layers, ndotv);
+    const float3 diffuseResponse = sampledColor.rgb * (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI * layerBaseScale +
+                                   sheenEnvironmentResponse(layers, ndotv);
     float captureWeights[4];
     float captureWeightSum = 0;
     // Captures arrive most specific first (priority, then smallest volume);
@@ -1406,11 +1494,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         else if (skyLighting)
             ambient = samplePhysicalSkyIrradiance(normal) * diffuseResponse * physicalSkySettings.z;
         else
-            ambient = sampledColor.rgb * (1.0 - materialMetallic) * cameraPositionAmbient.w;
+            // Flat ambient radiance: the base's albedo without Fresnel (as before layers), under and with the layers.
+            ambient = (sampledColor.rgb * (1.0 - materialMetallic) * layerBaseScale +
+                       sheenEnvironmentResponse(layers, ndotv) * PI) * cameraPositionAmbient.w;
         if (skyLighting)
         {
             environmentSpecular = samplePhysicalSkySpecular(reflect(-viewDirection, normal), materialRoughness) *
-                                  iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z;
+                                  iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z * layerBaseScale;
+            if (layers.clearCoatActive)
+                environmentSpecular += samplePhysicalSkySpecular(reflect(-viewDirection, normal), layers.clearCoatRoughness) *
+                                       coatResponse * physicalSkySettings.z;
             skySpecularShare = 1.0 - captureCoverage;
         }
     }
@@ -1422,13 +1515,19 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         {
             if (captureWeights[i] <= 0) continue;
             const float3 diffuse = gridCovered ? gridDiffuse : iblDiffuse(i, normal) * diffuseResponse;
-            const float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) * iblSpecularResponse(f0, materialRoughness, ndotv);
+            float3 specular = iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), materialRoughness) *
+                              iblSpecularResponse(f0, materialRoughness, ndotv) * layerBaseScale;
+            if (layers.clearCoatActive)
+                specular += iblRadiance(i, input.worldPosition, reflect(-viewDirection, normal), layers.clearCoatRoughness) *
+                            coatResponse;
             capturedAmbient += diffuse * captureWeights[i];
             capturedSpecular += specular * captureWeights[i];
         }
         ambient = lerp(ambient, capturedAmbient / max(captureWeightSum, 0.0001), captureCoverage);
         environmentSpecular = lerp(environmentSpecular, capturedSpecular / max(captureWeightSum, 0.0001), captureCoverage);
     }
+    ambient *= multiBounceOcclusion(materialOcclusion, sampledColor.rgb);
+    environmentSpecular *= specularOcclusion(materialOcclusion, ndotv, materialRoughness);
     ambient += environmentSpecular;
     float3 directionalLighting=unshadowedDirectionalLighting * shadowVisibility;
     if(customLighting)
@@ -1507,7 +1606,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 1.0);
     // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
     output.normal = float4(normal * 0.5 + 0.5, gridDeferred && shaderGraph.header.y == 0 && !glass ? 0.0 : 1.0);
-    output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), sampledColor.a);
+    // Alpha is the material occlusion that passes rebuilding ambient light apply (DiffuseResponse.slang).
+    output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), materialOcclusion);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);
     const float2 previousNdc = input.previousClip.xy / max(abs(input.previousClip.w), 0.00001);
     // Signed current-minus-previous displacement in normalized Y-up units.

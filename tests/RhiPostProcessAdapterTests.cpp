@@ -404,8 +404,8 @@ int main()
         const auto occlusion = BuildCloudOcclusion(effects);
         const float expected = EstimateMeanCloudNoiseDensity(0.55f, 0.32f, 0.035f / 0.006f) * 0.74f * 0.42f * 0.012f;
         if (!Near(occlusion.volumes[0].w * 1.0e4f, expected * 1.0e4f) ||
-            !Near(occlusion.worldToLocal[0][3].x, float(PLUTO_CLOUD_OCCLUSION_VOLUMES)) ||
-            !Near(occlusion.worldToLocal[PLUTO_CLOUD_OCCLUSION_VOLUMES - 1][3].x, 1.0f) ||
+            !Near(occlusion.volumeWorldToLocal[0][3].x, float(PLUTO_CLOUD_OCCLUSION_VOLUMES)) ||
+            !Near(occlusion.volumeWorldToLocal[PLUTO_CLOUD_OCCLUSION_VOLUMES - 1][3].x, 1.0f) ||
             !(occlusion.volumes[0].x > 0.0f))
             return 152;
         if (BuildCloudOcclusion(std::span(effects).last(1)).volumes[0].w != 0.0f)

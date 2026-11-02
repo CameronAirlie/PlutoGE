@@ -16,6 +16,7 @@
 
 #include "../include/PlutoGE/render/DdgiConfig.h"
 #include "../include/PlutoGE/render/PhysicalSkyLayout.h"
+#include "CloudOcclusion.slang"
 
 #ifndef PI
 #define PI 3.14159265358979
@@ -50,7 +51,16 @@
     float4 ddgiSky;           // x physical sky enabled, y flat ambient radiance
     float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
+    // The geometry pass's cloud state, so rays that reach the sky see the same overcast (CloudOcclusion.slang).
+    CloudOcclusionParameters ddgiClouds;
 };
+
+// Sky radiance a ray from origin meets along direction, with the cloud base replacing the sky the clouds block.
+float3 ddgiCloudySky(float3 clearSky, float3 origin, float3 direction)
+{
+    const CloudLighting cloud = evaluateCloudLighting(ddgiClouds, origin, float3(0.0, 1.0, 0.0));
+    return cloudySky(clearSky, cloudOvercastRadiance(cloud.overcast, direction), cloud);
+}
 
 uint ddgiCascades() { return ddgiVolume.x; }
 

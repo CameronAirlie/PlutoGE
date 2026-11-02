@@ -45,11 +45,11 @@ struct RayTracedInstance
 
 static const float RayOffset = 0.001;
 
-float3 missRadiance(float3 direction)
+float3 missRadiance(float3 origin, float3 direction)
 {
     // The directional light owns the sun disc, exactly as the geometry pass's sky irradiance.
-    return ddgiSky.x > 0.5 ? samplePhysicalSkyEnvironment(direction, 0.0) * physicalSkySettings.z
-                           : float3(ddgiSky.y);
+    return ddgiCloudySky(ddgiSky.x > 0.5 ? samplePhysicalSkyEnvironment(direction, 0.0) * physicalSkySettings.z
+                                         : float3(ddgiSky.y), origin, direction);
 }
 
 // As the voxel source: only rays leaving above the horizon reach the sky. Below it the scene ends in ground it does
@@ -117,7 +117,7 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
     while (query.Proceed()) {}
     if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
-        return float4(fixedRay ? float3(0.0) : missRadiance(direction), escapeDistance(direction, reach));
+        return float4(fixedRay ? float3(0.0) : missRadiance(origin, direction), escapeDistance(direction, reach));
     const float distance = query.CommittedRayT();
     // A probe inside geometry first meets a back face: report how far it must travel to leave (negative).
     if (!query.CommittedTriangleFrontFace())

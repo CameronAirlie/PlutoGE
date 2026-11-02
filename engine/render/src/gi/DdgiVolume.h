@@ -5,6 +5,7 @@
 #include "PlutoGE/render/DdgiConfig.h"
 #include "PlutoGE/render/DdgiProbeGrid.h"
 #include "PlutoGE/render/DdgiSettings.h"
+#include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
 
 #include <glm/glm.hpp>
@@ -35,8 +36,10 @@ namespace PlutoGE::render
         glm::vec4 sky{0.0f};
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> physicalSkyParameters{};
         glm::vec4 physicalSkySettings{0.0f};
+        CloudOcclusionParameters clouds{};
     };
-    static_assert(sizeof(DdgiGpuParameters) == 16 * (16 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT));
+    static_assert(sizeof(DdgiGpuParameters) ==
+                  16 * (16 + 2 * PLUTO_DDGI_MAX_CASCADES + PLUTO_SKY_LANE_COUNT) + sizeof(CloudOcclusionParameters));
 
     // What rays that leave the scene see: the physical sky, or the flat ambient term without it. Matches the
     // environment the geometry pass lights surfaces with, so an unoccluded volume reproduces that lighting.
@@ -46,6 +49,8 @@ namespace PlutoGE::render
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT> skyParameters{};
         float skyExposure = 0.0f;
         float ambientIntensity = 0.0f;
+        // Clouds over the scene: misses see their overcast base where they block the sky.
+        CloudOcclusionParameters clouds{};
     };
 
     // Camera-centred cascades of irradiance probes, updated progressively from a ray source and applied to the

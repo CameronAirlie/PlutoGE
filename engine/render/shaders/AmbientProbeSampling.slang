@@ -181,9 +181,8 @@ ProbeLighting evaluateProbeLighting(int index, float3 normal)
 
 float3 evaluateProbeIrradiance(int index, float3 normal) { return evaluateProbeLighting(index, normal).irradiance; }
 
-// The current sky's cosine-weighted mean radiance (SkyIrradiance.h), for volumes
-// baked with a live sky. Without a physical sky this is the flat ambient radiance.
-float3 liveSkyRadiance(float3 n)
+// The current sky without clouds (liveSkyRadiance).
+float3 clearLiveSkyRadiance(float3 n)
 {
     if (skyIrradiance[0].w < 0.5) return float3(cameraPositionAmbient.w);
     float3 radiance = skyIrradiance[0].rgb * 0.282095;
@@ -196,6 +195,15 @@ float3 liveSkyRadiance(float3 n)
     radiance += skyIrradiance[7].rgb * (1.092548 * n.x * n.z);
     radiance += skyIrradiance[8].rgb * (0.546274 * (n.x * n.x - n.y * n.y));
     return max(radiance, 0.0) * physicalSkySettings.z;
+}
+
+// The current sky's cosine-weighted mean radiance (SkyIrradiance.h), for volumes
+// baked with a live sky, with the cloud base replacing the sky clouds over
+// position block. Without a physical sky this is the flat ambient radiance.
+float3 liveSkyRadiance(float3 n, float3 position)
+{
+    const CloudLighting cloud = evaluateCloudLighting(cloudOcclusion, position, float3(0.0, 1.0, 0.0));
+    return cloudySky(clearLiveSkyRadiance(n), cloudOvercastRadiance(cloud.overcast, n), cloud);
 }
 
 // One volume's lighting at a receiver, or several volumes' composited.
@@ -265,7 +273,7 @@ DiffuseGridSample sampleDiffuseVolume(float3 position, float3 normal, float3 rec
     skyVisibility /= max(sum,0.00001);
     // Visibility is linear in its coefficients, so interpolating them interpolates
     // it in every direction; the live sky factorises as visibility * irradiance.
-    if (sky.x > 0.0) sample.irradiance += sky.x * evaluateSkyVisibility(skyVisibility, normal) * liveSkyRadiance(normal);
+    if (sky.x > 0.0) sample.irradiance += sky.x * evaluateSkyVisibility(skyVisibility, normal) * liveSkyRadiance(normal, position);
     sample.skyVisibility = lerp(float4(0, 0, 0, 1), skyVisibility, sky.y);
     sample.coverage = 1;
     return sample;

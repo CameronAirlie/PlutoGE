@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/AmbientProbeConfig.h"
+#include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/GeometryDiagnostics.h"
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
@@ -39,6 +40,7 @@ namespace PlutoGE::render
     class DeferredProbeIrradiance;
     class BackgroundMotion;
     class UpscalerSharpening;
+    class CloudTemporalFilter;
     class CloudNoiseVolume;
     class ScreenSpaceGuide;
     class ScreenSpaceAmbientOcclusion;
@@ -316,6 +318,7 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
         BasicPostProcessShaderPackage cloudShadow;
+        BasicPostProcessShaderPackage cloudTemporal;
         // Reference SSR: trace, upsample and composite, horizontal filter, the trace for fewer than 16 rays per
         // pixel, and the vertical filter. The filters and traces run at trace resolution.
         std::array<BasicPostProcessShaderPackage, 5> ssrStages;
@@ -839,6 +842,8 @@ namespace PlutoGE::render
         static constexpr std::uint32_t SurfaceTextureSlot = 33;
         // The rectangle-light LTC table (LtcAreaLights.slang ltcTable, set 0 binding 8).
         static constexpr std::uint32_t LtcTableSlot = 8;
+        // The sky lighting atlas in volumetric fog, for the cloud shadow map (VolumetricFog.slang cloudShadowAtlas).
+        static constexpr std::uint32_t CloudShadowAtlasSlot = 16;
         static constexpr std::uint32_t SurfaceTextureBinding = 26;
 
         // Runs outside a rendering pass with command recording open. The
@@ -1083,6 +1088,7 @@ namespace PlutoGE::render
         std::unique_ptr<DeferredProbeIrradiance> m_deferredProbeIrradiance;
         std::unique_ptr<BackgroundMotion> m_backgroundMotion;
         std::unique_ptr<UpscalerSharpening> m_upscalerSharpening;
+        std::unique_ptr<CloudTemporalFilter> m_cloudTemporal;
         std::unique_ptr<CloudNoiseVolume> m_cloudNoise;
         // Surface guides by resolution divisor (full, half), shared by SSAO and SSR.
         std::array<std::unique_ptr<ScreenSpaceGuide>, 2> m_screenSpaceGuides;
@@ -1127,6 +1133,10 @@ namespace PlutoGE::render
         // Traces the cloud shadow map into its region of m_skyQuadratureTexture (CloudShadowMap.h).
         rhi::GraphicsPipeline m_cloudShadowPipeline;
         rhi::Buffer m_cloudShadowBuffer;
+        // This frame's cloud lighting state (CloudOcclusion.h), shared by every pass that lights with the sky.
+        CloudOcclusionParameters m_frameCloudOcclusion{};
+        // lighting with the directional light dimmed by the clouds over the camera, for GI ray sources.
+        [[nodiscard]] BasicLighting CloudShadedGiLighting(const BasicLighting &lighting) const;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};
         bool m_skyEnvironmentValid = false;
         rhi::Texture m_glassDepthCopy;

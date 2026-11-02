@@ -38,6 +38,7 @@
 #include "CloudNoiseVolume.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/CloudShadowMap.h"
+#include "atmosphere/CloudTemporalFilter.h"
 #include "PostProcessParameterBlock.h"
 
 #include <cstddef>
@@ -194,11 +195,8 @@ namespace PlutoGE::render
             glm::vec4 contactShadowParameters{0.0f}; // each channel's light id, mask present
             // Live sky for ambient volumes (SkyIrradiance.h): rgb SH coefficients, [0].w 1 when present.
             std::array<glm::vec4, 9> skyIrradiance{};
-            // Cloud shadow map (CloudShadowMap::SurfaceMapping) and its projection direction, w present.
-            glm::vec4 cloudShadowMapping{0.0f};
-            glm::vec4 cloudShadowLight{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 6800 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) == 6768 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         struct alignas(16) SelectionOutlineParameters
@@ -1119,6 +1117,11 @@ namespace PlutoGE::render
                              rhi::ResourceBindingType::SampledTexture,
                              rhi::ShaderStageMask::Fragment});
                 }
+                // Fog's sun reads the cloud shadow map in the sky lighting atlas (VolumetricFog.slang).
+                if (type == BasicPostProcessEffectType::VolumetricFog)
+                    postDescriptor.resourceBindings.push_back(
+                        {CloudShadowAtlasSlot, 0, CloudShadowAtlasSlot, rhi::ResourceBindingType::SampledTexture,
+                         rhi::ShaderStageMask::Fragment});
                 postDescriptor.cullMode = rhi::CullMode::None;
                 postDescriptor.depthTest = false;
                 postDescriptor.depthWrite = false;
@@ -1460,6 +1463,9 @@ namespace PlutoGE::render
                 m_upscalerSharpening = std::move(upscalerSharpening);
             m_cloudNoise = std::make_unique<CloudNoiseVolume>();
             if (!m_cloudNoise->Initialize(device)) throw std::runtime_error("Cloud noise lattice creation failed");
+            auto cloudTemporal = std::make_unique<CloudTemporalFilter>();
+            if (cloudTemporal->Initialize(device, {shaders.cloudTemporal.vertex, shaders.cloudTemporal.fragment}))
+                m_cloudTemporal = std::move(cloudTemporal);
             m_occlusion->Initialize(device, shaders.occlusion);
             m_lightClusters = std::make_unique<LightClusterGrid>();
             m_lightClusters->Initialize(device, shaders.lightClusterCulling);
@@ -1608,6 +1614,7 @@ namespace PlutoGE::render
         m_backgroundMotion.reset();
         m_upscalerSharpening.reset();
         m_cloudNoise.reset();
+        m_cloudTemporal.reset();
         m_ambientOcclusion.reset();
         m_reflections.reset();
         m_globalIllumination.reset();
@@ -2387,9 +2394,11 @@ namespace PlutoGE::render
             : CloudShadowMap{};
         if (cloudShadow.enabled)
         {
-            frameParameters.cloudShadowMapping = cloudShadow.SurfaceMapping();
-            frameParameters.cloudShadowLight = glm::vec4(glm::vec3(cloudShadow.pass.light), 1.0f);
+            frameParameters.cloudOcclusion.shadowMapping = cloudShadow.SurfaceMapping();
+            frameParameters.cloudOcclusion.shadowLight = glm::vec4(glm::vec3(cloudShadow.pass.light), 1.0f);
         }
+        // Passes after the geometry (fog, DDGI, voxel lighting) take the same cloud state.
+        m_frameCloudOcclusion = frameParameters.cloudOcclusion;
         frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
         frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
         frameParameters.probeResolution = glm::vec4(glm::vec3(lighting.diffuseProbeResolution), lighting.diffuseProbeAtlasWidth);
@@ -4359,6 +4368,13 @@ namespace PlutoGE::render
             beforeTemporalResolve(*this, glm::vec2(temporalClipOffset));
             m_timingStats.cameraCompositionMs = elapsedMs(compositionStart, std::chrono::steady_clock::now());
         };
+        // Each cloud volume keeps a temporal history, addressed by its order among this frame's cloud packets.
+        std::size_t cloudVolumes = 0;
+        if (m_cloudTemporal)
+            m_cloudTemporal->BeginFrame({m_postProcessView, m_postProcessProjection, m_previousMotionViewProjection,
+                                         glm::vec3(m_postProcessCameraPosition),
+                                         m_device->GetApi() == rhi::GraphicsApi::Vulkan},
+                                        m_hasPreviousFrame);
         for (std::size_t effectCursor = 0; effectCursor < postProcessEffects.size(); ++effectCursor)
         {
             const auto &effect = postProcessEffects[effectCursor];
@@ -4414,7 +4430,8 @@ namespace PlutoGE::render
             }
             if (effect.type == BasicPostProcessEffectType::DDGI)
             {
-                m_outputColor = RenderDdgi(m_outputColor, effect, lighting, giDraws.empty() ? draws : giDraws, commands);
+                m_outputColor = RenderDdgi(m_outputColor, effect, CloudShadedGiLighting(lighting),
+                                           giDraws.empty() ? draws : giDraws, commands);
                 continue;
             }
             if (effect.type == BasicPostProcessEffectType::SSGI)
@@ -4424,7 +4441,7 @@ namespace PlutoGE::render
             }
             if (effect.type == BasicPostProcessEffectType::VCTGI)
             {
-                m_outputColor = RenderVctgi(m_outputColor, effect, lighting,
+                m_outputColor = RenderVctgi(m_outputColor, effect, CloudShadedGiLighting(lighting),
                                             giDraws.empty() ? draws : giDraws, commands);
                 continue;
             }
@@ -4435,9 +4452,12 @@ namespace PlutoGE::render
             const bool volumetric = effect.type == BasicPostProcessEffectType::VolumetricFog ||
                                     effect.type == BasicPostProcessEffectType::VolumetricCloud;
             const std::size_t volumeIndex = effect.type == BasicPostProcessEffectType::VolumetricFog ? 0 : 1;
-            const bool reducedVolume = volumetric && effect.volumetricResolutionDivisor > 1 &&
+            // Clouds trace separately even at full resolution when their temporal filter runs.
+            const bool cloudTemporal = effect.type == BasicPostProcessEffectType::VolumetricCloud && m_cloudTemporal;
+            const bool reducedVolume = volumetric && (effect.volumetricResolutionDivisor > 1 || cloudTemporal) &&
                                        m_volumetricCompositePipeline && m_volumetricTracePipelines[volumeIndex];
             const auto divisor = reducedVolume ? std::clamp(effect.volumetricResolutionDivisor, 1u, 4u) : 1u;
+            const std::size_t cloudVolume = effect.type == BasicPostProcessEffectType::VolumetricCloud ? cloudVolumes++ : 0;
             const auto passWidth = (m_postProcessWidth + divisor - 1u) / divisor;
             const auto passHeight = (m_postProcessHeight + divisor - 1u) / divisor;
             if (reducedVolume)
@@ -4452,7 +4472,13 @@ namespace PlutoGE::render
                 effectParameters[5] = glm::vec4(FogNoiseWindOffset(effect), 0.0f);
             }
             if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
+            {
                 effectParameters[5].w = volumeDepth ? 1.0f : 0.0f;
+                // Lane 7 (VolumetricCloud.slang cloudTemporalJitter): jitter only when the history will reproject.
+                const bool jitter = reducedVolume && cloudTemporal &&
+                                    m_cloudTemporal->JitterTrace(cloudVolume, passWidth, passHeight);
+                effectParameters[7] = {jitter ? 1.0f : 0.0f, static_cast<float>(m_frameIndex % 1024u), 0.0f, 0.0f};
+            }
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
                 effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
@@ -4548,6 +4574,10 @@ namespace PlutoGE::render
                     commands.BindTexture(9, m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get(), m_screenSampler.Get());
                     commands.BindTexture(10, m_taaDepthHistoryTargets[m_taaHistoryIndex].Get(), m_screenSampler.Get());
                 }
+                if (effect.type == BasicPostProcessEffectType::VolumetricFog)
+                    commands.BindTexture(CloudShadowAtlasSlot,
+                                         m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(),
+                                         m_screenSampler.Get());
                 if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
                 {
                     commands.BindUniformBuffer(12, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
@@ -4566,8 +4596,12 @@ namespace PlutoGE::render
                 commands.EndRendering();
             }
             if (writeOceanDepth) oceanVolumeDepth = depthDestination;
+            const auto volumeResult = reducedVolume && cloudTemporal
+                ? m_cloudTemporal->Resolve(commands, cloudVolume, colorDestination, m_screenSampler.Get(),
+                                           passWidth, passHeight, effect.worldToLocal)
+                : colorDestination;
             m_outputColor = reducedVolume
-                ? CompositeVolumetric(m_outputColor, colorDestination, passWidth, passHeight, commands, targetIndex, volumeDepth)
+                ? CompositeVolumetric(m_outputColor, volumeResult, passWidth, passHeight, commands, targetIndex, volumeDepth)
                 : colorDestination;
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
@@ -4576,6 +4610,8 @@ namespace PlutoGE::render
                 m_outputCoverage = m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get();
             }
         }
+        if (m_cloudTemporal)
+            m_cloudTemporal->EndFrame(cloudVolumes);
         composeTranslucency();
         composeCameras();
         evaluateTemporalUpscaler();
@@ -4653,6 +4689,21 @@ namespace PlutoGE::render
             commands.Submit();
             m_timingStats.submitMs = elapsedMs(submitStart, std::chrono::steady_clock::now());
         }
+    }
+
+    BasicLighting BasicRenderer::CloudShadedGiLighting(const BasicLighting &lighting) const
+    {
+        // GI traces the sun at scene scale, where the deck estimate at the camera stands in for the shadow map.
+        // Quantized so drifting clouds do not relight the voxel caches every frame.
+        BasicLighting shaded = lighting;
+        const float length = glm::length(lighting.directionalDirection);
+        if (length > 1.e-6f && lighting.directionalIntensity > 0.0f)
+        {
+            const auto cloud = EvaluateCloudLighting(m_frameCloudOcclusion, lighting.cameraPosition,
+                                                     -lighting.directionalDirection / length);
+            shaded.directionalIntensity *= std::round(cloud.sun * 64.0f) / 64.0f;
+        }
+        return shaded;
     }
 
     rhi::Buffer &BasicRenderer::AcquirePostProcessBuffer(std::size_t index)
@@ -5853,7 +5904,8 @@ namespace PlutoGE::render
         const DdgiEnvironment environment{.physicalSky = lighting.physicalSkyEnabled,
                                           .skyParameters = lighting.physicalSkyParameters,
                                           .skyExposure = lighting.physicalSkyExposure,
-                                          .ambientIntensity = lighting.ambientIntensity};
+                                          .ambientIntensity = lighting.ambientIntensity,
+                                          .clouds = m_frameCloudOcclusion};
         {
             const ScopedGpuTiming updateTiming(commands, "RHI DDGI / Probe update");
             m_ddgi->Update(commands, settings, environment, lighting.cameraPosition, *rays);

@@ -11,6 +11,7 @@
 #include "RenderTextureRenderingChecks.h"
 #include "FogRenderingChecks.h"
 #include "CloudShadowChecks.h"
+#include "CloudTemporalChecks.h"
 #include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -92,6 +93,7 @@ int main(int argc, char **argv)
         shaders.vertex.spirv = ReadSpirv("BasicLit.vertex.spv");
         shaders.skyQuadrature = { { .spirv = ReadSpirv("SkyQuadrature.vertex.spv") }, { .spirv = ReadSpirv("SkyQuadrature.fragment.spv") } };
         shaders.cloudShadow = { { .spirv = ReadSpirv("CloudShadow.vertex.spv") }, { .spirv = ReadSpirv("CloudShadow.fragment.spv") } };
+        shaders.cloudTemporal = { { .spirv = ReadSpirv("CloudTemporal.vertex.spv") }, { .spirv = ReadSpirv("CloudTemporal.fragment.spv") } };
         shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
         shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
         shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
@@ -529,6 +531,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--night-sky")
         {
             CheckNightSky(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--cloud-temporal")
+        {
+            CheckCloudTemporal(device, shaders, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--cloud-shadows")

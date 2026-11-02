@@ -20,6 +20,58 @@ float cloudSampleOffset(uint index)
     // introducing pixel-sized noise that cannot be resolved without history.
     return frac(0.5 + float(index) * 0.61803398875);
 }
+
+// Lane 7.x is 1 when CloudTemporalFilter reprojects this trace, lane 7.y the frame index.
+bool cloudTemporalJitter() { return pass.parameters[7].x > 0.5; }
+
+// Interleaved gradient noise, advanced by the golden ratio every frame: a
+// per-pixel phase whose error the temporal filter averages away.
+float cloudPixelJitter(float2 pixel)
+{
+    const float noise = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+    return frac(noise + pass.parameters[7].y * 0.61803398875);
+}
+
+// Offset of primary step index within its stratum. Without history every
+// pixel shares the same sequence, which keeps a single frame free of grain but
+// shows each step's sample shell as a slice; with history each pixel takes its
+// own phase and the slices resolve into a continuous volume.
+float cloudStepOffset(uint index, float pixelJitter)
+{
+    return cloudTemporalJitter() ? pixelJitter : cloudSampleOffset(index);
+}
+
+// Henyey-Greenstein phase function.
+float henyeyGreenstein(float cosine, float anisotropy)
+{
+    const float g2 = anisotropy * anisotropy;
+    return (1.0 - g2) / (12.56637061 * pow(max(1.0 + g2 - 2.0 * anisotropy * cosine, 0.0001), 1.5));
+}
+
+// A strong forward lobe for the silver lining toward the sun and a weak back
+// lobe so clouds facing away from it are not flat.
+float cloudPhase(float cosine, float anisotropy)
+{
+    return lerp(henyeyGreenstein(cosine, -0.25 * anisotropy), henyeyGreenstein(cosine, anisotropy), 0.8);
+}
+
+// Multiple scattering approximated by octaves of single scattering with
+// decreasing extinction, contribution and anisotropy (Wrenninge, "Oz: The
+// Great and Volumetric"). Dense cloud interiors brighten and soften instead of
+// turning black a few metres from their sunlit edge.
+float cloudSunScattering(float opticalDepth, float cosine, float anisotropy)
+{
+    float scattering = 0.0;
+    float attenuation = 1.0, contribution = 1.0, eccentricity = 1.0;
+    [unroll] for (int octave = 0; octave < 3; ++octave)
+    {
+        scattering += contribution * cloudPhase(cosine, anisotropy * eccentricity) * exp(-opticalDepth * attenuation);
+        attenuation *= 0.25;
+        contribution *= 0.5;
+        eccentricity *= 0.5;
+    }
+    return scattering;
+}
 #include "VolumetricCloudDensity.slang"
 
 float densityLocal(float3 worldPosition, float3 local)
@@ -67,8 +119,10 @@ float2 intersectVolume(float3 origin, float3 direction, float4x4 inverseVolume)
                                 transformWorldToLocalDirection(direction, inverseVolume, pass.flipY));
 }
 
-float lightTransmittance(float3 position, float3 lightDirection, float4x4 inverseVolume, uint lightSteps,
-                         float3 localPosition, float3 localLightDirection, float3 inverseLightDirection)
+// Optical depth toward the light; lightOffset places each sample within its step.
+float lightOpticalDepth(float3 position, float3 lightDirection, float4x4 inverseVolume, uint lightSteps,
+                        float3 localPosition, float3 localLightDirection, float3 inverseLightDirection,
+                        float lightOffset)
 {
 #ifdef PLUTO_CLOUD_REFERENCE_TRANSFORMS
     const float2 hit = intersectVolume(position + lightDirection * 0.01, lightDirection, inverseVolume);
@@ -89,17 +143,19 @@ float lightTransmittance(float3 position, float3 lightDirection, float4x4 invers
     {
         if (index >= lightSteps)
             break;
-        const float distance = (float(index) + 0.5) * stepLength;
+        const float distance = (float(index) + lightOffset) * stepLength;
         const float3 samplePosition = position + lightDirection * distance;
 #ifdef PLUTO_CLOUD_REFERENCE_TRANSFORMS
         opticalDepth += densityAt(samplePosition, inverseVolume) * pass.parameters[2].w * stepLength;
 #else
         opticalDepth += densityLocal(samplePosition, localPosition + localLightDirection * distance) * pass.parameters[2].w * stepLength;
 #endif
-        if (opticalDepth >= 9.21034) // Remaining sunlight is below 0.0001.
+        // The softest multiple-scattering octave (attenuation 1/16) still
+        // passes 0.2% of the sunlight at this depth.
+        if (opticalDepth >= 100.0)
             break;
     }
-    return exp(-opticalDepth);
+    return opticalDepth;
 }
 
 [shader("vertex")]
@@ -153,8 +209,8 @@ float4 integrateCloud(FullscreenVertexOutput input)
     [unroll] for (int axis = 0; axis < 3; ++axis)
         inverseLightDirection[axis] = localLightDirection[axis] != 0.0 ? 1.0 / localLightDirection[axis] : 0.0;
     const float cosine = dot(rayDirection, lightDirection);
-    const float phase = (1.0 - anisotropy * anisotropy) /
-                        (12.56637061 * pow(max(1.0 + anisotropy * anisotropy - 2.0 * anisotropy * cosine, 0.0001), 1.5));
+    const float pixelJitter = cloudPixelJitter(pixel);
+    const float lightOffset = cloudTemporalJitter() ? frac(pixelJitter + 0.38196601125) : 0.5;
     // Fade the uniform daylight fill early in twilight. At night, the
     // directional moon term supplies illumination without an emissive floor.
     // Lane 5.z marks a non-solar light; the CPU then pre-scales the fill by
@@ -165,7 +221,7 @@ float4 integrateCloud(FullscreenVertexOutput input)
     {
         if (index >= primarySteps || transmittance < 0.01)
             break;
-        const float distanceAlongRay = start + (float(index) + cloudSampleOffset(index)) * stepLength;
+        const float distanceAlongRay = start + (float(index) + cloudStepOffset(index, pixelJitter)) * stepLength;
         const float3 samplePosition = pass.cameraPosition.xyz + rayDirection * distanceAlongRay;
         const float3 localPosition = localOrigin + localDirection * distanceAlongRay;
 #ifdef PLUTO_CLOUD_REFERENCE_TRANSFORMS
@@ -178,11 +234,14 @@ float4 integrateCloud(FullscreenVertexOutput input)
             continue;
         const float segmentTransmittance = exp(-density * pass.parameters[2].w * stepLength);
         const float sunlight = pass.parameters[3].w > 0.0001
-                                   ? lightTransmittance(samplePosition, lightDirection, inverseVolume, lightSteps,
-                                                        localPosition, localLightDirection, inverseLightDirection)
-                                   : 1.0;
-        const float3 incident = ambientLight +
-                                pass.parameters[3].rgb * pass.parameters[3].w * phase * sunlight;
+                                   ? cloudSunScattering(lightOpticalDepth(samplePosition, lightDirection, inverseVolume,
+                                                                          lightSteps, localPosition, localLightDirection,
+                                                                          inverseLightDirection, lightOffset),
+                                                        cosine, anisotropy)
+                                   : 0.0;
+        // Sky light reaches the tops of clouds more than their bases.
+        const float ambientHeight = lerp(0.55, 1.0, saturate(localPosition.y + 0.5));
+        const float3 incident = ambientLight * ambientHeight + pass.parameters[3].rgb * pass.parameters[3].w * sunlight;
         radiance += transmittance * pass.parameters[0].rgb * incident * pass.parameters[4].x * (1.0 - segmentTransmittance);
         transmittance *= segmentTransmittance;
     }

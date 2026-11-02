@@ -66,10 +66,6 @@ cbuffer CameraParameters : register(b0, space0)
     // Live sky irradiance for ambient volumes baked with a live sky (SkyIrradiance.h): cosine-convolved L2 SH of
     // mean radiance, in AmbientProbeSampling's coefficient order. [0].w is 1 when a physical sky supplied it.
     float4 skyIrradiance[9];
-    // Cloud shadow map (CloudShadowSampling.slang): map origin x/z, texels per world unit, plane height; and the
-    // direction it was projected along, w 1 when the map is present.
-    float4 cloudShadowMapping;
-    float4 cloudShadowLight;
 };
 
 // Local light types, as BasicRenderer packs them into pointDirectionSpot.w: points, then spots, then rectangles.

@@ -189,6 +189,7 @@ namespace PlutoGE::render
         parameters.physicalSkyParameters = m_environment.skyParameters;
         parameters.physicalSkySettings = {m_environment.physicalSky ? 1.0f : 0.0f,
                                           std::max(m_environment.skyExposure, 0.0f), 1.0f, 0.0f};
+        parameters.clouds = m_environment.clouds;
         return parameters;
     }
 

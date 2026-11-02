@@ -20,6 +20,9 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 [[vk::binding(28, 0)]] Sampler2D iblAtlas1 : register(t28, space0);
 [[vk::binding(29, 0)]] Sampler2D iblAtlas2 : register(t29, space0);
 [[vk::binding(30, 0)]] Sampler2D iblAtlas3 : register(t30, space0);
+// The physical sky's lighting atlas, which also holds the cloud shadow map (SkyEnvironmentConfig.h).
+[[vk::binding(2, 0)]] Sampler2D skyQuadratureTexture : register(t2, space0);
+#define PLUTO_CLOUD_SHADOW_ATLAS skyQuadratureTexture
 
 #include "SceneLightingParameters.slang"
 #include "LightClusters.slang"
@@ -366,12 +369,10 @@ float4 traceGlassReflection(float3 world, float3 normal, float3 viewDirection, f
 
 static const float PI = 3.14159265359;
 
-[[vk::binding(2, 0)]] Sampler2D skyQuadratureTexture : register(t2, space0);
 #define PLUTO_SKY_QUADRATURE_TEXTURE 1
 #include "PhysicalSkyEnvironment.slang"
 #include "FogEnvironment.slang"
 #include "FogIntegration.slang"
-#include "CloudShadowSampling.slang"
 
 float sampleConventionalShadowCascade(int cascade, float2 uv)
 {
@@ -1430,14 +1431,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (shadowsEnabled != 0 && needsDirectionalShadow)
         shadowVisibility *= contactShadowVisibility(input.position, transparentPass, ContactShadowDirectional);
     shadowVisibility *= microShadowing(materialOcclusion, dot(normal, lightDirection));
-    // Clouds shade the directional light in moving patches and, as coverage grows, replace the clear sky with their
-    // base: a full deck leaves only soft overcast light. rawShadowVisibility stays the geometry diagnostic.
-    CloudLighting cloudLighting = {1.0, 1.0, float3(0.0)};
-    if (cloudLightingActive())
-    {
-        cloudLighting = evaluateCloudLighting(cloudOcclusion, input.worldPosition, lightDirection);
-        shadowVisibility *= sampleCloudShadow(input.worldPosition, cloudLighting.sun);
-    }
+    // Clouds shade the directional light in moving patches (the cloud shadow map) and, as coverage grows, replace
+    // the clear sky with their base: a full deck leaves only soft overcast light. rawShadowVisibility stays the
+    // geometry diagnostic.
+    const CloudLighting cloudLighting = evaluateCloudLighting(cloudOcclusion, input.worldPosition, lightDirection);
+    shadowVisibility *= cloudLighting.sun;
     // Environment lighting layers, most specific first: reflection captures,
     // then the baked diffuse grid, then the physical sky, then flat ambient.
     // A layer below full capture coverage is only evaluated where it shows.
@@ -1482,7 +1480,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (captureCoverage < 1.0)
     {
         const bool skyLighting = physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0);
-        const float3 overcastIrradiance = cloudOvercastIrradiance(cloudLighting.overcast, normal) * diffuseResponse;
+        const float3 overcastIrradiance = PI * cloudOvercastRadiance(cloudLighting.overcast, normal) * diffuseResponse;
         if (gridCovered)
             ambient = gridDiffuse;
         else if (skyLighting)

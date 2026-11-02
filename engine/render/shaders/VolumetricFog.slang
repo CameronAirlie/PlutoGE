@@ -1,3 +1,8 @@
+// The sky lighting atlas: its cloud shadow map lets sunlight through cloud gaps
+// as shafts (CloudOcclusion.slang). Declared before any cloud lighting include.
+[[vk::binding(16, 0)]] Sampler2D cloudShadowAtlas : register(t16, space0);
+#define PLUTO_CLOUD_SHADOW_ATLAS cloudShadowAtlas
+
 #include "Fullscreen.slang"
 #include "FogIntegration.slang"
 #include "PostProcessParameters.slang"

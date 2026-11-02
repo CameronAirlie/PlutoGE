@@ -30,6 +30,7 @@ cbuffer FogLightingParameters : register(b7, space0)
     column_major float4x4 fogPreviousViewProjection;
     float4 physicalSkyParameters[PLUTO_SKY_LANE_COUNT];
     float4 physicalSkySettings;
+    // Includes the cloud shadow map's placement; shaders defining PLUTO_CLOUD_SHADOW_ATLAS sample it.
     CloudOcclusionParameters fogCloudOcclusion;
 };
 

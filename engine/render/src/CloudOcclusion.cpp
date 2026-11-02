@@ -19,6 +19,8 @@ namespace PlutoGE::render
         constexpr float kCloudProfileMean = 0.74f;
         constexpr int kDensitySamples = 4096;
         constexpr float kInverseFourPi = 0.0795774715f;
+        // Mean of VolumetricCloud.slang's ambient height gradient over the lower half of a deck.
+        constexpr float kBaseAmbientHeight = 0.66f;
 
         float Smooth(float t) { return t * t * (3.0f - 2.0f * t); }
 
@@ -75,6 +77,27 @@ namespace PlutoGE::render
             return std::abs(localToWorld[0].y) + std::abs(localToWorld[1].y) + std::abs(localToWorld[2].y);
         }
 
+        // cloudOcclusionChord in CloudOcclusion.slang.
+        float Chord(const glm::mat4 &worldToLocal, const glm::vec3 &position, const glm::vec3 &direction)
+        {
+            const glm::vec3 origin = glm::vec3(worldToLocal * glm::vec4(position, 1.0f));
+            const glm::vec3 local = glm::vec3(worldToLocal * glm::vec4(direction, 0.0f));
+            float nearDistance = 0.0f, farDistance = 1e30f;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (local[axis] == 0.0f)
+                {
+                    if (std::abs(origin[axis]) > 0.5f) return 0.0f;
+                    continue;
+                }
+                const float a = (-0.5f - origin[axis]) / local[axis];
+                const float b = (0.5f - origin[axis]) / local[axis];
+                nearDistance = std::max(nearDistance, std::min(a, b));
+                farDistance = std::min(farDistance, std::max(a, b));
+            }
+            return std::max(farDistance - nearDistance, 0.0f);
+        }
+
         float SmoothStep(float edge0, float edge1, float x)
         {
             const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
@@ -102,6 +125,31 @@ namespace PlutoGE::render
         return cache.emplace(key, mean).first->second;
     }
 
+    CloudLighting EvaluateCloudLighting(const CloudOcclusionParameters &clouds, const glm::vec3 &position,
+                                        const glm::vec3 &sunDirection)
+    {
+        constexpr float diffusivity = 1.66f;
+        float sunDepth = 0.0f, skyDepth = 0.0f, overcastWeight = 0.0f;
+        glm::vec3 overcast{0.0f};
+        for (std::size_t index = 0; index < clouds.volumes.size(); ++index)
+        {
+            const float extinction = clouds.volumes[index].w;
+            if (extinction <= 0.0f) continue;
+            sunDepth += extinction * Chord(clouds.volumeWorldToLocal[index], position, sunDirection);
+            const float zenithDepth = diffusivity * extinction *
+                                      Chord(clouds.volumeWorldToLocal[index], position, glm::vec3(0.0f, 1.0f, 0.0f));
+            skyDepth += zenithDepth;
+            const float blocked = 1.0f - std::exp(-zenithDepth);
+            overcast += glm::vec3(clouds.volumes[index]) * blocked;
+            overcastWeight += blocked;
+        }
+        CloudLighting result;
+        result.sun = std::exp(-sunDepth);
+        result.sky = std::exp(-skyDepth);
+        result.overcast = overcastWeight > 0.0f ? overcast / overcastWeight : glm::vec3(0.0f);
+        return result;
+    }
+
     CloudOcclusionParameters BuildCloudOcclusion(std::span<const BasicPostProcessEffect> effects)
     {
         CloudOcclusionParameters result;
@@ -122,20 +170,25 @@ namespace PlutoGE::render
                 continue;
 
             // Cloud-base radiance follows the cloud pass's lighting: its
-            // ambient fill plus sunlight that reaches mid-cloud, scattered
-            // isotropically because multiple scattering diffuses it.
+            // ambient fill (dimmed toward the base, VolumetricCloud.slang
+            // ambientHeight) plus sunlight that reaches mid-cloud through the
+            // pass's multiple-scattering octaves, scattered isotropically
+            // because multiple scattering diffuses it.
             const glm::vec3 lightDirection = glm::dot(glm::vec3(lanes[2]), glm::vec3(lanes[2])) > 0.000001f
                                                  ? glm::normalize(glm::vec3(lanes[2])) : glm::vec3(0.0f, 1.0f, 0.0f);
             const float daylight = SmoothStep(-0.12f, 0.035f, lightDirection.y);
-            const float ambientFill = lanes[4].z * (lanes[5].z > 0.5f ? 1.0f : daylight * daylight);
+            const float ambientFill = kBaseAmbientHeight * lanes[4].z * (lanes[5].z > 0.5f ? 1.0f : daylight * daylight);
             const float sunDepth = meanExtinction * 0.5f * VolumeHeight(effect->worldToLocal) /
                                    std::max(lightDirection.y, 0.1f);
+            float octaves = 0.0f, attenuation = 1.0f, contribution = 1.0f;
+            for (int octave = 0; octave < 3; ++octave, attenuation *= 0.25f, contribution *= 0.5f)
+                octaves += contribution * std::exp(-sunDepth * attenuation);
             const glm::vec3 sunlight = glm::max(glm::vec3(lanes[3]), glm::vec3(0.0f)) * std::max(lanes[3].w, 0.0f) *
-                                       kInverseFourPi * std::exp(-sunDepth);
+                                       kInverseFourPi * octaves;
             const glm::vec3 baseRadiance = glm::max(glm::vec3(lanes[0]), glm::vec3(0.0f)) *
                                            std::max(lanes[4].x, 0.0f) * (glm::vec3(ambientFill) + sunlight);
 
-            result.worldToLocal[count] = effect->worldToLocal;
+            result.volumeWorldToLocal[count] = effect->worldToLocal;
             result.volumes[count] = glm::vec4(baseRadiance, meanExtinction);
             ++count;
         }

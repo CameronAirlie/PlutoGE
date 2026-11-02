@@ -142,11 +142,11 @@ float3 reflectedProbeLight(float3 hitPoint, float3 direction, float voxelSize)
     return reflectance * irradiance * coverage;
 }
 
-float3 missRadiance(float3 direction)
+float3 missRadiance(float3 origin, float3 direction)
 {
     // The directional light owns the sun disc, exactly as the geometry pass's sky irradiance.
-    return ddgiSky.x > 0.5 ? samplePhysicalSkyEnvironment(direction, 0.0) * physicalSkySettings.z
-                           : float3(ddgiSky.y);
+    return ddgiCloudySky(ddgiSky.x > 0.5 ? samplePhysicalSkyEnvironment(direction, 0.0) * physicalSkySettings.z
+                                         : float3(ddgiSky.y), origin, direction);
 }
 
 // The hit distance of a ray that left the voxel scene without reaching a surface. Only rays leaving above the horizon
@@ -171,7 +171,7 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     float covered, voxelSize;
     const float4 start = sampleScene(origin, direction, 0.0, covered, voxelSize);
     if (covered <= 0.0)
-        return float4(fixedRay ? float3(0.0) : missRadiance(direction), escapeDistance(direction, voxelTrace.y));
+        return float4(fixedRay ? float3(0.0) : missRadiance(origin, direction), escapeDistance(direction, voxelTrace.y));
     if (start.a > 0.5)
     {
         // Inside geometry: report how far this direction must travel to leave it.
@@ -249,7 +249,7 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     const float luminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
     if (luminance > ddgiBlend.y)
         radiance *= ddgiBlend.y / luminance;
-    radiance += transmission * missRadiance(direction);
+    radiance += transmission * missRadiance(origin, direction);
     return float4(radiance, hitDistance >= 0.0 ? hitDistance : escapeDistance(direction, distance));
 }
 

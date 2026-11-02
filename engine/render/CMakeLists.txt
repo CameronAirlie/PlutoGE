@@ -55,6 +55,7 @@ add_library(PlutoGERender
     src/CloudNoiseVolume.cpp
     src/CloudOcclusion.cpp
     src/CloudShadowMap.cpp
+    src/atmosphere/CloudTemporalFilter.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiTerrainLayerCache.cpp
@@ -171,7 +172,6 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
-                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudShadowSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TerrainLayers.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightClusters.slang"
@@ -441,6 +441,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SkyQuadrature "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SkyQuadrature.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VolumetricCloud "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudBaked.slang" vertexMain fragmentMain
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang")
+    pluto_add_slang_graphics_shader(CloudTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudTemporal.slang" vertexMain fragmentMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Fullscreen.slang")
     pluto_add_slang_graphics_shader(CloudShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudShadow.slang" vertexMain fragmentMain
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudNoise.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/CloudOcclusionLayout.h"

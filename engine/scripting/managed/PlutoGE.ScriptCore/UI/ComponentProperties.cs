@@ -35,6 +35,11 @@ internal static class ComponentProperties
     public static void SetVector2(uint entity, string type, string name, Vector2 value) =>
         Set(entity, type, name, FormatVector(value.X, value.Y));
 
+    public static Vector3 GetVector3(uint entity, string type, string name) =>
+        ParseVector(Get(entity, type, name), 3) is { } v ? new Vector3(v[0], v[1], v[2]) : Vector3.Zero;
+    public static void SetVector3(uint entity, string type, string name, Vector3 value) =>
+        Set(entity, type, name, FormatVector(value.X, value.Y, value.Z));
+
     public static Vector4 GetVector4(uint entity, string type, string name) =>
         ParseVector(Get(entity, type, name), 4) is { } v ? new Vector4(v[0], v[1], v[2], v[3]) : Vector4.Zero;
     public static void SetVector4(uint entity, string type, string name, Vector4 value) =>

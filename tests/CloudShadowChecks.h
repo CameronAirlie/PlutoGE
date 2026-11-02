@@ -100,7 +100,9 @@ void CheckCloudShadows(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     auto overcast = cloud;
     overcast.parameters[0].w = 1;
     const auto closed = render(std::span(&overcast, 1));
-    require(closed.mean < clear.mean * .2f, "A closed cloud deck must block direct sunlight");
+    // Real overcast days receive roughly a tenth to a third of clear-sky light, all of it diffuse.
+    require(closed.mean < clear.mean * .3f, "A closed cloud deck must leave only overcast light");
+    require(closed.maximum < clear.mean * .7f, "No part of a closed cloud deck may let full sunlight through");
 
     const auto broken = render(std::span(&cloud, 1));
     require(broken.maximum - broken.minimum > .25f * clear.mean, "A broken deck must cast distinct cloud shadows");

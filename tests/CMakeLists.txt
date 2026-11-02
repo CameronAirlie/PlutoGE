@@ -180,6 +180,8 @@ add_test(NAME PlutoGEVulkanSkyQuadratureTests COMMAND PlutoGEVulkanRhiTests --sk
 add_test(NAME PlutoGEOpenGLSkyQuadratureTests COMMAND PlutoGEOpenGLRhiTests --sky-quadrature)
 add_test(NAME PlutoGEVulkanCloudShadowTests COMMAND PlutoGEVulkanRhiTests --cloud-shadows)
 add_test(NAME PlutoGEOpenGLCloudShadowTests COMMAND PlutoGEOpenGLRhiTests --cloud-shadows)
+add_test(NAME PlutoGEVulkanCloudTemporalTests COMMAND PlutoGEVulkanRhiTests --cloud-temporal)
+add_test(NAME PlutoGEOpenGLCloudTemporalTests COMMAND PlutoGEOpenGLRhiTests --cloud-temporal)
 add_test(NAME PlutoGEVulkanNightSkyTests COMMAND PlutoGEVulkanRhiTests --night-sky)
 add_test(NAME PlutoGEOpenGLNightSkyTests COMMAND PlutoGEOpenGLRhiTests --night-sky)
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)
@@ -1125,6 +1127,25 @@ if (PLUTOGE_TEST_DOTNET)
         add_dependencies(PlutoGENativeUIScriptingTests PlutoGETestOpenAL)
     endif()
     add_test(NAME PlutoGENativeUIScriptingTests COMMAND PlutoGENativeUIScriptingTests)
+
+    set(PLUTO_WEATHER_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/WeatherProbe")
+    add_custom_command(OUTPUT "${PLUTO_WEATHER_PROBE_OUTPUT}/PlutoGE.WeatherProbe.dll"
+        COMMAND "${PLUTOGE_TEST_DOTNET}" build
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.WeatherProbe/PlutoGE.WeatherProbe.csproj"
+            --configuration Release --output "${PLUTO_WEATHER_PROBE_OUTPUT}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.WeatherProbe/PlutoGE.WeatherProbe.csproj"
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.WeatherProbe/Probe.cs" PlutoGEScriptCore
+        VERBATIM)
+    add_custom_target(PlutoGEWeatherProbe DEPENDS "${PLUTO_WEATHER_PROBE_OUTPUT}/PlutoGE.WeatherProbe.dll")
+    add_executable(PlutoGECloudScriptingTests CloudScriptingTests.cpp)
+    target_compile_definitions(PlutoGECloudScriptingTests PRIVATE
+        PLUTOGE_WEATHER_PROBE_ASSEMBLY="${PLUTO_WEATHER_PROBE_OUTPUT}/PlutoGE.WeatherProbe.dll")
+    pluto_link_engine(PlutoGECloudScriptingTests)
+    add_dependencies(PlutoGECloudScriptingTests PlutoGEWeatherProbe)
+    if (TARGET PlutoGETestOpenAL)
+        add_dependencies(PlutoGECloudScriptingTests PlutoGETestOpenAL)
+    endif()
+    add_test(NAME PlutoGECloudScriptingTests COMMAND PlutoGECloudScriptingTests)
 endif()
 
 add_executable(PlutoGEHeadlessServerTests HeadlessServerTests.cpp)

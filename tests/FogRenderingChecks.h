@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/CloudOcclusion.h"
+#include "PlutoGE/render/CloudShadowMap.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -169,7 +170,7 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         // Without sky or sun, the only fog light is the cloud base radiance
         // that replaces the blocked fraction of the sky.
         fog.parameters[2].y = 1;
-        cloud.parameters[3].w = 20;
+        cloud.parameters[3].w = 6; // Keeps the base radiance (multiple-scattering octaves) within RGBA8.
         const std::array overcast{cloud, fog};
         const auto overcastOcclusion = BuildCloudOcclusion(overcast);
         const float skyVisibility = std::exp(-1.66f * overcastOcclusion.volumes[0].w * 10.f);
@@ -179,6 +180,40 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         expect(static_cast<int>(overcastPixels[(16 * 33 + 16) * 4]) / 255.0f,
                overcastOcclusion.volumes[0].r * (1.f - skyVisibility),
                "Clouds must replace blocked sky light with their base radiance");
+
+        // A broken deck casting shadows lights the fog through its gaps: columns of fog under gaps
+        // and under clouds differ (light shafts), where the deck estimate alone lights them evenly.
+        auto broken = cloud;
+        broken.parameters[0].w = .45f;
+        broken.parameters[3].w = 1;
+        broken.parameters[4].w = .08f; // Cloud cells of a few metres, inside the fog's view depth.
+        broken.parameters[CloudShadowLane] = {1, 250, 1, 0};
+        fog.parameters[2].y = 0;
+        lighting.directionalIntensity = 8;
+        const auto columnSpread = [&](const BasicPostProcessEffect &deck)
+        {
+            const std::array effects{deck, fog};
+            renderer.Render(projection * lighting.view, lighting, {}, std::span(&effects[0], 2));
+            const auto columns = readPixels(renderer.GetColorTexture());
+            int lowest = 255, highest = 0;
+            for (int x = 0; x < 33; ++x)
+            {
+                const int value = static_cast<int>(columns[(16 * 33 + x) * 4]);
+                lowest = std::min(lowest, value);
+                highest = std::max(highest, value);
+            }
+            return (highest - lowest) / 255.0f;
+        };
+        const float shafts = columnSpread(broken);
+        broken.parameters[CloudShadowLane].x = 0;
+        const float uniform = columnSpread(broken);
+        if (shafts < .05f || uniform > .02f)
+        {
+            std::cerr << "Fog column spread with cloud shadows " << shafts << ", without " << uniform << '\n';
+            throw std::runtime_error("Cloud gaps must cast light shafts through fog");
+        }
+        fog.parameters[2].y = 1;
+        lighting.directionalIntensity = 0;
     }
     fog.parameters[1].x = 0;
     lighting.directionalIntensity = 0;

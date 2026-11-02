@@ -71,6 +71,9 @@ public abstract class RegisteredComponent : ComponentReference
     protected Vector2 GetVector2(string name) => ComponentProperties.GetVector2(EntityId, NativeTypeName, name);
     protected void SetVector2(string name, Vector2 value) => ComponentProperties.SetVector2(EntityId, NativeTypeName, name, value);
 
+    protected Vector3 GetVector3(string name) => ComponentProperties.GetVector3(EntityId, NativeTypeName, name);
+    protected void SetVector3(string name, Vector3 value) => ComponentProperties.SetVector3(EntityId, NativeTypeName, name, value);
+
     protected Vector4 GetVector4(string name) => ComponentProperties.GetVector4(EntityId, NativeTypeName, name);
     protected void SetVector4(string name, Vector4 value) => ComponentProperties.SetVector4(EntityId, NativeTypeName, name, value);
 

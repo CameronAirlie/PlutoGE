@@ -345,6 +345,35 @@ Properties: `IsMainCamera`, `Fov`.
 
 Properties: `Intensity`, `Color`.
 
+### VolumetricCloudComponent
+
+A cloud volume, reached through the generic property bridge (`RegisteredComponent`). Cloud shadows and overcast
+light follow its settings every frame ([cloud shadows](CLOUD_SHADOWS.md)), so a weather script can drive the sky
+directly.
+
+Properties: `Size`, `Coverage`, `Density`, `Extinction`, `ScatteringAlbedo`, `Anisotropy`, `AmbientLight`,
+`CloudColor`, `BaseNoiseScale`, `DetailNoiseScale`, `DetailErosion`, `WindDirection`, `WindSpeed`, `RenderScale`,
+`PrimarySteps`, `LightSteps`, `CastShadows`, `ShadowDistance`, `ShadowDensity`. Values are clamped as in the
+inspector. `Enabled` is not available for this component.
+
+```csharp
+public sealed class Weather : ScriptBehaviour
+{
+    [SerializedField] public float Storminess; // 0 fair, 1 overcast
+    private VolumetricCloudComponent? _clouds;
+
+    public override void OnCreate() => _clouds = GameObject.Find("Clouds")?.GetComponent<VolumetricCloudComponent>();
+
+    public override void OnUpdate(float deltaTime)
+    {
+        if (_clouds is null) return;
+        _clouds.Coverage = 0.35f + 0.65f * Storminess;
+        _clouds.Density = 0.4f + 0.4f * Storminess;
+        _clouds.WindSpeed = 6.0f + 10.0f * Storminess;
+    }
+}
+```
+
 ### MeshComponent
 
 Properties: `Static`, `Color`, `Emission`.

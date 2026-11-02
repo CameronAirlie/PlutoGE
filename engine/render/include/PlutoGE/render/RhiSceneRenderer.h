@@ -376,6 +376,9 @@ namespace PlutoGE::render
       {
           std::unordered_map<const Texture *, rhi::Texture> srgb, linear, normal;
           std::unordered_map<const Texture *, TextureVersion> versions;
+          // Each read texture's mean: raw channels (linear data) and its colour decoded from sRGB (alpha raw).
+          struct Mean { glm::vec4 raw{0.0f}, srgb{0.0f}; };
+          std::unordered_map<const Texture *, Mean> means;
           std::uint64_t residencyRevision = 1;
           RhiTerrainLayerCache terrainLayers;
       };

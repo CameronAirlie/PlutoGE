@@ -52,6 +52,27 @@ namespace PlutoGE::render
         std::atomic_uint64_t g_nextUpscalerContextId{1};
 
         // An ambient volume's live sky scale and reflection occlusion strength, as
+        // A texture's mean over at most about 65536 evenly strided texels (enough for a mean, and cheap for large
+        // textures), raw and with colour decoded from sRGB.
+        auto TextureMean(std::span<const std::byte> pixels)
+        {
+            const auto texels = pixels.size() / 4;
+            const std::size_t stride = std::max<std::size_t>(1, texels / 65536);
+            glm::dvec4 raw(0.0), srgb(0.0);
+            std::size_t count = 0;
+            const auto decode = [](double value)
+            { return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4); };
+            for (std::size_t texel = 0; texel < texels; texel += stride, ++count)
+                for (int channel = 0; channel < 4; ++channel)
+                {
+                    const double value = static_cast<double>(std::to_integer<unsigned>(pixels[texel * 4 + channel])) / 255.0;
+                    raw[channel] += value;
+                    srgb[channel] += channel < 3 ? decode(value) : value;
+                }
+            const double scale = count ? 1.0 / static_cast<double>(count) : 0.0;
+            return std::pair{glm::vec4(raw * scale), glm::vec4(srgb * scale)};
+        }
+
         // AmbientProbeSampling.slang reads them (AmbientProbeVolumeParameters).
         glm::vec2 AmbientVolumeSky(const scene::BakedProbeVolume &volume)
         {
@@ -238,6 +259,7 @@ namespace PlutoGE::render
             m_textureCache->srgb.clear();
             m_textureCache->linear.clear();
             m_textureCache->normal.clear();
+            m_textureCache->means.clear();
             m_textureCache->versions.clear();
             ++m_textureCache->residencyRevision;
         }
@@ -443,6 +465,7 @@ namespace PlutoGE::render
                 }
             }
             m_textureCache->srgb.erase(source); m_textureCache->linear.erase(source); m_textureCache->normal.erase(source);
+            m_textureCache->means.erase(source);
             ++m_textureCache->residencyRevision;
             return true;
         });
@@ -496,6 +519,11 @@ namespace PlutoGE::render
             const auto expectedSize = static_cast<std::size_t>(source->GetWidth()) * source->GetHeight() * 4;
             if (pixels.size() != expectedSize)
                 return {};
+            if (!m_textureCache->means.contains(source))
+            {
+                const auto [raw, srgb] = TextureMean(pixels);
+                m_textureCache->means[source] = {raw, srgb};
+            }
             if (normalMap && m_immediateTextureUploads)
             {
                 const auto width = static_cast<std::uint32_t>(source->GetWidth());
@@ -660,6 +688,27 @@ namespace PlutoGE::render
             draw.sheenColor = glm::clamp(material.sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
             draw.sheenRoughness = std::clamp(material.sheenRoughness, 0.0f, 1.0f);
             draw.terrainLayers = prepareTerrainLayers(material);
+            // Means for consumers that do not sample textures. Imported metal/roughness materials keep a metallic
+            // factor of 1 and the real metalness in the texture, so the factors alone make every surface a black
+            // metal to them.
+            {
+                const auto mean = [&](const Texture *texture) -> const TextureCache::Mean * {
+                    const auto found = texture ? m_textureCache->means.find(texture) : m_textureCache->means.end();
+                    return found != m_textureCache->means.end() ? &found->second : nullptr;
+                };
+                const auto *albedo = mean(material.albedoTexture);
+                const auto *metallic = mean(material.metallicTexture);
+                if ((!material.albedoTexture || albedo) && (!material.metallicTexture || metallic))
+                {
+                    const float metalness = material.metallic *
+                        (metallic ? metallic->raw[std::min<std::size_t>(draw.metallicChannel, 3)] : 1.0f);
+                    draw.meanDiffuse = glm::vec3(material.color) * (albedo ? glm::vec3(albedo->srgb) : glm::vec3(1.0f)) *
+                                       (1.0f - std::clamp(metalness, 0.0f, 1.0f));
+                }
+                const auto *emission = mean(material.emissionTexture);
+                if (!material.emissionChannelMask && (!material.emissionTexture || emission))
+                    draw.meanEmission = material.emission * (emission ? glm::vec3(emission->srgb) : glm::vec3(1.0f));
+            }
             if (entry.revision == 0 || !SameBasicDrawSurface(entry.draw, draw))
             {
                 entry.revision = preparation.NextRevision();

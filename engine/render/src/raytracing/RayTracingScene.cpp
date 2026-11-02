@@ -103,9 +103,12 @@ namespace PlutoGE::render
                 found = m_bottomLevels.emplace(key, BottomLevel{rhi::AccelerationStructure(*m_device, handle), 0}).first;
             }
             found->second.lastUsed = m_frame;
-            const RayTracedInstance record{
-                glm::vec4(glm::vec3(draw.baseColor) * (1.0f - std::clamp(draw.metallic, 0.0f, 1.0f)), 1.0f),
-                glm::vec4(glm::max(draw.emission, glm::vec3(0.0f)), 0.0f)};
+            // Hits are not textured: the material's means over its textures where known, else its factors.
+            const glm::vec3 diffuse = draw.meanDiffuse.x >= 0.0f
+                ? draw.meanDiffuse : glm::vec3(draw.baseColor) * (1.0f - std::clamp(draw.metallic, 0.0f, 1.0f));
+            const glm::vec3 emission = draw.meanEmission.x >= 0.0f ? draw.meanEmission : draw.emission;
+            const RayTracedInstance record{glm::vec4(glm::clamp(diffuse, glm::vec3(0.0f), glm::vec3(1.0f)), 1.0f),
+                                           glm::vec4(glm::max(emission, glm::vec3(0.0f)), 0.0f)};
             const auto place = [&](const glm::mat4 &model)
             {
                 m_instances.push_back({found->second.structure.Get(), RowMajorTransform(model),

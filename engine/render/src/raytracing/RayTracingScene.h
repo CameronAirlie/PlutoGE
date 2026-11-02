@@ -24,7 +24,8 @@ namespace PlutoGE::render
     // The triangles hardware ray queries trace: a bottom-level acceleration structure per mesh range (built once per
     // geometry revision, released when unused for a while) and a top-level structure rebuilt each frame from the
     // draws given, with a record per instance. Like GI, it leaves out GPU-skinned and transparent geometry; surfaces
-    // are their material's constant colour and emission (textures are not sampled at hits).
+    // are their material's mean diffuse reflectance and emission over its textures (BasicDraw::meanDiffuse), as
+    // textures are not sampled at hits.
     class RayTracingScene
     {
     public:

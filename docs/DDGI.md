@@ -211,8 +211,12 @@ probe visibility for leak reduction is an exact segment test. `SurfaceTolerance`
 - **Scene** (`raytracing/RayTracingScene`): one bottom-level acceleration structure per mesh range and geometry
   revision, built when first seen (at most 64 per frame) and released after 240 frames unused; a top-level structure
   rebuilt every frame over the GI draw list. GPU-skinned and transparent geometry is left out, as from voxel GI.
-- **Hits** are shaded from their material's constant colour (times one minus metallic) and emission: textures are not
-  sampled. They receive the directional light, shadowed by a second ray, local lights (unshadowed; a rectangle as a
+- **Hits** are shaded from their material's mean diffuse reflectance and emission: textures are not sampled at hits,
+  so each material's textures are averaged once when they are first read (base colour times the albedo texture's mean,
+  less the metallic share from the metallic texture's mean; emission times the emission texture's mean). Imported
+  metal/roughness materials keep a metallic factor of 1 with the real metalness in the texture, so the factors alone
+  made every such surface black and no light bounced off it. Without the textures' pixels the factors are used. Hits
+  receive the directional light, shadowed by a second ray, local lights (unshadowed; a rectangle as a
   cosine emitter at its centre) and, with **Multiple Bounces**, the volume's own irradiance. Normals come from the hit
   triangle's positions. A probe whose ray first meets a back face is inside geometry (negative distance), so meshes
   need consistent winding for relocation and classification to see that.

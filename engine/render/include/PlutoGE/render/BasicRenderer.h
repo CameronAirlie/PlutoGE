@@ -501,6 +501,12 @@ namespace PlutoGE::render
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
         bool contributesToGi = true;
+        // The surface's mean diffuse reflectance and emitted radiance over its textures (base colour times the albedo
+        // texture's mean, less the metallic share; emission times the emission texture's mean), for consumers that
+        // shade without sampling textures, such as ray-traced GI hits. Negative when unknown: the textures' pixels
+        // were not read, and the constant factors are all there is.
+        glm::vec3 meanDiffuse{-1.0f};
+        glm::vec3 meanEmission{-1.0f};
         float normalizedLod = 0.0f;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;

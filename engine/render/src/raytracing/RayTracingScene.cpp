@@ -81,12 +81,15 @@ namespace PlutoGE::render
             {
                 if (built == BuildBudget)
                     continue;
+                // Indices are stored rebased by the mesh's first vertex (BasicMesh::VertexBuffer), so they address the
+                // buffer from its start, as draws do with a vertex offset of zero; the highest is BaseVertex past the
+                // mesh's own count.
                 rhi::BottomLevelAccelerationStructureDescriptor descriptor;
                 descriptor.geometries.push_back({
                     .vertices = mesh.VertexBuffer(),
-                    .vertexOffset = std::size_t(mesh.BaseVertex()) * sizeof(BasicVertex),
+                    .vertexOffset = 0,
                     .vertexStride = static_cast<std::uint32_t>(sizeof(BasicVertex)),
-                    .vertexCount = static_cast<std::uint32_t>(mesh.VertexCount()),
+                    .vertexCount = static_cast<std::uint32_t>(mesh.BaseVertex() + mesh.VertexCount()),
                     .indices = mesh.IndexBuffer(),
                     .indexOffset = std::size_t(mesh.BaseIndex() + firstIndex) * sizeof(std::uint32_t),
                     .indexCount = indexCount - indexCount % 3,

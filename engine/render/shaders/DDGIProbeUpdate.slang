@@ -194,13 +194,15 @@ void blendIrradianceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadI
     // scene. The rays measure that noise themselves: the standard error of their weighted mean luminance is the
     // spread of their luminance over the square root of their effective count. A change within it is most likely
     // noise and keeps more history (ddgiTemporal.x); one well beyond it is a real change and converges at the volume's
-    // hysteresis, and one that doubles or halves the brightness (a light switched on or off) at half of that.
+    // hysteresis, and a real change that doubles or halves the brightness (a light switched on or off) at half of that.
+    // Size alone does not make a change real: in a dim room one ray reaching a small sunlit patch doubles a texel, and
+    // treating that as a light switched on flashed the texel at every such update whatever the hysteresis.
     const float spread = max(luminanceSquares / weightSum - luminanceCurrent * luminanceCurrent, 0.0);
     const float effectiveRays = weightSum * weightSum / max(weightSquares, 1e-8);
     const float standardError = sqrt(spread / max(effectiveRays, 1.0));
     const float noise = 1.0 - smoothstep(ddgiTemporal.y, ddgiTemporal.z, luminanceChange / max(standardError, 1e-6));
     float hysteresis = lerp(ddgiBlend.x, ddgiTemporal.x, noise);
-    if (luminanceChange > max(luminancePrevious, 0.1))
+    if (noise <= 0.0 && luminanceChange > max(luminancePrevious, 0.1))
         hysteresis = ddgiBlend.x * 0.5;
     hysteresis = min(hysteresis, ddgiHistoryLimit(state));
     irradianceAtlas[texel] = float4(lerp(current, previous, hysteresis), 1.0);

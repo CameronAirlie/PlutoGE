@@ -5779,6 +5779,14 @@ namespace PlutoGE::render
             }
             m_frameStats.rayTracedInstances = m_rayTracingScene->InstanceCount();
         }
+        // Probe states and light belong to the scene representation that traced them: positions relocated out of one
+        // source's geometry (up to the relocation cap) and probes it classified inactive would otherwise stay stuck,
+        // dark or inside the other's surfaces.
+        if (rays != m_ddgiHistoryRays)
+        {
+            m_ddgi->InvalidateHistory();
+            m_ddgiHistoryRays = rays;
+        }
         DdgiVoxelScene scene;
         if (m_frameVoxelScene && rays == m_ddgiRays.get())
         {

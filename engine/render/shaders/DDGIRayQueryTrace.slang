@@ -126,7 +126,10 @@ float4 traceRay(float3 origin, float3 direction, float reach)
         return float4(0.0, 0.0, 0.0, distance);
     const float3 corners[3] = query.CommittedGetIntersectionTriangleVertexPositions();
     const float3 objectNormal = cross(corners[1] - corners[0], corners[2] - corners[0]);
-    float3 normal = normalize(mul(objectNormal, (float3x3)query.CommittedWorldToObject3x4()));
+    const float3 worldNormal = mul(objectNormal, (float3x3)query.CommittedWorldToObject3x4());
+    // A zero-area triangle has no normal; normalising it would write NaN into the probe's history for good.
+    const float normalLength = length(worldNormal);
+    float3 normal = normalLength > 1.0e-12 ? worldNormal / normalLength : -direction;
     if (dot(normal, direction) > 0.0) normal = -normal;
     const RayTracedInstance instance = instances[query.CommittedInstanceID()];
     const float3 position = origin + direction * distance;

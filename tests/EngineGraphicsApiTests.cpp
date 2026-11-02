@@ -14,6 +14,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/render/Material.h"
@@ -123,6 +124,23 @@ int main(int argc, char **argv)
     {
         engine.GetAssetManager().SetProjectContext(argv[2]);
         std::string error;
+        // Source-project captures need the same stable identities and Library routes as the runtime.
+        if (ddgiCapture)
+            for (const auto &entry : std::filesystem::directory_iterator(argv[2]))
+                if (entry.path().extension() == ".plutoproject")
+                {
+                    auto project = assets::Project::Load(entry.path(), &error);
+                    if (!project) { std::cerr << error << std::endl; return 30; }
+                    assets::AssetDatabase database;
+                    assets::AssetScanOptions options;
+                    options.createMissingMetadata = options.hashContent = options.collectDependencies = false;
+                    if (!database.Scan(*project, options, &error))
+                    { std::cerr << error << std::endl; return 30; }
+                    engine.GetAssetManager().SetProjectContext(argv[2], project->GetManifest().assetDirectory,
+                                                               project->GetManifest().assetPipelineVersion);
+                    engine.GetAssetManager().SetAssetSnapshot(database.GetCatalog(), database.GetStorageMap());
+                    break;
+                }
         auto scene = scene::SceneSerializer::Load(argv[3], &error);
         if (!scene) { std::cerr << error << std::endl; return 30; }
         engine.SetScene(scene.get());
@@ -252,11 +270,12 @@ int main(int argc, char **argv)
             // Optional arguments after the camera: preset=<project post-process preset> applies its DDGI settings,
             // move=<units per frame> dollies the camera sideways while measuring stability, full=1 measures with the
             // preset's whole effect stack (TAA, exposure and so on, DDGI in its place), probeframes=<n> saves n frames
-            // of the probe view, AutoExposure:Name=Value overrides one auto exposure parameter (after preset=), and
-            // Name=Value overrides one DDGI parameter.
+            // of the probe view, Effect:Name=Value overrides a preset effect parameter (after preset=),
+            // Effect:Enabled=0/1 disables/enables it, and Name=Value overrides one DDGI parameter.
+            // ablations=1 measures the full stack without each other indirect/atmospheric effect, then stops.
             float move = 0.0f;
             int probeFrames = 0;
-            bool full = false, timeOnly = false;
+            bool full = false, timeOnly = false, ablations = false;
             std::vector<std::unique_ptr<render::IPostProcessEffect>> presetEffects;
             std::vector<render::IPostProcessEffect *> fullStack;
             for (int argument = 12; argument < argc; ++argument)
@@ -279,20 +298,27 @@ int main(int argc, char **argv)
                             continue;
                         }
                         auto created = render::CreatePostProcessEffect(effect.typeName);
-                        if (!created || !effect.enabled) continue;
+                        if (!created) continue;
+                        created->SetEnabled(effect.enabled);
                         created->ApplyParameters(effect.parameters);
                         fullStack.push_back(created.get());
                         presetEffects.push_back(std::move(created));
                     }
                 }
-                else if (name.rfind("AutoExposure:", 0) == 0)
+                else if (name.find(':') != std::string::npos)
                 {
+                    const auto separator = name.find(':');
                     for (auto &effect : presetEffects)
-                        if (effect->GetTypeName() == "AutoExposure")
-                            effect->ApplyParameters({{name.substr(13), render::PostProcessParameterType::String, value}});
+                        if (effect->GetTypeName() == name.substr(0, separator))
+                        {
+                            if (name.substr(separator + 1) == "Enabled") effect->SetEnabled(value != "0");
+                            else effect->ApplyParameters({{name.substr(separator + 1), render::PostProcessParameterType::String, value}});
+                        }
                 }
                 else if (name == "full")
                     full = value == "1";
+                else if (name == "ablations")
+                    ablations = value == "1";
                 else if (name == "timeonly")
                     timeOnly = value == "1";
                 else if (name == "probeframes")
@@ -364,10 +390,19 @@ int main(int argc, char **argv)
                     previous = std::move(pixels);
                 }
                 double mean = 0;
-                for (const float change : changes) mean += change;
+                std::size_t flashes = 0;
+                for (const float change : changes)
+                {
+                    mean += change;
+                    // A visible pop: far beyond the one or two levels dithering and slow drift cause.
+                    if (change > 16.0f) ++flashes;
+                }
+                std::nth_element(changes.begin(), changes.begin() + changes.size() * 999 / 1000, changes.end());
+                const float p999 = changes[changes.size() * 999 / 1000];
                 std::nth_element(changes.begin(), changes.begin() + changes.size() * 99 / 100, changes.end());
                 std::cout << "DDGI flicker " << label << " mean " << mean / changes.size() << " p99 "
-                          << changes[changes.size() * 99 / 100] << std::endl;
+                          << changes[changes.size() * 99 / 100] << " p99.9 " << p999 << " flashes per million "
+                          << 1.0e6 * double(flashes) / double(changes.size()) << std::endl;
                 // Where it flickers: accumulated second differences, bright where unstable.
                 std::ofstream file(std::filesystem::path(argv[4]) / (std::string("flicker-") + label + ".pgm"), std::ios::binary);
                 file << "P5\n" << output.extentWidth << ' ' << output.extentHeight << "\n255\n";
@@ -380,10 +415,23 @@ int main(int argc, char **argv)
             };
             if (full)
             {
+                std::erase_if(fullStack, [](auto *effect) { return !effect->IsEnabled(); });
                 std::vector<render::IPostProcessEffect *> withoutDdgi;
                 for (auto *effect : fullStack)
                     if (effect != &ddgi) withoutDdgi.push_back(effect);
-                if (!stability(withoutDdgi, "preset off") || !stability(fullStack, "preset on")) return 32;
+                if (!run(withoutDdgi, frames, "preset-off-warm") || !stability(withoutDdgi, "preset off") ||
+                    !run(fullStack, frames, "preset-on-warm") || !stability(fullStack, "preset on")) return 32;
+                if (ablations)
+                {
+                    for (const auto type : {"SSGI", "VolumetricFog", "AutoExposure", "SSAO"})
+                    {
+                        auto isolated = fullStack;
+                        std::erase_if(isolated, [&](auto *effect) { return effect->GetTypeName() == type; });
+                        const std::string label = std::string("without-") + type;
+                        if (!run(isolated, frames, label.c_str()) || !stability(isolated, label.c_str())) return 32;
+                    }
+                    service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
+                }
                 // The settled image with the whole stack, without auto exposure and without DDGI.
                 std::vector<render::IPostProcessEffect *> withoutExposure;
                 for (auto *effect : fullStack)
@@ -394,6 +442,10 @@ int main(int argc, char **argv)
             if (!stability({&tone, &gamma}, "off") || !stability({&ddgi, &tone, &gamma}, "on")) return 32;
             ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "2"}});
             if (!stability({&ddgi, &tone, &gamma}, "indirect")) return 32;
+            ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "4"}});
+            if (!stability({&ddgi, &tone, &gamma}, "sky")) return 32;
+            ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "5"}});
+            if (!stability({&ddgi, &tone, &gamma}, "reflections")) return 32;
             // Probes that keep relocating show as unstable spheres.
             ddgi.ApplyParameters({{"Debug View", render::PostProcessParameterType::Enum, "3"}});
             if (!stability({&ddgi, &tone, &gamma}, "probes")) return 32;

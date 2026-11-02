@@ -65,11 +65,17 @@ float ddgiSpacing(uint cascade) { return ddgiCascadeOrigins[cascade].w; }
 uint ddgiProbeCount() { return ddgiVolume.z; }
 uint ddgiCascadeOf(uint index) { return index / ddgiVolume.y; }
 
-// GLSL leaves % undefined for negative operands, and grid cells left of the world origin are negative: floor division
-// is exact for every cell index a float can address.
+// GLSL leaves % undefined for negative operands, and grid cells left of the world origin are negative, so the quotient
+// comes from float division. GPUs divide by multiplying with an approximate reciprocal, which puts exact multiples just
+// below the integer (28 / 28 = 0.99999994): the result was then the divisor itself, an out-of-range storage coordinate
+// whose occlusion volume entry aliased another cell's, so two probes overwrote each other's visibility and lit surfaces
+// flashed at every probe update. The integer remainder is corrected into [0, divisor) exactly.
 int3 ddgiPositiveModulo(int3 value, int3 divisor)
 {
-    return value - divisor * int3(floor(float3(value) / float3(divisor)));
+    int3 remainder = value - divisor * int3(floor(float3(value) / float3(divisor)));
+    remainder += select(remainder < 0, divisor, int3(0));
+    remainder -= select(remainder >= divisor, divisor, int3(0));
+    return remainder;
 }
 
 int3 ddgiStorageCoordinate(uint cascade, int3 gridCoordinate)

@@ -1089,6 +1089,8 @@ namespace PlutoGE::render
         std::unique_ptr<RayTracingScene> m_rayTracingScene;
         std::unique_ptr<RayQueryDdgiRaySource> m_rayQueryDdgiRays;
         const void *m_ddgiOwner = nullptr;
+        // The ray source DDGI's probe history was traced with; another one starts it again.
+        const void *m_ddgiHistoryRays = nullptr;
         // This frame's scene colour and the ambient light it holds, as DDGI and SSGI leave them; SSAO attenuates
         // that indirect term and SSR replaces the environment reflection where it finds hits. Starts as the geometry
         // pass's colour, indirect and environment specular targets.

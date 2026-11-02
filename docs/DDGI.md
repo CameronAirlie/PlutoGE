@@ -263,6 +263,28 @@ See [the measurements](#measurements) below.
 - Changes reach a probe at its next update, so a light switched on takes a sweep (six to eight frames by default) plus
   hysteresis to settle.
 
+## Trace cost
+
+Tracing dominates DDGI's cost, and most of a voxel ray's steps used to cross empty space: rays that escape to the
+sky march through the outer cascades until they leave them (up to 96 steps), and in open levels most probes are
+classified inactive yet still traced their 16 fixed rays all the way out. Two changes keep the result and remove
+that work:
+
+- **Fixed rays stop at the classification reach.** Fixed rays only feed relocation and classification, which read no
+  distance beyond `PLUTO_DDGI_CLASSIFICATION_REACH` (2 probe spacings, or the minimum frontface distance if larger),
+  so both sources stop them there (`ddgiFixedRayReach`): one sample past it, so a hit straddling it is placed as
+  before, and without the sky lookup their radiance never needed. Output is bit-identical.
+- **Empty-space skipping** (`DDGIVoxelTrace.slang`): where a sample is empty and the voxels four footprints coarse
+  around the next stretch are empty too (their trilinear sample covers the stretch; opacity below 10^-5), the march
+  leaps over it. Empty voxels add nothing, so only where later samples fall changes; the step before the landing
+  point stands in for the previous sample, so hits are placed as before. Two and eight footprints were slower (more
+  short leaps, and more failed tests near geometry).
+
+On a Vega 8 iGPU (Vulkan): the GITest courtyard at Medium went from 40.5 ms to 14.0 ms of trace (23.2 ms with the
+fixed-ray reach alone), with every captured view within one 8-bit level of before and identical flicker; the
+`--gi-performance` room's trace from 14.9 / 29.3 / 102.7 ms to 2.6 / 4.4 / 13.4 ms at Low / Medium / High. Apply,
+which runs at render resolution, is now the larger cost at 1080p on that GPU (about 6.6 ms).
+
 ## Measurements
 
 `PlutoGEVulkanRhiTests --gi-performance`, 1920 x 1080, RTX 4070 SUPER. The scene is a static lit room with an
@@ -307,4 +329,5 @@ VCT's progressive voxelization and relighting work (see [VCT world cache](vct-wo
   room must still leak over 30% with Leak Reduction off (49%), so the check keeps measuring leaks. `--ddgi-leakage`
   prints every placement.
 - `PlutoGEEngineGraphicsApiTests --ddgi-scene <project> <scene> <output> <frames> [eye target]` captures a project scene
-  with DDGI off, on and in each debug view, for checking real content.
+  with DDGI off, on and in each debug view, for checking real content, and prints each DDGI stage's GPU time (averaged
+  over 64 frames); `timeonly=1` stops after the timing.

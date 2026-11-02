@@ -159,12 +159,19 @@ float escapeDistance(float3 direction, float travelled)
     return direction.y >= 0.0 ? PLUTO_DDGI_MISS_DISTANCE : travelled;
 }
 
-float4 traceRay(float3 origin, float3 direction)
+// `reach`: how far the caller reads hits (fixed rays need only ddgiFixedRayReach). The march stops after the first
+// sample beyond it, so a hit straddling it is placed as by a full march; radiance is only gathered for full rays.
+float4 traceRay(float3 origin, float3 direction, float reach)
 {
+    const bool fixedRay = reach < voxelTrace.y;
+    // Opacity below which a region counts as empty for skipping: a voxel this faint at four footprints would add at
+    // most 0.06% opacity at the ordinary one. The finest voxel bounds the coarsest cell a sample can cover.
+    const float EmptyOpacity = 0.00001;
+    const float finestVoxel = voxelCascades[0].w / float(max(voxelCounts.z, 1u));
     float covered, voxelSize;
     const float4 start = sampleScene(origin, direction, 0.0, covered, voxelSize);
     if (covered <= 0.0)
-        return float4(missRadiance(direction), escapeDistance(direction, voxelTrace.y));
+        return float4(fixedRay ? float3(0.0) : missRadiance(direction), escapeDistance(direction, voxelTrace.y));
     if (start.a > 0.5)
     {
         // Inside geometry: report how far this direction must travel to leave it.
@@ -183,7 +190,7 @@ float4 traceRay(float3 origin, float3 direction)
     float transmission = 1.0;
     float hitDistance = -1.0, hitVoxel = voxelSize;
     float3 radiance = 0.0;
-    for (uint step = 0; step < 96 && transmission > 0.02 && distance < voxelTrace.y; ++step)
+    for (uint step = 0; step < 96 && transmission > 0.02 && distance < voxelTrace.y && previousDistance < reach; ++step)
     {
         const float diameter = max(voxelSize, distance * voxelTrace.x);
         float sampleCovered, sampleVoxel;
@@ -210,8 +217,31 @@ float4 traceRay(float3 origin, float3 direction)
         transmission = next;
         voxelSize = sampleVoxel;
         previousDistance = distance;
-        distance += max(sampleVoxel, diameter * 0.5);
+        const float advance = max(sampleVoxel, diameter * 0.5);
+        distance += advance;
+        // Empty-space skipping. Escaping rays otherwise spend most of their steps crossing empty outer cascades. Where
+        // this sample is empty and so is the volume four footprints coarse around the next stretch (its trilinear
+        // sample at that size covers the whole stretch), leap over it: empty voxels add no radiance or opacity, so
+        // only where later samples fall changes. The sample before the landing point is taken as one ordinary step
+        // back, where transmission is still what it is now, so hits beyond the leap are placed as before.
+        if (sample.a <= EmptyOpacity)
+        {
+            const float leap = min(max(sampleVoxel, diameter) * 4.0, finestVoxel * exp2(float(voxelCounts.w)));
+            if (leap > advance * 2.0)
+            {
+                float leapCovered, leapVoxel;
+                const float4 coarse = sampleScene(origin + direction * (previousDistance + leap * 0.5), direction, leap,
+                                                  leapCovered, leapVoxel);
+                if (leapCovered >= 1.0 && coarse.a <= EmptyOpacity)
+                {
+                    distance = previousDistance + leap;
+                    previousDistance = distance - advance;
+                }
+            }
+        }
     }
+    if (fixedRay)
+        return float4(0.0, 0.0, 0.0, hitDistance >= 0.0 ? hitDistance : escapeDistance(direction, distance));
     if (ddgiState.w > 0.0 && hitDistance >= 0.0)
         radiance += (1.0 - transmission) * ddgiState.w * reflectedProbeLight(origin + direction * hitDistance, direction, hitVoxel);
     // Bright, small sources make single rays dominate a probe update: limit the luminance a ray gathers from the
@@ -298,5 +328,6 @@ void traceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
     const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
     if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE) && ray >= ddgiRays.x)
         return;
-    rayOutput[int2(ray, slot)] = traceRay(ddgiProbePositionOf(storage, state), ddgiRayDirection(ray));
+    const float reach = ray < ddgiRays.x ? ddgiFixedRayReach(ddgiCascadeOf(storage)) : voxelTrace.y;
+    rayOutput[int2(ray, slot)] = traceRay(ddgiProbePositionOf(storage, state), ddgiRayDirection(ray), reach);
 }

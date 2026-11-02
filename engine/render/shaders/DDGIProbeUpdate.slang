@@ -105,7 +105,7 @@ void stateMain(uint3 id : SV_DispatchThreadID)
     {
         // A surface only samples the probes at the corners of its cell: with none within reach (or the probe still
         // inside geometry) the probe cannot contribute, so it traces just its fixed rays until that changes.
-        inactive = inside || closestFrontface > spacing * 2.0;
+        inactive = inside || closestFrontface > spacing * PLUTO_DDGI_CLASSIFICATION_REACH;
     }
     uint next = (flags & PLUTO_DDGI_PROBE_FRESH) | (inactive ? PLUTO_DDGI_PROBE_INACTIVE : 0u) |
                 (moves << PLUTO_DDGI_RELOCATION_SHIFT);

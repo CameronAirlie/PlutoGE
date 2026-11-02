@@ -53,6 +53,13 @@
 };
 
 uint ddgiCascades() { return ddgiVolume.x; }
+
+// How far a fixed ray of a probe in `cascade` must look (PLUTO_DDGI_CLASSIFICATION_REACH): relocation and
+// classification read no distance beyond it.
+float ddgiFixedRayReach(uint cascade)
+{
+    return max(PLUTO_DDGI_CLASSIFICATION_REACH, ddgiState.z) * ddgiCascadeOrigins[cascade].w;
+}
 float ddgiSpacing(uint cascade) { return ddgiCascadeOrigins[cascade].w; }
 // Probes in all cascades.
 uint ddgiProbeCount() { return ddgiVolume.z; }

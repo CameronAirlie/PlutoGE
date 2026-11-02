@@ -104,22 +104,26 @@ float3 directLight(float3 position, float3 normal)
     return light / PI;
 }
 
-float4 traceRay(float3 origin, float3 direction)
+// `reach`: how far the caller reads hits; fixed rays need only ddgiFixedRayReach and no radiance.
+float4 traceRay(float3 origin, float3 direction, float reach)
 {
+    const bool fixedRay = reach < PLUTO_RT_MAX_DISTANCE;
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = direction;
     ray.TMin = 0.0;
-    ray.TMax = PLUTO_RT_MAX_DISTANCE;
+    ray.TMax = reach;
     RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
     query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
     while (query.Proceed()) {}
     if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
-        return float4(missRadiance(direction), escapeDistance(direction, PLUTO_RT_MAX_DISTANCE));
+        return float4(fixedRay ? float3(0.0) : missRadiance(direction), escapeDistance(direction, reach));
     const float distance = query.CommittedRayT();
     // A probe inside geometry first meets a back face: report how far it must travel to leave (negative).
     if (!query.CommittedTriangleFrontFace())
         return float4(0.0, 0.0, 0.0, -distance);
+    if (fixedRay)
+        return float4(0.0, 0.0, 0.0, distance);
     const float3 corners[3] = query.CommittedGetIntersectionTriangleVertexPositions();
     const float3 objectNormal = cross(corners[1] - corners[0], corners[2] - corners[0]);
     float3 normal = normalize(mul(objectNormal, (float3x3)query.CommittedWorldToObject3x4()));
@@ -186,5 +190,6 @@ void traceMain(uint3 group : SV_GroupID, uint3 local : SV_GroupThreadID)
     const float4 state = probeStateTexture.Load(int3(ddgiTile(storage), 0));
     if (ddgiHasFlag(state, PLUTO_DDGI_PROBE_INACTIVE) && ray >= ddgiRays.x)
         return;
-    rayOutput[int2(ray, slot)] = traceRay(ddgiProbePositionOf(storage, state), ddgiRayDirection(ray));
+    const float reach = ray < ddgiRays.x ? ddgiFixedRayReach(ddgiCascadeOf(storage)) : PLUTO_RT_MAX_DISTANCE;
+    rayOutput[int2(ray, slot)] = traceRay(ddgiProbePositionOf(storage, state), ddgiRayDirection(ray), reach);
 }

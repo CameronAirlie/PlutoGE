@@ -18,6 +18,10 @@
 // Rays traced in fixed (unrotated) directions, used only for probe relocation and classification. Inactive probes
 // trace just these; the blended rays follow them in the ray buffer.
 #define PLUTO_DDGI_FIXED_RAYS 16
+// Classification deactivates a probe with no surface within this many probe spacings (DDGIProbeUpdate.slang). Fixed
+// rays serve only relocation and classification, so ray sources stop them at this reach (or the minimum frontface
+// distance, if larger): anything farther is as good as no surface.
+#define PLUTO_DDGI_CLASSIFICATION_REACH 2.0
 #define PLUTO_DDGI_MAX_BLENDED_RAYS 256
 #define PLUTO_DDGI_MAX_RAYS (PLUTO_DDGI_FIXED_RAYS + PLUTO_DDGI_MAX_BLENDED_RAYS)
 // Hit distance a ray source reports for a ray that left the scene and saw the sky (IDdgiRaySource).

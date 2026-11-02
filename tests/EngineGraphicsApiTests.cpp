@@ -256,7 +256,7 @@ int main(int argc, char **argv)
             // Name=Value overrides one DDGI parameter.
             float move = 0.0f;
             int probeFrames = 0;
-            bool full = false;
+            bool full = false, timeOnly = false;
             std::vector<std::unique_ptr<render::IPostProcessEffect>> presetEffects;
             std::vector<render::IPostProcessEffect *> fullStack;
             for (int argument = 12; argument < argc; ++argument)
@@ -293,6 +293,8 @@ int main(int argc, char **argv)
                 }
                 else if (name == "full")
                     full = value == "1";
+                else if (name == "timeonly")
+                    timeOnly = value == "1";
                 else if (name == "probeframes")
                     probeFrames = std::stoi(value);
                 else if (name == "move")
@@ -304,6 +306,35 @@ int main(int argc, char **argv)
             const int frames = std::stoi(argv[5]);
             if (!run({&tone, &gamma}, 4, "off")) return 32;
             if (!run({&ddgi, &tone, &gamma}, frames, "ddgi")) return 32;
+            // GPU cost of each DDGI stage, averaged over frames after the volume settled (timeonly=1 stops here).
+            {
+                std::vector<std::pair<std::string, double>> stages;
+                int samples = 0;
+                const std::vector<render::IPostProcessEffect *> stack{&ddgi, &tone, &gamma};
+                for (int frame = 0; frame < 64; ++frame)
+                {
+                    if (!service.RenderSceneAndPresent(camera, lighting, commands, textures, scene.get(), stack))
+                        return 32;
+                    const auto timing = device.GetTimingStats("Scene");
+                    if (!timing.hasGpuResult) continue;
+                    for (const auto &gpuScope : timing.gpuScopes)
+                    {
+                        if (!gpuScope.name.starts_with("RHI DDGI") && gpuScope.name != "RHI Voxel Scene") continue;
+                        const auto stage = std::ranges::find(stages, gpuScope.name, &std::pair<std::string, double>::first);
+                        if (stage == stages.end()) stages.emplace_back(gpuScope.name, gpuScope.milliseconds);
+                        else stage->second += gpuScope.milliseconds;
+                    }
+                    ++samples;
+                }
+                std::cout << "DDGI timing (" << samples << " samples)";
+                for (const auto &[name, milliseconds] : stages)
+                    std::cout << ", " << name.substr(4) << " " << milliseconds / std::max(samples, 1) << " ms";
+                std::cout << std::endl;
+                if (timeOnly)
+                {
+                    service.Shutdown(); engine.SetScene(nullptr); scene.reset(); engine.Shutdown(); return 0;
+                }
+            }
             // Temporal stability: mean and 99th percentile of the second temporal difference |L(t+1) - 2 L(t) + L(t-1)|
             // of the final image (8-bit display values), without DDGI, with it, and of the indirect light alone. Smooth
             // camera motion leaves it near zero; flicker, and aliased edges crawling without TAA, do not.

@@ -315,6 +315,7 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage glassColorCopy, glassDepthCopy;
         BasicPostProcessShaderPackage decals, decalSnapshot;
         BasicPostProcessShaderPackage skyQuadrature;
+        BasicPostProcessShaderPackage cloudShadow;
         // Reference SSR: trace, upsample and composite, horizontal filter, the trace for fewer than 16 rays per
         // pixel, and the vertical filter. The filters and traces run at trace resolution.
         std::array<BasicPostProcessShaderPackage, 5> ssrStages;
@@ -1123,6 +1124,9 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_skyQuadraturePipeline;
         rhi::Buffer m_skyQuadratureBuffer;
         rhi::Texture m_skyQuadratureTexture;
+        // Traces the cloud shadow map into its region of m_skyQuadratureTexture (CloudShadowMap.h).
+        rhi::GraphicsPipeline m_cloudShadowPipeline;
+        rhi::Buffer m_cloudShadowBuffer;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};
         bool m_skyEnvironmentValid = false;
         rhi::Texture m_glassDepthCopy;

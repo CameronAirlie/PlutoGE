@@ -99,6 +99,9 @@ namespace PlutoGE::render
                                             ambientLight, cloud->GetBaseNoiseScale()};
                     effect.parameters[5] = {cloud->GetDetailNoiseScale(), cloud->GetDetailErosion(),
                                             lighting.directionalIsMoon ? 1.0f : 0.0f, 0.0f};
+                    // CloudShadowLane (CloudShadowMap.h).
+                    effect.parameters[6] = {cloud->GetCastShadows() ? 1.0f : 0.0f, cloud->GetShadowDistance(),
+                                            cloud->GetShadowDensity(), 0.0f};
                     const auto *entity = cloud->GetOwner();
                     const glm::mat4 volumeTransform =
                         entity->GetWorldTransform() * glm::scale(glm::mat4(1.0f), cloud->GetSize());

@@ -7,6 +7,7 @@
 #include "RayTracingChecks.h"
 #include "IblRenderingChecks.h"
 #include "FogRenderingChecks.h"
+#include "CloudShadowChecks.h"
 #include "CloudTransformChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -181,6 +182,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         render::BasicRenderer basicRenderer;
         render::BasicRendererShaderPackage shaders;
         shaders.skyQuadrature = { { .glsl = ReadText("SkyQuadrature.vertex.glsl") }, { .glsl = ReadText("SkyQuadrature.fragment.glsl") } };
+        shaders.cloudShadow = { { .glsl = ReadText("CloudShadow.vertex.glsl") }, { .glsl = ReadText("CloudShadow.fragment.glsl") } };
         shaders.ssrStages[0] = {{.glsl = ReadText("SSRTrace.vertex.glsl")}, {.glsl = ReadText("SSRTrace.fragment.glsl")}};
         shaders.ssrStages[1] = {{.glsl = ReadText("SSRResolve.vertex.glsl")}, {.glsl = ReadText("SSRResolve.fragment.glsl")}};
         shaders.ssrStages[2] = {{.glsl = ReadText("SSRFilter.vertex.glsl")}, {.glsl = ReadText("SSRFilter.fragment.glsl")}};
@@ -673,6 +675,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string_view(argv[1]) == "--night-sky")
         {
             CheckNightSky(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--cloud-shadows")
+        {
+            CheckCloudShadows(basicRenderer, [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));

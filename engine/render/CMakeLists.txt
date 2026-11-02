@@ -54,6 +54,7 @@ add_library(PlutoGERender
     src/gi/VoxelDdgiRaySource.cpp
     src/CloudNoiseVolume.cpp
     src/CloudOcclusion.cpp
+    src/CloudShadowMap.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiTerrainLayerCache.cpp
@@ -170,6 +171,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudShadowSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TerrainLayers.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightClusters.slang"
@@ -301,7 +303,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(ParticlesInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VolumetricFogTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain traceMain)
     pluto_add_slang_graphics_shader(VolumetricCloudTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudBaked.slang" vertexMain traceMain
-        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang")
     pluto_add_slang_graphics_shader(VolumetricComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricComposite.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(FusedColor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FusedColor.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ColorOperations.slang")
     pluto_add_slang_graphics_shader(Particles "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" vertexMain fragmentMain)
@@ -425,7 +427,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
     if(BUILD_TESTING)
         pluto_add_slang_graphics_shader(CloudTransformReference "${PROJECT_SOURCE_DIR}/tests/shaders/CloudTransformReference.slang" vertexMain fragmentMain
-            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang")
         pluto_add_slang_graphics_shader(CloudTransformTraceReference "${PROJECT_SOURCE_DIR}/tests/shaders/CloudTransformReference.slang" vertexMain traceMain
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
         pluto_add_slang_graphics_shader(CloudNoiseProbe "${PROJECT_SOURCE_DIR}/tests/shaders/CloudNoiseProbe.slang" vertexMain noiseProbeMain
@@ -438,7 +440,11 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(PhysicalSky "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSky.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SkyQuadrature "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SkyQuadrature.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(VolumetricCloud "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudBaked.slang" vertexMain fragmentMain
-        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang")
+    pluto_add_slang_graphics_shader(CloudShadow "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudShadow.slang" vertexMain fragmentMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CloudNoise.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/CloudOcclusionLayout.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
     pluto_add_slang_graphics_shader(SceneComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneComposite.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BloomPrefilter "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain prefilterMain)
     pluto_add_slang_graphics_shader(BloomDownsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Bloom.slang" vertexMain downsampleMain)

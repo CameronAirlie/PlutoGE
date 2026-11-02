@@ -37,6 +37,7 @@
 #include "PlutoGE/render/DdgiPacket.h"
 #include "CloudNoiseVolume.h"
 #include "PlutoGE/render/CloudOcclusion.h"
+#include "PlutoGE/render/CloudShadowMap.h"
 #include "PostProcessParameterBlock.h"
 
 #include <cstddef>
@@ -193,8 +194,11 @@ namespace PlutoGE::render
             glm::vec4 contactShadowParameters{0.0f}; // each channel's light id, mask present
             // Live sky for ambient volumes (SkyIrradiance.h): rgb SH coefficients, [0].w 1 when present.
             std::array<glm::vec4, 9> skyIrradiance{};
+            // Cloud shadow map (CloudShadowMap::SurfaceMapping) and its projection direction, w present.
+            glm::vec4 cloudShadowMapping{0.0f};
+            glm::vec4 cloudShadowLight{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 6768 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) == 6800 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         struct alignas(16) SelectionOutlineParameters
@@ -782,6 +786,21 @@ namespace PlutoGE::render
                     {sizeof(m_skyEnvironmentParameters), rhi::BufferUsage::Uniform, "Physical sky quadrature parameters"}));
                 m_skyQuadratureTexture = rhi::Texture(device, device.CreateTexture(
                     {PLUTO_SKY_ATLAS_WIDTH, PLUTO_SKY_ATLAS_HEIGHT, skyAtlasFormat, rhi::TextureUsage::ColorAttachment, "Physical sky lighting atlas", true}));
+                if (!shaders.cloudShadow.fragment.glsl.empty() || !shaders.cloudShadow.fragment.spirv.empty())
+                {
+                    rhi::GraphicsPipelineDescriptor clouds;
+                    clouds.vertexShader = shaders.cloudShadow.vertex;
+                    clouds.fragmentShader = shaders.cloudShadow.fragment;
+                    clouds.colorFormats = {skyAtlasFormat};
+                    clouds.depthTest = clouds.depthWrite = false;
+                    clouds.resourceBindings = {
+                        {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                        {15, 0, 15, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+                    clouds.debugName = "Cloud shadow map";
+                    m_cloudShadowPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(clouds));
+                    m_cloudShadowBuffer = rhi::Buffer(device, device.CreateBuffer(
+                        {sizeof(CloudShadowPassParameters), rhi::BufferUsage::Uniform, "Cloud shadow map parameters"}));
+                }
             }
             auto instancedDescriptor = descriptor;
             instancedDescriptor.vertexShader = shaders.instancedVertex;
@@ -1663,6 +1682,8 @@ namespace PlutoGE::render
         m_skyQuadratureBuffer.Reset();
         m_skyQuadratureTexture.Reset();
         m_skyEnvironmentValid = false;
+        m_cloudShadowPipeline.Reset();
+        m_cloudShadowBuffer.Reset();
         m_glassDepthCopy.Reset();
         for (auto &texture : m_particleTransparencyDepth) texture.Reset();
         m_glassReflectionBuffer.Reset();
@@ -2360,6 +2381,15 @@ namespace PlutoGE::render
                 frameParameters.skyIrradiance[i] = glm::vec4(lighting.skyIrradiance->coefficients[i], 0.0f);
             frameParameters.skyIrradiance[0].w = 1.0f;
         }
+        // Clouds shade the directional light through a map traced into the sky atlas before any receiver reads it.
+        const CloudShadowMap cloudShadow = m_cloudShadowPipeline && m_cloudNoise && geometryMode != GeometryDiagnosticMode::ReferenceSky
+            ? BuildCloudShadowMap(postProcessEffects, lighting.cameraPosition, -lighting.directionalDirection)
+            : CloudShadowMap{};
+        if (cloudShadow.enabled)
+        {
+            frameParameters.cloudShadowMapping = cloudShadow.SurfaceMapping();
+            frameParameters.cloudShadowLight = glm::vec4(glm::vec3(cloudShadow.pass.light), 1.0f);
+        }
         frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
         frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
         frameParameters.probeResolution = glm::vec4(glm::vec3(lighting.diffuseProbeResolution), lighting.diffuseProbeAtlasWidth);
@@ -2492,6 +2522,23 @@ namespace PlutoGE::render
                 m_skyEnvironmentParameters = parameters;
                 m_skyEnvironmentValid = true;
             }
+        }
+        if (cloudShadow.enabled)
+        {
+            // Wind moves the clouds every frame. The pass keeps the sky rows: it
+            // loads the atlas and discards outside its own region.
+            ScopedGpuTiming cloudShadowTiming(commands, "RHI Cloud Shadow Map");
+            m_device->UpdateBuffer(m_cloudShadowBuffer.Get(), 0, Bytes(cloudShadow.pass));
+            rhi::RenderingInfo info;
+            info.colorAttachments = {m_skyQuadratureTexture.Get()};
+            info.width = PLUTO_SKY_ATLAS_WIDTH; info.height = PLUTO_SKY_ATLAS_HEIGHT;
+            info.clearColor = false; info.clearDepth = false;
+            commands.BeginRendering(info);
+            commands.BindPipeline(m_cloudShadowPipeline.Get());
+            commands.BindUniformBuffer(0, m_cloudShadowBuffer.Get());
+            commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
+            commands.Draw(3);
+            commands.EndRendering();
         }
         shadowScope.End();
         // Shadows and geometry record into their own command contexts, on worker threads when the device allows,

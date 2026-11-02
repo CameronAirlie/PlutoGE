@@ -371,6 +371,7 @@ static const float PI = 3.14159265359;
 #include "PhysicalSkyEnvironment.slang"
 #include "FogEnvironment.slang"
 #include "FogIntegration.slang"
+#include "CloudShadowSampling.slang"
 
 float sampleConventionalShadowCascade(int cascade, float2 uv)
 {
@@ -1429,6 +1430,14 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (shadowsEnabled != 0 && needsDirectionalShadow)
         shadowVisibility *= contactShadowVisibility(input.position, transparentPass, ContactShadowDirectional);
     shadowVisibility *= microShadowing(materialOcclusion, dot(normal, lightDirection));
+    // Clouds shade the directional light in moving patches and, as coverage grows, replace the clear sky with their
+    // base: a full deck leaves only soft overcast light. rawShadowVisibility stays the geometry diagnostic.
+    CloudLighting cloudLighting = {1.0, 1.0, float3(0.0)};
+    if (cloudLightingActive())
+    {
+        cloudLighting = evaluateCloudLighting(cloudOcclusion, input.worldPosition, lightDirection);
+        shadowVisibility *= sampleCloudShadow(input.worldPosition, cloudLighting.sun);
+    }
     // Environment lighting layers, most specific first: reflection captures,
     // then the baked diffuse grid, then the physical sky, then flat ambient.
     // A layer below full capture coverage is only evaluated where it shows.
@@ -1473,24 +1482,28 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (captureCoverage < 1.0)
     {
         const bool skyLighting = physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0);
+        const float3 overcastIrradiance = cloudOvercastIrradiance(cloudLighting.overcast, normal) * diffuseResponse;
         if (gridCovered)
             ambient = gridDiffuse;
         else if (skyLighting)
-            ambient = samplePhysicalSkyIrradiance(normal) * diffuseResponse * physicalSkySettings.z;
+            ambient = cloudySky(samplePhysicalSkyIrradiance(normal) * diffuseResponse * physicalSkySettings.z,
+                                overcastIrradiance, cloudLighting);
         else
             // Flat ambient radiance: the base's albedo without Fresnel (as before layers), under and with the layers.
-            ambient = (sampledColor.rgb * (1.0 - materialMetallic) * layerBaseScale +
-                       sheenEnvironmentResponse(layers, ndotv) * PI) * cameraPositionAmbient.w;
+            ambient = cloudySky((sampledColor.rgb * (1.0 - materialMetallic) * layerBaseScale +
+                                 sheenEnvironmentResponse(layers, ndotv) * PI) * cameraPositionAmbient.w,
+                                overcastIrradiance, cloudLighting);
         if (skyLighting)
         {
             // Inside a volume, each lobe reflects only the sky its probes see.
             const float skyVisibility = bakedSkyReflectionVisibility(ambientGrid, reflectionDirection, normal, materialRoughness);
-            environmentSpecular = samplePhysicalSkySpecular(reflectionDirection, materialRoughness) *
-                                  iblSpecularResponse(f0, materialRoughness, ndotv) * physicalSkySettings.z * layerBaseScale *
-                                  skyVisibility;
+            environmentSpecular = cloudySky(samplePhysicalSkySpecular(reflectionDirection, materialRoughness) *
+                                                physicalSkySettings.z, cloudLighting.overcast, cloudLighting) *
+                                  iblSpecularResponse(f0, materialRoughness, ndotv) * layerBaseScale * skyVisibility;
             if (layers.clearCoatActive)
-                environmentSpecular += samplePhysicalSkySpecular(reflectionDirection, layers.clearCoatRoughness) *
-                                       coatResponse * physicalSkySettings.z *
+                environmentSpecular += cloudySky(samplePhysicalSkySpecular(reflectionDirection, layers.clearCoatRoughness) *
+                                                     physicalSkySettings.z, cloudLighting.overcast, cloudLighting) *
+                                       coatResponse *
                                        bakedSkyReflectionVisibility(ambientGrid, reflectionDirection, normal, layers.clearCoatRoughness);
             skySpecularShare = (1.0 - captureCoverage) * skyVisibility;
         }
@@ -1559,9 +1572,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float3 absorption = exp(log(clamp(attenuationColorDistance.rgb, 0.0001, 1.0)) *
                                        pathLength / max(attenuationColorDistance.w, 0.0001));
         const float3 viewFresnel = float3(dielectricFresnel(ndotv, glassParameters.z));
-        const float3 fallbackEnvironment = physicalSkySettings.x > 0.5
+        const float3 fallbackEnvironment = cloudySky(physicalSkySettings.x > 0.5
             ? samplePhysicalSkySpecular(reflectionDirection, materialRoughness) * physicalSkySettings.z
-            : float3(cameraPositionAmbient.w);
+            : float3(cameraPositionAmbient.w), cloudLighting.overcast, cloudLighting);
         float3 environment = blendIblReflection(fallbackEnvironment, input.worldPosition, reflectionDirection, materialRoughness);
         const float4 screenReflection = traceGlassReflection(input.worldPosition, normal, viewDirection, materialRoughness);
         // Replace the covered environment contribution; Fresnel is applied once

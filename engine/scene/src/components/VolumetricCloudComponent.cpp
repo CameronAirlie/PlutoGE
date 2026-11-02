@@ -47,6 +47,9 @@ namespace PlutoGE::scene
             {"Render Scale", PropertyType::Float, std::to_string(m_renderScale)},
             {"Primary Steps", PropertyType::Int, std::to_string(m_primaryStepCount)},
             {"Light Steps", PropertyType::Int, std::to_string(m_lightStepCount)},
+            {"Cast Shadows", PropertyType::Bool, m_castShadows ? "true" : "false"},
+            {"Shadow Distance", PropertyType::Float, std::to_string(m_shadowDistance)},
+            {"Shadow Density", PropertyType::Float, std::to_string(m_shadowDensity)},
         };
     }
 
@@ -70,6 +73,9 @@ namespace PlutoGE::scene
             else if (property.name == "Render Scale") m_renderScale = std::clamp(std::stof(property.value), 0.25f, 1.0f);
             else if (property.name == "Primary Steps") m_primaryStepCount = std::clamp(std::stoi(property.value), 8, 128);
             else if (property.name == "Light Steps") m_lightStepCount = std::clamp(std::stoi(property.value), 1, 16);
+            else if (property.name == "Cast Shadows") m_castShadows = property.value == "true" || property.value == "1";
+            else if (property.name == "Shadow Distance") SetShadowDistance(std::stof(property.value));
+            else if (property.name == "Shadow Density") SetShadowDensity(std::stof(property.value));
         }
     }
 }

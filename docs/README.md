@@ -45,6 +45,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
 | Surface marks | [Decals](decals.md) |
 | Directional shadows | [Virtual shadow maps](virtual-shadow-maps.md), [defaults and compatibility](VSM_DEFAULT.md) |
+| Clouds and weather | [Cloud shadows and overcast light](CLOUD_SHADOWS.md) |
 | Local lights and shadows | [Physical lights](physical-local-lights.md), [point shadow filtering](point-shadow-filtering.md) |
 | Surface lighting | [BRDF, area lights, specular occlusion, contact shadows, tone mapping](SURFACE_LIGHTING.md) |
 | Baked global illumination (low-end GPUs) | [Ambient probe grids](ambient-probe-grids.md), [live sky, reflection occlusion and capture relighting](BAKED_ENVIRONMENT_LIGHTING.md) |

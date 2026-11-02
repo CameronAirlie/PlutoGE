@@ -13,6 +13,8 @@ For automated local ambient lighting and sparse reflection captures, see
 [ambient probe grids](ambient-probe-grids.md).
 For the sky at night (moon phases, moonlight handoff and stars), see
 [night sky rendering](NIGHT_SKY.md).
+For cloud shadows on the ground and overcast lighting from cloud cover, see
+[cloud shadows](CLOUD_SHADOWS.md).
 
 For clustered local lights, scoped Vulkan synchronisation, bindless GPU-driven
 opaque draws and the frame graph with async compute, and their switches, see

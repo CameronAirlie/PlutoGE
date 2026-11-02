@@ -4,6 +4,8 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
+
 namespace PlutoGE::scene
 {
     // A world-space participating-media volume. The owning entity positions and
@@ -33,6 +35,26 @@ namespace PlutoGE::scene
         float GetRenderScale() const { return m_renderScale; }
         int GetPrimaryStepCount() const { return m_primaryStepCount; }
         int GetLightStepCount() const { return m_lightStepCount; }
+        // Cloud shadows (CloudShadowMap.h): whether the volume shades the
+        // directional light, how far from the camera its shadows reach, and a
+        // scale on its extinction for those shadows only.
+        bool GetCastShadows() const { return m_castShadows; }
+        float GetShadowDistance() const { return m_shadowDistance; }
+        float GetShadowDensity() const { return m_shadowDensity; }
+
+        // Runtime weather: shadows and overcast light follow these each frame.
+        // Coverage 1 with enough density closes the deck into an overcast sky.
+        void SetCoverage(float coverage) { m_coverage = std::clamp(coverage, 0.0f, 1.0f); }
+        void SetDensity(float density) { m_density = std::max(density, 0.0f); }
+        void SetExtinction(float extinction) { m_extinction = std::max(extinction, 0.0001f); }
+        void SetCloudColor(const glm::vec3 &color) { m_cloudColor = glm::max(color, glm::vec3(0.0f)); }
+        void SetAmbientLight(float ambientLight) { m_ambientLight = std::max(ambientLight, 0.0f); }
+        void SetDetailErosion(float erosion) { m_detailErosion = std::clamp(erosion, 0.0f, 1.0f); }
+        void SetWindDirection(const glm::vec3 &direction) { m_windDirection = direction; }
+        void SetWindSpeed(float speed) { m_windSpeed = speed; }
+        void SetCastShadows(bool castShadows) { m_castShadows = castShadows; }
+        void SetShadowDistance(float distance) { m_shadowDistance = std::clamp(distance, 250.0f, 20000.0f); }
+        void SetShadowDensity(float density) { m_shadowDensity = std::max(density, 0.0f); }
 
     private:
         glm::vec3 m_size{1000.0f, 300.0f, 1000.0f};
@@ -54,5 +76,8 @@ namespace PlutoGE::scene
         float m_renderScale = 0.5f;
         int m_primaryStepCount = 24;
         int m_lightStepCount = 3;
+        bool m_castShadows = true;
+        float m_shadowDistance = 3000.0f;
+        float m_shadowDensity = 1.0f;
     };
 }

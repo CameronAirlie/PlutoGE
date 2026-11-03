@@ -20,6 +20,7 @@
 #include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/assets/ModelImportSettings.h"
 #include "PlutoGE/assets/ModelSourcePackage.h"
+#include "PlutoGE/import/ImpostorBaker.h"
 #include "PlutoGE/import/MeshImporter.h"
 
 #include <algorithm>
@@ -473,6 +474,36 @@ namespace PlutoGE::assetimport
                         settings.materialRemaps.push_back(std::move(remap));
                     }
                 }
+            // The impostor atlases are sub-objects of the model, like its textures, and the mesh refers to them.
+            std::optional<assets::MeshImpostorAsset> impostor;
+            if (hasMesh && importOptions.bakeImpostor)
+            {
+                progress("Baking impostor");
+                const auto atlas = assetimport::BakeImportedImpostor(imported);
+                if (atlas.parameters.Valid())
+                {
+                    const auto writeAtlas = [&](const assetimport::ImpostorImage &image, const std::string &suffix,
+                                                const std::string &sourceKey)
+                    {
+                        assetimport::ImportedTextureData texture;
+                        texture.width = static_cast<int>(image.width);
+                        texture.height = static_cast<int>(image.height);
+                        texture.channels = 4;
+                        texture.pixels = image.pixels;
+                        const auto name = sourcePath.stem().string() + suffix;
+                        const auto destination = importDirectory / "Textures" / (name + ".tga");
+                        if (!WriteTextureTga(stage(destination), texture, errorMessage))
+                            throw std::runtime_error("Cannot write impostor atlas " + name + ".");
+                        const auto reference = projectReference(destination);
+                        return dependencyReference(addObject(assets::ProjectAssetType::Texture, name, reference, sourceKey), reference);
+                    };
+                    impostor = assets::MeshImpostorAsset{
+                        .parameters = atlas.parameters,
+                        .albedoReference = writeAtlas(atlas.albedo, "_ImpostorAlbedo", "texture/impostor/albedo"),
+                        .normalDepthReference = writeAtlas(atlas.normalDepth, "_ImpostorNormalDepth", "texture/impostor/normal-depth"),
+                    };
+                }
+            }
             if (hasMesh)
             {
                 progress("Writing mesh");
@@ -492,6 +523,7 @@ namespace PlutoGE::assetimport
                     .sourceAssetId = sourceMetadata.id,
                     .sourceObjectId = id,
                     .importOptions = importOptions,
+                    .impostor = impostor,
                 };
                 const auto staged = stage(destination);
                 if (!writer.SaveMeshAsset(staged.string(), config, materialReferences, errorMessage, metadata)) return false;

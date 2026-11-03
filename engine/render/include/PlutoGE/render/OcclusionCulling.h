@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/rhi/Resource.h"
 #include <glm/glm.hpp>
+#include <array>
 #include <functional>
 #include <memory>
 #include <span>
@@ -23,6 +24,18 @@ namespace PlutoGE::render
     {
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex, fragment, reduce, test;
     };
+    // The reverse-Z depth hierarchy a Record built: a storage buffer of floats holding every level (each level's width,
+    // height and offset), the farthest depth per cell, and the view-projection of the depth it reduced. Consumers that
+    // cull before this frame's depth exists (GpuInstanceCulling) test against the previous frame's.
+    struct OcclusionDepthHierarchy
+    {
+        rhi::BufferHandle buffer;
+        glm::mat4 viewProjection{1.0f};
+        std::uint32_t width = 0, height = 0, levelCount = 0;
+        std::uint32_t flags = 0; // bit 0 zero-to-one clip depth, bit 1 Vulkan clip y
+        std::array<glm::uvec4, 32> levels{};
+        std::uint64_t frame = 0; // the Record that built it; 0 before the first
+    };
     // Current-frame reverse-Z occlusion. Owns GPU resources, never reads back
     // visibility for rendering decisions. Missing/uncertain bounds fail open.
     class OcclusionCulling
@@ -36,6 +49,9 @@ namespace PlutoGE::render
                     OcclusionMode mode, const SubmitDepth &submit,
                     rhi::TextureHandle compatibleDepth = {});
         [[nodiscard]] rhi::BufferHandle Indirect() const { return m_indirect.Get(); }
+        // The hierarchy the last Record built (frame counts Records). Valid until the next Record at another size.
+        [[nodiscard]] const OcclusionDepthHierarchy &Hierarchy() const { return m_lastHierarchy; }
+        [[nodiscard]] std::uint64_t Frame() const { return m_frame; }
         [[nodiscard]] OcclusionStats Stats() const { return *m_stats; }
         [[nodiscard]] static bool SafeOccluder(const BasicDraw &draw);
         static void SetRigidBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum);
@@ -50,6 +66,7 @@ namespace PlutoGE::render
         std::uint32_t m_width = 0, m_height = 0;
         std::size_t m_capacity = 0;
         std::uint64_t m_frame = 0;
+        OcclusionDepthHierarchy m_lastHierarchy;
         std::shared_ptr<OcclusionStats> m_stats = std::make_shared<OcclusionStats>();
     };
 }

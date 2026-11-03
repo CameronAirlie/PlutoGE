@@ -1542,7 +1542,7 @@ namespace PlutoGE::assets
         bool WriteGeneratedMeshAsset(std::ostream &output, const render::MeshConfig &config, const std::vector<std::string> &materialReferences, const MeshAssetMetadata &metadata)
         {
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
-            constexpr std::uint32_t kVersion = 5;
+            constexpr std::uint32_t kVersion = 6;        // 6: impostor block after the import options
             WritePod(output, kMagic);
             WritePod(output, kVersion);
 
@@ -1619,6 +1619,18 @@ namespace PlutoGE::assets
             WritePod<std::uint8_t>(output, metadata.importOptions.generateLods ? 1 : 0);
             WritePod<std::uint8_t>(output, metadata.importOptions.optimizeVertexCache ? 1 : 0);
             WritePod<std::uint8_t>(output, metadata.importOptions.optimizeOverdraw ? 1 : 0);
+            WritePod<std::uint8_t>(output, metadata.impostor ? 1 : 0);
+            if (metadata.impostor)
+            {
+                const auto &parameters = metadata.impostor->parameters;
+                WritePod(output, parameters.framesPerSide);
+                WritePod(output, parameters.frameResolution);
+                WritePod(output, parameters.boundsCenter);
+                WritePod(output, parameters.boundsRadius);
+                WritePod(output, parameters.maxScreenRadiusPixels);
+                WriteString(output, metadata.impostor->albedoReference);
+                WriteString(output, metadata.impostor->normalDepthReference);
+            }
             return output.good();
         }
 
@@ -1627,7 +1639,7 @@ namespace PlutoGE::assets
             constexpr std::uint32_t kMagic = 0x4d47504c; // LPGM
             const auto magic = ReadPod<std::uint32_t>(input);
             const auto version = ReadPod<std::uint32_t>(input);
-            if (magic != kMagic || version < 1 || version > 5)
+            if (magic != kMagic || version < 1 || version > 6)
             {
                 return false;
             }
@@ -1722,6 +1734,18 @@ namespace PlutoGE::assets
                 metadata.importOptions.generateLods = ReadPod<std::uint8_t>(input) != 0;
                 metadata.importOptions.optimizeVertexCache = ReadPod<std::uint8_t>(input) != 0;
                 metadata.importOptions.optimizeOverdraw = ReadPod<std::uint8_t>(input) != 0;
+            }
+            if (version >= 6 && ReadPod<std::uint8_t>(input) != 0)
+            {
+                MeshImpostorAsset impostor;
+                impostor.parameters.framesPerSide = ReadPod<std::uint32_t>(input);
+                impostor.parameters.frameResolution = ReadPod<std::uint32_t>(input);
+                impostor.parameters.boundsCenter = ReadPod<glm::vec3>(input);
+                impostor.parameters.boundsRadius = ReadPod<float>(input);
+                impostor.parameters.maxScreenRadiusPixels = ReadPod<float>(input);
+                impostor.albedoReference = ReadString(input);
+                impostor.normalDepthReference = ReadString(input);
+                if (impostor.parameters.Valid()) metadata.impostor = std::move(impostor);
             }
             return input.good();
         }

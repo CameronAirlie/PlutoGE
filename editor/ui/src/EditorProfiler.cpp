@@ -540,6 +540,7 @@ namespace PlutoGE::ui
         report << "RHI render recording: " << rhiScene.renderRecordingMs << " ms\n";
         report << "RHI begin active CPU: " << activeRhiBeginCpuMs << " ms\n";
         report << "RHI shadow recording CPU: " << rhiScene.shadowRecordingMs << " ms\n";
+        report << "RHI instance preparation and binning CPU: " << rhiScene.instanceBinningMs << " ms\n";
         report << "RHI geometry recording CPU: " << rhiScene.geometryRecordingMs << " ms\n";
         report << "RHI post-process recording CPU: " << rhiScene.postProcessRecordingMs << " ms\n";
         report << "RHI camera stack composition CPU: " << rhiScene.cameraCompositionMs << " ms\n";

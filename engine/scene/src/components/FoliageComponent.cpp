@@ -494,6 +494,19 @@ namespace PlutoGE::scene
             return true;
         }
 
+        // The mesh asset's baked impostor with its atlas textures loaded; null when it has none or they fail to load.
+        std::shared_ptr<const render::MeshImpostor> LoadImpostor(assets::AssetManager &assets, const std::string &meshReference)
+        {
+            const auto &impostor = assets.GetMeshAssetMetadata(meshReference).impostor;
+            if (!impostor) return nullptr;
+            const auto *albedo = assets.LoadTexture(assets.ResolveAssetPath(impostor->albedoReference).c_str(),
+                                                    render::TextureColorSpace::SRGB);
+            const auto *normalDepth = assets.LoadTexture(assets.ResolveAssetPath(impostor->normalDepthReference).c_str(),
+                                                         render::TextureColorSpace::Linear);
+            if (!albedo || !normalDepth) return nullptr;
+            return std::make_shared<const render::MeshImpostor>(render::MeshImpostor{impostor->parameters, albedo, normalDepth});
+        }
+
         bool CompareRenderCommandKeys(const render::RenderCommand &a, const render::RenderCommand &b)
         {
             auto *aShader = a.material ? a.material->GetShader() : a.shader;
@@ -612,6 +625,16 @@ namespace PlutoGE::scene
 
             const glm::vec3 localOriginOffset = ComputeSubmeshGroupCenterOfMass(*type.mesh, selectedSubmeshes);
             const render::MeshBounds clusterSourceBounds = CombineSubmeshBounds(*type.mesh, selectedSubmeshes);
+            // One submesh's commands draw the impostor cards: the first alpha-masked one (the leaves, whose material
+            // the cards shade with), else the first.
+            std::size_t impostorOwner = selectedSubmeshes.front();
+            for (const std::size_t submeshIndex : selectedSubmeshes)
+                if (const auto *material = GetMaterialForTypeSubmesh(type, submeshIndex);
+                    material && material->ReadConfig().alphaMode == render::AlphaMode::Mask)
+                {
+                    impostorOwner = submeshIndex;
+                    break;
+                }
 
             std::unordered_map<FoliageClusterKey, FoliageCluster, FoliageClusterKeyHash> clusters;
             for (const auto &instance : type.instances)
@@ -659,6 +682,8 @@ namespace PlutoGE::scene
                                                   ? type.asset.maxDrawDistance
                                                   : m_maxDrawDistance;
                     command.maxShadowDistance = m_maxShadowDistance;
+                    command.impostor = type.impostor.get();
+                    command.impostorOwner = type.impostor && submeshIndex == impostorOwner;
                     command.isStatic = m_isStatic;
                     command.castsShadow = m_castShadows;
                     command.usePrimaryUvForLightmap = true;
@@ -1744,6 +1769,7 @@ namespace PlutoGE::scene
         type.mesh = nullptr;
         type.materials.clear();
         type.ownedMaterials.clear();
+        type.impostor = nullptr;
         if (type.sourceMeshPath.empty())
         {
             return;
@@ -1765,6 +1791,7 @@ namespace PlutoGE::scene
                 loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
             }
             AssignFoliageMaterials(type, loadedMaterials);
+            type.impostor = LoadImpostor(engine.GetAssetManager(), type.sourceMeshPath);
             SanitizeTypeSubmeshSelection(type);
             return;
         }

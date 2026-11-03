@@ -1,6 +1,8 @@
 #include "PlutoGE/assets/ModelHierarchyAsset.h"
 #include "PlutoGE/asset_import/ModelArtifactSettings.h"
 #include "PlutoGE/assets/ModelArtifactStorage.h"
+#include "PlutoGE/import/ImpostorBaker.h"
+#include "PlutoGE/import/MeshTriangleBudget.h"
 #include <algorithm>
 #include "PlutoGE/assets/ModelSourcePackage.h"
 
@@ -42,6 +44,13 @@ namespace PlutoGE::assetimport
         // remain semantic inputs; generated hashes and locations do not.
         for (const auto &record : package.extensionRecords) field(record);
         field(std::to_string(options.ToFlags()));
+        // Only when used, so artifacts of models without a budget or impostor stay valid; the versions rebuild those
+        // that do whenever the algorithm changes.
+        if (options.triangleBudget != 0)
+            field("triangle-budget:" + std::to_string(options.triangleBudget) + ":" + std::to_string(assetimport::TriangleBudgetVersion));
+        if (options.bakeImpostor) field("impostor:" + std::to_string(assetimport::ImpostorBakeVersion));
+        if (options.generateLods && options.vegetationLods)
+            field("vegetation-lods:" + std::to_string(MeshImportOptions::VegetationLodVersion));
         field(sourceReference);
         for (const auto &binding : bindings) field(binding);
         std::sort(outputs.begin(), outputs.end());

@@ -13,6 +13,8 @@
 #include "CloudShadowChecks.h"
 #include "CloudTemporalChecks.h"
 #include "InstanceLodChecks.h"
+#include "ImpostorChecks.h"
+#include "GpuInstanceCullingChecks.h"
 #include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -537,6 +539,16 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--instance-lods")
         {
             CheckInstanceLods(renderer);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-culling")
+        {
+            CheckGpuInstanceCulling(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--impostors")
+        {
+            CheckImpostors(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--cloud-temporal")

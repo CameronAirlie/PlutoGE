@@ -181,6 +181,8 @@ namespace PlutoGE::render
                                  BarrierAccess::IndirectCommandRead | BarrierAccess::TransferRead);
         commands.EndGpuScope();
         const auto frame = ++m_frame;
+        m_lastHierarchy = {m_hierarchy.Get(), viewProjection, width, height, parameters.config.w, parameters.config.y,
+                           parameters.levels, frame};
         const std::weak_ptr<OcclusionStats> stats = m_stats;
         commands.QueueBufferReadback(m_counters.Get(), 64, [stats, frame](std::span<const std::byte> bytes)
         {

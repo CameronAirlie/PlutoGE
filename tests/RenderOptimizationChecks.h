@@ -23,6 +23,8 @@ inline void LoadRenderOptimizationShaders(PlutoGE::render::BasicRendererShaderPa
     shaders.compactFragments = additions.compactFragments;
     shaders.coverageFragments = additions.coverageFragments;
     shaders.opaqueDepth = additions.opaqueDepth;
+    shaders.impostor = additions.impostor;
+    shaders.instanceCulling = additions.instanceCulling;
     shaders.volumetricTrace = additions.volumetricTrace;
     shaders.volumetricComposite = additions.volumetricComposite;
     shaders.opaqueShadow = additions.opaqueShadow;

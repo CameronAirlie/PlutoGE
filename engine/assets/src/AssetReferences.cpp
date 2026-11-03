@@ -486,9 +486,20 @@ namespace PlutoGE::assets
                 Add(scan, value, number);
         }
 
+        std::uint64_t ReadUint64(std::istream &input)
+        {
+            std::array<unsigned char, 8> bytes{};
+            input.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
+            std::uint64_t value = 0;
+            for (std::size_t index = 0; index < bytes.size(); ++index) value |= std::uint64_t(bytes[index]) << (index * 8);
+            return value;
+        }
+
+        // Whether the string just read is a mesh's source reference: the trailer of WriteGeneratedMeshAsset follows it
+        // (version 4: three option flags; 5: owner id, object id and the flags; 6: those and an impostor block).
         bool IsMeshSourceTrailer(std::istream &input, std::uint32_t version, std::streamoff fileSize)
         {
-            if (version != 4 && version != 5) return false;
+            if (version < 4 || version > 6) return false;
             const auto position = input.tellg();
             if (position < 0 || fileSize < static_cast<std::streamoff>(position)) return false;
             const auto remaining = fileSize - static_cast<std::streamoff>(position);
@@ -496,11 +507,11 @@ namespace PlutoGE::assets
             if (version == 4) source = remaining == 3;
             else if (remaining >= 19)
             {
-                std::array<unsigned char, 8> bytes{};
-                input.read(reinterpret_cast<char *>(bytes.data()), bytes.size());
-                std::uint64_t ownerSize = 0;
-                for (std::size_t index = 0; index < bytes.size(); ++index) ownerSize |= std::uint64_t(bytes[index]) << (index * 8);
-                source = input.good() && ownerSize <= MaxReferenceSize && ownerSize == static_cast<std::uint64_t>(remaining - 19);
+                const auto ownerSize = ReadUint64(input);
+                const auto trailer = 8 + ownerSize + 8 + 3 + (version >= 6 ? 1u : 0u);
+                source = input.good() && ownerSize <= MaxReferenceSize &&
+                         (version == 5 ? trailer == static_cast<std::uint64_t>(remaining)
+                                       : trailer <= static_cast<std::uint64_t>(remaining));
                 if (source) input.seekg(position + static_cast<std::streamoff>(8 + ownerSize + 8));
             }
             if (source)
@@ -508,6 +519,24 @@ namespace PlutoGE::assets
                 std::array<unsigned char, 3> flags{};
                 input.read(reinterpret_cast<char *>(flags.data()), flags.size());
                 source = input.good() && std::all_of(flags.begin(), flags.end(), [](auto flag) { return flag <= 1; });
+            }
+            if (source && version >= 6)
+            {
+                // The impostor block: a flag, then its layout (28 bytes) and two atlas references, ending the file.
+                const int impostor = input.get();
+                std::streamoff end = input.tellg();
+                if (impostor == 1)
+                {
+                    input.seekg(28, std::ios::cur);
+                    for (int atlas = 0; atlas < 2 && input.good(); ++atlas)
+                    {
+                        const auto size = ReadUint64(input);
+                        if (size > MaxReferenceSize) { source = false; break; }
+                        input.seekg(static_cast<std::streamoff>(size), std::ios::cur);
+                    }
+                    end = input.tellg();
+                }
+                source = source && (impostor == 0 || impostor == 1) && input.good() && end == fileSize;
             }
             input.clear();
             input.seekg(position);

@@ -10,6 +10,7 @@
 #include "PointShadowLayers.h"
 #include "LightClusterGrid.h"
 #include "GpuDrivenOpaque.h"
+#include "GpuInstanceCulling.h"
 #include "LtcTable.h"
 #include "gi/RayQueryDdgiRaySource.h"
 #include "raytracing/RayTracingScene.h"
@@ -874,6 +875,14 @@ namespace PlutoGE::render
             m_standardVertices = shaders.standardVertices;
             m_standardColorVertices = shaders.standardColorVertices;
             m_terrainShaders = shaders.terrain;
+            m_impostorShaders = shaders.impostor;
+            if (m_impostorShaders.Available())
+            {
+                // One card per instance: corner ids 0-3 (BasicLitImpostor.slang impostorCorner).
+                constexpr std::array<std::uint32_t, 6> cardIndices{0, 1, 2, 2, 1, 3};
+                m_impostorCardIndices = rhi::Buffer(device, device.CreateBuffer(
+                    {sizeof(cardIndices), rhi::BufferUsage::Index, "Impostor card indices"}, Bytes(cardIndices)));
+            }
             if (!shaders.transparentFragment.glsl.empty() || !shaders.transparentFragment.spirv.empty())
             {
                 auto transparentDescriptor = descriptor;
@@ -1576,6 +1585,12 @@ namespace PlutoGE::render
                 if (gpuDriven->Available())
                     m_gpuDriven = std::move(gpuDriven);
             }
+            if (device.GetImmediateContext().SupportsGpuOcclusionCulling())
+            {
+                auto culling = std::make_unique<GpuInstanceCulling>();
+                if (culling->Initialize(device, shaders.instanceCulling))
+                    m_gpuInstanceCulling = std::move(culling);
+            }
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
             m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
@@ -1605,6 +1620,8 @@ namespace PlutoGE::render
         m_standardVertices = {};
         m_standardColorVertices = {};
         m_terrainShaders = {};
+        m_impostorShaders = {};
+        m_impostorCardIndices.Reset();
         m_depthTarget.Reset();
         m_temporalUpscalerOutput.Reset();
         m_upscalerReactiveMask.Reset();
@@ -1673,6 +1690,7 @@ namespace PlutoGE::render
         if (m_gpuDriven)
             m_gpuDriven->Shutdown(*m_device);
         m_gpuDriven.reset();
+        m_gpuInstanceCulling.reset();
         m_bindlessGeometryPipelines.clear();
         m_gpuSkinning.reset();
         m_deferredProbeIrradiance.reset();
@@ -2136,6 +2154,7 @@ namespace PlutoGE::render
                                std::optional<glm::vec2> sharedClipJitter,
                                std::span<const BasicDecalDraw> decals, RecordingMode recordingMode)
     {
+        ++m_renderCount;
         m_frameStats = {};
         m_timingStats = {};
         const bool automaticSweep = lighting.geometryDiagnosticMode == GeometryDiagnosticMode::AutomaticSweep;
@@ -2636,6 +2655,8 @@ namespace PlutoGE::render
         }
         shadowScope.End();
         // Instanced draws' records upload here, outside rendering; resident arrays (static foliage) only stay bound.
+        const auto instanceBinningStart = std::chrono::steady_clock::now();
+        core::CpuScope instanceBinningScope("Instance preparation and binning", core::CpuCategory::Rendering);
         if (m_instanceStorage)
         {
             const auto prepare = [&](const BasicDraw &draw)
@@ -2671,16 +2692,46 @@ namespace PlutoGE::render
             }
             // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone, leaving out
             // instances outside the view or beyond the draw's distance (a visible foliage cell is often mostly off
-            // screen or out of range). The bins feed only the camera passes. Draws bin in parallel; staging
-            // concatenates them in draw order.
-            std::vector<std::size_t> chained;
+            // screen or out of range). The bins feed only the camera passes. GpuInstanceCulling bins the draws it
+            // supports on the GPU, also culling against the previous frame's depth; the rest bin here, in parallel,
+            // and staging concatenates them in draw order.
+            const auto recordsOf = [&](const BasicDraw &draw)
+            {
+                const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
+                                         draw.previousInstanceModels->size() == draw.instanceModels->size();
+                return m_instanceStorage->Find(draw.instanceModels.get(), hasPrevious ? draw.previousInstanceModels.get() : nullptr);
+            };
+            const bool gpuBinning = m_gpuInstanceCulling && m_gpuInstanceCullingEnabled;
+            const ClipFrustum view(viewProjection);
+            std::vector<std::size_t> chained, culledClusters;
+            std::vector<GpuInstanceCulling::Source> gpuSources;
             for (std::size_t index = 0; index < draws.size(); ++index)
-                if (draws[index].instanceLods && draws[index].instanceModels && draws[index].instanceModels->size() > 1)
+            {
+                const auto &draw = draws[index];
+                if (!draw.instanceLods || !draw.instanceModels || draw.instanceModels->size() <= 1) continue;
+                // A cluster wholly outside the view or beyond its draw distance draws nothing. It gets empty bins
+                // below instead of per-instance work (or the unbinned fallback, which would draw all of it).
+                if (draw.shadowBoundsRadius >= 0.0f && std::isfinite(draw.shadowBoundsRadius))
+                {
+                    const glm::vec3 offset = draw.shadowBoundsCenter - lighting.cameraPosition;
+                    const float reach = draw.instanceDrawDistance + draw.shadowBoundsRadius;
+                    if (glm::dot(offset, offset) > reach * reach ||
+                        !view.SidesIntersect(draw.shadowBoundsCenter, draw.shadowBoundsRadius))
+                    {
+                        culledClusters.push_back(index);
+                        continue;
+                    }
+                }
+                if (gpuBinning && GpuInstanceCulling::Supports(draw))
+                {
+                    if (const auto records = recordsOf(draw)) gpuSources.push_back({&draw, records});
+                }
+                else
                     chained.push_back(index);
+            }
             std::vector<std::vector<std::vector<std::uint32_t>>> binned(chained.size());
             std::vector<std::size_t> culledByDraw(chained.size(), 0);
             const float binProjection = std::abs(m_postProcessProjection[1][1]) * 0.5f * static_cast<float>(m_height);
-            const ClipFrustum view(viewProjection);
             core::TaskPool::Shared().RunRanges(chained.size(), 16, [&](std::size_t, std::size_t begin, std::size_t end)
             {
                 for (std::size_t item = begin; item < end; ++item)
@@ -2700,7 +2751,10 @@ namespace PlutoGE::render
                             ++culledByDraw[item];
                             continue;
                         }
-                        bins[chain.Select(ProjectedRadius(sphere, lighting.cameraPosition, binProjection))].push_back(instance);
+                        // Instances another draw covers (a mesh's impostor-sized ones) go in no bin of this draw.
+                        if (const auto lod = chain.Select(ProjectedRadius(sphere, lighting.cameraPosition, binProjection));
+                            lod != chain.NotDrawn())
+                            bins[lod].push_back(instance);
                     }
                 }
             });
@@ -2708,17 +2762,36 @@ namespace PlutoGE::render
             for (std::size_t item = 0; item < chained.size(); ++item)
             {
                 const auto &draw = draws[chained[item]];
-                const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
-                                         draw.previousInstanceModels->size() == draw.instanceModels->size();
-                const auto records = m_instanceStorage->Find(draw.instanceModels.get(),
-                                                             hasPrevious ? draw.previousInstanceModels.get() : nullptr);
-                if (records)
+                if (const auto records = recordsOf(draw))
                     m_instanceStorage->StageBins(records, draw.instanceModels.get(), draw.instanceLods.get(), binned[item]);
             }
+            for (const auto index : culledClusters)
+            {
+                const auto &draw = draws[index];
+                m_frameStats.viewCulledInstances += draw.instanceModels->size();
+                if (const auto records = recordsOf(draw))
+                    m_instanceStorage->StageBins(records, draw.instanceModels.get(), draw.instanceLods.get(),
+                                                 std::vector<std::vector<std::uint32_t>>(draw.instanceLods->lods.size()));
+            }
             m_instanceStorage->UploadBins();
+            if (gpuBinning)
+            {
+                // The previous render's occlusion hierarchy, while it still describes the view: same size, and the
+                // camera moved little (a cut would otherwise hide what the old view did not see for a frame).
+                constexpr float MaxOcclusionCameraTravel = 4.0f;
+                const OcclusionDepthHierarchy *hierarchy = m_occlusion ? &m_occlusion->Hierarchy() : nullptr;
+                if (!hierarchy || !m_hasPreviousFrame || m_occlusionHierarchyRender + 1 != m_renderCount ||
+                    hierarchy->width != m_width || hierarchy->height != m_height ||
+                    glm::distance(m_occlusionHierarchyCamera, lighting.cameraPosition) >= MaxOcclusionCameraTravel)
+                    hierarchy = nullptr;
+                m_gpuInstanceCulling->Record(commands, gpuSources, {viewProjection, lighting.cameraPosition, binProjection, hierarchy});
+                m_frameStats.gpuBinnedDraws = gpuSources.size();
+            }
             m_frameStats.instanceRecordUploads = m_instanceStorage->UploadedRecords();
             m_frameStats.residentInstanceRecords = m_instanceStorage->ResidentRecords();
         }
+        instanceBinningScope.End();
+        m_timingStats.instanceBinningMs = elapsedMs(instanceBinningStart, std::chrono::steady_clock::now());
         // Shadows and geometry record into their own command contexts, on worker threads when the device allows,
         // and execute on the GPU in that order. Inside each job `commands` is the job's context. A job writes only
         // its own caches and statistics; everything both read is prepared before Run.
@@ -3517,6 +3590,10 @@ namespace PlutoGE::render
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
+            // Impostor cards draw only through their instance bins, with their own vertex stages (GeometryPipeline).
+            const BasicImpostor *impostor = draw.impostor.get();
+            if (impostor && (!m_impostorShaders.Available() || !instanced || !draw.instanceLods))
+                return;
             // Occlusion-culled indirect draws keep their own buffer: the GPU writes their arguments.
             const bool streamed = objectStreaming && !instanced && !transparent &&
                 !(occlusionActive && !recordingDepth && !draw.outlinePass);
@@ -3677,7 +3754,13 @@ namespace PlutoGE::render
                 // The next alpha/graph draw must re-establish its material bindings.
                 geometryResourcesBound = false;
             }
-            if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundDrawMesh != draw.mesh)
+            if (impostor)
+            {
+                // Cards have no vertex input: the card index buffer gives each corner its id.
+                commands.BindIndexBuffer(m_impostorCardIndices.Get());
+                boundDrawMesh = nullptr;
+            }
+            else if (m_device->GetApi() != rhi::GraphicsApi::Vulkan || boundDrawMesh != draw.mesh)
             {
                 BindMeshBuffers(commands, *draw.mesh);
                 boundDrawMesh = draw.mesh;
@@ -3700,11 +3783,53 @@ namespace PlutoGE::render
                     commands.BindStorageBuffer(InstanceRecordSlot, records.buffer);
                     // The streamed-object block is declared too; any block of its size satisfies it.
                     commands.BindUniformBuffer(17, streamedBlockPlaceholder());
-                    const auto instanceDebug = glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f,
-                                                         draw.probeDebug.x, draw.probeDebug.y);
-                    const auto *binned = draw.instanceLods && m_instanceStorage->IndexBuffer()
+                    // Impostor cards take their layout here instead: bounds sphere, and frames per side in range.w.
+                    const auto instanceDebug = impostor
+                        ? glm::vec4(impostor->parameters.boundsCenter, impostor->parameters.boundsRadius)
+                        : glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f,
+                                    draw.probeDebug.x, draw.probeDebug.y);
+                    const std::uint32_t instanceLayout = impostor ? impostor->parameters.framesPerSide : 0u;
+                    const auto *gpuBins = draw.instanceLods && m_gpuInstanceCulling && m_gpuInstanceCullingEnabled
+                        ? m_gpuInstanceCulling->Find(draw) : nullptr;
+                    const auto *binned = !gpuBins && draw.instanceLods && m_instanceStorage->IndexBuffer()
                         ? m_instanceStorage->FindBins(draw.instanceModels.get(), draw.instanceLods.get()) : nullptr;
-                    if (binned)
+                    if (gpuBins)
+                    {
+                        // GPU bins (GpuInstanceCulling): the arguments hold absolute first indices, so the index buffer
+                        // binds at zero; with first instances the LODs go as one batch, else each finds its bin offset
+                        // in the bin buffer's header (instanceRange.z = 2).
+                        if (!impostor) commands.BindVertexBuffer(draw.mesh->m_vertexBuffer);
+                        commands.BindIndexBuffer(impostor ? m_impostorCardIndices.Get() : draw.mesh->m_indexBuffer, rhi::Format::R32Uint, 0);
+                        boundDrawMesh = nullptr;
+                        commands.BindStorageBuffer(InstanceIndexSlot, m_gpuInstanceCulling->IndexBuffer());
+                        const auto bind = [&](const glm::uvec4 &range)
+                        {
+                            const BasicInstanceDrawParameters parameters{range, instanceDebug};
+                            std::size_t key = 0x2545f491u;
+                            for (int component = 0; component < 4; ++component)
+                            {
+                                HashBatchValue(key, range[component]);
+                                HashBatchValue(key, instanceDebug[component]);
+                            }
+                            commands.BindUniformBuffer(InstanceStorageSlot, m_geometryParameters->Acquire(*m_device, Bytes(parameters), key));
+                        };
+                        boundObjectBlock = {};
+                        const auto arguments = m_gpuInstanceCulling->Arguments();
+                        constexpr auto stride = GpuInstanceCulling::ArgumentStride;
+                        if (m_gpuInstanceCulling->UsesFirstInstance())
+                        {
+                            bind({0u, 1u, 1u, instanceLayout});
+                            commands.DrawIndexedIndirectBatch(arguments, std::size_t(gpuBins->firstSlot) * stride, gpuBins->lodCount);
+                        }
+                        else
+                            for (std::uint32_t lod = 0; lod < gpuBins->lodCount; ++lod)
+                            {
+                                bind({gpuBins->firstSlot + lod, 1u, 2u, instanceLayout});
+                                commands.DrawIndexedIndirect(arguments, std::size_t(gpuBins->firstSlot + lod) * stride);
+                            }
+                        m_frameStats.geometryDraws += gpuBins->lodCount;
+                    }
+                    else if (binned)
                     {
                         // Per-instance LOD: one draw per LOD over that LOD's binned instances.
                         commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStorage->IndexBuffer());
@@ -3713,18 +3838,22 @@ namespace PlutoGE::render
                         {
                             const auto bin = binned->bins[lod];
                             const auto &range = chain.lods[lod];
-                            if (bin.count == 0 || range.firstIndex >= draw.mesh->m_indexCount) continue;
-                            const auto lodCount = std::min(range.indexCount, draw.mesh->m_indexCount - range.firstIndex);
+                            // A card chain's range is in the card index buffer, not the mesh.
+                            const std::uint32_t lodCount = impostor ? range.indexCount
+                                : range.firstIndex < draw.mesh->m_indexCount
+                                    ? std::min(range.indexCount, draw.mesh->m_indexCount - range.firstIndex) : 0u;
+                            if (bin.count == 0 || lodCount == 0) continue;
                             // Vulkan's instance index includes the first instance, so a bin's offset rides on the draw
                             // and its constants stay cached; OpenGL draws have no first instance and carry it here.
                             const bool firstInstance = m_device->GetApi() == rhi::GraphicsApi::Vulkan;
                             const BasicInstanceDrawParameters parameters{
-                                glm::uvec4(firstInstance ? 0u : bin.first, 1u, 1u, 0u), instanceDebug};
+                                glm::uvec4(firstInstance ? 0u : bin.first, 1u, 1u, instanceLayout), instanceDebug};
                             if (firstInstance)
                             {
                                 std::size_t binKey = 0x51ed27f9u;
                                 for (int component = 0; component < 4; ++component)
                                     HashBatchValue(binKey, instanceDebug[component]);
+                                HashBatchValue(binKey, instanceLayout);
                                 commands.BindUniformBuffer(InstanceStorageSlot,
                                                            m_geometryParameters->Acquire(*m_device, Bytes(parameters), binKey));
                             }
@@ -3739,7 +3868,7 @@ namespace PlutoGE::render
                                 static_cast<std::uint64_t>(lodCount / 3) * bin.count;
                         }
                     }
-                    else
+                    else if (!impostor)
                     {
                     // The index-bin slot is declared by the pipeline: keep it bound to valid storage.
                     commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStorage->IndexBuffer() ? m_instanceStorage->IndexBuffer()
@@ -3752,8 +3881,11 @@ namespace PlutoGE::render
                         std::uint32_t chunkFirstIndex = draw.firstIndex, chunkIndexCount = drawCount;
                         if (draw.instanceLods && !draw.instanceLods->lods.empty())
                         {
-                            const auto &lod = draw.instanceLods->lods[InstanceChunkLod(
-                                *draw.instanceLods, *draw.instanceModels, first, instanceCount, lighting.cameraPosition, lodProjection)];
+                            const auto lodIndex = InstanceChunkLod(*draw.instanceLods, *draw.instanceModels, first, instanceCount,
+                                                                   lighting.cameraPosition, lodProjection);
+                            // A chunk all of whose instances another draw covers (an impostor's) is not drawn here.
+                            if (lodIndex == draw.instanceLods->NotDrawn()) continue;
+                            const auto &lod = draw.instanceLods->lods[lodIndex];
                             if (lod.firstIndex < draw.mesh->m_indexCount)
                             {
                                 chunkFirstIndex = lod.firstIndex;
@@ -3891,7 +4023,12 @@ namespace PlutoGE::render
                     commands.DrawIndexed(std::min(draw.indexCount ? draw.indexCount : available, available), draw.firstIndex);
                 }, depthPrepassActive ? m_depthTarget.Get() : reuseReceiverDepth ? m_virtualShadows->ReceiverDepth() : rhi::TextureHandle{});
             m_frameStats.occlusionActive = occlusionActive;
-            if (occlusionActive) m_frameStats.occlusion = m_occlusion->Stats();
+            if (occlusionActive)
+            {
+                m_frameStats.occlusion = m_occlusion->Stats();
+                m_occlusionHierarchyRender = m_renderCount;
+                m_occlusionHierarchyCamera = lighting.cameraPosition;
+            }
             if (m_gpuDriven)
                 m_gpuDriven->RecordVisibility(*m_device, commands, occlusionActive ? m_occlusion->Indirect() : rhi::BufferHandle{});
             // Compute/coverage passes invalidate all cached graphics bindings.

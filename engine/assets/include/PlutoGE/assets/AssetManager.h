@@ -8,12 +8,14 @@
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include "PlutoGE/assets/PostProcessPresetAsset.h"
 #include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/render/ImpostorLayout.h"
 #include "PlutoGE/render/ShaderGraph.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -36,12 +38,22 @@ namespace PlutoGE::render
 
 namespace PlutoGE::assets
 {
+    // A model's baked octahedral impostor (assetimport::BakeImpostor): its layout and the atlas textures' references.
+    struct MeshImpostorAsset
+    {
+        render::impostor::Parameters parameters;
+        std::string albedoReference;      // sRGB colour, coverage in alpha
+        std::string normalDepthReference; // linear frame-space normal and depth
+        bool operator==(const MeshImpostorAsset &) const = default;
+    };
+
     struct MeshAssetMetadata
     {
         std::string sourceAssetReference;
         std::string sourceAssetId;
         std::uint64_t sourceObjectId = 0;
         assetimport::MeshImportOptions importOptions;
+        std::optional<MeshImpostorAsset> impostor;
     };
 
     class AssetManager

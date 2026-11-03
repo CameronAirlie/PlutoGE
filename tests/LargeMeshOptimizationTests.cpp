@@ -1,10 +1,12 @@
 #include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/import/MeshTriangleBudget.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/render/IndirectDraw.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <chrono>
@@ -14,6 +16,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -27,6 +30,12 @@
             return 1;                                                                    \
         }                                                                                \
     } while (false)
+
+// Unlike assert, holds in Release builds too (NDEBUG compiles assert out).
+static void Expect(bool condition, const char *message)
+{
+    if (!condition) throw std::runtime_error(message);
+}
 
 int main(int argc, char **argv)
 {
@@ -352,6 +361,67 @@ int main(int argc, char **argv)
         assert(vegetationRatio < standardRatio * 0.5);
         assetimport::MeshImportOptions flags{true, true, true, true};
         assert(flags.ToFlags() == 15 && assetimport::MeshImportOptions::FromFlags(15).vegetationLods);
+
+        // A triangle budget replaces the source with a simplified base before the LODs are built: the finest LOD
+        // stays near the budget, the source's geometry is gone, and every remaining vertex is referenced.
+        assetimport::MeshImportOptions budgeted{true, true, true, true, 1000};
+        const auto budgetedAsset = importer.ImportMeshSourceAsset(leavesGltfPath.string(), budgeted);
+        Expect(budgetedAsset.submeshes.size() == 1, "A budgeted import must keep one submesh");
+        const auto &budgetedLods = budgetedAsset.submeshes.front().lods;
+        const auto budgetedTriangles = budgetedLods.front().indexCount / 3;
+        std::cout << "Leaf-card budget 1000: LOD0 " << budgetedTriangles << " triangles, "
+                  << budgetedAsset.meshData.vertices.size() << " vertices, " << budgetedLods.size() << " LODs\n";
+        Expect(budgetedTriangles > 0 && budgetedTriangles <= 2000, "A budgeted import must keep its finest LOD near the budget");
+        Expect(budgetedAsset.meshData.vertices.size() < leafPositions.size() / 3, "A budgeted import must drop the source's vertices");
+        std::vector<bool> referenced(budgetedAsset.meshData.vertices.size());
+        for (const auto index : budgetedAsset.meshData.indices) referenced.at(index) = true;
+        Expect(std::ranges::all_of(referenced, [](bool used) { return used; }), "A budgeted import must leave no unreferenced vertex");
+    }
+    {
+        // ApplyTriangleBudget leaves a mesh within its budget, and a skinned mesh, unchanged.
+        render::MeshData quad{{{{0, 0, 0}, {0, 0, 1}, {0, 0}, {1, 0, 0, 1}}, {{1, 0, 0}, {0, 0, 1}, {1, 0}, {1, 0, 0, 1}},
+                               {{1, 1, 0}, {0, 0, 1}, {1, 1}, {1, 0, 0, 1}}, {{0, 1, 0}, {0, 0, 1}, {0, 1}, {1, 0, 0, 1}}},
+                              {0, 1, 2, 0, 2, 3}};
+        std::vector<render::Submesh> quadSubmeshes(1);
+        quadSubmeshes.front().indexCount = 6;
+        const auto within = assetimport::ApplyTriangleBudget(quad, quadSubmeshes, 2,
+                                                            assetimport::TriangleBudgetSimplification::PreserveTopology);
+        Expect(!within.applied && within.sourceTriangles == 2 && quad.indices.size() == 6, "A mesh within its budget must stay unchanged");
+        quad.vertices.front().weights = {1, 0, 0, 0};
+        const auto skinned = assetimport::ApplyTriangleBudget(quad, quadSubmeshes, 1,
+                                                             assetimport::TriangleBudgetSimplification::PruneIslands);
+        Expect(!skinned.applied && quad.indices.size() == 6, "A skinned mesh must ignore the budget");
+
+        // Cards keep their coverage: 2000 separate unit quads (4000 triangles) at a 2000-triangle budget keep about
+        // half of the cards, each enlarged so that the total area stays about the source's.
+        render::MeshData cards;
+        for (std::uint32_t card = 0; card < 2000; ++card)
+        {
+            const float x = static_cast<float>(card % 50) * 3.0f, z = static_cast<float>(card / 50) * 3.0f;
+            const auto base = static_cast<std::uint32_t>(cards.vertices.size());
+            for (const auto &[dx, dy] : {std::pair(0.0f, 0.0f), std::pair(1.0f, 0.0f), std::pair(1.0f, 1.0f), std::pair(0.0f, 1.0f)})
+                cards.vertices.push_back({{x + dx, dy, z}, {0, 0, 1}, {dx, dy}, {1, 0, 0, 1}});
+            cards.indices.insert(cards.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        }
+        std::vector<render::Submesh> cardSubmeshes(1);
+        cardSubmeshes.front().indexCount = static_cast<std::uint32_t>(cards.indices.size());
+        const std::array surfaces{assetimport::TriangleBudgetSurface::Cards};
+        const auto reduced = assetimport::ApplyTriangleBudget(cards, cardSubmeshes, 2000,
+                                                             assetimport::TriangleBudgetSimplification::PruneIslands, surfaces);
+        float area = 0.0f;
+        for (std::size_t i = 0; i < cards.indices.size(); i += 3)
+        {
+            const auto position = [&](std::size_t corner)
+            {
+                const auto &p = cards.vertices[cards.indices[i + corner]].position;
+                return glm::vec3(p[0], p[1], p[2]);
+            };
+            area += 0.5f * glm::length(glm::cross(position(1) - position(0), position(2) - position(0)));
+        }
+        std::cout << "Card budget 2000: " << reduced.keptTriangles << " triangles, area " << area << " of 2000\n";
+        Expect(reduced.applied && reduced.keptTriangles <= 2000 && reduced.keptTriangles >= 1000,
+               "Cards must be reduced to their budget by whole cards");
+        Expect(area > 1700.0f && area < 2300.0f, "Dropped cards must be made up by enlarging the rest");
     }
     // Alternating cook settings must preserve both disk cache variants.
     // Native skinned LODs preserve vertex payloads and the original index range.

@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/MeshImpostor.h"
 #include <glm/glm.hpp>
 #include <algorithm>
 #include <limits>
@@ -29,6 +30,11 @@ namespace PlutoGE::render
         uint32_t minShadowLodIndex = 0;
         float maxDrawDistance = std::numeric_limits<float>::max();
         float maxShadowDistance = std::numeric_limits<float>::max();
+        // Instanced commands of a mesh with an impostor: the camera passes draw instances smaller than the impostor's
+        // screen radius as impostor cards instead of this submesh. Exactly one command per cluster, the owner, also
+        // draws those cards (one card per instance represents every submesh); the others only hand them over.
+        const MeshImpostor *impostor = nullptr;
+        bool impostorOwner = false;
         bool isStatic = false;
         bool castsShadow = true;
         bool usePrimaryUvForLightmap = false;

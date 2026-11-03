@@ -14,6 +14,8 @@
 inline void CheckInstanceLods(PlutoGE::render::BasicRenderer &renderer)
 {
     using namespace PlutoGE::render;
+    // The statistics checked here count CPU-binned instances (GpuInstanceCulling has its own check).
+    renderer.SetGpuInstanceCulling(false);
     renderer.Resize(64, 64);
     // LOD0: a 10 x 10 grid of quads (200 triangles); LOD1: one quad (2 triangles), after it in the index buffer.
     std::vector<BasicVertex> vertices;

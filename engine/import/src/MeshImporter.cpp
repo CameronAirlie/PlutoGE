@@ -1,6 +1,7 @@
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/import/MeshTriangleBudget.h"
 #include "SimplificationSeamLocks.h"
 #include "SkinWeightAttributeSlots.h"
 
@@ -174,7 +175,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 40;
+        constexpr uint32_t kCookedMeshCacheVersion = 41;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -252,6 +253,7 @@ namespace PlutoGE::assetimport
             bool optimizeOverdraw = false;
             bool assimpQualityPostProcess = false;
             bool vegetationLods = false;
+            uint32_t triangleBudget = 0; // MeshImportOptions::triangleBudget; part of the cache key, not the flags
 
             uint32_t ToFlags() const
             {
@@ -264,6 +266,12 @@ namespace PlutoGE::assetimport
                 flags |= vegetationLods ? 32u : 0u;
                 return flags;
             }
+
+            // Identifies the cooked result in the disk and in-process caches: the flags, plus the budget when set.
+            std::string CacheKey() const
+            {
+                return std::to_string(ToFlags()) + (triangleBudget != 0 ? "-b" + std::to_string(triangleBudget) : std::string());
+            }
         };
 
         MeshCookOptions ResolveMeshCookOptions(const MeshImportOptions &requested = {})
@@ -275,6 +283,7 @@ namespace PlutoGE::assetimport
                 .optimizeOverdraw = requested.optimizeOverdraw || ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", false),
                 .assimpQualityPostProcess = ReadBooleanEnvironmentFlag("PLUTOGE_ASSIMP_QUALITY_POSTPROCESS", false),
                 .vegetationLods = requested.vegetationLods,
+                .triangleBudget = requested.triangleBudget,
             };
         }
 
@@ -324,7 +333,7 @@ namespace PlutoGE::assetimport
             const std::string normalizedPath = NormalizePath(filePath);
             const auto sourcePath = std::filesystem::path(normalizedPath);
             const auto hash = HashCacheKey(normalizedPath);
-            return sourcePath.parent_path() / ".plutoge-cache" / "meshes" / (std::to_string(hash) + "-" + std::to_string(cookOptions.ToFlags()) + ".pmesh");
+            return sourcePath.parent_path() / ".plutoge-cache" / "meshes" / (std::to_string(hash) + "-" + cookOptions.CacheKey() + ".pmesh");
         }
 
         template <typename T>
@@ -1951,6 +1960,10 @@ namespace PlutoGE::assetimport
                 float minDistanceFactor = 0.0f;
                 float maxScreenRadiusPixels = std::numeric_limits<float>::max();
                 float error = 0.02f;
+                // Most triangles the whole model keeps at this LOD, shared among its submeshes by their triangles
+                // (0: no cap). Fixed ratios alone leave a multi-million-triangle scan thousands of triangles at its
+                // coarsest LOD; the caps bring every model's distant LODs down to a few hundred.
+                std::uint32_t maxModelTriangles = 0;
             };
 
             struct PendingLodRange
@@ -1997,9 +2010,12 @@ namespace PlutoGE::assetimport
             constexpr std::array<LodTarget, 5> kVegetationLodTargets{{
                 {.targetRatio = 0.25f, .minDistanceFactor = 4.0f, .maxScreenRadiusPixels = 420.0f, .error = 0.02f},
                 {.targetRatio = 0.08f, .minDistanceFactor = 8.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.05f},
-                {.targetRatio = 0.025f, .minDistanceFactor = 16.0f, .maxScreenRadiusPixels = 110.0f, .error = 0.10f},
-                {.targetRatio = 0.008f, .minDistanceFactor = 32.0f, .maxScreenRadiusPixels = 55.0f, .error = 0.20f},
-                {.targetRatio = 0.0025f, .minDistanceFactor = 64.0f, .maxScreenRadiusPixels = 25.0f, .error = 0.35f},
+                {.targetRatio = 0.025f, .minDistanceFactor = 16.0f, .maxScreenRadiusPixels = 110.0f, .error = 0.10f,
+                 .maxModelTriangles = 4000},
+                {.targetRatio = 0.008f, .minDistanceFactor = 32.0f, .maxScreenRadiusPixels = 55.0f, .error = 0.20f,
+                 .maxModelTriangles = 1500},
+                {.targetRatio = 0.0025f, .minDistanceFactor = 64.0f, .maxScreenRadiusPixels = 25.0f, .error = 0.35f,
+                 .maxModelTriangles = 500},
             }};
             const bool vegetation = profile == LodProfile::Vegetation;
             const std::span<const LodTarget> kLodTargets = vegetation ? std::span<const LodTarget>(kVegetationLodTargets)
@@ -2041,6 +2057,8 @@ namespace PlutoGE::assetimport
             {
                 return;
             }
+            std::uint64_t modelTriangles = 0;
+            for (const auto submeshIndex : eligibleSubmeshIndices) modelTriangles += submeshes[submeshIndex].indexCount / 3;
 
             std::vector<PendingSubmeshLods> pendingLods(submeshes.size());
             const auto generateSubmeshLods = [&](size_t submeshIndex)
@@ -2124,8 +2142,25 @@ namespace PlutoGE::assetimport
                         attributeWeights.data(), attributeCount, permissive && !vegetation ? seamLocks.data() : nullptr,
                         targetIndexCount,
                         error, options);
-                    // Clustering reaches any target regardless of topology; it is coarse, so only distant
-                    // vegetation LODs whose careful simplification stalled well above the target use it.
+                    // Seam-locked vegetation (bark with UV and normal splits) stalls: retry permissively with only tearing
+                    // seams locked, which keeps the surface's shape, before resorting to clustering.
+                    if (vegetation && count > targetIndexCount * 2u)
+                    {
+                        if (seamLocks.empty()) seamLocks = BuildTearingSeamLocks(meshData.vertices, globalByLocal, localPositions);
+                        std::vector<unsigned int> relaxed(submesh.indexCount);
+                        const size_t relaxedCount = meshopt_simplifyWithAttributes(
+                            relaxed.data(), localIndices.data(), submesh.indexCount, localPositions.front().data(),
+                            localPositions.size(), sizeof(localPositions.front()), attributes.data(),
+                            attributeCount * sizeof(float), attributeWeights.data(), attributeCount, seamLocks.data(),
+                            targetIndexCount, error, meshopt_SimplifyPrune | meshopt_SimplifyPermissive);
+                        if (relaxedCount > 0 && relaxedCount < count)
+                        {
+                            std::copy_n(relaxed.begin(), relaxedCount, simplified.begin());
+                            count = relaxedCount;
+                        }
+                    }
+                    // Clustering reaches any target regardless of topology, but at small targets its coarse grid turns
+                    // a surface into spikes; only vegetation LODs that still stalled well above the target use it.
                     if (vegetation && count > targetIndexCount * 2u)
                         count = meshopt_simplifySloppy(simplified.data(), localIndices.data(), submesh.indexCount,
                                                        localPositions.front().data(), localPositions.size(),
@@ -2134,7 +2169,12 @@ namespace PlutoGE::assetimport
                 };
                 for (const auto &lodTarget : kLodTargets)
                 {
-                    const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(static_cast<float>(submesh.indexCount) * lodTarget.targetRatio));
+                    float targetIndices = static_cast<float>(submesh.indexCount) * lodTarget.targetRatio;
+                    if (lodTarget.maxModelTriangles != 0)
+                        targetIndices = std::min(targetIndices, 3.0f * static_cast<float>(lodTarget.maxModelTriangles) *
+                                                                    static_cast<float>(submesh.indexCount / 3) /
+                                                                    static_cast<float>(modelTriangles));
+                    const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(targetIndices));
                     if (targetIndexCount < 3 || targetIndexCount >= submesh.indexCount)
                     {
                         continue;
@@ -2220,6 +2260,28 @@ namespace PlutoGE::assetimport
                     submesh.lods = sourceSubmesh.lods;
                 }
             }
+        }
+
+        // Simplifies a source over its triangle budget before optimisation and LOD generation, which then work on the
+        // budgeted geometry. Vegetation prunes islands, as its LODs do.
+        void ApplyCookTriangleBudget(render::MeshData &meshData, std::vector<render::Submesh> &submeshes,
+                                     const std::vector<ImportedMaterialData> &materials, const MeshCookOptions &cookOptions)
+        {
+            if (cookOptions.triangleBudget == 0) return;
+            // Alpha-masked submeshes (leaves) are cards: the budget drops and enlarges whole cards rather than
+            // collapsing them.
+            std::vector<TriangleBudgetSurface> surfaces;
+            for (const auto &submesh : submeshes)
+                surfaces.push_back(submesh.materialIndex < materials.size() &&
+                                   materials[submesh.materialIndex].alphaMode == render::AlphaMode::Mask
+                                       ? TriangleBudgetSurface::Cards : TriangleBudgetSurface::Solid);
+            const auto result = ApplyTriangleBudget(meshData, submeshes, cookOptions.triangleBudget,
+                                                    cookOptions.vegetationLods ? TriangleBudgetSimplification::PruneIslands
+                                                                               : TriangleBudgetSimplification::PreserveTopology,
+                                                    surfaces);
+            if (result.applied)
+                std::clog << "[Mesh import] Triangle budget " << cookOptions.triangleBudget << ": " << result.sourceTriangles
+                          << " -> " << result.keptTriangles << " triangles\n";
         }
 
         void OptimizeGeneratedLodRanges(render::MeshData &meshData,
@@ -4712,6 +4774,7 @@ namespace PlutoGE::assetimport
                 profile->missingNormalsMs = ElapsedMilliseconds(missingNormalsStart);
             }
             GenerateMissingTangents(asset.meshData);
+            ApplyCookTriangleBudget(asset.meshData, asset.submeshes, asset.materials, cookOptions);
             const auto optimizeStart = ImportClock::now();
             OptimizeMeshData(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, profile);
             if (profile && profile->enabled)
@@ -4958,6 +5021,7 @@ namespace PlutoGE::assetimport
             logProgress("Mesh assembled; generating LODs and optimizing");
             const auto optimizeStart = ImportClock::now();
             GenerateMissingTangents(parsedMeshAsset.meshData);
+            ApplyCookTriangleBudget(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, parsedMeshAsset.materials, cookOptions);
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods,
                                 cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard);
@@ -5018,7 +5082,7 @@ namespace PlutoGE::assetimport
         // generations. A fixed-size retirement queue leaves dangling scene pointers.
         const auto normalizedPath = NormalizePath(filePath);
         const auto cookOptions = ResolveMeshCookOptions(options);
-        const auto cacheKey = normalizedPath + "|" + std::to_string(cookOptions.ToFlags());
+        const auto cacheKey = normalizedPath + "|" + cookOptions.CacheKey();
         const auto cachedMesh = m_meshCache.find(cacheKey);
         if (cachedMesh != m_meshCache.end())
         {
@@ -5055,7 +5119,7 @@ namespace PlutoGE::assetimport
     {
         const auto normalizedPath = NormalizePath(filePath);
         const auto cookOptions = ResolveMeshCookOptions(options);
-        const auto cacheKey = normalizedPath + "|" + std::to_string(cookOptions.ToFlags());
+        const auto cacheKey = normalizedPath + "|" + cookOptions.CacheKey();
         const auto cachedMesh = m_meshCache.find(cacheKey);
         if (cachedMesh != m_meshCache.end())
         {

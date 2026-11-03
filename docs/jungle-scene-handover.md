@@ -10,9 +10,13 @@ storage too, so a frame uses about 9.3 MB of the 32 MB Vulkan uniform arena, and
 in the editor viewport is fixed. The work up to that point is committed (engine `45e90be4` on `vulkanrhi`, sample
 `6a41eb9`).
 
-**2026-11-03 performance pass (uncommitted, engine only).** Per-instance view and draw-distance culling plus a
-triangle-density cap on per-instance LOD took the trailhead benchmark on the Vega 8 iGPU from 1365 ms to 400 ms of
-scene GPU time (§3.3). Most of what is left is canopy trees already at their coarsest LOD (§3.8).
+**2026-11-03 performance pass (uncommitted, engine and sample).** On the user's Vega 8 iGPU at the trailhead (Low,
+1280×720), scene GPU time went from 1365 ms to 42 ms and the frame from 2.4 s to 57 ms (§3.3). The changes:
+- Per-instance and per-cluster culling, and a triangle-density cap on per-instance LOD (`docs/FOLIAGE.md`).
+- Triangle budgets (the plan's asset rules) with absolute vegetation LOD caps.
+- Octahedral impostors for distant trees.
+- GPU instance culling with occlusion. It is implemented and tested but off by default, because without an indirect
+  draw count it costs more than it saves here (§3.10).
 
 ## 1. Repositories and uncommitted changes
 
@@ -20,9 +24,16 @@ Two repositories. Paths differ between the user's machines. On the Vega 8 machin
 `C:\Users\Cameron.Airlie\dev\PlutoGE` (build tree `out/build/msvc18`) and the sample is `D:\dev\ThirdPersonProject`.
 The user has their own uncommitted edits in the sample (Basin model metas, the project file). Leave those alone.
 
-The tables below list the files of the committed work. The 2026-11-03 pass changed `BasicRenderer.{h,cpp}`,
-`RhiSceneRenderer.{h,cpp}`, `editor/ui/src/EditorProfiler.cpp`, `editor/ui/src/panels/ProfilerPanel.cpp`,
-`tests/InstanceLodChecks.h`, `docs/FOLIAGE.md` and this file.
+The tables below list the files of the committed work. The uncommitted 2026-11-03 pass adds:
+
+| Area | Files |
+| --- | --- |
+| Triangle budgets | `engine/import/{include/PlutoGE/import,src}/MeshTriangleBudget.*` (new), `MeshImportOptions.h`, `MeshImporter.cpp` (budget pass, LOD caps), `ModelImportSettings.cpp` (`MODEL_TRIANGLE_BUDGET`), `ModelArtifactSettings.cpp`, `ContentBrowserPanel.cpp` |
+| Impostor baking | `engine/import/{include/PlutoGE/import,src}/ImpostorBaker.*` (new), `engine/render/include/PlutoGE/render/ImpostorLayout.h` (new), `ModelImportService.cpp`, `AssetManager.{h,cpp}` (`.plutomesh` format 6) |
+| Impostor rendering | `MeshImpostor.h` (new), `RenderCommand.h`, `RetainedRenderScene.cpp`, `FoliageComponent.{h,cpp}`, `engine/render/src/ImpostorDraws.*` (new), `RhiSceneRenderer.{h,cpp}`, `BasicRenderer.{h,cpp}`, `GeometryRendering.cpp`, `VirtualShadowMaps.cpp`, shaders `BasicLitImpostor.slang`, `ImpostorLayout.slang` (new) |
+| Culling | `BasicRenderer.cpp` (cluster and per-instance culling, density cap), `engine/render/src/GpuInstanceCulling.*` and `shaders/InstanceCulling.slang` (new), `OcclusionCulling.{h,cpp}` (hierarchy view), `BasicLit.slang` (bin header lookup), `RhiRenderService.*`, benchmark `--gpu-instance-culling` and `instance_binning_ms` |
+| Tests | `tests/ImpostorChecks.h`, `tests/GpuInstanceCullingChecks.h` (new), `InstanceLodChecks.h`, `LargeMeshOptimizationTests.cpp`, `ModelImportSettingsTests.cpp`, ctest `PlutoGE{Vulkan,OpenGL}{Impostor,GpuInstanceCulling}Tests` |
+| Sample | `Tools/levelkit/models.py` (`ImportOptions`, `apply_import_options(force=...)`), `vegetation.py` (`imported_triangles`), `verdant.py` (tree shadow floors 2), `verdant_assets.json` (budgets, impostors), regenerated scene, reimported models |
 
 **Engine** (branch `vulkanrhi`):
 
@@ -98,7 +109,7 @@ need no manual registration.
      (see the depth-variant filter in `GeometryRendering.cpp`), and any shader including `BasicLit.slang` that
      still indexes `instances[instanceId]` directly.
 3. **Frame cost at full density (benchmark, 1280×720, High, on the machine the earlier work used; Basin is 12.5 ms
-   there):**
+   there; superseded by the Vega 8 table below):**
 
    | Scope | ms |
    | --- | --- |
@@ -117,7 +128,12 @@ need no manual registration.
    | Before (HEAD `45e90be4`) | 1365 | 533 | 831 | 27,419 | 1,767,931 | 64.4 M |
    | Skip instances outside the view | 1187 | 486 | 698 | 17,477 | 1,115,448 | 38.4 M |
    | Triangle-density cap (0.5 per pixel) | 506 | 174 | 328 | 17,345 | 1,115,448 | 35.3 M |
-   | Skip instances beyond the draw distance | **400** | 141 | 254 | 2,354 | 36,670 | 23.7 M |
+   | Skip instances beyond the draw distance | 400 | 141 | 254 | 2,354 | 36,670 | 23.7 M |
+   | Triangle budgets, LOD caps, impostors (reimported) | 43 | 5.4 | 32.3 | 2,206 | 43,926 | 1.7 M |
+   | Cull whole clusters first | **42** | 5.4 | 30.7 | 2,207 | — | — |
+
+   With cluster culling the frame is 57 ms (CPU-bound: 49 ms recording, of which instance binning is 10 ms). The
+   benchmark CSV now has `instance_binning_ms`.
 
    "Instance draws" counts an instance once per submesh. A density cap of 0.25 measured the same as 0.5 (509 ms),
    because the instances it would coarsen are already at their last LOD, so 0.5 stays. The user's editor capture
@@ -135,17 +151,41 @@ need no manual registration.
    - No wind.
 7. **Verdant DDGI uses voxel rays.** Hardware rays rebuilt acceleration structures over all plants every frame
    (17.7 ms). Masked leaves are opaque to hardware rays anyway (plan E11).
-8. **Canopy trees bottom out at their coarsest LOD** (after the pass above). Estimated from the trailhead: canopy and
-   understorey trees are about 89% of the triangles, and about 94% of canopy instances already draw their chain's
-   last LOD. That LOD is 0.25% of sources of 1.1–3.9 M triangles, so 2.7–9.7 k triangles each, and the canopy has no
-   draw distance. Only a deeper vegetation chain (needs reimporting the Verdant models) or impostors (E6) will reduce
-   this; a canopy draw distance in `verdant.py` is the content-side stopgap.
+8. **Resolved: canopy trees bottomed out at their coarsest LOD.**
+   - Every Verdant model now imports under a triangle budget (`verdant_assets.json` `triangle_budget`; 25 k for
+     trees). Vegetation LODs 3–5 have absolute model caps.
+   - Canopy and understorey trees bake impostors (`"impostor": true`), drawn below 40 px.
+   - Leaf thinning: budgeted leaves are fewer, enlarged cards (`MaxCardEnlargement` 1.75), which read slightly chunky
+     up close. Mid-distance trees still thin out until E3 (coverage-preserving alpha mips).
+   - Impostors read a little warmer and brighter than the lit meshes at distance; compare the aerial and lookout
+     renders before tuning.
 9. **The editor and runtime cull foliage differently.** The editor viewport calls
    `Renderer::PrepareVisibleRenderCommands`, which copies each partly visible cluster's surviving instances into
    pooled scratch arrays (`CullRenderCommandInstances`). The runtime hands every scene command to the RHI renderer
    unculled. Per-instance binning now culls by view and draw distance in both, so for clusters with a LOD chain the
    editor's scratch copy is redundant. It also costs more than it saves, because scratch arrays are not retained and
    re-upload their instance records every frame. Skip that copy for commands the RHI bins.
+10. **GPU instance culling is off by default.** `GpuInstanceCulling` (count, scan and scatter compute passes, with
+    occlusion against the previous frame's depth hierarchy) draws the same images as CPU binning on both backends
+    (`--gpu-instance-culling` tests). Measured at the trailhead with cluster culling, though, it lost:
+    - The passes take 0.7 ms.
+    - Every LOD slot of every binned draw is an indirect draw, about 21 k per pass against CPU binning's 2.2 k
+      non-empty draws. That raised scene GPU from 42 to 94 ms and recording CPU from 49 to 132 ms.
+    - To make it pay: an indirect draw count in the RHI (`vkCmdDrawIndexedIndirectCount`,
+      `GL_ARB_indirect_parameters`) to compact slots, and slots only for the LODs a cluster's distance range can
+      reach. Then re-measure with `--gpu-instance-culling` against the default.
+11. **Open: dark angular shapes in the aerial review render** (`Tests/views/Verdant/aerial.png`, on the ground near
+    clearings and the gorge). They appeared with the triangle-budget reimport and stay in the same places.
+    - Ruled out:
+      - impostors (a render with the impostor shaders removed still shows them);
+      - tree shadow LOD floors (4 → 2);
+      - deadwood card enlargement (cap 2.5 → 1.75, deadwood budget 12 k);
+      - clustered vegetation LODs (permissive retry before clustering, `VegetationLodVersion` 2);
+      - deadwood and roots: beyond their draw distances from the 260 m camera.
+    - Next: render the aerial view with one layer at a time (or one model's budget removed) to find the source.
+      Ground-level views do not show them.
+12. **Shading now dominates.** With geometry fixed, the main geometry pass (BasicLit shading at 720p on alpha-tested
+    foliage) is about 31 of the 42 ms. Profile its lighting cost (DDGI apply, VSM fallback to CSM, subsurface) next.
 
 ## 4. How to work on it
 
@@ -191,15 +231,17 @@ need no manual registration.
    - Exit when `uniform_bytes` is below 8 MB at full density and the editor opens Verdant cleanly.
 2. **Pass the full GPU suite** on both backends, per §3.2.
 3. **Draw count and overdraw.**
-   - Done (2026-11-03): CPU per-instance view and draw-distance culling and a triangle-density cap in the LOD
-     binning (§3.3).
-   - Next, the biggest lever: canopy triangles at the last LOD (§3.8). Extend `kVegetationLodTargets` with coarser
-     steps, or better an absolute per-mesh triangle floor, then reimport the Verdant models and check the review
-     renders. Impostors (E6) after that.
-   - Drop the editor's redundant scratch-array instance culling for binned clusters (§3.9).
-   - Bin shadows by instance too, or at least by chunk.
-   - Consider skipping the coverage depth prepass for instanced alpha-tested foliage; measure both.
-   - Then GPU culling (plan E8 proper): compute frustum and HiZ culling per instance, writing the bins.
+   - Done (2026-11-03):
+     - per-instance and per-cluster view and draw-distance culling;
+     - the triangle-density cap;
+     - triangle budgets with absolute LOD caps;
+     - impostors (E6);
+     - GPU instance culling with HiZ (E8; opt-in, §3.10).
+   - Next:
+     - Make GPU culling pay (§3.10).
+     - Profile the shading cost (§3.12).
+     - Drop the editor's redundant scratch-array instance culling (§3.9).
+     - Bin shadows by instance.
    - Exit at under 33 ms at High at the trailhead.
 4. **E1 wind**, the biggest visual gap. Design notes:
    - Apply wind in the instanced vertex path (`BasicLit.slang instanceObject` / `transformSurfaceVertex`) and the
@@ -210,7 +252,8 @@ need no manual registration.
 5. **E3** coverage-preserving alpha mips. Leaves thin out at distance; visible in the aerial and lookout renders.
 6. **Assets:** tropical hero trees, palms and vines (Fab or ambientCG; check licences, see the plan §2). Retune the
    per-layer `max_triangles` budgets in `verdant.py`.
-7. **The rest of the plan:** E2 texture compression, E5 translucency, E6 impostors, E10 16-bit heightmaps,
+7. **The rest of the plan:** E2 texture compression, E5 translucency, E6 impostor refinements (frame blending,
+   shadows from depth, an "impostor beyond" setting per foliage type), E10 16-bit heightmaps,
    E11 masked RT, E12 weather, and E13 quality scaling (the density hook exists; presets do not use it).
 
 When something lands, update `docs/FOLIAGE.md` or the relevant engine doc, the plan's status, and this handover.

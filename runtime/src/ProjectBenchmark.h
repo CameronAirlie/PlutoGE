@@ -52,6 +52,7 @@ namespace PlutoGE
         bool frozenRender = false;
         // Records, submits and presents on the calling thread instead of the render thread (for comparisons).
         bool serialRender = false;
+        bool gpuInstanceCulling = false; // --gpu-instance-culling: bin instanced draws on the GPU
         // Geometry shading diagnostic applied to every measured frame.
         render::GeometryDiagnosticMode geometryDiagnostic = render::GeometryDiagnosticMode::None;
         // Project graphics tier applied before the scene loads. Frozen captures run
@@ -82,9 +83,9 @@ namespace PlutoGE
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 11) // project, output, two counts and seven switches
+            if (args.size() < 2 || args.size() > 12) // project, output, two counts and eight switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
-                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] "
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--gpu-instance-culling] "
                                             "[--quality=low|medium|high|ultra] [--camera-pan=<degrees>] "
                                             "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
@@ -109,6 +110,7 @@ namespace PlutoGE
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
+                else if (value == "--gpu-instance-culling" && !result.gpuInstanceCulling) result.gpuInstanceCulling = true;
                 else if (value.starts_with(capturePrefix) && result.capture.empty())
                 {
                     result.capture = std::filesystem::path(value.substr(capturePrefix.size()));
@@ -182,7 +184,7 @@ namespace PlutoGE
             "parallel_recording", "descriptor_cpu_ms", "descriptor_binds", "uniform_bytes", "persistent_uniform_bytes", "vsm_page_batches",
             "point_shadow_face_updates", "point_shadow_draws", "point_shadow_object_uploads",
             "point_shadow_invalid_projection", "point_shadow_invalid_casters", "point_shadow_invalid_content", "point_shadow_static_faces",
-            "gpu_observation_id"};
+            "instance_binning_ms", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

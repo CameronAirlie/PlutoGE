@@ -82,6 +82,14 @@ namespace PlutoGE::render
         return m_sceneRenderer ? m_sceneRenderer->GetColorTexture() : rhi::TextureHandle{};
     }
 
+    void RhiRenderService::SetGpuInstanceCulling(bool enabled)
+    {
+        (void)WaitForFrame();
+        m_gpuInstanceCulling = enabled;
+        if (m_sceneRenderer)
+            m_sceneRenderer->SetGpuInstanceCulling(enabled);
+    }
+
     void RhiRenderService::SetRenderThreadEnabled(bool enabled)
     {
         (void)WaitForFrame();
@@ -165,6 +173,7 @@ namespace PlutoGE::render
             sceneRenderer->SetTemporalUpscalerOptions(m_upscalerOptions);
             sceneRenderer->SetGraphicsQuality(m_graphicsQuality);
             sceneRenderer->SetRenderingSettings(m_renderingSettings);
+            sceneRenderer->SetGpuInstanceCulling(m_gpuInstanceCulling);
             m_sceneRenderer = std::move(sceneRenderer);
         }
         const bool runtimeUi = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI();

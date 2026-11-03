@@ -183,7 +183,8 @@ frame, every instance of a cluster with a LOD chain is:
    bounding disc. The shared thresholds alone would leave a multi-million-triangle scan with tens of thousands of
    triangles on a tree a few dozen pixels across.
 
-Each LOD then draws once over its binned instances. The depth prepass uses the same bins as the shaded pass. The
+Before any per-instance work, a cluster whose bounds lie wholly outside the view or beyond its draw distance is
+culled whole and given empty bins. Each LOD then draws once over its binned instances. The depth prepass uses the same bins as the shaded pass. The
 profiler reports the skipped instances ("outside the view or draw distance skipped"). Shadow passes keep the cluster
 LOD, floored by `MinShadowLod`, and are not culled per instance.
 
@@ -206,22 +207,97 @@ Arrays unused for four frames are released, and their pages are reused once no f
 Scanned plants often carry millions of triangles in thousands of disconnected leaves and twigs. The standard
 importer LODs lock every island's border, so they barely reduce such a mesh. Turn on **Vegetation LODs** in a
 model's import settings (Content Browser; `MODEL_OPTIONS` bit 8, `MeshImportOptions::vegetationLods`) for a deeper
-chain:
+chain. Each step keeps a share of the finest LOD, but never more than its cap on the whole model's triangles (shared
+among submeshes by their triangles), so every model's distant LODs end at a few hundred triangles:
 
-| LOD | Share of triangles | Used until (projected radius) |
-| --- | --- | --- |
-| 1 | 25% | 420 px |
-| 2 | 8% | 220 px |
-| 3 | 2.5% | 110 px |
-| 4 | 0.8% | 55 px |
-| 5 | 0.25% | 25 px |
+| LOD | Share of triangles | Model cap | Used until (projected radius) |
+| --- | --- | --- | --- |
+| 1 | 25% | — | 420 px |
+| 2 | 8% | — | 220 px |
+| 3 | 2.5% | 4,000 | 110 px |
+| 4 | 0.8% | 1,500 | 55 px |
+| 5 | 0.25% | 500 | 25 px |
 
 The vegetation profile prunes small islands first. When topology-preserving simplification stalls at more than
-twice its target, it falls back to clustering.
+twice its target, it retries permissively with only tearing seams locked, and falls back to clustering only if that
+stalls too (at small targets clustering turns bark into spikes). `VegetationLodVersion` in the artifact settings
+rebuilds vegetation imports when the chain changes.
 
-The chain ends at 0.25% of the source. For sources of millions of triangles that is still thousands of triangles per
-instance (a 3.9 M-triangle jacaranda keeps about 9,700), and the triangle-density rule above cannot go further than the
-last LOD. Such trees need a deeper chain or impostors at distance.
+### Triangle budgets
+
+A model's **Triangle budget** (Content Browser; `MODEL_TRIANGLE_BUDGET` in its `.plutometa`,
+`MeshImportOptions::triangleBudget`) caps its finest LOD. A denser static source is reduced to about the budget before
+its LODs are built (`ApplyTriangleBudget`, `engine/import/include/PlutoGE/import/MeshTriangleBudget.h`); its original
+geometry is dropped and unused vertices compacted, so the import is also smaller and faster to cook.
+
+- Each distinct submesh range gets a share of the budget by its triangles. Opaque ranges (trunks, rocks) are
+  weighted four times alpha-masked ones, because silhouettes need geometry and leaves get their shape from texture.
+- **Opaque** ranges are simplified, retrying permissively with only tearing seams locked (UV and skin seams) when
+  split normals or seams lock them. The finest LOD never falls back to clustering, which smears texture coordinates.
+- **Alpha-masked** ranges are cards: each card is simplified, then whole cards are dropped, spread evenly over the
+  surface, and the rest enlarged about their centres (at most 1.75 times) to keep the surface's coverage.
+- A range is never emptied, and skinned meshes ignore the budget.
+- The artifact settings include the budget and `TriangleBudgetVersion`, so changing either reimports affected
+  models only.
+
+The plan's asset rules (`docs/JUNGLE_SCENE_PLAN.md` section 2) set the budgets the Verdant level kit uses: 25,000 for
+canopy and understorey trees, 6,000 for shrubs, plants, rocks and roots, 800 for ground cover.
+
+### Impostors
+
+**Bake impostor** (Content Browser; `MODEL_OPTIONS` bit 16, `MeshImportOptions::bakeImpostor`) renders the finest LOD
+into an octahedral impostor at import (`BakeImpostor`, `engine/import/include/PlutoGE/import/ImpostorBaker.h`). The
+layout is shared with the renderer in `ImpostorLayout.h` and `ImpostorLayout.slang`.
+
+- **The atlas:** 8 x 8 orthographic views over the upper hemisphere (hemi-octahedral; the grid's edges are the
+  horizon), 128 px each. It is rasterized on the CPU, so imports need no GPU, with 2 x 2 supersampled coverage and
+  dilated edges.
+- **Two maps, published as the model's textures:**
+  - albedo with coverage in alpha (sRGB);
+  - normal and depth (linear). Normals are in each frame's own basis (right, up, view), so a card whose tangent frame
+    is that basis decodes them as an ordinary tangent-space normal map.
+- **In the mesh asset:** the `.plutomesh` (format 6) records the layout and the two texture references.
+  `FoliageComponent` loads them with the mesh (`FoliageType::impostor`). Every cluster command carries the impostor,
+  and one submesh's commands own it: the first alpha-masked submesh, whose material the cards shade with.
+
+At render time (`RhiSceneRenderer`, `ImpostorDraws.h`), a mesh with an impostor hands every instance whose projected
+radius is below the impostor's threshold (40 px by default) to an impostor draw over the same instances. Both measure
+on the same bounding sphere, so each instance draws exactly once.
+
+The impostor draw uses `BasicLitImpostor.slang`'s vertex stages: one card per instance, in the plane of the atlas
+frame nearest the view. Its fragments are BasicLitStandard's unchanged, with the atlas bound as base colour and normal
+maps, so cards light, fog and receive shadows like the meshes. Cards skip shadow casting, GI and VSM receiver depth:
+those keep the mesh at the cluster's shadow LOD.
+
+### GPU instance culling
+
+When enabled (`BasicRenderer::SetGpuInstanceCulling`, off by default; the benchmark's `--gpu-instance-culling`) and
+the device has compute and the `InstanceCulling` shaders load, `GpuInstanceCulling` (`engine/render/src`) bins
+instanced draws on the GPU instead of the CPU loop above. It applies the same culling and LOD rules, and adds
+occlusion against the previous frame's depth hierarchy (`OcclusionCulling::Hierarchy`, used only when it was built
+last frame at the same size and the camera moved under 4 m). Three compute passes run per frame:
+
+1. **Count:** each instance's slot (draw and LOD) is counted.
+2. **Scan:** prefix sums give each bin's offset and fill the indirect draw arguments.
+3. **Scatter:** record indices are written into the bins.
+
+Draws read the bins through the same index buffer binding as CPU bins:
+
+- **Vulkan with indirect first instances:** a draw's LODs go as one indirect batch whose first instances are the bin
+  offsets.
+- **Otherwise (OpenGL):** each LOD is an indirect draw whose vertex shader reads its bin's offset from a header
+  (`instanceRange.z == 2`).
+
+Limits and fallbacks:
+
+- Chains of more than 8 LODs keep the CPU path.
+- It is off by default because every LOD of every binned draw is an indirect draw, empty or not: the RHI has no
+  indirect draw count (`vkCmdDrawIndexedIndirectCount`, `GL_ARB_indirect_parameters`) to drop empty bins. In Verdant
+  on a Vega 8 (2026-11-03, trailhead, 720p Low) the culling passes take 0.7 ms, but about 21,000 indirect draws per
+  pass instead of CPU binning's 2,200 non-empty ones raise scene GPU time from 42 to 94 ms. Adding an indirect count
+  path, and slots only for the LODs a cluster's distance range can reach, are the next steps.
+- Triangles and instances of GPU-binned draws are not counted in the frame statistics, because the bins are never
+  read back. `gpuBinnedDraws` reports how many draws were binned on the GPU.
 
 ## Physics representation
 

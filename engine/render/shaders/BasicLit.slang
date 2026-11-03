@@ -173,8 +173,8 @@ struct InstanceRecord
 [[vk::binding(3, 3)]]
 cbuffer InstanceStorageParameters : register(b3, space3)
 {
-    uint4 instanceRange;            // x first record or bin entry, y 1 for storage, z 1 through bins
-    float4 instanceDebugParameters; // normalized LOD, outline width, probe debug
+    uint4 instanceRange;            // x first record or bin entry, y 1 for storage, z 1 through bins, w impostor frames per side
+    float4 instanceDebugParameters; // normalized LOD, outline width, probe debug; impostors: bounds centre and radius
 };
 [[vk::binding(1, 3)]] StructuredBuffer<InstanceRecord> instanceRecords : register(t1, space3);
 // Per-instance LOD bins: record indices grouped by LOD (InstanceStorage::StageBins). A struct element gives the
@@ -190,7 +190,10 @@ InstanceObjectParameters instanceObject(uint instanceId)
 {
     if (instanceRange.y == 0)
         return instances[instanceId];
-    const uint index = instanceRange.z != 0 ? instanceIndices[instanceRange.x + instanceId].record : instanceRange.x + instanceId;
+    // z: 0 records from x, 1 through bins from entry x, 2 through the GPU-written bin whose offset is header entry x
+    // (InstanceCulling.slang, where draws have no first instance).
+    const uint first = instanceRange.z == 2 ? instanceIndices[instanceRange.x].record : instanceRange.x;
+    const uint index = instanceRange.z != 0 ? instanceIndices[first + instanceId].record : first + instanceId;
     const InstanceRecord record = instanceRecords[index];
     InstanceObjectParameters result;
     result.model = record.model;

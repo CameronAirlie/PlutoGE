@@ -49,6 +49,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <climits>
 #include <array>
 #include <cctype>
 #include <cfloat>
@@ -2492,8 +2493,17 @@ namespace PlutoGE::ui
                 ImGui::EndDisabled();
                 ImGui::Checkbox("Optimize vertex cache", &m_modelSettingsDraft.optimizeVertexCache);
                 ImGui::Checkbox("Optimize overdraw", &m_modelSettingsDraft.optimizeOverdraw);
+                int triangleBudget = static_cast<int>(std::min<std::uint32_t>(m_modelSettingsDraft.triangleBudget, INT_MAX));
+                if (ImGui::InputInt("Triangle budget", &triangleBudget, 1000, 10000))
+                    m_modelSettingsDraft.triangleBudget = static_cast<std::uint32_t>(std::max(triangleBudget, 0));
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Most triangles the finest LOD keeps (0: the source's). A denser static model is simplified "
+                                      "to this budget on import.");
+                ImGui::Checkbox("Bake impostor", &m_modelSettingsDraft.bakeImpostor);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Bakes view cards of the model so distant foliage instances draw as impostors.");
                 ImGui::EndDisabled();
-                const bool settingsChanged = m_modelSettingsDraft.ToFlags() != m_modelSettingsCommitted.ToFlags();
+                const bool settingsChanged = m_modelSettingsDraft != m_modelSettingsCommitted;
                 ImGui::BeginDisabled(importRunning || !m_modelSettingsValid || !settingsChanged);
                 if (ImGui::Button("Apply Settings and Reimport"))
                 {

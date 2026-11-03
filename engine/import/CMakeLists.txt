@@ -2,6 +2,8 @@ add_library(PlutoGEImport
     src/ImportedMaterial.cpp
     src/ImportedModelHierarchy.cpp
     src/MeshImporter.cpp
+    src/MeshTriangleBudget.cpp
+    src/ImpostorBaker.cpp
 )
 
 add_library(PlutoGE::Import ALIAS PlutoGEImport)

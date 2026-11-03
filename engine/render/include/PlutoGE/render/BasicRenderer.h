@@ -6,6 +6,7 @@
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
+#include "PlutoGE/render/ImpostorLayout.h"
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/TerrainLayerLimits.h"
@@ -70,6 +71,7 @@ namespace PlutoGE::render
     class PointShadowLayers;
     class LightClusterGrid;
     class GpuDrivenOpaque;
+    class GpuInstanceCulling;
     struct BindlessMaterialFallbacks;
 
     enum class BasicPostProcessEffectType : std::uint8_t
@@ -266,6 +268,30 @@ namespace PlutoGE::render
         }
     };
 
+    // Impostor cards (BasicLitImpostor.slang): vertex stages that place a camera-facing card per instance and pick its
+    // atlas frame, the second for colour-only layouts and coverage depth. They pair with the standard fragments, so
+    // impostors shade exactly as standard materials do. Without them draws carrying BasicDraw::impostor are skipped.
+    struct BasicImpostorShaderPackage
+    {
+        rhi::GraphicsPipelineDescriptor::ShaderCode vertex, colorVertex;
+        [[nodiscard]] bool Available() const
+        {
+            return (!vertex.glsl.empty() || !vertex.spirv.empty()) && (!colorVertex.glsl.empty() || !colorVertex.spirv.empty());
+        }
+    };
+
+    // GPU instance culling (InstanceCulling.slang, GpuInstanceCulling): count, scan and scatter passes that bin instanced
+    // draws' instances by LOD on the GPU. Without them the renderer bins on the CPU.
+    struct BasicInstanceCullingShaderPackage
+    {
+        rhi::ComputePipelineDescriptor::ShaderCode count, scan, scatter;
+        [[nodiscard]] bool Available() const
+        {
+            const auto present = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
+            return present(count) && present(scan) && present(scatter);
+        }
+    };
+
     // GPU-driven opaque draws (BasicLitBindless.slang, GpuDrivenOpaque): the vertex stage for every geometry layout
     // but Color, and Color's; fragments for Surface and wider layouts, Color, ColorMotion and SurfaceIndirect; and
     // the pass copying occlusion results into the multi-draw commands. Without them every draw binds its material.
@@ -311,6 +337,8 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> coverageFragments;
         std::array<BasicPostProcessShaderPackage, 2> opaqueDepth;
         BasicTerrainShaderPackage terrain;
+        BasicImpostorShaderPackage impostor;
+        BasicInstanceCullingShaderPackage instanceCulling;
         BasicBindlessShaderPackage bindless;
         // Optional per-graph specialisations of fragment, compactFragments[0]
         // and coverageFragments[0]. Null keeps graphs interpreted.
@@ -468,14 +496,20 @@ namespace PlutoGE::render
         glm::vec3 boundsCenter{0.0f}; // the mesh's bounding sphere, in its own space
         float boundsRadius = 0.0f;
         std::uint32_t minimumLod = 0;
+        // The projected radii this draw covers, [minimum, maximum): a mesh with an impostor hands instances smaller
+        // than the impostor's threshold to its impostor draw, whose chain covers just those.
+        float minScreenRadiusPixels = 0.0f;
+        float maxScreenRadiusPixels = std::numeric_limits<float>::infinity();
         // Most triangles a LOD may spend per pixel of the instance's projected bounding disc. The screen-radius
         // thresholds are shared by every mesh, so on its own a multi-million-triangle scan would keep tens of
         // thousands of triangles on a tree a few dozen pixels across; past this density the next coarser LOD is taken.
         static constexpr float MaxTrianglesPerPixel = 0.5f;
-        // The LOD index (into lods) for an instance whose bounding sphere projects to `pixels` in radius.
+        // The LOD index (into lods) for an instance whose bounding sphere projects to `pixels` in radius, or
+        // NotDrawn() when this draw does not cover that size.
+        [[nodiscard]] std::uint32_t NotDrawn() const { return static_cast<std::uint32_t>(lods.size()); }
         [[nodiscard]] std::uint32_t Select(float pixels) const
         {
-            if (lods.empty()) return 0u;
+            if (lods.empty() || pixels < minScreenRadiusPixels || pixels >= maxScreenRadiusPixels) return NotDrawn();
             const auto last = static_cast<std::uint32_t>(lods.size() - 1);
             std::uint32_t selected = 0;
             for (std::uint32_t lod = 0; lod < lods.size(); ++lod)
@@ -485,6 +519,16 @@ namespace PlutoGE::render
             while (selected < last && static_cast<float>(lods[selected].indexCount / 3) > budget) ++selected;
             return selected;
         }
+    };
+
+    // An instanced draw's octahedral impostor (ImpostorLayout.h): the layout and the uploaded atlases. A draw that
+    // carries one as BasicDraw::impostor draws its instances as camera-facing cards (BasicLitImpostor.slang) through
+    // the standard surface shading, with the atlases bound as its base colour and normal maps.
+    struct BasicImpostor
+    {
+        impostor::Parameters parameters;
+        rhi::TextureHandle albedo;
+        rhi::TextureHandle normalDepth;
     };
 
     struct BasicDraw
@@ -556,6 +600,11 @@ namespace PlutoGE::render
         // With instanceLods: the camera passes skip instances whose bounds lie wholly beyond this distance (the
         // producer's draw distance, RenderCommand::maxDrawDistance, which otherwise only culls whole clusters).
         float instanceDrawDistance = std::numeric_limits<float>::max();
+        // Set on an impostor draw: its instances draw as this impostor's cards rather than as the mesh.
+        std::shared_ptr<const BasicImpostor> impostor;
+        // Set on the mesh draw that owns a model's impostor; RhiSceneRenderer adds the impostor draw over the same
+        // instances (ImpostorDraws.h). Other renderer passes ignore it.
+        std::shared_ptr<const BasicImpostor> spawnsImpostor;
         // Authoritative object history survives visibility and draw-order changes.
         std::optional<glm::mat4> previousModel;
         // Optional current world-space AABB. Negative extents select the
@@ -837,6 +886,8 @@ namespace PlutoGE::render
         std::uint32_t lightClusterUpdates = 0;
         // Opaque draws submitted through GPU-driven multi-draw indirect calls, those calls, and live bindless materials.
         std::size_t gpuDrivenDraws = 0, gpuDrivenBatches = 0, gpuDrivenMaterials = 0;
+        // Instanced draws binned by GpuInstanceCulling (their triangles and instances are not counted).
+        std::size_t gpuBinnedDraws = 0;
         // Frame-graph sections run on the async compute queue (zero when its work ran inline or none was needed).
         std::uint32_t asyncComputeSections = 0;
         bool virtualShadowsActive = false;
@@ -865,6 +916,8 @@ namespace PlutoGE::render
     {
         float beginFrameMs = 0.0f;
         float shadowRecordingMs = 0.0f;
+        // Instance record preparation and per-instance culling and LOD binning (part of shadowRecordingMs).
+        float instanceBinningMs = 0.0f;
         float geometryRecordingMs = 0.0f;
         float postProcessRecordingMs = 0.0f;
         float cameraCompositionMs = 0.0f;
@@ -942,6 +995,14 @@ namespace PlutoGE::render
         // renderers use their own label so they never replace the main scene's.
         void SetSubmissionLabel(std::string label) { m_submissionLabel = std::move(label); }
         // Reference switches for controlled rendering/performance comparisons.
+        // Bins instanced draws' instances on the GPU (GpuInstanceCulling) when its shaders are available; off (the
+        // default), they bin on the CPU. The images agree. The GPU path adds occlusion against the previous frame's
+        // depth, but issues one indirect draw per LOD whether or not its bin is empty (the RHI has no indirect draw
+        // count to compact them), which costs more than CPU binning saves on integrated GPUs (docs/FOLIAGE.md). It
+        // leaves triangle and instance statistics of the draws it bins uncounted (it never reads its bins back).
+        void SetGpuInstanceCulling(bool enabled) noexcept { m_gpuInstanceCullingEnabled = enabled; }
+        // Whether the device and shaders allow it (Initialize).
+        [[nodiscard]] bool GpuInstanceCullingAvailable() const noexcept { return static_cast<bool>(m_gpuInstanceCulling); }
         void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
         { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
         // Records shadows and geometry on worker threads when the device supports it. The output is identical;
@@ -1053,6 +1114,7 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_indirectFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_colorVertices, m_standardVertices, m_standardColorVertices;
         BasicTerrainShaderPackage m_terrainShaders;
+        BasicImpostorShaderPackage m_impostorShaders;
         // Pipeline state flags plus the specialised graph structure (0 = interpreter or standard).
         struct GeometryPipelineKey
         {
@@ -1070,6 +1132,12 @@ namespace PlutoGE::render
         std::unordered_map<unsigned, rhi::GraphicsPipeline> m_bindlessGeometryPipelines;
         std::unique_ptr<GpuDrivenOpaque> m_gpuDriven;
         bool m_gpuDrivenOpaqueEnabled = true;
+        std::unique_ptr<GpuInstanceCulling> m_gpuInstanceCulling;
+        bool m_gpuInstanceCullingEnabled = false;
+        // Renders so far, and the one whose occlusion hierarchy the next may cull against (GpuInstanceCulling), with
+        // its camera position.
+        std::uint64_t m_renderCount = 0, m_occlusionHierarchyRender = 0;
+        glm::vec3 m_occlusionHierarchyCamera{0.0f};
         std::shared_ptr<ShaderGraphVariantCache> m_graphVariants;
         [[nodiscard]] rhi::TextureHandle RenderFusedColor(rhi::TextureHandle source,
             std::span<const BasicPostProcessEffect> effects, rhi::ICommandContext &commands,
@@ -1393,6 +1461,7 @@ namespace PlutoGE::render
         rhi::Extent2D m_decalSnapshotSize;
         rhi::GraphicsPipeline m_particleInstancedPipeline;
         rhi::Buffer m_particleQuadIndices;
+        rhi::Buffer m_impostorCardIndices;
         std::vector<rhi::Buffer> m_particleInstances;
         std::vector<std::size_t> m_particleInstanceCapacities;
         rhi::Texture m_particleDepthCopy;

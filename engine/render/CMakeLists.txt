@@ -57,6 +57,8 @@ add_library(PlutoGERender
     src/CloudShadowMap.cpp
     src/atmosphere/CloudTemporalFilter.cpp
     src/InstanceStorage.cpp
+    src/ImpostorDraws.cpp
+    src/GpuInstanceCulling.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiTerrainLayerCache.cpp
@@ -319,6 +321,15 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(BasicLitTerrainInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" instancedVertexMain fragmentMain)
     pluto_add_slang_graphics_shader(BasicLitTerrainColorInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" colorInstancedVertexMain colorMain)
     pluto_add_slang_graphics_shader(BasicLitTerrainIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitTerrain.slang" vertexMain indirectMain)
+    foreach(pass Count Scan Scatter)
+        string(TOLOWER "${pass}" entry)
+        pluto_add_slang_compute_shader(InstanceCulling${pass} "${CMAKE_CURRENT_SOURCE_DIR}/shaders/InstanceCulling.slang" ${entry}Main)
+    endforeach()
+    # Impostor cards: vertex stages only matter; they pair with the BasicLitStandard fragments.
+    pluto_add_slang_graphics_shader(BasicLitImpostor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitImpostor.slang" impostorVertexMain fragmentMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ImpostorLayout.slang")
+    pluto_add_slang_graphics_shader(BasicLitImpostorColor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitImpostor.slang" impostorColorVertexMain colorMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ImpostorLayout.slang")
     foreach(material IN ITEMS BasicLit BasicLitStandard BasicLitTerrain)
         pluto_add_slang_graphics_shader(${material}Color "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" colorVertexMain colorMain)
         pluto_add_slang_graphics_shader(${material}ColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain colorMotionMain)

@@ -589,6 +589,7 @@ int RunRuntime(int argc, char **argv)
         const bool renderThreadDisabled = renderThreadSetting && std::string_view(renderThreadSetting) == "0";
         engine.GetRhiRenderService().SetRenderThreadEnabled(
             !runtimeProfiler && !renderThreadDisabled && !(projectBenchmark && projectBenchmark->serialRender));
+        engine.GetRhiRenderService().SetGpuInstanceCulling(projectBenchmark && projectBenchmark->gpuInstanceCulling);
     }
 
     while (!window.ShouldClose())
@@ -850,7 +851,8 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.pointShadowFaceUpdates), static_cast<double>(render.pointShadowDraws),
                         static_cast<double>(render.pointShadowObjectUploads),
                         static_cast<double>(render.pointShadowInvalidations[1]), static_cast<double>(render.pointShadowInvalidations[2]),
-                        static_cast<double>(render.pointShadowInvalidations[3]), static_cast<double>(render.pointShadowStaticFaceUpdates), 0};
+                        static_cast<double>(render.pointShadowInvalidations[3]), static_cast<double>(render.pointShadowStaticFaceUpdates),
+                        render.instanceBinningMs, 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)

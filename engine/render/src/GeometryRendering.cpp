@@ -126,6 +126,8 @@ namespace PlutoGE::render
     {
         // Terrain layers use their own standard-material variant; without its shaders they draw as standard.
         const bool terrain = draw.terrainLayers && m_terrainShaders.Available();
+        // Impostor cards: their own vertex stages (one card per instance, no vertex input) with the standard fragments.
+        const bool impostor = draw.impostor && m_impostorShaders.Available();
         const bool standard = terrain || (!draw.shaderGraphProgram &&
             (!m_standardFragment.glsl.empty() || !m_standardFragment.spirv.empty()));
         const auto cull = GeometryCullMode(draw);
@@ -138,7 +140,7 @@ namespace PlutoGE::render
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
                 (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
-                (unsigned(terrain) << 11),
+                (unsigned(terrain) << 11) | (unsigned(impostor) << 12),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -202,13 +204,20 @@ namespace PlutoGE::render
                 : layout == GeometryOutputLayout::SurfaceIndirect ? shaders.indirectFragment : shaders.fragment;
             AddTerrainLayerBindings(descriptor);
         }
+        if (impostor)
+        {
+            descriptor.vertexShader = depthOnly || layout == GeometryOutputLayout::Color ? m_impostorShaders.colorVertex
+                                                                                         : m_impostorShaders.vertex;
+            descriptor.vertexLayout = {};
+        }
         if (graphFragment) descriptor.fragmentShader = {.glsl = {}, .spirv = *graphFragment};
-        descriptor.debugName = terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
+        descriptor.debugName = impostor ? (depthOnly ? "Impostor coverage" : "Impostor cards")
+            : terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
             : depthOnly ? "Geometry coverage" : "Geometry required outputs";
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();
         m_geometryPipelines.emplace(key, std::move(pipeline));
-        if (standard && !terrain)
+        if (standard && !terrain && !impostor)
         {
             // Prepare the matching graph path when the scene first prepares
             // ordinary geometry. Unlit loot and hit effects use this path;

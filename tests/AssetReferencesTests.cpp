@@ -166,7 +166,9 @@ namespace
         binary += logical;
         Write(root / "Logical.plutomesh", binary);
         Require(Has(ScanAssetReferences(root / "Logical.plutomesh"), logical), "Binary logical dependency omitted");
-        for (const std::uint32_t version : {4u, 5u, 6u})
+        // Version 6 appends an impostor block (a flag, its 28-byte layout and two atlas references) after the trailer.
+        for (const auto &[version, impostor] : {std::pair(4u, false), std::pair(5u, false), std::pair(6u, false),
+                                                std::pair(6u, true), std::pair(7u, false)})
         {
             std::string mesh = "LPGM";
             for (std::size_t index = 0; index < 4; ++index) mesh += static_cast<char>((version >> (8 * index)) & 255);
@@ -176,11 +178,22 @@ namespace
             string("project://Models/Source.gltf");
             if (version >= 5) { string("model-owner"); pod(42); }
             mesh += std::string(3, '\1');
+            if (version >= 6) mesh += static_cast<char>(impostor ? 1 : 0);
+            if (impostor)
+            {
+                mesh += std::string(28, '\0');
+                string("asset://model-owner#7");
+                string("asset://model-owner#8");
+            }
             Write(root / "Provenance.plutomesh", mesh);
             scan = ScanAssetReferences(root / "Provenance.plutomesh");
-            Require(scan.errors.empty() && scan.occurrences.size() == 2 && scan.occurrences.front().role == AssetReferenceRole::Runtime &&
-                    scan.occurrences.back().role == (version <= 5 ? AssetReferenceRole::ImportSource : AssetReferenceRole::Runtime),
+            const auto expected = impostor ? 4u : 2u;
+            Require(scan.errors.empty() && scan.occurrences.size() == expected && scan.occurrences.front().role == AssetReferenceRole::Runtime &&
+                    scan.occurrences[1].role == (version <= 6 ? AssetReferenceRole::ImportSource : AssetReferenceRole::Runtime),
                     "Mesh source provenance lost its role or classified an unsupported future trailer");
+            if (impostor)
+                Require(scan.occurrences[2].role == AssetReferenceRole::Runtime && scan.occurrences[3].role == AssetReferenceRole::Runtime,
+                        "Impostor atlases must be runtime dependencies of their mesh");
         }
     }
 

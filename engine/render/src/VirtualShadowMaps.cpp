@@ -252,7 +252,8 @@ namespace PlutoGE::render
     }
     bool VirtualShadowMaps::IsReceiver(const BasicDraw &draw) noexcept
     {
-        return draw.mesh && draw.mesh->IsValid() && draw.alphaMode != 2 && draw.surfaceType != 1;
+        // Impostor cards have no mesh geometry to draw receiver depth with; the coverage prepass covers them.
+        return draw.mesh && draw.mesh->IsValid() && draw.alphaMode != 2 && draw.surfaceType != 1 && !draw.impostor;
     }
     bool VirtualShadowMaps::Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                                    std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,

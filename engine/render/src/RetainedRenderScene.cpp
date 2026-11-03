@@ -180,7 +180,8 @@ namespace PlutoGE::render
             geometryChanged |= producer.meshRevisions[i] != (b.mesh ? b.mesh->GetContentRevision() : 0) || a.mesh != b.mesh || a.submeshIndex != b.submeshIndex || a.lodIndex != b.lodIndex || a.isStatic != b.isStatic ||
                 a.castsShadow != b.castsShadow || a.minLodIndex != b.minLodIndex || a.minShadowLodIndex != b.minShadowLodIndex ||
                 a.maxDrawDistance != b.maxDrawDistance || a.maxShadowDistance != b.maxShadowDistance ||
-                a.usePrimaryUvForLightmap != b.usePrimaryUvForLightmap || a.terrainGeomorph != b.terrainGeomorph;
+                a.usePrimaryUvForLightmap != b.usePrimaryUvForLightmap || a.terrainGeomorph != b.terrainGeomorph ||
+                a.impostor != b.impostor || a.impostorOwner != b.impostorOwner;
             materialChanged |= a.material != b.material || a.shader != b.shader;
             transformChanged |= a.model != b.model || a.previousModel != b.previousModel ||
                 a.worldBounds.center != b.worldBounds.center || a.worldBounds.radius != b.worldBounds.radius ||

@@ -219,6 +219,7 @@ namespace PlutoGE::render
         if (!renderer->Initialize(device, shaders))
             return false;
         renderer->SetSubmissionLabel(m_submissionLabel);
+        renderer->SetGpuInstanceCulling(m_gpuInstanceCulling);
         m_device = &device;
         // Weak ownership prevents cached resources outliving their device. All
         // renderers are initialized and used on the rendering thread.
@@ -230,6 +231,13 @@ namespace PlutoGE::render
         m_renderer = std::move(renderer);
         m_upscalerContextId = g_nextUpscalerContextId.fetch_add(1, std::memory_order_relaxed);
         return true;
+    }
+
+    void RhiSceneRenderer::SetGpuInstanceCulling(bool enabled)
+    {
+        m_gpuInstanceCulling = enabled;
+        if (m_renderer)
+            m_renderer->SetGpuInstanceCulling(enabled);
     }
 
     void RhiSceneRenderer::SetSubmissionLabel(std::string label)
@@ -262,6 +270,7 @@ namespace PlutoGE::render
             m_textureCache->means.clear();
             m_textureCache->versions.clear();
             ++m_textureCache->residencyRevision;
+            m_impostors.clear();
         }
         if (m_drawPreparation)
             m_drawPreparation->Reset();
@@ -292,6 +301,7 @@ namespace PlutoGE::render
         m_reusedSkinningFrame.reset();
         m_borrowedSkinningCache = false;
         m_textureCache.reset();
+        m_impostors.clear();
         // The worker owns its pixels and never touches scene or GPU objects.
         m_normalMipJob = {};
         m_pendingNormalSource = nullptr;
@@ -1051,6 +1061,23 @@ namespace PlutoGE::render
         if (prepareShadowCasters) collectSkinning(directionalShadowCommands, true);
         flushSkinning();
 
+        // A producer's impostor with its atlases uploaded; cached by the albedo atlas (producer impostor objects come and
+        // go with their components, asset textures stay).
+        const auto prepareImpostor = [&](const MeshImpostor &source) -> std::shared_ptr<const BasicImpostor>
+        {
+            auto &cached = m_impostors[source.albedo];
+            if (!cached || cached->parameters != source.parameters)
+            {
+                auto impostor = std::make_shared<BasicImpostor>();
+                impostor->parameters = source.parameters;
+                impostor->albedo = uploadTexture(source.albedo, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Impostor albedo");
+                impostor->normalDepth = uploadTexture(source.normalDepth, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear,
+                                                      "Impostor normal and depth");
+                if (!impostor->albedo || !impostor->normalDepth) return nullptr;
+                cached = std::move(impostor);
+            }
+            return cached;
+        };
         const auto appendDraws = [&](RenderCommandView sourceCommands,
                                      RhiDrawPreparationCache::List &cache, bool shadowOnly, bool giOnly = false) {
             // GI may introduce a pose absent from the visible/shadow lists.
@@ -1173,6 +1200,13 @@ namespace PlutoGE::render
                     firstIndex = range.indexOffset;
                     indexCount = range.indexCount;
                 }
+                // An empty submesh draws nothing. Emitting it would draw the rest of the index buffer: BasicDraw reads
+                // an index count of 0 as "to the end of the mesh".
+                if (indexCount == 0)
+                {
+                    entry.Store(command, revision, nullptr);
+                    continue;
+                }
                 if (rigidMesh)
                     if (const auto canonical = rigidMesh->canonicalGeometry.find(GeometryRangeKey({firstIndex, indexCount}));
                         canonical != rigidMesh->canonicalGeometry.end())
@@ -1235,7 +1269,11 @@ namespace PlutoGE::render
                 if (rigidMesh && !shadowOnly && !emissiveGi && lodCount > 1 && command.instanceModels &&
                     command.instanceModels->size() > 1)
                 {
-                    const std::uint64_t key = (std::uint64_t(command.submeshIndex) << 8) | command.GetMinLodIndex();
+                    // A mesh with an impostor hands instances below the impostor's size to it (ImpostorDraws.h).
+                    const float impostorBelow = command.impostor && command.impostor->parameters.Valid()
+                        ? command.impostor->parameters.maxScreenRadiusPixels : 0.0f;
+                    const std::uint64_t key = (std::uint64_t(command.submeshIndex) << 8) | command.GetMinLodIndex() |
+                                              (std::uint64_t(impostorBelow > 0.0f) << 40);
                     auto &chain = rigidMesh->instanceLods[key];
                     if (!chain)
                     {
@@ -1243,6 +1281,7 @@ namespace PlutoGE::render
                         built->boundsCenter = command.mesh->GetBounds().center;
                         built->boundsRadius = command.mesh->GetBounds().radius;
                         built->minimumLod = command.GetMinLodIndex();
+                        built->minScreenRadiusPixels = impostorBelow;
                         const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
                         for (std::size_t lod = 0; lod < lodCount; ++lod)
                         {
@@ -1259,6 +1298,8 @@ namespace PlutoGE::render
                     }
                     draw.instanceLods = chain;
                     draw.instanceDrawDistance = command.maxDrawDistance;
+                    if (impostorBelow > 0.0f && command.impostorOwner)
+                        draw.spawnsImpostor = prepareImpostor(*command.impostor);
                 }
                 draw.preparationRevision = Cacheable(command) ? preparation.NextRevision() : 0;
                 if (!command.material)
@@ -2052,7 +2093,8 @@ namespace PlutoGE::render
         PreparedFrame frame;
         frame.viewProjection = projection * cameraData.view;
         frame.lighting = effectiveLighting;
-        frame.draws = draws;
+        frame.draws = preparation.impostors.Expand(draws, visibleChanged, [&] { return preparation.NextRevision(); });
+        m_timingStats.impostorDrawCount = preparation.impostors.Count();
         frame.shadowDraws = shadowDraws;
         frame.giDraws = giDraws;
         frame.selectionDraws = selectionDraws;
@@ -2124,6 +2166,7 @@ namespace PlutoGE::render
         const auto &rendererTiming = m_renderer->GetTimingStats();
         m_timingStats.beginFrameMs = rendererTiming.beginFrameMs;
         m_timingStats.shadowRecordingMs = rendererTiming.shadowRecordingMs;
+        m_timingStats.instanceBinningMs = rendererTiming.instanceBinningMs;
         m_timingStats.geometryRecordingMs = rendererTiming.geometryRecordingMs;
         m_timingStats.parallelRecording = rendererTiming.parallelRecording;
         m_timingStats.postProcessRecordingMs = rendererTiming.postProcessRecordingMs;

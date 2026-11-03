@@ -55,6 +55,7 @@ namespace PlutoGE::render
         float renderRecordingMs = 0.0f;
         float beginFrameMs = 0.0f;
         float shadowRecordingMs = 0.0f;
+        float instanceBinningMs = 0.0f;
         float geometryRecordingMs = 0.0f;
         bool parallelRecording = false;   // Shadows and geometry recorded on worker threads.
         float postProcessRecordingMs = 0.0f;
@@ -76,6 +77,7 @@ namespace PlutoGE::render
         std::size_t recordedGeometryDrawCount = 0;
         std::size_t recordedGeometryInstanceCount = 0;
         std::size_t viewCulledInstanceCount = 0;
+        std::size_t impostorDrawCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
         std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
         std::size_t reusedOpaqueBatchGroups = 0, rebuiltOpaqueBatchGroups = 0;
@@ -160,6 +162,8 @@ namespace PlutoGE::render
         }
         void InvalidateAssetCache();
         void SetSubmissionLabel(std::string label);
+        // BasicRenderer::SetGpuInstanceCulling, kept across Initialize.
+        void SetGpuInstanceCulling(bool enabled);
         // Camera-stack layers render the same immutable scene pose. Reuse the
         // base view's vertex streams and previous-frame positions for one Render.
         // Camera/depth/temporal reconstruction histories remain view-local.
@@ -296,10 +300,13 @@ namespace PlutoGE::render
       BasicSelectionOutline m_selectionOutline;
       std::vector<const RenderCommand *> m_selectionCommands;
       std::string m_submissionLabel = "Scene";
+      bool m_gpuInstanceCulling = false;
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
       std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;
       std::unique_ptr<RhiDrawPreparationCache> m_drawPreparation;
+      // Producers' impostors with their atlases uploaded, by albedo atlas (cleared with the texture caches).
+      std::unordered_map<const Texture *, std::shared_ptr<const BasicImpostor>> m_impostors;
       struct CachedMesh
       {
           std::weak_ptr<const void> lifetime;

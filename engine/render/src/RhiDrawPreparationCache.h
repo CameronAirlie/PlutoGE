@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BasicDrawBatching.h"
+#include "ImpostorDraws.h"
 #include "RetainedOpaqueBatches.h"
 #include "PlutoGE/render/Renderer.h"
 
@@ -24,6 +25,8 @@ namespace PlutoGE::render
     {
       public:
         std::vector<const RenderCommand *> giSource;
+        // The visible draws expanded with their impostor card draws, as the renderer receives them.
+        ImpostorDraws impostors;
         struct MaterialEntry
         {
             BasicDraw draw;

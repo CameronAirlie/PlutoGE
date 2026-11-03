@@ -45,6 +45,25 @@ int main()
             Require(ReadModelImportSettings(metadata, check, &error) == ModelImportSettingsStatus::Success &&
                     check.meshOptions.ToFlags() == flags, "Import options changed");
         }
+        // The triangle budget persists beside the flags, only when set.
+        loaded.meshOptions.triangleBudget = 25000;
+        Require(WriteModelImportSettings(metadata, loaded, &error), "Budget update failed");
+        {
+            ModelImportSettings check;
+            Require(ReadModelImportSettings(metadata, check, &error) == ModelImportSettingsStatus::Success &&
+                    check.meshOptions == loaded.meshOptions, "Triangle budget changed");
+        }
+        loaded.meshOptions.triangleBudget = 0;
+        Require(WriteModelImportSettings(metadata, loaded, &error), "Budget removal failed");
+        Require(std::none_of(metadata.extensionRecords.begin(), metadata.extensionRecords.end(),
+                             [](const auto &record) { return record.starts_with("MODEL_TRIANGLE_BUDGET"); }),
+                "An unset triangle budget was written");
+        {
+            auto zero = metadata;
+            zero.extensionRecords.push_back("MODEL_TRIANGLE_BUDGET\t0");
+            ModelImportSettings check;
+            Require(ReadModelImportSettings(zero, check, &error) == ModelImportSettingsStatus::Invalid, "A zero budget record was accepted");
+        }
         loaded.materialRemaps = {{material, {}, "engine://builtin/material/default-shaded"}};
         Require(WriteModelImportSettings(metadata, loaded, &error), "Engine remap serialization failed");
         Require(ReadModelImportSettings(metadata, settings, &error) == ModelImportSettingsStatus::Success &&

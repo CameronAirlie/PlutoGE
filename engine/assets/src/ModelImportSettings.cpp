@@ -32,7 +32,8 @@ namespace PlutoGE::assets
 
         bool Known(std::string_view key)
         {
-            return key == "MODEL_IMPORT" || key == "MODEL_OPTIONS" || key == "MODEL_OBJECT" || key == "MODEL_MATERIAL_REMAP" || key == "MODEL_NODE_ALIAS";
+            return key == "MODEL_IMPORT" || key == "MODEL_OPTIONS" || key == "MODEL_TRIANGLE_BUDGET" || key == "MODEL_OBJECT" ||
+                   key == "MODEL_MATERIAL_REMAP" || key == "MODEL_NODE_ALIAS";
         }
 
         bool IsEngineMaterial(std::string_view value)
@@ -87,7 +88,7 @@ namespace PlutoGE::assets
         ModelImportSettings parsed;
         bool header = false;
         unsigned version = 0;
-        bool options = false;
+        bool options = false, triangleBudget = false;
         bool any = false;
         std::unordered_set<std::string> keys;
         std::set<std::uint64_t> ids;
@@ -118,8 +119,16 @@ namespace PlutoGE::assets
                 std::uint32_t flags = 0;
                 if (options || fields.size() != 2 || !Number(fields[1], flags) ||
                     (flags & ~assetimport::MeshImportOptions::FlagMask) != 0) return invalid();
-                parsed.meshOptions = assetimport::MeshImportOptions::FromFlags(flags);
+                parsed.meshOptions = assetimport::MeshImportOptions::FromFlags(flags, parsed.meshOptions.triangleBudget);
                 options = true;
+            }
+            else if (fields[0] == "MODEL_TRIANGLE_BUDGET")
+            {
+                // Optional and written only when set, so models without a budget keep their metadata unchanged.
+                std::uint32_t budget = 0;
+                if (triangleBudget || fields.size() != 2 || !Number(fields[1], budget) || budget == 0) return invalid();
+                parsed.meshOptions.triangleBudget = budget;
+                triangleBudget = true;
             }
             else if (fields[0] == "MODEL_OBJECT")
             {
@@ -174,6 +183,8 @@ namespace PlutoGE::assets
         std::erase_if(updated.extensionRecords, [](const auto &line) { return Known(Fields(line)[0]); });
         updated.extensionRecords.push_back(settings.nodeAliases.empty() ? "MODEL_IMPORT\t1" : "MODEL_IMPORT\t2");
         updated.extensionRecords.push_back("MODEL_OPTIONS\t" + std::to_string(settings.meshOptions.ToFlags()));
+        if (settings.meshOptions.triangleBudget != 0)
+            updated.extensionRecords.push_back("MODEL_TRIANGLE_BUDGET\t" + std::to_string(settings.meshOptions.triangleBudget));
         auto objects = settings.objects;
         std::sort(objects.begin(), objects.end(), [](const auto &a, const auto &b) { return a.sourceKey < b.sourceKey; });
         for (const auto &object : objects)

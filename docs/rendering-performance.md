@@ -11,7 +11,7 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 ```
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
                [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
-               [--quality=low|medium|high|ultra] [--camera-pan=<degrees>]
+               [--quality=low|medium|high|ultra] [--camera-pan=<degrees>] [--camera-travel=<metres>]
                [--disable-effects=<Type>[,<Type>...]|all]
 ```
 
@@ -24,6 +24,11 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
   recorded on worker threads and what descriptor work cost (see [parallel-recording.md](parallel-recording.md)).
   `uniform_bytes` and `persistent_uniform_bytes` count uniform data copied into the frame's arena, and
   `vsm_page_batches` the virtual shadow page draws issued (see [frame-pipeline.md](frame-pipeline.md)).
+  Packet-preparation columns split command translation (`visible_preparation_ms`, `shadow_preparation_ms`,
+  `gi_preparation_ms`, `batching_ms`, `rebuilt_draw_packets`, `opaque_batch_*`, `visible_packets`). The `vsm_*`
+  columns report whether VSM was active, the caster packets it rebuilt, and its delayed dirty and deferred page and
+  triangle counts. `ray_traced_rebuilt` reports whether the DDGI top level was rebuilt. The run also prints the
+  directional shadow status, so a VSM that is unavailable is visible.
 * `<out.cpu.csv>` lists the scene update's CPU cost per component type, animation
   phase, script `OnUpdate` and script `OnLateUpdate` (same columns). A script's
   row includes whatever it calls, so a spawner's max shows its `Instantiate` cost.
@@ -36,6 +41,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 * `--camera-pan` swings the base camera's yaw by +/- that many degrees over a
   120-frame cycle, after the scene update, so temporal reconstruction (TAA,
   upscalers) is measured and captured under motion.
+* `--camera-travel` moves the base camera +/- that many metres along its horizontal forward axis over a
+  600-frame cycle. Use it to measure costs that only appear as the camera travels, which panning alone does not
+  exercise: LOD changes, producer shadow distances, VSM page churn and the ray-traced GI scene.
 * `--disable-effects` turns off the named post-process effects (type names such as `SSAO`, `DDGI`; `all` for
   every one) on the rendering camera each frame, exactly as the editor's Enabled toggle does, so a run per effect
   shows what it costs. A disabled effect records no GPU work at all (`PlutoGE{Vulkan,OpenGL}DisabledEffectTests`).

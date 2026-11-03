@@ -58,12 +58,19 @@ int main() try
     if (panOptions.cameraPanDegrees != 10.0f || std::abs(panOptions.CameraPanOffset(ProjectBenchmarkOptions::CameraPanPeriodFrames / 4) - 10.0f) > 1e-4f ||
         panOptions.CameraPanOffset(0) != 0.0f)
         throw std::runtime_error("Camera pan option or offsets wrong");
-    for (const auto *bad : {"--camera-pan=0", "--camera-pan=-5", "--camera-pan=200", "--camera-pan=x"})
+    if (options.cameraTravelMetres != 0.0f || options.CameraTravelOffset(30) != 0.0f) throw std::runtime_error("Camera travels by default");
+    const std::array travel{"game.plutoproject", "results.csv", "--camera-travel=25"};
+    const auto travelOptions = ProjectBenchmarkOptions::Parse(travel);
+    if (travelOptions.cameraTravelMetres != 25.0f ||
+        std::abs(travelOptions.CameraTravelOffset(ProjectBenchmarkOptions::CameraTravelPeriodFrames / 4) - 25.0f) > 1e-3f)
+        throw std::runtime_error("Camera travel option or offsets wrong");
+    for (const auto *bad : {"--camera-pan=0", "--camera-pan=-5", "--camera-pan=200", "--camera-pan=x",
+                            "--camera-travel=0", "--camera-travel=-1", "--camera-travel=x"})
     {
         bool rejected = false;
         try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
         catch (const std::invalid_argument &) { rejected = true; }
-        if (!rejected) throw std::runtime_error("Invalid camera pan accepted");
+        if (!rejected) throw std::runtime_error("Invalid camera pan or travel accepted");
     }
     const std::array capture{"game.plutoproject", "results.csv", "--capture=out/frame.png"};
     if (ProjectBenchmarkOptions::Parse(capture).capture != std::filesystem::path("out/frame.png"))

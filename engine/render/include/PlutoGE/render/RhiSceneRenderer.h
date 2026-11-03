@@ -91,7 +91,7 @@ namespace PlutoGE::render
         std::size_t impostorDrawCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
         std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
-        std::size_t reusedOpaqueBatchGroups = 0, rebuiltOpaqueBatchGroups = 0;
+        std::size_t reusedOpaqueBatchGroups = 0, rebuiltOpaqueBatchGroups = 0, rebuiltOpaqueBatchDraws = 0;
         float glassBoundsCpuMs = 0, glassGroupingCpuMs = 0, glassDamageCpuMs = 0;
         float glassCopyRecordingCpuMs = 0, glassDrawRecordingCpuMs = 0;
         std::size_t sharedDrawPacketHits = 0;

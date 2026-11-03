@@ -1044,8 +1044,18 @@ namespace PlutoGE::render
                 collectSkinning(sourceCommands, shadowOnly);
                 flushSkinning();
             }
+            // Lists arrive sorted by material, and a material prepares once per frame, so consecutive commands reuse
+            // the last revision instead of looking it up again (the unchanged check visits every command).
+            const Material *lastMaterial = nullptr;
+            std::uint64_t lastRevision = 0;
             const auto materialRevision = [&](const RenderCommand &command) {
-                return command.material ? prepareMaterial(command.material).revision : std::uint64_t{0};
+                if (!command.material) return std::uint64_t{0};
+                if (command.material != lastMaterial)
+                {
+                    lastMaterial = command.material;
+                    lastRevision = prepareMaterial(command.material).revision;
+                }
+                return lastRevision;
             };
             // The LOD each list draws: the camera's for the visible list, the shared caster policy for shadows (which
             // may be coarser than the view), and a camera-independent one for GI's scene, so its packets (and the
@@ -1294,6 +1304,7 @@ namespace PlutoGE::render
             const auto batches = preparation.opaqueBatches.Update(preparation.visible.draws, preparation.batched, nextRevision);
             m_timingStats.reusedOpaqueBatchGroups = batches.reused;
             m_timingStats.rebuiltOpaqueBatchGroups = batches.rebuilt;
+            m_timingStats.rebuiltOpaqueBatchDraws = batches.rebuiltDraws;
         }
         auto &draws = preparation.batched;
         batchingScope.End();

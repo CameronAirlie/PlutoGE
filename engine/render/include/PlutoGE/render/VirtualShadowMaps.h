@@ -9,6 +9,8 @@
 #include <array>
 #include <memory>
 #include <string_view>
+#include <unordered_map>
+#include <vector>
 
 namespace PlutoGE::render
 {
@@ -60,6 +62,7 @@ namespace PlutoGE::render
     // clipmap policy and uploading caster/chunk inputs. Residency, invalidation,
     // request compaction and bounded indirect submission stay on the GPU.
     class GpuRecordTable;
+    class GpuRecordHeap;
 
     class VirtualShadowMaps
     {
@@ -138,8 +141,10 @@ namespace PlutoGE::render
                                    std::size_t count, ChunkPipelines pipelines);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, VirtualShadowShaders::RasterModules.size()> m_raster;
-        // Batched page draws' records and models (see RecordChunks).
-        std::unique_ptr<GpuRecordTable> m_batchedDraws, m_batchedModels;
+        // Batched page draws' records (see RecordChunks), and their models: each caster packet's held where it was
+        // first uploaded while the packet stays prepared.
+        std::unique_ptr<GpuRecordTable> m_batchedDraws;
+        std::unique_ptr<GpuRecordHeap> m_batchedModels;
         bool m_batchPages = false;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_white;
         // m_receiverDepth, or the scene depth Prepare was given (then no receiver depth pass is recorded).
@@ -148,24 +153,49 @@ namespace PlutoGE::render
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;
         rhi::Sampler m_sampler, m_materialSampler;
-        struct ClusterPlan
+        // A caster packet's page chunks, held by its preparation revision rather than its place in the caster list,
+        // so a packet keeps them as casters enter, leave or change LOD around it while the camera moves.
+        struct CasterChunk
+        {
+            // indexOffset is relative to the mesh's base index (BasicMesh::BaseIndex).
+            std::uint32_t indexCount = 0, indexOffset = 0, instances = 0, firstInstance = 0;
+            glm::vec4 bounds{0, 0, 0, -1};
+            glm::vec4 extents{-1, -1, -1, 0};
+        };
+        struct CasterPacket
         {
             const void *mesh = nullptr;
-            std::uint64_t meshRevision = 0, packetRevision = 0;
+            std::uint64_t meshRevision = 0;
             std::uint32_t firstIndex = 0, indexCount = 0;
+            // Placement the chunks were built for. Revisions identify immutable packets; this only guards against a
+            // token reaching a different draw.
+            glm::mat4 model{1};
+            const void *instances = nullptr;
+            std::size_t instanceCount = 0;
+            // Whole-mesh cluster bounds of a rigid draw, and whether its clusters coalesce into one page chunk.
             ShadowGeometryCluster merged;
             glm::vec4 worldBounds{0, 0, 0, -1};
-            bool coalesce = false;
+            bool planned = false, coalesce = false;
+            std::uint64_t coalesceProjection = 0;
+            bool chunksValid = false, clustered = false, coalesced = false;
+            std::vector<CasterChunk> chunks;
+            // First of this packet's records in m_batchedModels, or ~0u.
+            std::uint32_t models = ~0u, modelCount = 0;
+            std::uint64_t lastFrame = 0;
         };
-        std::vector<ClusterPlan> m_clusterPlans;
+        void BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced) const;
+        void ReleaseCasterModels(CasterPacket &packet);
+        std::unordered_map<std::uint64_t, CasterPacket> m_casterPackets;
+        std::vector<CasterPacket *> m_casterPacketSlots;
+        std::vector<glm::mat4> m_modelScratch;
+        std::uint64_t m_packetFrame = 0, m_projectionRevision = 0;
         struct PreparedPacket
         {
             const void *mesh = nullptr;
             std::uint64_t revision = 0, meshRevision = 0;
             std::size_t first = 0, count = 0;
-            bool clustered = false, coalesced = false;
         };
-        std::vector<PreparedPacket> m_receiverPackets, m_casterPackets;
+        std::vector<PreparedPacket> m_receiverPackets;
         std::vector<Chunk> m_receiverChunks, m_casterChunks;
         std::size_t m_receiverCount = 0, m_casterCount = 0, m_capacity = 0;
         std::uint32_t m_width = 0, m_height = 0, m_frame = 0;

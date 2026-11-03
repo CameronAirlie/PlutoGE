@@ -553,7 +553,7 @@ int RunRuntime(int argc, char **argv)
         runtimeRenderScale < 0.999f;
     std::unique_ptr<PlutoGE::render::RenderTarget> runtimeRenderTarget;
     // Persist filtered command storage across frames to avoid reallocations.
-    PlutoGE::scene::CameraCommandFilter baseCameraCommandFilter;
+    PlutoGE::scene::CameraCommandFilter baseCameraCommandFilter, baseCameraVisibleFilter;
     PlutoGE::scene::CameraOverlayLayerBuilder overlayCameraLayers;
     PlutoGE::scene::RenderTextureViewBuilder renderTextureViews;
     PlutoGE::render::SpatialUpscaler runtimeUpscaler;
@@ -562,6 +562,8 @@ int RunRuntime(int argc, char **argv)
     std::size_t benchmarkFrameIndex = 0;
     // The orientation --camera-pan swings about: the base camera's on the first frame.
     std::optional<glm::vec3> benchmarkCameraBaseRotation;
+    // The position --camera-travel moves from: the base camera's on the first frame.
+    std::optional<glm::vec3> benchmarkCameraBasePosition;
     std::vector<double> benchmarkFrameTimes;
     std::vector<PlutoGE::ProjectBenchmarkSample> projectBenchmarkSamples;
     PlutoGE::ProjectBenchmarkGpuScopes projectBenchmarkGpuScopes, projectBenchmarkCpuScopes;
@@ -699,6 +701,16 @@ int RunRuntime(int argc, char **argv)
                         cameraEntity->SetRotation(*benchmarkCameraBaseRotation +
                                                   glm::vec3(0.0f, projectBenchmark->CameraPanOffset(benchmarkFrameIndex), 0.0f));
                     }
+                if (projectBenchmark && projectBenchmark->cameraTravelMetres > 0.0f)
+                    if (auto *cameraEntity = cameraComponent->GetOwner())
+                    {
+                        if (!benchmarkCameraBasePosition) benchmarkCameraBasePosition = cameraEntity->GetPosition();
+                        const glm::vec3 forward = glm::vec3(cameraEntity->GetWorldTransform() * glm::vec4(0, 0, -1, 0));
+                        const glm::vec2 horizontal(forward.x, forward.z);
+                        const glm::vec2 direction = glm::dot(horizontal, horizontal) > 1.e-8f ? glm::normalize(horizontal) : glm::vec2(0, -1);
+                        cameraEntity->SetPosition(*benchmarkCameraBasePosition + glm::vec3(direction.x, 0.0f, direction.y) *
+                                                  projectBenchmark->CameraTravelOffset(benchmarkFrameIndex));
+                    }
                 const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
                 const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
                 auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
@@ -726,16 +738,21 @@ int RunRuntime(int argc, char **argv)
                     return std::vector<std::byte>(reinterpret_cast<const std::byte *>(source.data()),
                                                   reinterpret_cast<const std::byte *>(source.data() + source.size()));
                 };
+                // The base camera draws its frustum- and distance-culled commands at their view LODs; shadows and GI
+                // read the camera's whole scene, as the editor's game view does.
+                renderer.PrepareVisibleRenderCommands(cameraData, static_cast<int>(windowExtents.height));
                 const auto sceneCommands = renderer.GetSceneRenderCommandView();
                 const auto cameraCommands = baseCameraCommandFilter.Apply(*scene, cameraComponent->GetTagFilter(), sceneCommands);
+                const auto visibleCommands = baseCameraVisibleFilter.Apply(*scene, cameraComponent->GetTagFilter(),
+                                                                           renderer.GetVisibleRenderCommandView());
                 const auto overlays = overlayCameraLayers.Build(*scene, cameraStack.overlays, sceneCommands,
                                                                 windowExtents.width, windowExtents.height);
                 const auto textureViews = renderTextureViews.Build(*scene, cameraStack.textureCameras, sceneCommands);
                 if (!engine.GetRhiRenderService().RenderTextures(textureViews, readTexturePixels, scene.get()))
                     std::cerr << "Failed to render the frame's render textures." << std::endl;
                 if (!engine.GetRhiRenderService().RenderSceneAndPresent(
-                        cameraData, lighting, cameraCommands, readTexturePixels, scene.get(), postProcessEffects, overlays,
-                        std::span<PlutoGE::scene::Light *const>(cameraLights)))
+                        cameraData, lighting, visibleCommands, readTexturePixels, scene.get(), postProcessEffects, overlays,
+                        std::span<PlutoGE::scene::Light *const>(cameraLights), cameraCommands))
                 {
                     std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
                     window.RequestClose();
@@ -856,7 +873,14 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.pointShadowObjectUploads),
                         static_cast<double>(render.pointShadowInvalidations[1]), static_cast<double>(render.pointShadowInvalidations[2]),
                         static_cast<double>(render.pointShadowInvalidations[3]), static_cast<double>(render.pointShadowStaticFaceUpdates),
-                        render.instanceBinningMs, render.instancePreparationMs, 0};
+                        render.instanceBinningMs, render.instancePreparationMs,
+                        render.visiblePreparationMs, render.shadowPreparationMs, render.giPreparationMs, render.batchingMs,
+                        static_cast<double>(render.rebuiltDrawPackets),
+                        render.virtualShadowsActive ? 1.0 : 0.0, static_cast<double>(render.virtualShadows.rebuiltPackets),
+                        static_cast<double>(render.virtualShadows.dirty), static_cast<double>(render.virtualShadows.deferred),
+                        static_cast<double>(render.virtualShadows.submittedTriangles),
+                        render.rayTracedSceneRebuilt ? 1.0 : 0.0, static_cast<double>(render.rebuiltOpaqueBatchGroups),
+                        static_cast<double>(render.rebuiltOpaqueBatchDraws), static_cast<double>(render.visibleDrawCount), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)
@@ -962,6 +986,8 @@ int RunRuntime(int argc, char **argv)
     if (projectBenchmark)
     {
         benchmarkSucceeded = projectBenchmarkSamples.size() == projectBenchmark->frames;
+        if (useVulkanRenderer)
+            std::cerr << "Benchmark directional shadows: " << engine.GetRhiRenderService().GetTimingStats().directionalShadowStatus << '\n';
         try
         {
             if (benchmarkSucceeded)

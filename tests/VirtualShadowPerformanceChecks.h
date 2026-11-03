@@ -103,25 +103,34 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
     // Immutable editor packets should skip bounds merging, while changed
     // revisions must rebuild even when the mesh allocation is unchanged.
     for (std::size_t i = 0; i < casters.size(); ++i) casters[i].preparationRevision = i + 1;
+    // A changed packet takes a token no other packet has, as RhiDrawPreparationCache::NextRevision issues them.
+    std::uint64_t nextRevision = 50000;
     render(0);
     render(0);
-    if (!renderer.GetFrameStats().virtualShadows.clusterBoundsCacheHits ||
-        renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds)
+    // When planning reads coverage depth the unrevised receiver no longer forces preparation; whenever it runs,
+    // stable packets keep their bounds.
+    const auto &stableStats = renderer.GetFrameStats().virtualShadows;
+    if (stableStats.clusterBoundsBuilds || (!stableStats.reusedPreparation && !stableStats.clusterBoundsCacheHits))
         throw std::runtime_error("Stable VSM packets rebuilt cluster bounds");
-    ++casters.front().preparationRevision;
+    casters.front().preparationRevision = nextRevision++;
     render(0);
-    if (renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds != 1)
-        throw std::runtime_error("VSM packet revision did not rebuild its cluster bounds");
+    if (renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds != 1 ||
+        !renderer.GetFrameStats().virtualShadows.clusterBoundsCacheHits)
+        throw std::runtime_error("VSM packet revision did not rebuild only its own cluster bounds: " +
+            std::to_string(renderer.GetFrameStats().virtualShadows.clusterBoundsBuilds) + " built, " +
+            std::to_string(renderer.GetFrameStats().virtualShadows.clusterBoundsCacheHits) + " reused");
+    // Receivers prepare chunks only when planning draws their depth itself.
+    const bool receiversPrepared = renderer.GetFrameStats().virtualShadows.receiverDraws != 0;
     receivers[0].preparationRevision = 10000;
     render(0); render(0);
     if (!renderer.GetFrameStats().virtualShadows.reusedPreparation)
         throw std::runtime_error("Immutable VSM scene did not reuse prepared chunks");
-    ++casters.front().preparationRevision;
+    casters.front().preparationRevision = nextRevision++;
     render(0);
     if (renderer.GetFrameStats().virtualShadows.reusedPreparation)
         throw std::runtime_error("Changed VSM packet incorrectly reused preparation");
     if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1 ||
-        renderer.GetFrameStats().virtualShadows.reusedPackets != casters.size())
+        renderer.GetFrameStats().virtualShadows.reusedPackets != casters.size() - 1 + (receiversPrepared ? receivers.size() : 0))
         throw std::runtime_error("A changed VSM packet rebuilt unaffected packets");
     // An inactive packet can retain a range whose chunks were overwritten by
     // another source index. Restoring it and shrinking the list must rebuild
@@ -133,7 +142,7 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
     render(0);
     receivers = {originalReceiver};
     render(0);
-    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1)
+    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != (receiversPrepared ? 1u : 0u))
         throw std::runtime_error("VSM reused receiver chunks overwritten by a different packet");
     render(0);
     if (!renderer.GetFrameStats().virtualShadows.reusedPreparation)
@@ -147,8 +156,9 @@ void CheckVirtualShadowPerformance(PlutoGE::render::BasicRenderer &renderer,
     render(0);
     casters = {originalCasters.front()};
     render(0);
-    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 1)
-        throw std::runtime_error("VSM reused caster chunks overwritten by a different packet");
+    // Caster packets hold their chunks by revision, so one that only moved in the list rebuilds nothing.
+    if (renderer.GetFrameStats().virtualShadows.rebuiltPackets != 0)
+        throw std::runtime_error("VSM rebuilt a caster packet that only moved in the list");
     render(0);
     if (!renderer.GetFrameStats().virtualShadows.reusedPreparation)
         throw std::runtime_error("Restored caster did not return to immutable VSM reuse");

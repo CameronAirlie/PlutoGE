@@ -67,6 +67,27 @@ Directional-light properties expose **VSM Page Updates per Frame** (default 64, 
 
 There is one indexed-indirect command per caster chunk, rather than one CPU command per caster/page pair. Shadow clusters contain up to 1024 triangles and 16 instances; the whole-draw fallback uses up to 64 instances; GPU page instancing still incurs actual geometry work, which the triangle budget bounds. The implementation supports up to 4096 chunks. A scene with more caster chunks first drops rigid casters outside the directional shadow reach (`DirectionalShadowReach`, otherwise applied only to skinned casters, so small scenes keep stable page caching); if the casters in reach still exceed capacity, that frame uses cascaded shadow maps and the profiler reports "Cascaded shadow maps (fallback: more casters in reach than VSM accepts)" and the rigid casters dropped. Large maps should instance repeated scenery (foliage) so they stay within the VSM budget.
 
+### CPU preparation
+
+`VirtualShadowMaps::Prepare` reuses the whole previous preparation when every packet is immutable
+(`BasicDraw::preparationRevision`) and unchanged. Otherwise:
+
+- **Caster packets** keep their page chunks (index ranges, instance subsets, cluster bounds and the merged-cluster
+  plan) by preparation revision, not by their position in the caster list. Casters entering or leaving the list as the
+  camera moves (shadow distances, LOD changes) only rewrite list positions: the caster record, its indirect command
+  and its batched draw record. A changed packet rebuilds alone. A content check (mesh, range, transform and instance
+  array) guards against a revision reaching another draw. Unrevised packets rebuild every frame.
+- **Batched page draws** read their models from a record heap (`GpuRecordHeap`, `ChangedBufferRecords.h`). Each
+  packet's models upload once, when it is first prepared, and keep their place while it stays prepared. Released
+  ranges are reused only after frames in flight finish. Unrevised packets rewrite their range in place where it
+  differs. Unbatched page draws and receivers keep their per-chunk uniforms.
+- **Receivers** are prepared, and count against the 4096-chunk limit, only when planning renders receiver depth itself.
+  With the coverage-depth prepass they cost nothing, so a large visible list cannot exceed the VSM capacity.
+- A chunk's page-signature identity is derived the same way whether its packet was rebuilt or reused. Arena meshes
+  previously changed identity between those two paths, which dirtied their pages once more.
+
+`--vsm-performance` covers packet reuse across list moves, single-packet rebuilds and idle-frame reuse.
+
 The physical D32 atlas and companion R32 attachment occupy 32, 72, or 128 MiB in total, depending on the selected pool tier.
 Page tables, requests, caster lists, indirect arguments, receiver targets and
 uniforms add further allocations; use the profiler's resource estimates.

@@ -63,10 +63,14 @@ namespace PlutoGE
         // Swings the base camera's yaw by +/- this many degrees over CameraPanPeriodFrames,
         // after the scene update, so temporal reconstruction is measured under motion.
         float cameraPanDegrees = 0.0f;
+        // Moves the base camera +/- this many metres along its horizontal forward axis over CameraTravelPeriodFrames,
+        // so streaming, LOD and shadow caching are measured as the camera travels (panning only turns it).
+        float cameraTravelMetres = 0.0f;
         // Post-process effect type names ("all" for every effect) disabled on the rendering camera each frame, as the
         // editor's Enabled toggle does, to measure what each effect costs.
         std::vector<std::string> disabledEffects;
         static constexpr std::size_t CameraPanPeriodFrames = 120;
+        static constexpr std::size_t CameraTravelPeriodFrames = 600;
 
         [[nodiscard]] bool DisablesEffect(std::string_view type) const
         {
@@ -82,13 +86,20 @@ namespace PlutoGE
             return cameraPanDegrees * std::sin(tau * static_cast<float>(frame % CameraPanPeriodFrames) /
                                                static_cast<float>(CameraPanPeriodFrames));
         }
+        // Forward offset in metres for a frame; zero when travel is off.
+        [[nodiscard]] float CameraTravelOffset(std::size_t frame) const noexcept
+        {
+            constexpr float tau = 6.28318530718f;
+            return cameraTravelMetres * std::sin(tau * static_cast<float>(frame % CameraTravelPeriodFrames) /
+                                                 static_cast<float>(CameraTravelPeriodFrames));
+        }
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 13) // project, output, two counts and nine switches
+            if (args.size() < 2 || args.size() > 14) // project, output, two counts and ten switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
                                             "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--gpu-instance-culling] "
-                                            "[--quality=low|medium|high|ultra] [--foliage-detail=<0.25..2>] [--camera-pan=<degrees>] "
+                                            "[--quality=low|medium|high|ultra] [--foliage-detail=<0.25..2>] [--camera-pan=<degrees>] [--camera-travel=<metres>] "
                                             "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
@@ -108,6 +119,7 @@ namespace PlutoGE
                 constexpr std::string_view capturePrefix = "--capture=";
                 constexpr std::string_view qualityPrefix = "--quality=";
                 constexpr std::string_view panPrefix = "--camera-pan=";
+                constexpr std::string_view travelPrefix = "--camera-travel=";
                 constexpr std::string_view foliagePrefix = "--foliage-detail=";
                 constexpr std::string_view disablePrefix = "--disable-effects=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
@@ -149,6 +161,16 @@ namespace PlutoGE
                         !(degrees > 0.0f) || degrees > 180.0f)
                         throw std::invalid_argument("Camera pan must be a number of degrees in (0, 180]");
                     result.cameraPanDegrees = degrees;
+                }
+                else if (value.starts_with(travelPrefix) && result.cameraTravelMetres == 0.0f)
+                {
+                    const auto text = value.substr(travelPrefix.size());
+                    float metres = 0.0f;
+                    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), metres);
+                    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+                        !(metres > 0.0f) || metres > 10000.0f)
+                        throw std::invalid_argument("Camera travel must be a number of metres in (0, 10000]");
+                    result.cameraTravelMetres = metres;
                 }
                 else if (value.starts_with(disablePrefix) && result.disabledEffects.empty())
                 {
@@ -199,7 +221,10 @@ namespace PlutoGE
             "parallel_recording", "descriptor_cpu_ms", "descriptor_binds", "uniform_bytes", "persistent_uniform_bytes", "vsm_page_batches",
             "point_shadow_face_updates", "point_shadow_draws", "point_shadow_object_uploads",
             "point_shadow_invalid_projection", "point_shadow_invalid_casters", "point_shadow_invalid_content", "point_shadow_static_faces",
-            "instance_binning_ms", "instance_preparation_ms", "gpu_observation_id"};
+            "instance_binning_ms", "instance_preparation_ms",
+            "visible_preparation_ms", "shadow_preparation_ms", "gi_preparation_ms", "batching_ms", "rebuilt_draw_packets",
+            "vsm_active", "vsm_rebuilt_packets", "vsm_dirty_pages", "vsm_deferred_pages", "vsm_updated_triangles",
+            "ray_traced_rebuilt", "opaque_batch_groups_rebuilt", "opaque_batch_draws_rebuilt", "visible_packets", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

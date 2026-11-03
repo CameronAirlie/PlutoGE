@@ -1783,6 +1783,15 @@ namespace PlutoGE::render
             m_visibleInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
             m_visiblePreviousInstanceModelPool.push_back(std::make_shared<std::vector<glm::mat4>>());
         }
+        // Culling refills pooled arrays in place. One a frame still in flight holds (a render thread recording the
+        // previous frame, or a cached packet) is replaced instead, so that frame keeps the instances it was given.
+        for (std::size_t job = 0; job < instanceCulls.size(); ++job)
+        {
+            if (m_visibleInstanceModelPool[job].use_count() > 1)
+                m_visibleInstanceModelPool[job] = std::make_shared<std::vector<glm::mat4>>();
+            if (m_visiblePreviousInstanceModelPool[job].use_count() > 1)
+                m_visiblePreviousInstanceModelPool[job] = std::make_shared<std::vector<glm::mat4>>();
+        }
         const auto cull = [&](std::size_t job)
         {
             const auto &[commandIndex, fullyInsideFrustum] = m_visibilityCandidates[instanceCulls[job].candidate];

@@ -43,6 +43,12 @@ Render thread:               [record, submit, present N+1   ]
   assets or render commands (translation, visibility, GI selection, particles, decals, new resource uploads) and returns
   a `PreparedFrame`; `Record` reads only that, the renderer and device resources. The frame borrows the renderer's
   preparation caches, so the next `Prepare` waits for the render thread (`RhiRenderService::WaitForFrame`).
+- **Visibility.** Before `RenderSceneAndPresent`, the runtime runs `Renderer::PrepareVisibleRenderCommands` for the
+  base camera, as the editor's views do. The visible list is frustum and draw-distance culled at view LODs; the
+  camera's whole scene goes alongside it for shadows and GI. Without that step the RHI received every scene command
+  as visible. On Verdant that meant 23.5k visible packets copied, batched and culled each frame, and meshes drawn at
+  LOD 0. The step runs before the wait for the previous frame. Culled instance arrays come from a pool, and the pool
+  replaces an array a frame in flight still holds, rather than refilling it.
 - **Runtime UI** is laid out and drawn on the game thread (scripts edit its documents during the update) into an
   `rhi::DeferredCommandList`, which the render thread replays after the scene. `RmlUiRhiRenderer::BeginFrame(target,
   commands)` records into any context. Frames with overlay cameras (they composite from the scene while recording) and

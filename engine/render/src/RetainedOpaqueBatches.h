@@ -31,7 +31,8 @@ namespace PlutoGE::render
         std::vector<Key> m_keys;
         std::uint64_t m_frame = 0;
     public:
-        struct Stats { std::size_t reused = 0, rebuilt = 0; };
+        // rebuiltDraws counts the source draws of the rebuilt islands.
+        struct Stats { std::size_t reused = 0, rebuilt = 0, rebuiltDraws = 0; };
         template<class AllocateRevision>
         Stats Update(std::span<const BasicDraw> source, std::vector<BasicDraw> &destination, AllocateRevision allocateRevision)
         {
@@ -64,6 +65,7 @@ namespace PlutoGE::render
                     BatchOpaqueDraws(entry.draws, allocateRevision);
                     MergeAdjacentOpaqueDraws(entry.draws, allocateRevision);
                     ++stats.rebuilt;
+                    stats.rebuiltDraws += end - begin;
                 }
                 else ++stats.reused;
                 entry.seen = m_frame;

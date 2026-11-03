@@ -158,8 +158,10 @@ namespace PlutoGE::render
                                                  const scene::Scene *scene,
                                                  std::span<IPostProcessEffect *const> postProcessEffects,
                                                  std::span<const CameraView> overlays,
-                                                 std::optional<std::span<scene::Light *const>> lights)
+                                                 std::optional<std::span<scene::Light *const>> lights,
+                                                 std::optional<RenderCommandView> sceneCommands)
     {
+        const auto shadowCommands = sceneCommands.value_or(commands);
         if (!WaitForFrame())
             return false;
         if (!m_swapchain || !m_renderer)
@@ -201,7 +203,7 @@ namespace PlutoGE::render
         if (m_renderThread && overlays.empty() && (!anyUi || combineRuntimeUiSubmission))
         {
             auto frame = m_sceneRenderer->Prepare(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting,
-                                                  commands, commands, postProcessEffects, atmosphere, texturePixelReader,
+                                                  commands, shadowCommands, postProcessEffects, atmosphere, texturePixelReader,
                                                   PostProcessDebugView::None, false, scene, lights);
             if (!frame)
                 return false;
@@ -223,7 +225,7 @@ namespace PlutoGE::render
         }
 
         if (!m_sceneRenderer->Render(m_swapchain->GetWidth(), m_swapchain->GetHeight(), cameraData, lighting, commands,
-                                     commands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
+                                     shadowCommands, postProcessEffects, atmosphere, texturePixelReader, PostProcessDebugView::None,
                                      !combineRuntimeUiSubmission, scene, lights, compose))
             return false;
         if (nativeUi)

@@ -151,7 +151,7 @@ namespace PlutoGE::render
     }
     VirtualShadowMaps::VirtualShadowMaps()
         : m_batchedDraws(std::make_unique<GpuRecordTable>("VSM batched draw table")),
-          m_batchedModels(std::make_unique<GpuRecordTable>("VSM batched model table"))
+          m_batchedModels(std::make_unique<GpuRecordHeap>("VSM batched model heap", sizeof(glm::mat4)))
     {
     }
 
@@ -261,7 +261,8 @@ namespace PlutoGE::render
                                    rhi::TextureHandle sceneDepth)
     {
         if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
-        if (!CanPrepare(receivers, casters)) return false;
+        const auto planningReceivers = sceneDepth ? std::span<const BasicDraw>{} : receivers;
+        if (!CanPrepare(planningReceivers, casters)) return false;
         const auto poolTiles = VirtualShadowPoolTiles(lighting.virtualShadowPoolPages);
         if (poolTiles != m_poolTiles) ResizePool(device, poolTiles);
         const auto poolCapacity = m_poolTiles * m_poolTiles;
@@ -304,6 +305,7 @@ namespace PlutoGE::render
         preparationProjection.camera.x = preparationProjection.camera.y = preparationProjection.camera.z = 0;
         m_preparationScratch.clear();
         m_preparationScratch.push_back(lighting.virtualShadowClusterCulling);
+        m_preparationScratch.push_back(m_batchPages);
         bool immutable = m_frame != 0 && m_cacheMembership && !changed;
         const auto appendKey = [&](std::span<const BasicDraw> draws, bool shadow)
         {
@@ -324,214 +326,250 @@ namespace PlutoGE::render
                     reinterpret_cast<std::uintptr_t>(draw.mesh), draw.mesh->GetRevision(), shadow ? signatures[index] : 0});
             }
         };
-        appendKey(receivers, false); appendKey(casters, true);
-        const bool reusePreparation = immutable && m_capacity != 0 && m_preparationScratch == m_preparationKey &&
-            std::memcmp(&preparationProjection, &m_preparationProjection, sizeof(preparationProjection)) == 0;
+        // Planning that reads the scene's depth draws no receivers, so they neither prepare nor invalidate.
+        appendKey(planningReceivers, false); appendKey(casters, true);
+        const bool sameProjection = std::memcmp(&preparationProjection, &m_preparationProjection, sizeof(preparationProjection)) == 0;
+        const bool reusePreparation = immutable && m_capacity != 0 && m_preparationScratch == m_preparationKey && sameProjection;
         m_stats->reusedPreparation = reusePreparation;
         m_stats->reusedPackets = m_stats->rebuiltPackets = 0;
-        const bool sameProjection = std::memcmp(&preparationProjection, &m_preparationProjection, sizeof(preparationProjection)) == 0;
         m_stats->clusterBoundsBuilds = m_stats->clusterBoundsCacheHits = 0;
+        if (!sameProjection) ++m_projectionRevision;
         if (!reusePreparation)
         {
-            std::vector<Caster> inputs;
-            inputs.reserve(m_casterCount);
+            const auto packetFrame = ++m_packetFrame;
+            m_batchedModels->BeginFrame(packetFrame);
+            // Draws without a preparation revision may change behind the same packet; they rebuild every frame under a
+            // key no revision uses.
+            constexpr std::uint64_t TransientPacket = 1ull << 63;
+            constexpr std::uint64_t PacketRetainFrames = 240, PacketSweepInterval = 64;
             // Preserve the draw-capacity contract: exceptionally fragmented scenes
             // retain whole-draw submission instead of disabling shadows.
             std::size_t clusteredCount = 0;
-            m_clusterPlans.resize(casters.size());
-            m_stats->clusterBoundsBuilds = m_stats->clusterBoundsCacheHits = 0;
-            for (std::size_t index = 0; lighting.virtualShadowClusterCulling && index < casters.size(); ++index)
+            m_casterPacketSlots.assign(casters.size(), nullptr);
+            for (std::size_t index = 0; index < casters.size(); ++index)
             {
                 const auto &draw = casters[index];
-                auto &plan = m_clusterPlans[index];
-                if (!draw.mesh || !draw.castsShadow || draw.alphaMode == 2 || draw.surfaceType == 1) continue;
+                if (!IsReceiver(draw) || !draw.castsShadow) continue;
                 const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
                 const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
+                auto &packet = m_casterPackets[draw.preparationRevision ? draw.preparationRevision : TransientPacket | index];
+                const auto *instances = draw.instanceModels.get();
+                const auto instanceCount = instances ? instances->size() : 0;
+                if (!draw.preparationRevision || packet.mesh != draw.mesh || packet.meshRevision != draw.mesh->GetRevision() ||
+                    packet.firstIndex != draw.firstIndex || packet.indexCount != count || packet.instances != instances ||
+                    packet.instanceCount != instanceCount || packet.model != draw.model)
+                {
+                    // An unrevised packet keeps its model records, rewritten in place below when they differ.
+                    const auto models = packet.models, modelCount = packet.modelCount;
+                    if (draw.preparationRevision) ReleaseCasterModels(packet);
+                    packet = {};
+                    if (!draw.preparationRevision) { packet.models = models; packet.modelCount = modelCount; }
+                    packet.mesh = draw.mesh;
+                    packet.meshRevision = draw.mesh->GetRevision();
+                    packet.firstIndex = draw.firstIndex;
+                    packet.indexCount = count;
+                    packet.model = draw.model;
+                    packet.instances = instances;
+                    packet.instanceCount = instanceCount;
+                }
+                packet.lastFrame = packetFrame;
+                m_casterPacketSlots[index] = &packet;
+                if (!lighting.virtualShadowClusterCulling) continue;
                 const auto ranges = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, count);
                 const auto models = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
                 auto rangeCount = std::max<std::size_t>(1, ranges.size());
                 if (models == 1 && ranges.size() > 1)
                 {
-                    bool rebuilt = false;
-                    if (!draw.preparationRevision || plan.packetRevision != draw.preparationRevision ||
-                        plan.mesh != draw.mesh || plan.meshRevision != draw.mesh->GetRevision() ||
-                        plan.firstIndex != draw.firstIndex || plan.indexCount != count)
+                    if (!packet.planned)
                     {
                         ++m_stats->clusterBoundsBuilds;
-                        rebuilt = true;
-                        plan.mesh = draw.mesh;
-                        plan.meshRevision = draw.mesh->GetRevision();
-                        plan.packetRevision = draw.preparationRevision;
-                        plan.firstIndex = draw.firstIndex;
-                        plan.indexCount = count;
-                        plan.merged = MergeShadowGeometryClusters(ranges);
+                        packet.planned = true;
+                        packet.merged = MergeShadowGeometryClusters(ranges);
                         const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->front() : draw.model;
-                        plan.worldBounds = ShadowClusterWorldSphere(plan.merged, std::span<const glm::mat4>(&model, 1));
+                        packet.worldBounds = ShadowClusterWorldSphere(packet.merged, std::span<const glm::mat4>(&model, 1));
+                        packet.coalesceProjection = 0;
                     }
                     else ++m_stats->clusterBoundsCacheHits;
                     // Reevaluate projection-dependent fit when lights or clipmaps move.
-                    if (rebuilt || !sameProjection) plan.coalesce = FitsShadowPage(parameters, plan.worldBounds);
-                    if (plan.coalesce) rangeCount = 1;
+                    if (packet.coalesceProjection != m_projectionRevision)
+                    {
+                        packet.coalesce = FitsShadowPage(parameters, packet.worldBounds);
+                        packet.coalesceProjection = m_projectionRevision;
+                    }
+                    if (packet.coalesce) rangeCount = 1;
                 }
-                else plan.coalesce = false;
+                else packet.coalesce = false;
                 clusteredCount += draw.firstIndex % 3 == 0 ? rangeCount * ((models + 15) / 16) : (models + 63) / 64;
             }
             const bool useClusters = lighting.virtualShadowClusterCulling && clusteredCount <= PLUTO_VSM_MAX_DRAW_CHUNKS;
-            const auto prepare = [&](std::span<const BasicDraw> draws, std::vector<Chunk> &chunks, bool shadow)
+            // Uploads a chunk's own parameters, for page draws that are not batched and for receivers.
+            const auto uploadChunk = [&](Chunk &chunk, std::size_t cursor, const BasicDraw &draw, std::size_t first, std::uint32_t models)
             {
-                std::size_t cursor = 0;
-                auto &packets = shadow ? m_casterPackets : m_receiverPackets;
-                packets.resize(draws.size());
-                for (std::size_t index = 0; index < draws.size(); ++index)
+                const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
+                const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
+                const auto upload = [&](const auto &values)
                 {
-                    const auto &draw = draws[index];
-                    if (!IsReceiver(draw) || (shadow && !draw.castsShadow)) continue;
-                    auto &packet = packets[index];
-                    const bool clustered = shadow && useClusters;
-                    const bool coalesced = clustered && m_clusterPlans[index].coalesce;
-                    if (draw.preparationRevision && packet.revision == draw.preparationRevision &&
-                        packet.mesh == draw.mesh && packet.meshRevision == draw.mesh->GetRevision() &&
-                        packet.first == cursor && packet.clustered == clustered && packet.coalesced == coalesced &&
-                        cursor <= chunks.size() && packet.count <= chunks.size() - cursor &&
-                        // Packets retain ranges in shared chunk storage, not ownership
-                        // of those slots. Visibility changes can overwrite a range
-                        // while its old packet remains cached at an inactive index.
-                        std::all_of(chunks.begin() + cursor, chunks.begin() + cursor + packet.count,
-                            [&](const Chunk &chunk) {
-                                return chunk.sourceIndex == index && chunk.mesh == draw.mesh &&
-                                    chunk.meshRevision == draw.mesh->GetRevision() &&
-                                    chunk.preparationRevision == draw.preparationRevision;
-                            }) &&
-                        (!shadow || (cursor + packet.count) * sizeof(Caster) <= m_uploadedCasters.size()))
+                    const auto bytes = Bytes(values);
+                    if (!chunk.uniform || chunk.uploaded.size() != bytes.size())
+                        chunk.uniform = rhi::Buffer(device, device.CreateBuffer({bytes.size(), rhi::BufferUsage::Uniform, "VSM draw chunk"}));
+                    if (chunk.uploaded.size() != bytes.size() || std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
                     {
-                        ++m_stats->reusedPackets;
-                        for (std::size_t part = 0; part < packet.count; ++part)
-                        {
-                            auto &chunk = chunks[cursor++];
-                            chunk.submission.draw = &draw;
-                            chunk.sourceIndex = index;
-                            if (shadow)
-                            {
-                                Caster input;
-                                std::memcpy(&input, m_uploadedCasters.data() + (cursor - 1) * sizeof(Caster), sizeof(Caster));
-                                const auto signature = signatures[index] ^ (std::uint64_t(chunk.submission.firstIndex) * 0x9e3779b97f4a7c15ull);
-                                input.identity.x = std::uint32_t(signature);
-                                input.identity.y = std::uint32_t(signature >> 32) ^ std::uint32_t(chunk.firstInstance);
-                                input.draw.w = static_cast<std::uint32_t>(index);
-                                inputs.push_back(input);
-                            }
-                        }
-                        continue;
+                        device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
+                        chunk.uploaded.assign(bytes.begin(), bytes.end());
+                        changed = true;
                     }
-                    const auto packetFirst = cursor;
-                    ++m_stats->rebuiltPackets;
-                    const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
-                    const auto drawCount = std::min(draw.indexCount ? draw.indexCount : available, available);
-                    if (drawCount == 0) continue;
-                    // Submissions use absolute first indices (see BasicMesh::BaseIndex) so arena meshes batch together.
-                    const auto baseIndex = draw.mesh->BaseIndex();
-                    const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
-                    auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, drawCount);
-                    const bool subdivide = shadow && useClusters && draw.firstIndex % 3 == 0 && !clusters.empty();
-                    if (subdivide && m_clusterPlans[index].coalesce)
-                        clusters = std::span<const ShadowGeometryCluster>(&m_clusterPlans[index].merged, 1);
-                    const auto rangeCount = subdivide ? clusters.size() : 1;
-                    const std::size_t instanceLimit = subdivide ? 16 : 64;
-                    for (std::size_t range = 0; range < rangeCount; ++range)
-                    {
-                        const auto firstIndex = subdivide ? std::max(draw.firstIndex, clusters[range].firstIndex) : draw.firstIndex;
-                        const auto endIndex = subdivide ? std::min(draw.firstIndex + drawCount, clusters[range].firstIndex + clusters[range].indexCount) : draw.firstIndex + drawCount;
-                        if (endIndex <= firstIndex) continue;
-                        const auto count = endIndex - firstIndex;
-                        for (std::size_t first = 0; first < modelCount; first += instanceLimit)
-                        {
-                            if (cursor == chunks.size()) chunks.emplace_back();
-                            auto &chunk = chunks[cursor];
-                            const auto models = static_cast<std::uint32_t>(std::min(instanceLimit, modelCount - first));
-                            if (draw.preparationRevision && chunk.preparationRevision == draw.preparationRevision &&
-                                chunk.mesh == draw.mesh && chunk.meshRevision == draw.mesh->GetRevision() &&
-                                chunk.firstInstance == first && chunk.submission.instances == models &&
-                                chunk.submission.firstIndex == baseIndex + firstIndex && chunk.submission.indexCount == count &&
-                                chunk.clustered == subdivide)
-                            {
-                                // Refresh the borrowed packet address even on a hit.
-                                // Clipmap/camera/lighting feedback is still processed
-                                // below; only immutable caster/receiver preparation skips.
-                                chunk.submission.draw = &draw;
-                                chunk.sourceIndex = index;
-                                if (shadow)
-                                {
-                                    const auto signature = signatures[index] ^ (std::uint64_t(firstIndex) * 0x9e3779b97f4a7c15ull);
-                                    inputs.push_back({chunk.bounds,
-                                                      {count, baseIndex + firstIndex, models, index},
-                                                      {std::uint32_t(signature),
-                                                       std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}, chunk.extents});
-                                }
-                                ++cursor;
-                                continue;
-                            }
-                            chunk.preparationRevision = draw.preparationRevision;
-                            chunk.clustered = subdivide;
-                            chunk.firstInstance = first;
-                            chunk.sourceIndex = index;
-                            const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
-                            const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
-                            const auto upload = [&](const auto &parameters)
-                            {
-                                const auto bytes = Bytes(parameters);
-                                if (!chunk.uniform || chunk.uploaded.size() != bytes.size())
-                                    chunk.uniform = rhi::Buffer(device, device.CreateBuffer({bytes.size(), rhi::BufferUsage::Uniform, "VSM draw chunk"}));
-                                if (chunk.uploaded.size() != bytes.size() || std::memcmp(chunk.uploaded.data(), bytes.data(), bytes.size()) != 0)
-                                {
-                                    device.UpdateBuffer(chunk.uniform.Get(), 0, bytes);
-                                    chunk.uploaded.assign(bytes.begin(), bytes.end());
-                                    changed = true;
-                                }
-                            };
-                            if (models == 1)
-                            {
-                                const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
-                                upload(RigidDrawParameters{model, drawParameters, alpha});
-                            }
-                            else
-                            {
-                                DrawParameters parameters;
-                                std::copy_n(draw.instanceModels->begin() + first, models, parameters.models.begin());
-                                parameters.draw = drawParameters; parameters.alpha = alpha;
-                                upload(parameters);
-                            }
-                            const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
-                            changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
-                                chunk.texture != texture || chunk.submission.indexCount != count ||
-                                chunk.submission.firstIndex != baseIndex + firstIndex;
-                            chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
-                            chunk.geometry = draw.mesh->VertexBuffer();
-                            chunk.submission = {&draw, count, baseIndex + firstIndex, models, {}, cursor * 20};
-                            chunk.texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
-                            if (shadow)
-                            {
-                                const auto signature = signatures[index] ^ (std::uint64_t(firstIndex) * 0x9e3779b97f4a7c15ull);
-                                const float radius = std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
-                                const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
-                                    ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
-                                const auto bounds = subdivide ? ShadowClusterWorldBounds(clusters[range], transforms) : ShadowWorldBounds{};
-                                chunk.bounds = subdivide ? bounds.sphere : glm::vec4(draw.shadowBoundsCenter, radius);
-                                chunk.extents = bounds.extents;
-                                inputs.push_back({chunk.bounds, {count, baseIndex + firstIndex, models, index},
-                                    {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ std::uint32_t(first), 0, 0}, chunk.extents});
-                            }
-                            ++cursor;
-                        }
-                    }
-                    packet = {draw.mesh, draw.preparationRevision, draw.mesh->GetRevision(), packetFirst,
-                        cursor - packetFirst, clustered, coalesced};
+                };
+                if (models == 1)
+                {
+                    const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
+                    upload(RigidDrawParameters{model, drawParameters, alpha});
                 }
-                return cursor;
+                else
+                {
+                    DrawParameters values;
+                    std::copy_n(draw.instanceModels->begin() + first, models, values.models.begin());
+                    values.draw = drawParameters; values.alpha = alpha;
+                    upload(values);
+                }
             };
-            const auto receiverCount = prepare(receivers, m_receiverChunks, false);
-            const auto casterCount = prepare(casters, m_casterChunks, true);
-            changed |= receiverCount != m_receiverCount || casterCount != m_casterCount;
-            m_receiverCount = receiverCount; m_casterCount = casterCount;
+            // Receivers draw depth only when planning has no scene depth. Their chunks keep list positions: a
+            // receiver is reused while it stays at the same place in the visible list.
+            std::size_t receiverCursor = 0;
+            m_receiverPackets.resize(planningReceivers.size());
+            for (std::size_t index = 0; index < planningReceivers.size(); ++index)
+            {
+                const auto &draw = planningReceivers[index];
+                if (!IsReceiver(draw)) continue;
+                auto &packet = m_receiverPackets[index];
+                if (draw.preparationRevision && packet.revision == draw.preparationRevision &&
+                    packet.mesh == draw.mesh && packet.meshRevision == draw.mesh->GetRevision() &&
+                    packet.first == receiverCursor && receiverCursor <= m_receiverChunks.size() &&
+                    packet.count <= m_receiverChunks.size() - receiverCursor &&
+                    // Packets retain ranges in shared chunk storage, not ownership
+                    // of those slots. Visibility changes can overwrite a range
+                    // while its old packet remains cached at an inactive index.
+                    std::all_of(m_receiverChunks.begin() + receiverCursor, m_receiverChunks.begin() + receiverCursor + packet.count,
+                        [&](const Chunk &chunk) {
+                            return chunk.sourceIndex == index && chunk.mesh == draw.mesh &&
+                                chunk.meshRevision == draw.mesh->GetRevision() &&
+                                chunk.preparationRevision == draw.preparationRevision;
+                        }))
+                {
+                    ++m_stats->reusedPackets;
+                    for (std::size_t part = 0; part < packet.count; ++part)
+                    {
+                        auto &chunk = m_receiverChunks[receiverCursor++];
+                        chunk.submission.draw = &draw;
+                        chunk.sourceIndex = index;
+                    }
+                    continue;
+                }
+                const auto packetFirst = receiverCursor;
+                ++m_stats->rebuiltPackets;
+                const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
+                const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
+                if (count == 0) continue;
+                // Submissions use absolute first indices (see BasicMesh::BaseIndex) so arena meshes batch together.
+                const auto firstIndex = draw.mesh->BaseIndex() + draw.firstIndex;
+                const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
+                for (std::size_t first = 0; first < modelCount; first += 64)
+                {
+                    if (receiverCursor == m_receiverChunks.size()) m_receiverChunks.emplace_back();
+                    auto &chunk = m_receiverChunks[receiverCursor];
+                    const auto models = static_cast<std::uint32_t>(std::min<std::size_t>(64, modelCount - first));
+                    uploadChunk(chunk, receiverCursor, draw, first, models);
+                    const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
+                    changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
+                        chunk.texture != texture || chunk.submission.indexCount != count || chunk.submission.firstIndex != firstIndex;
+                    chunk.preparationRevision = draw.preparationRevision;
+                    chunk.firstInstance = first;
+                    chunk.sourceIndex = index;
+                    chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
+                    chunk.geometry = draw.mesh->VertexBuffer();
+                    chunk.submission = {&draw, count, firstIndex, models, {}, receiverCursor * 20};
+                    chunk.texture = texture;
+                    ++receiverCursor;
+                }
+                packet = {draw.mesh, draw.preparationRevision, draw.mesh->GetRevision(), packetFirst, receiverCursor - packetFirst};
+            }
+            // Casters reuse their packets' chunks wherever they now sit in the list; only list positions (the page
+            // lists and indirect commands they address) are rewritten.
+            std::vector<Caster> inputs;
+            inputs.reserve(m_casterCount);
+            std::vector<BatchedDraw> batched;
+            if (m_batchPages) batched.reserve(m_casterCount);
+            std::size_t casterCursor = 0;
+            for (std::size_t index = 0; index < casters.size(); ++index)
+            {
+                auto *packet = m_casterPacketSlots[index];
+                if (!packet) continue;
+                const auto &draw = casters[index];
+                const bool coalesced = useClusters && packet->coalesce;
+                if (packet->chunksValid && packet->clustered == useClusters && packet->coalesced == coalesced)
+                    ++m_stats->reusedPackets;
+                else
+                {
+                    ++m_stats->rebuiltPackets;
+                    BuildCasterChunks(*packet, draw, useClusters, coalesced);
+                }
+                if (m_batchPages && !packet->chunks.empty())
+                {
+                    // A revised packet's models are immutable and upload once; an unrevised one's may change in place.
+                    const auto models = draw.instanceModels && !draw.instanceModels->empty()
+                        ? std::span<const glm::mat4>(*draw.instanceModels) : std::span<const glm::mat4>(&draw.model, 1);
+                    if (packet->models != GpuRecordHeap::Invalid && packet->modelCount != models.size()) ReleaseCasterModels(*packet);
+                    if (packet->models == GpuRecordHeap::Invalid)
+                    {
+                        packet->models = m_batchedModels->Allocate(std::as_bytes(models));
+                        packet->modelCount = static_cast<std::uint32_t>(models.size());
+                    }
+                    else if (!draw.preparationRevision)
+                        m_batchedModels->Write(packet->models, std::as_bytes(models));
+                }
+                const auto baseIndex = draw.mesh->BaseIndex();
+                const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
+                const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
+                for (const auto &part : packet->chunks)
+                {
+                    if (casterCursor == m_casterChunks.size()) m_casterChunks.emplace_back();
+                    auto &chunk = m_casterChunks[casterCursor];
+                    const auto firstIndex = baseIndex + part.indexOffset;
+                    changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
+                        chunk.texture != texture || chunk.submission.indexCount != part.indexCount ||
+                        chunk.submission.firstIndex != firstIndex || chunk.submission.instances != part.instances;
+                    chunk.preparationRevision = draw.preparationRevision;
+                    chunk.clustered = packet->clustered;
+                    chunk.firstInstance = part.firstInstance;
+                    chunk.sourceIndex = index;
+                    chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
+                    chunk.geometry = draw.mesh->VertexBuffer();
+                    chunk.texture = texture;
+                    chunk.bounds = part.bounds; chunk.extents = part.extents;
+                    chunk.submission = {&draw, part.indexCount, firstIndex, part.instances, {}, casterCursor * 20};
+                    if (m_batchPages)
+                    {
+                        // Batched draws read the shared tables; drop parameters left from unbatched recording.
+                        if (chunk.uniform) { chunk.uniform.Reset(); chunk.uploaded = {}; }
+                        batched.push_back({glm::uvec4(casterCursor, part.instances, draw.alphaMode, packet->models + part.firstInstance), alpha});
+                    }
+                    else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances);
+                    // One identity per chunk geometry, whether its packet was rebuilt or reused this frame.
+                    const auto signature = signatures[index] ^ (std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull);
+                    inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
+                        {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, 0}, part.extents});
+                    ++casterCursor;
+                }
+            }
+            if (packetFrame % PacketSweepInterval == 0)
+                std::erase_if(m_casterPackets, [&](auto &item)
+                {
+                    const bool stale = (item.first & TransientPacket) ? item.second.lastFrame != packetFrame
+                                                                      : item.second.lastFrame + PacketRetainFrames < packetFrame;
+                    if (stale) ReleaseCasterModels(item.second);
+                    return stale;
+                });
+            changed |= receiverCursor != m_receiverCount || casterCursor != m_casterCount;
+            m_receiverCount = receiverCursor; m_casterCount = casterCursor;
             if (m_capacity < std::max(m_casterCount, std::size_t{1}))
             {
                 m_capacity = 1;
@@ -562,49 +600,25 @@ namespace PlutoGE::render
             const auto inputBytes = std::as_bytes(std::span(inputs));
             changed |= UploadChangedRecords(device, m_casters.Get(), inputBytes, sizeof(Caster), m_uploadedCasters);
             for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
+            if (m_batchPages)
+            {
+                // Batched page draws read each caster chunk's parameters and models from two tables (VirtualShadowRaster's
+                // BatchedDraw), so chunks of any model count batch.
+                changed |= m_batchedDraws->Upload(device, std::as_bytes(std::span(batched)), sizeof(BatchedDraw));
+                changed |= m_batchedModels->Flush(device);
+            }
         }
         else
         {
-            m_stats->reusedPackets = static_cast<std::uint32_t>(receivers.size() + casters.size());
+            m_stats->reusedPackets = static_cast<std::uint32_t>(planningReceivers.size() + casters.size());
             // Borrowed packet addresses change even when immutable content does not.
             for (std::size_t index = 0; index < m_receiverCount; ++index)
-                m_receiverChunks[index].submission.draw = &receivers[m_receiverChunks[index].sourceIndex];
+                m_receiverChunks[index].submission.draw = &planningReceivers[m_receiverChunks[index].sourceIndex];
             for (std::size_t index = 0; index < m_casterCount; ++index)
                 m_casterChunks[index].submission.draw = &casters[m_casterChunks[index].sourceIndex];
         }
         m_preparationKey.swap(m_preparationScratch);
         m_preparationProjection = preparationProjection;
-        if (m_batchPages && !reusePreparation)
-        {
-            // Batched page draws read each caster chunk's parameters and models from two tables (VirtualShadowRaster's
-            // BatchedDraw), so chunks of any model count batch. The chunk uniforms prepared above hold the same values.
-            std::vector<BatchedDraw> draws(m_casterCount);
-            std::vector<glm::mat4> models;
-            models.reserve(m_casterCount);
-            for (std::size_t index = 0; index < m_casterCount; ++index)
-            {
-                const auto &chunk = m_casterChunks[index];
-                auto &record = draws[index];
-                const auto firstModel = static_cast<std::uint32_t>(models.size());
-                if (chunk.submission.instances == 1 && chunk.uploaded.size() == sizeof(RigidDrawParameters))
-                {
-                    RigidDrawParameters rigid;
-                    std::memcpy(&rigid, chunk.uploaded.data(), sizeof(rigid));
-                    models.push_back(rigid.model);
-                    record = {rigid.draw, rigid.alpha};
-                }
-                else if (chunk.uploaded.size() == sizeof(DrawParameters))
-                {
-                    const auto parameters = std::make_unique<DrawParameters>();
-                    std::memcpy(parameters.get(), chunk.uploaded.data(), sizeof(DrawParameters));
-                    models.insert(models.end(), parameters->models.begin(), parameters->models.begin() + chunk.submission.instances);
-                    record = {parameters->draw, parameters->alpha};
-                }
-                record.parameters.w = firstModel;
-            }
-            m_batchedDraws->Upload(device, std::as_bytes(std::span(draws)), sizeof(BatchedDraw));
-            m_batchedModels->Upload(device, std::as_bytes(std::span(models)), sizeof(glm::mat4));
-        }
         for (std::size_t level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
             const bool stable = m_frame != 0 && parameters.matrices[level] == m_previousClipmaps.matrices[level] &&
@@ -645,6 +659,52 @@ namespace PlutoGE::render
             m_stats->deferred == 0 && m_stats->overflow == 0;
         if (!m_reuseFrame) device.UpdateBuffer(m_parameters.Get(), 0, Bytes(parameters));
         return true;
+    }
+    void VirtualShadowMaps::ReleaseCasterModels(CasterPacket &packet)
+    {
+        m_batchedModels->Release(packet.models, packet.modelCount, m_packetFrame);
+        packet.models = GpuRecordHeap::Invalid;
+        packet.modelCount = 0;
+    }
+    void VirtualShadowMaps::BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced) const
+    {
+        packet.chunks.clear();
+        packet.chunksValid = true;
+        packet.clustered = clustered;
+        packet.coalesced = coalesced;
+        const auto drawCount = packet.indexCount;
+        if (drawCount == 0) return;
+        const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
+        auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, drawCount);
+        const bool subdivide = clustered && draw.firstIndex % 3 == 0 && !clusters.empty();
+        if (subdivide && coalesced)
+            clusters = std::span<const ShadowGeometryCluster>(&packet.merged, 1);
+        const auto rangeCount = subdivide ? clusters.size() : 1;
+        const std::size_t instanceLimit = subdivide ? 16 : 64;
+        const float radius = std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
+        for (std::size_t range = 0; range < rangeCount; ++range)
+        {
+            const auto firstIndex = subdivide ? std::max(draw.firstIndex, clusters[range].firstIndex) : draw.firstIndex;
+            const auto endIndex = subdivide ? std::min(draw.firstIndex + drawCount, clusters[range].firstIndex + clusters[range].indexCount)
+                                            : draw.firstIndex + drawCount;
+            if (endIndex <= firstIndex) continue;
+            for (std::size_t first = 0; first < modelCount; first += instanceLimit)
+            {
+                const auto models = static_cast<std::uint32_t>(std::min(instanceLimit, modelCount - first));
+                CasterChunk chunk{endIndex - firstIndex, firstIndex, models, static_cast<std::uint32_t>(first)};
+                if (subdivide)
+                {
+                    const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
+                        ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
+                    const auto bounds = ShadowClusterWorldBounds(clusters[range], transforms);
+                    chunk.bounds = bounds.sphere;
+                    chunk.extents = bounds.extents;
+                }
+                else
+                    chunk.bounds = glm::vec4(draw.shadowBoundsCenter, radius);
+                packet.chunks.push_back(chunk);
+            }
+        }
     }
     void VirtualShadowMaps::BindCompute(rhi::ICommandContext &commands, std::size_t pipeline)
     {

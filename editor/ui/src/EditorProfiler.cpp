@@ -467,7 +467,8 @@ namespace PlutoGE::ui
                << rhiScene.geometryParameterReuses << " reused\n";
         report << "RHI retained packets: " << rhiScene.sharedDrawPacketHits << " shared across pass/list changes\n";
         report << "RHI opaque batch groups: " << rhiScene.reusedOpaqueBatchGroups << " reused / "
-               << rhiScene.rebuiltOpaqueBatchGroups << " rebuilt (when the visible packet list changes)\n";
+               << rhiScene.rebuiltOpaqueBatchGroups << " rebuilt from " << rhiScene.rebuiltOpaqueBatchDraws
+               << " packets (when the visible packet list changes)\n";
         report << "RHI material preparation: " << rhiScene.materialPreparations << " prepared / "
                << rhiScene.materialPreparationHits << " reused\n";
         report << "RHI shader graph draws: " << rhiScene.graphSpecializedDraws << " specialised / "

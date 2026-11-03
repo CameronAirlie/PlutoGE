@@ -2037,7 +2037,8 @@ namespace PlutoGE::render
     }
 
     const char *BasicRenderer::VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
-                                                             std::span<const BasicDraw> shadowDraws) const
+                                                             std::span<const BasicDraw> shadowDraws,
+                                                             bool sceneDepthPlansShadows) const
     {
         if (!m_device || !m_device->GetImmediateContext().SupportsGpuDrivenShadows())
             return "VSM unavailable: backend lacks GPU-driven shadows";
@@ -2055,7 +2056,9 @@ namespace PlutoGE::render
         };
         if (unsupported(draws, false) || unsupported(casters, true))
             return "VSM unavailable: vertex deformation or masked shader graph requires graph-aware depth rendering";
-        if (!VirtualShadowMaps::CanPrepare(draws, casters)) return "VSM unavailable: draw chunk capacity exceeded";
+        // Receivers are drawn (and limited) only when planning cannot read the scene's depth.
+        if (!VirtualShadowMaps::CanPrepare(sceneDepthPlansShadows ? std::span<const BasicDraw>{} : draws, casters))
+            return "VSM unavailable: draw chunk capacity exceeded";
         return nullptr;
     }
 
@@ -2156,7 +2159,21 @@ namespace PlutoGE::render
         const bool virtualShadowsRequested = !reuseDirectionalShadows &&
             ((lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual) ||
              std::any_of(lighting.spotLights.begin(), lighting.spotLights.end(), [](const auto &spot) { return spot.light.castsShadows && spot.light.range > 0.02f; }));
-        const char *virtualShadowIssue = virtualShadowsRequested ? VirtualShadowUnavailableReason(draws, shadowDraws) : nullptr;
+        // Coverage depth: opaque and alpha-tested surfaces' exact depth, rendered once before they are shaded.
+        const bool depthPrepassActive = m_depthPrepass && std::ranges::all_of(m_coverageFragments,
+            [](const auto &shader) { return !shader.glsl.empty() || !shader.spirv.empty(); });
+        const auto prepassEligible = [](const BasicDraw &draw)
+        {
+            return !draw.outlinePass && draw.surfaceType == 0 && draw.alphaMode < 2 &&
+                !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures);
+        };
+        // When it holds every surface that samples virtual shadows, VSM planning reads it instead of rendering those
+        // surfaces' depth a second time. Graphs that read scene textures are shaded without it; their views keep
+        // VSM's own receiver pass.
+        const bool coverageDepthPlansShadows = depthPrepassActive && std::ranges::all_of(draws, [&](const BasicDraw &draw)
+            { return !VirtualShadowMaps::IsReceiver(draw) || prepassEligible(draw); });
+        const char *virtualShadowIssue = virtualShadowsRequested
+            ? VirtualShadowUnavailableReason(draws, shadowDraws, coverageDepthPlansShadows) : nullptr;
         bool virtualShadowsActive = virtualShadowsRequested && !virtualShadowIssue;
         const bool cascadedShadowsActive = lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Cascaded;
         if (lighting.shadowsEnabled)
@@ -2294,19 +2311,6 @@ namespace PlutoGE::render
                 std::erase_if(m_shadowSignatureCache, [&](const auto &entry)
                     { return entry.second.lastUsed + SignatureRetainFrames < frame; });
         }
-        // Coverage depth: opaque and alpha-tested surfaces' exact depth, rendered once before they are shaded.
-        const bool depthPrepassActive = m_depthPrepass && std::ranges::all_of(m_coverageFragments,
-            [](const auto &shader) { return !shader.glsl.empty() || !shader.spirv.empty(); });
-        const auto prepassEligible = [](const BasicDraw &draw)
-        {
-            return !draw.outlinePass && draw.surfaceType == 0 && draw.alphaMode < 2 &&
-                !(draw.shaderGraphProgram && draw.shaderGraphProgram->requiresSceneTextures);
-        };
-        // When it holds every surface that samples virtual shadows, VSM planning reads it instead of rendering those
-        // surfaces' depth a second time. Graphs that read scene textures are shaded without it; their views keep
-        // VSM's own receiver pass.
-        const bool coverageDepthPlansShadows = depthPrepassActive && std::ranges::all_of(draws, [&](const BasicDraw &draw)
-            { return !VirtualShadowMaps::IsReceiver(draw) || prepassEligible(draw); });
         if (virtualShadowsActive)
         {
             core::CpuScope prepareScope("VSM preparation", core::CpuCategory::Rendering);

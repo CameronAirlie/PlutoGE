@@ -1057,8 +1057,10 @@ namespace PlutoGE::render
             }
         }
         void SetStaticShadowCachingEnabled(bool enabled) noexcept;
+        // `sceneDepthPlansShadows`: VSM planning reads the coverage depth prepass, so no receiver depth is drawn.
         [[nodiscard]] const char *VirtualShadowUnavailableReason(std::span<const BasicDraw> draws,
-                                                               std::span<const BasicDraw> shadowDraws = {}) const;
+                                                               std::span<const BasicDraw> shadowDraws = {},
+                                                               bool sceneDepthPlansShadows = false) const;
         void Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws);
         void Render(const glm::mat4 &viewProjection, const BasicLighting &lighting, std::span<const BasicDraw> draws,
                     std::span<const BasicPostProcessEffect> postProcessEffects = {},

@@ -92,7 +92,10 @@ namespace PlutoGE::render
                                                  std::span<IPostProcessEffect *const> postProcessEffects = {},
                                                  // Composited in order over the base camera, beneath runtime UI.
                                                  std::span<const CameraView> overlays = {},
-                                                 std::optional<std::span<scene::Light *const>> lights = std::nullopt);
+                                                 std::optional<std::span<scene::Light *const>> lights = std::nullopt,
+                                                 // The camera's unculled scene, for shadows and GI, when `commands` is its
+                                                 // visible list (Renderer::PrepareVisibleRenderCommands); else `commands`.
+                                                 std::optional<RenderCommandView> sceneCommands = std::nullopt);
         [[nodiscard]] bool IsInitialized() const noexcept { return m_renderer != nullptr; }
         [[nodiscard]] rhi::GraphicsApi GetGraphicsApi() const noexcept { return m_graphicsApi; }
 

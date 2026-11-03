@@ -506,7 +506,14 @@ namespace PlutoGE::ui
                << rhiScene.recordedShadowDrawsByCascade[3] << " by cascade; "
                << rhiScene.shadowObjectUploadCount << " object uploads)\n";
         report << "RHI shadow cascade cache: " << rhiScene.shadowCascadeCacheHitCount << " hits, "
-               << rhiScene.shadowCascadeUpdateCount << " updates, " << rhiScene.shadowCascadeTargetCount << " allocated targets\n";
+               << rhiScene.shadowCascadeUpdateCount << " updates, " << rhiScene.shadowCascadeTargetCount << " allocated targets; "
+               << rhiScene.retainedShadowCascades << " projections retained\n";
+        report << "RHI shadow caster culling: " << rhiScene.shadowCastersBeyondShadowDistance
+               << " beyond their shadow distance, " << rhiScene.shadowCastersBelowTexelSize
+               << " below cascade texel size (in redrawn cascades)\n";
+        report << "RHI ray-traced GI scene: " << rhiScene.rayTracedInstances << " instances, "
+               << rhiScene.rayTracedSkippedInstances << " too small to trace; top level "
+               << (rhiScene.rayTracedSceneRebuilt ? "rebuilt" : "reused") << "\n";
         report << "RHI directional shadows: " << rhiScene.directionalShadowStatus << "\n";
         if (rhiScene.virtualShadowsActive)
         {

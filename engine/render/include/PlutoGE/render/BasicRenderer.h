@@ -584,6 +584,10 @@ namespace PlutoGE::render
         bool castsShadow = true;
         glm::vec3 shadowBoundsCenter{0.0f};
         float shadowBoundsRadius = -1.0f;
+        // World bounding-sphere radius of the draw's largest instance (of the draw itself when not instanced), for
+        // size-based culling: casters too small for a shadow cascade's texels, instances too small to matter to
+        // ray-traced GI. Negative when unknown, which never culls.
+        float maxInstanceRadius = -1.0f;
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
         bool contributesToGi = true;
@@ -806,6 +810,12 @@ namespace PlutoGE::render
         float shadowFilterNormalSoftness = 0.26f;
         float shadowDistance = 150.0f;
         float shadowCasterDistance = 0.0f;
+        // Cascaded shadow maps skip, per cascade, casters whose largest instance spans fewer texels across than this
+        // (BasicDraw::maxInstanceRadius): grass contributes nothing but cost to a far cascade. 0 draws every caster.
+        float shadowCasterMinimumTexels = 0.0f;
+        // Ray-traced GI leaves out draws whose largest instance's bounding radius is below this, in world units
+        // (RayTracingScene). 0 traces every instance.
+        float rayTracedMinimumInstanceRadius = 0.0f;
         // World length of the screen-space contact shadow rays towards the directional light; 0 disables them.
         // Contact shadows (local lights' too: BasicPointLight::contactShadowLength) need the depth prepass and
         // shadowsEnabled (ScreenSpaceContactShadows.h).
@@ -858,9 +868,11 @@ namespace PlutoGE::render
         // DDGI probes traced and reset this frame, the rays scheduled for them (inactive probes trace fewer), and the
         // frames one sweep of the whole volume takes.
         std::uint32_t ddgiProbesTraced = 0, ddgiProbesReset = 0, ddgiRaysScheduled = 0, ddgiFramesPerSweep = 0;
-        // True when DDGI traced with hardware ray queries this frame, with this many instances.
+        // True when DDGI traced with hardware ray queries this frame, with this many instances; those left out as too
+        // small (BasicLighting::rayTracedMinimumInstanceRadius); whether the top level was rebuilt this frame.
         bool ddgiHardwareRays = false;
-        std::size_t rayTracedInstances = 0;
+        std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0;
+        bool rayTracedSceneRebuilt = false;
         std::size_t geometryDepthDraws = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
@@ -906,6 +918,8 @@ namespace PlutoGE::render
         std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
         std::size_t shadowCascadeCacheHits = 0;
+        // Casters the redrawn cascades skipped as narrower than BasicLighting::shadowCasterMinimumTexels.
+        std::size_t shadowCastersBelowTexelSize = 0;
         std::size_t pointShadowAtlasUpdates = 0, pointShadowAtlasCacheHits = 0, pointShadowDraws = 0;
         std::size_t pointShadowFaceUpdates = 0, pointShadowFaceHits = 0, pointShadowObjectUploads = 0, pointShadowMaterialUploads = 0;
         std::size_t pointShadowStaticFaceUpdates = 0; // Static layer faces redrawn (PointShadowLayers).
@@ -1322,11 +1336,15 @@ namespace PlutoGE::render
         std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;
         std::vector<std::uint8_t> m_shadowVisibleInAnyCascade;
         std::vector<std::uint64_t> m_shadowDrawSignatures;
-        struct ShadowSignatureCache
+        // Shadow draw signatures by the immutable packet they describe (BasicDraw::preparationRevision), not by list
+        // position: the caster list gains and loses draws as the camera moves, and a positional cache then misses for
+        // every draw after the change, rehashing each one's instance matrices. Entries unused for a while are dropped.
+        struct ShadowSignatureEntry
         {
-            std::uint64_t packetRevision = 0, meshRevision = 0, signature = 0;
+            std::uint64_t meshRevision = 0, signature = 0, lastUsed = 0;
         };
-        std::vector<ShadowSignatureCache> m_shadowSignatureCache;
+        std::unordered_map<std::uint64_t, ShadowSignatureEntry> m_shadowSignatureCache;
+        std::uint64_t m_shadowSignatureFrame = 0;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;

@@ -261,6 +261,9 @@ namespace PlutoGE::render::rhi::vulkan
             AddressedBuffer instances;
             bool topLevel = false;
             std::uint32_t maxInstances = 0;
+            // Bottom level: the structure's device address, which top-level instances reference. Fixed at creation,
+            // so it is queried once rather than per instance of every top-level build.
+            VkDeviceAddress address = 0;
             std::vector<AccelerationStructureGeometry> geometries; // bottom level
             std::string debugName;
         };
@@ -2134,20 +2137,26 @@ namespace PlutoGE::render::rhi::vulkan
             FlushBufferUploads();
             const auto region = static_cast<VkDeviceSize>(m_impl.activeFrameIndex % AccelerationInstanceFrames) * structure->maxInstances;
             auto *written = static_cast<VkAccelerationStructureInstanceKHR *>(structure->instances.mapped) + region;
+            // Instances arrive in runs of one bottom level (a foliage cell's thousands); resolve each run once.
+            AccelerationStructureHandle resolved{};
+            VkDeviceAddress reference = 0;
             for (std::size_t index = 0; index < instances.size(); ++index)
             {
                 const auto &instance = instances[index];
-                auto *bottom = m_impl.accelerationStructures.Get(instance.bottomLevel);
-                if (!bottom || bottom->topLevel)
-                    throw std::logic_error("Vulkan top-level instance names no bottom-level structure");
-                VkAccelerationStructureDeviceAddressInfoKHR addressInfo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
-                addressInfo.accelerationStructure = bottom->structure;
+                if (index == 0 || instance.bottomLevel != resolved)
+                {
+                    auto *bottom = m_impl.accelerationStructures.Get(instance.bottomLevel);
+                    if (!bottom || bottom->topLevel)
+                        throw std::logic_error("Vulkan top-level instance names no bottom-level structure");
+                    resolved = instance.bottomLevel;
+                    reference = bottom->address;
+                }
                 VkAccelerationStructureInstanceKHR record{};
                 std::memcpy(record.transform.matrix, instance.transform.data(), sizeof(record.transform.matrix));
                 record.instanceCustomIndex = instance.customIndex & 0xFFFFFFu;
                 record.mask = instance.mask;
                 record.flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR;
-                record.accelerationStructureReference = vkGetAccelerationStructureDeviceAddressKHR(m_impl.device, &addressInfo);
+                record.accelerationStructureReference = reference;
                 written[index] = record;
             }
             vmaFlushAllocation(m_impl.allocator, structure->instances.allocation,
@@ -5596,6 +5605,9 @@ namespace PlutoGE::render::rhi::vulkan
             m_impl->DestroyAccelerationStructureResource(resource);
             throw std::runtime_error("vkCreateAccelerationStructureKHR(bottom level) failed");
         }
+        VkAccelerationStructureDeviceAddressInfoKHR addressInfo{VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR};
+        addressInfo.accelerationStructure = resource.structure;
+        resource.address = vkGetAccelerationStructureDeviceAddressKHR(m_impl->device, &addressInfo);
         return m_impl->accelerationStructures.Insert(std::move(resource));
     }
 

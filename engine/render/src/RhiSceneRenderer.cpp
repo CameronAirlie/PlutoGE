@@ -5,6 +5,7 @@
 
 #include "BasicDrawBatching.h"
 #include "CanonicalGeometry.h"
+#include "DirectionalShadowCascades.h"
 #include "DirectionalShadowReach.h"
 #include "PlutoGE/render/VirtualShadowConfig.h"
 #include "ParticleDrawOrder.h"
@@ -108,109 +109,49 @@ namespace PlutoGE::render
             return result;
         }
 
-        struct DirectionalShadowProjection
+        // The largest axis scale of a transform: a sphere of radius r it transforms fits in one of radius r * scale.
+        float MaxAxisScale(const glm::mat4 &model)
         {
-            glm::mat4 matrix{1.0f};
-            float worldTexelSize = 0.0f;
-            float depthRange = 1.0f;
-        };
+            return std::sqrt(std::max({glm::dot(glm::vec3(model[0]), glm::vec3(model[0])),
+                                       glm::dot(glm::vec3(model[1]), glm::vec3(model[1])),
+                                       glm::dot(glm::vec3(model[2]), glm::vec3(model[2]))}));
+        }
 
-        DirectionalShadowProjection BuildDirectionalShadowProjection(const CameraData &camera,
-                                                                     const BasicLighting &lighting,
-                                                                     float cascadeNear,
-                                                                     float shadowDistance,
-                                                                     float casterDistance,
-                                                                     std::uint32_t shadowResolution)
+        // BasicDraw::maxInstanceRadius of a rigid command: its geometry's bounding radius under its largest instance.
+        float MaxInstanceRadius(const RenderCommand &command)
         {
-            const glm::mat4 inverseView = glm::inverse(camera.view);
-            const glm::vec3 cameraPosition = glm::vec3(inverseView[3]);
-            const glm::vec3 right = glm::normalize(glm::vec3(inverseView[0]));
-            const glm::vec3 up = glm::normalize(glm::vec3(inverseView[1]));
-            const glm::vec3 forward = -glm::normalize(glm::vec3(inverseView[2]));
-            const float nearDistance = std::max(cascadeNear, camera.nearPlane);
-            const float farDistance = std::max(shadowDistance, nearDistance + 0.01f);
-            const float projectionX = std::max(std::abs(camera.projection[0][0]), 0.0001f);
-            const float projectionY = std::max(std::abs(camera.projection[1][1]), 0.0001f);
-            // Use actual camera coverage, matching the legacy cascade fit.
-            // Radius quantization and world-anchored snapping still stabilize
-            // camera translation and rotation at a fixed projection.
-            const float inverseProjectionY = 1.0f / projectionY;
-            const float inverseProjectionX = 1.0f / projectionX;
+            if (!command.mesh)
+                return -1.0f;
+            const float local = command.submeshIndex < command.mesh->GetSubmeshCount()
+                ? command.mesh->GetSubmesh(command.submeshIndex).bounds.radius : command.mesh->GetBounds().radius;
+            if (!(local > 0.0f))
+                return -1.0f;
+            float scale = 0.0f;
+            if (command.instanceModels && !command.instanceModels->empty())
+                for (const auto &model : *command.instanceModels)
+                    scale = std::max(scale, MaxAxisScale(model));
+            else
+                scale = MaxAxisScale(command.model);
+            return local * scale;
+        }
 
-            std::array<glm::vec3, 8> corners{};
-            std::size_t cornerIndex = 0;
-            for (const float distance : {nearDistance, farDistance})
-            {
-                const glm::vec3 center = cameraPosition + forward * distance;
-                const float coverageDepth = std::abs(camera.projection[3][3]) > 0.5f ? 1.0f : distance;
-                const glm::vec3 horizontal = right * (coverageDepth * inverseProjectionX);
-                const glm::vec3 vertical = up * (coverageDepth * inverseProjectionY);
-                corners[cornerIndex++] = center - horizontal - vertical;
-                corners[cornerIndex++] = center + horizontal - vertical;
-                corners[cornerIndex++] = center - horizontal + vertical;
-                corners[cornerIndex++] = center + horizontal + vertical;
-            }
-
-            glm::vec3 center(0.0f);
-            for (const auto &corner : corners)
-                center += corner;
-            center /= static_cast<float>(corners.size());
-            float radius = 0.0f;
-            for (const auto &corner : corners)
-                radius = std::max(radius, glm::length(corner - center));
-            radius = std::ceil(std::max(radius, 0.1f) * 16.0f) / 16.0f;
-            glm::vec3 lightDirection = lighting.directionalDirection;
-            if (glm::dot(lightDirection, lightDirection) < 0.000001f)
-                lightDirection = {0.4f, -0.8f, 0.3f};
-            lightDirection = glm::normalize(lightDirection);
-            const glm::vec3 lightUp = std::abs(lightDirection.y) > 0.98f
-                                          ? glm::vec3(0.0f, 0.0f, 1.0f)
-                                          : glm::vec3(0.0f, 1.0f, 0.0f);
-            const float lightOffset = std::max(casterDistance, farDistance) + radius + 1.0f;
-            const glm::mat4 lightView = glm::lookAtRH(center - lightDirection * lightOffset, center, lightUp);
-            const glm::vec3 lightSpaceCenter = glm::vec3(lightView * glm::vec4(center, 1.0f));
-            // Tent support plus half a texel for world-grid snapping.
-            const float guardTexels = std::clamp(lighting.shadowSoftness, 0.0f, 4.0f) + 1.5f;
-            const float guard = guardTexels * (radius * 2.0f / std::max(shadowResolution, 1u)) + 0.01f;
-            glm::vec3 minimum = lightSpaceCenter - glm::vec3(radius + guard, radius + guard, radius);
-            glm::vec3 maximum = lightSpaceCenter + glm::vec3(radius + guard, radius + guard, radius);
-            // The receiver slice alone is not a sufficient shadow-caster
-            // volume. A directional-light caster may be outside the camera
-            // slice on the light-facing side while its projection still
-            // reaches a receiver inside it. Extrude toward the light (the
-            // negative light direction), and include the full caster sphere.
-            // Extending minimum.z instead grows the volume downstream and
-            // makes valid casters cross the near plane as the camera rotates.
-            const float casterExtrusion = std::max(casterDistance, farDistance);
-            const glm::vec3 extrudedCenter = center - lightDirection * casterExtrusion;
-            const glm::vec3 lightSpaceExtrudedCenter =
-                glm::vec3(lightView * glm::vec4(extrudedCenter, 1.0f));
-            minimum.z = std::min(minimum.z, lightSpaceExtrudedCenter.z - radius - 0.01f);
-            maximum.z = std::max(maximum.z, lightSpaceExtrudedCenter.z + radius + 0.01f);
-            const glm::vec2 extent(maximum.x - minimum.x, maximum.y - minimum.y);
-            const glm::vec2 texelSize = extent / static_cast<float>(std::max(shadowResolution, 1u));
-            // Anchor the grid to absolute world zero, not the moving cascade
-            // centre. This is the key phase-stability rule used by GLSL CSM.
-            const glm::vec2 worldAnchor = glm::vec2(lightView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-            const glm::vec2 snappedMinimum = worldAnchor -
-                                             glm::round((worldAnchor - glm::vec2(minimum)) / texelSize) * texelSize;
-            const glm::vec2 snapOffset = snappedMinimum - glm::vec2(minimum);
-            minimum.x += snapOffset.x;
-            maximum.x += snapOffset.x;
-            minimum.y += snapOffset.y;
-            maximum.y += snapOffset.y;
-            const float nearPlane = std::max(-maximum.z, 0.01f);
-            const float farPlane = std::max(-minimum.z, nearPlane + 0.01f);
-            return {
-                glm::orthoRH_ZO(minimum.x, maximum.x, minimum.y, maximum.y,
-                                nearPlane, farPlane) * lightView,
-                std::max(extent.x, extent.y) / static_cast<float>(std::max(shadowResolution, 1u)),
-                farPlane - nearPlane,
-            };
+        // RenderCommand::maxShadowDistance: whether any of the command's casters lies within its producer's shadow
+        // distance of the camera. Whole commands (foliage cells) are kept or dropped; the bound is conservative.
+        bool WithinShadowDistance(const RenderCommand &command, const glm::vec3 &camera)
+        {
+            if (!(command.maxShadowDistance > 0.0f) || command.maxShadowDistance == std::numeric_limits<float>::max())
+                return true;
+            const float reach = command.maxShadowDistance + std::max(command.worldBounds.radius, 0.0f);
+            const glm::vec3 offset = command.worldBounds.center - camera;
+            if (glm::dot(offset, offset) <= reach * reach)
+                return true;
+            // Displacing graphs move vertices outside the bounds (ShadowPass applies the same exemption).
+            const auto *graph = command.material ? command.material->ReadConfig().shaderGraphProgram.get() : nullptr;
+            return graph && graph->data.header.z > 0;
         }
     }
 
-    RhiSceneRenderer::RhiSceneRenderer() = default;
+    RhiSceneRenderer::RhiSceneRenderer() : m_cascadeRetention(std::make_unique<DirectionalShadowCascadeRetention>()) {}
     RhiSceneRenderer::~RhiSceneRenderer() = default;
     bool RhiSceneRenderer::Initialize(rhi::IRenderDevice &device, const BasicRendererShaderPackage &shaders)
     {
@@ -766,40 +707,56 @@ namespace PlutoGE::render
         // valid as the camera moves; a scene with more caster chunks than the
         // VSM accepts (a whole large map) would lose directional shadows
         // entirely, so there rigid casters out of reach are dropped as well.
+        // Producers' own shadow distances (RenderCommand::maxShadowDistance, foliage layers) apply to every shadow
+        // first, so they also count against the VSM's capacity: a scene of short-shadowed foliage fits it.
         RenderCommandView directionalShadowCommands = shadowCommands;
-        if (prepareShadowCasters && !localShadows)
+        if (prepareShadowCasters)
         {
-            std::size_t casterChunks = 0;
-            for (const auto &command : shadowCommands)
-                casterChunks += command.instanceModels && !command.instanceModels->empty()
-                    ? (command.instanceModels->size() + 63) / 64 : 1;
-            const bool cullRigid = casterChunks > PLUTO_VSM_MAX_DRAW_CHUNKS;
-            const float shadowDistance = std::max(lighting.shadowDistance > 0.0f
-                ? std::min(cameraData.farPlane, lighting.shadowDistance) : cameraData.farPlane, 8.0f);
-            const float casterDistance = lighting.shadowCasterDistance > 0.0f ? lighting.shadowCasterDistance : shadowDistance;
-            if (const auto reach = DirectionalShadowReach::Create(glm::vec3(glm::inverse(cameraData.view)[3]),
-                    cameraData.projection, lighting.directionalDirection, shadowDistance, casterDistance))
+            const glm::vec3 cameraPosition = glm::vec3(glm::inverse(cameraData.view)[3]);
+            const auto beyondShadowDistance = [&](const RenderCommand &command)
+            { return !WithinShadowDistance(command, cameraPosition); };
+            const auto chunks = [](const RenderCommand &command) -> std::size_t
             {
-                const auto skinned = [](const RenderCommand &command)
-                { return command.jointMatrices && !command.jointMatrices->empty(); };
-                const auto outOfReach = [&](const RenderCommand &command)
+                return command.instanceModels && !command.instanceModels->empty()
+                    ? (command.instanceModels->size() + 63) / 64 : 1;
+            };
+            std::optional<DirectionalShadowReach> reach;
+            bool cullRigid = false;
+            if (!localShadows)
+            {
+                std::size_t casterChunks = 0;
+                for (const auto &command : shadowCommands)
+                    if (!beyondShadowDistance(command)) casterChunks += chunks(command);
+                cullRigid = casterChunks > PLUTO_VSM_MAX_DRAW_CHUNKS;
+                const float shadowDistance = std::max(lighting.shadowDistance > 0.0f
+                    ? std::min(cameraData.farPlane, lighting.shadowDistance) : cameraData.farPlane, 8.0f);
+                const float casterDistance = lighting.shadowCasterDistance > 0.0f ? lighting.shadowCasterDistance : shadowDistance;
+                reach = DirectionalShadowReach::Create(cameraPosition, cameraData.projection, lighting.directionalDirection,
+                                                       shadowDistance, casterDistance);
+            }
+            const auto skinned = [](const RenderCommand &command)
+            { return command.jointMatrices && !command.jointMatrices->empty(); };
+            const auto outOfReach = [&](const RenderCommand &command)
+            {
+                return reach && (cullRigid || skinned(command)) &&
+                    !reach->Contains(command.worldBounds.center, command.worldBounds.radius);
+            };
+            if (std::ranges::any_of(shadowCommands, [&](const RenderCommand &command)
+                    { return beyondShadowDistance(command) || outOfReach(command); }))
+            {
+                m_directionalShadowCommands.clear();
+                m_directionalShadowCommands.reserve(shadowCommands.size());
+                for (const auto &command : shadowCommands)
                 {
-                    return (cullRigid || skinned(command)) &&
-                        !reach->Contains(command.worldBounds.center, command.worldBounds.radius);
-                };
-                const auto culled = static_cast<std::size_t>(std::ranges::count_if(shadowCommands, outOfReach));
-                if (culled != 0)
-                {
-                    m_directionalShadowCommands.clear();
-                    m_directionalShadowCommands.reserve(shadowCommands.size() - culled);
-                    for (const auto &command : shadowCommands)
-                        if (!outOfReach(command)) m_directionalShadowCommands.push_back(&command);
-                    directionalShadowCommands = m_directionalShadowCommands;
-                    for (const auto &command : shadowCommands)
-                        if (outOfReach(command))
-                            ++(skinned(command) ? m_timingStats.skinnedShadowCastersOutOfReach
-                                                : m_timingStats.rigidShadowCastersOutOfReach);
+                    if (beyondShadowDistance(command))
+                        ++m_timingStats.shadowCastersBeyondShadowDistance;
+                    else if (outOfReach(command))
+                        ++(skinned(command) ? m_timingStats.skinnedShadowCastersOutOfReach
+                                            : m_timingStats.rigidShadowCastersOutOfReach);
+                    else
+                        m_directionalShadowCommands.push_back(&command);
                 }
+                directionalShadowCommands = m_directionalShadowCommands;
             }
         }
         // Still more casters in reach than the VSM accepts: shade this frame with
@@ -1265,6 +1222,7 @@ namespace PlutoGE::render
                 draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
+                draw.maxInstanceRadius = deformed ? draw.shadowBoundsRadius : MaxInstanceRadius(command);
                 // Camera passes pick each instance chunk's LOD (foliage clusters span many LODs' distances).
                 if (rigidMesh && !shadowOnly && !emissiveGi && lodCount > 1 && command.instanceModels &&
                     command.instanceModels->size() > 1)
@@ -1696,11 +1654,13 @@ namespace PlutoGE::render
                         effectiveLighting.shadowCascadeSplits[cascade - 1] + 0.01f);
                 effectiveLighting.shadowCascadeSplits[cascadeCount - 1] = shadowDistance;
 
+                if (!m_renderingSettings.retainShadowCascades)
+                    m_cascadeRetention->Reset();
                 for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
                 {
                     const float cascadeNear = cascade == 0 ? cameraNear
                                                            : effectiveLighting.shadowCascadeSplits[cascade - 1];
-                    const auto projection = BuildDirectionalShadowProjection(
+                    auto projection = BuildDirectionalShadowProjection(
                         cameraData, effectiveLighting, cascadeNear,
                         effectiveLighting.shadowCascadeSplits[cascade], casterDistance,
                         std::clamp(static_cast<std::uint32_t>(std::lround(
@@ -1708,6 +1668,8 @@ namespace PlutoGE::render
                                                                                 std::clamp(effectiveLighting.shadowCascadeResolutionFalloff, 0.25f, 1.0f),
                                                                                 static_cast<float>(cascade)))),
                                    256u, 8192u));
+                    if (m_renderingSettings.retainShadowCascades && m_cascadeRetention->Retain(cascade, projection))
+                        ++m_timingStats.retainedShadowCascades;
                     effectiveLighting.shadowMatrices[cascade] = projection.matrix;
                     effectiveLighting.shadowCascadeMetrics[cascade] = {
                         projection.worldTexelSize, projection.depthRange, 0.0f, 0.0f};
@@ -2221,6 +2183,10 @@ namespace PlutoGE::render
         m_timingStats.shadowCascadeUpdateCount = frameStats.shadowCascadeUpdates;
         m_timingStats.shadowCascadeCacheHitCount = frameStats.shadowCascadeCacheHits;
         m_timingStats.shadowCascadeTargetCount = frameStats.shadowCascadeTargets;
+        m_timingStats.shadowCastersBelowTexelSize = frameStats.shadowCastersBelowTexelSize;
+        m_timingStats.rayTracedInstances = frameStats.rayTracedInstances;
+        m_timingStats.rayTracedSkippedInstances = frameStats.rayTracedSkippedInstances;
+        m_timingStats.rayTracedSceneRebuilt = frameStats.rayTracedSceneRebuilt;
         m_timingStats.occlusion = frameStats.occlusion;
         m_timingStats.occlusionActive = frameStats.occlusionActive;
         m_timingStats.occlusionMode = frame.lighting.occlusionMode;

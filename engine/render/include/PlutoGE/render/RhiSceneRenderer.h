@@ -30,6 +30,7 @@ namespace PlutoGE::render
     class RhiSkinnedShadowBounds;
     struct RhiSkinningJob;
     class RhiDrawPreparationCache;
+    class DirectionalShadowCascadeRetention;
     struct ParticleInstanceKey;
     struct RhiSceneTimingStats
     {
@@ -72,6 +73,15 @@ namespace PlutoGE::render
         std::size_t skinnedShadowCastersOutOfReach = 0;
         // Rigid casters dropped because the full list exceeded the VSM caster capacity.
         std::size_t rigidShadowCastersOutOfReach = 0;
+        // Casters dropped beyond their producer's own shadow distance (RenderCommand::maxShadowDistance).
+        std::size_t shadowCastersBeyondShadowDistance = 0;
+        // Cascades that kept last frame's projection (DirectionalShadowCascadeRetention).
+        std::size_t retainedShadowCascades = 0;
+        // Casters skipped by cascades too coarse to resolve them (BasicLighting::shadowCasterMinimumTexels).
+        std::size_t shadowCastersBelowTexelSize = 0;
+        // Hardware ray-traced GI: instances in the top level, and whether it was rebuilt this frame.
+        std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0;
+        bool rayTracedSceneRebuilt = false;
         std::size_t recordedGeometryDepthDrawCount = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
@@ -359,6 +369,7 @@ namespace PlutoGE::render
       std::vector<SkinnedMesh *> m_skinningGrowth;
       std::vector<RhiSkinningJob> m_skinningJobs;
       std::vector<const RenderCommand *> m_directionalShadowCommands;
+      std::unique_ptr<DirectionalShadowCascadeRetention> m_cascadeRetention;
       // A shared model can have multiple independently animated owners.
       struct SkinningCache
       {

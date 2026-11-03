@@ -190,6 +190,49 @@ inline void CheckSsgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
               << " bounce pixels)\n";
 }
 
+// Hardware rays rebuild the top level only when the traced draws change: retained packets (revisions) that stay the
+// same reuse it, a changed surface or a new packet rebuilds it, and draws below the size threshold are left out.
+// Devices without hardware ray tracing skip it.
+inline void CheckRayTracedSceneReuse(PlutoGE::render::BasicRenderer &renderer, PlutoGE::render::rhi::IRenderDevice &device)
+{
+    using namespace GlobalIlluminationChecks;
+    Require(renderer.Resize(96, 64), "Ray-traced scene viewport resize failed");
+    auto floorMesh = MakeQuad(renderer, {0, 0, 0}, {6, 0, 0}, {0, 0, -6});
+    auto wallMesh = MakeQuad(renderer, {0, 1.5f, -1}, {4, 0, 0}, {0, 1.5f, 0});
+    BasicDraw floor{.mesh = &floorMesh, .preparationRevision = 0x7001};
+    BasicDraw wall{.mesh = &wallMesh, .preparationRevision = 0x7002};
+    wall.emission = {2.0f, 0.0f, 0.0f};
+    Scene scene{renderer, device};
+    scene.lighting.shadowsEnabled = false;
+    scene.Look({0, 1.0f, 3.5f}, {0, 0.3f, 0});
+    DdgiSettings settings;
+    settings.raySource = DdgiRaySource::Hardware;
+    const auto ddgi = EncodeDdgiPacket(settings, &settings);
+    std::array draws{floor, wall};
+    (void)scene.Render(draws, std::span(&ddgi, 1), 3);
+    if (!renderer.GetFrameStats().ddgiHardwareRays)
+    {
+        std::cout << "Ray-traced scene reuse skipped: no hardware ray tracing\n";
+        return;
+    }
+    Require(renderer.GetFrameStats().rayTracedInstances == 2 && !renderer.GetFrameStats().rayTracedSceneRebuilt,
+            "An unchanged ray-traced scene rebuilt its top level");
+    draws[1].emission = {0.0f, 2.0f, 0.0f};
+    (void)scene.Render(draws, std::span(&ddgi, 1), 1);
+    Require(renderer.GetFrameStats().rayTracedSceneRebuilt, "A changed hit surface reused the old top level");
+    draws[1].preparationRevision = 0x7003;
+    (void)scene.Render(draws, std::span(&ddgi, 1), 1);
+    Require(renderer.GetFrameStats().rayTracedSceneRebuilt, "A new packet reused the old top level");
+    scene.lighting.rayTracedMinimumInstanceRadius = 2.0f;
+    draws[0].maxInstanceRadius = 8.0f;
+    draws[1].maxInstanceRadius = 1.0f;
+    (void)scene.Render(draws, std::span(&ddgi, 1), 1);
+    const auto &stats = renderer.GetFrameStats();
+    Require(stats.rayTracedSceneRebuilt && stats.rayTracedInstances == 1 && stats.rayTracedSkippedInstances == 1,
+            "The ray-traced size threshold did not leave out exactly the small draw");
+    std::cout << "Ray-traced scene reuse, invalidation and size threshold passed\n";
+}
+
 inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE::render::rhi::IRenderDevice &device)
 {
     using namespace GlobalIlluminationChecks;
@@ -382,6 +425,7 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
         ddgi = EncodeDdgiPacket(settings, &settings);
         (void)scene.Render(roofScene, std::span(&ddgi, 1), 2);
     }
+
     std::cout << "DDGI bounce light (" << bled << " pixels), open ambient ratio " << openRatio
               << ", roofed ambient ratio " << roofRatio << ", reflection ratio roofed " << roofedReflection
               << " / open " << openReflection << " and debug views passed\n";

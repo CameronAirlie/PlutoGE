@@ -308,6 +308,11 @@ int main(int argc, char **argv)
             CheckDdgiLeakage(renderer, device, true);
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--ray-traced-scene")
+        {
+            CheckRayTracedSceneReuse(renderer, device);
+            return 0;
+        }
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")
         {
             CheckDdgiRendering(renderer, device);
@@ -629,6 +634,11 @@ int main(int argc, char **argv)
             }, &device, projectSettings, captureSettings);
             return 0;
         }
+        if (argc > 1 && std::string_view(argv[1]) == "--opaque-shadow-batching")
+        {
+            CheckOpaqueShadowBatching(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
         CheckTextureMipRendering(renderer, device, [&](rhi::TextureHandle texture) {
             return device.ReadTextureRgba8(texture);
         }, argc > 1 && std::string_view(argv[1]) == "--texture-mips");
@@ -637,11 +647,6 @@ int main(int argc, char **argv)
         {
             return device.ReadTextureRgba8(texture);
         });
-        if (argc > 1 && std::string_view(argv[1]) == "--opaque-shadow-batching")
-        {
-            CheckOpaqueShadowBatching(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
-            return 0;
-        }
         CheckLightClusters(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); },
                            device.GetImmediateContext().SupportsAsyncCompute());
         if (argc > 1 && std::string_view(argv[1]) == "--light-clusters")
@@ -710,13 +715,7 @@ int main(int argc, char **argv)
                 throw std::runtime_error("GPU profiling failed to resume");
         }
 
-        CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
-            return device.ReadTextureRgba8(texture);
-        });
-        CheckGlassRendering(renderer, [&](rhi::TextureHandle texture)
-        {
-            return device.ReadTextureRgba8(texture);
-        });
+        // Particle points and glass run in their own modes (--particles-points-only, --transparency-only).
 
         // The Vulkan editor host owns its presentation renderer and creates
         // independent off-screen renderers for its viewports on the same device.

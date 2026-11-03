@@ -59,6 +59,7 @@ add_library(PlutoGERender
     src/InstanceStorage.cpp
     src/InstanceBinning.cpp
     src/ImpostorDraws.cpp
+    src/DirectionalShadowCascades.cpp
     src/GpuInstanceCulling.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp

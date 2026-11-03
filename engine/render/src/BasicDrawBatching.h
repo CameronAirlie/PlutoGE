@@ -99,6 +99,8 @@ namespace PlutoGE::render
                             glm::length(draw.shadowBoundsCenter - previous.shadowBoundsCenter) + draw.shadowBoundsRadius);
                     else
                         previous.shadowBoundsRadius = -1;
+                    previous.maxInstanceRadius = previous.maxInstanceRadius >= 0 && draw.maxInstanceRadius >= 0
+                        ? std::max(previous.maxInstanceRadius, draw.maxInstanceRadius) : -1.0f;
                     // The aggregate sphere is conservative; the first object's
                     // tight AABB is no longer a valid bound for the merged draw.
                     previous.occlusionBoundsExtents = glm::vec3(-1);
@@ -266,6 +268,8 @@ namespace PlutoGE::render
                             glm::length(draw.shadowBoundsCenter - first.shadowBoundsCenter) + draw.shadowBoundsRadius);
                     else
                         first.shadowBoundsRadius = -1;
+                    first.maxInstanceRadius = first.maxInstanceRadius >= 0 && draw.maxInstanceRadius >= 0
+                        ? std::max(first.maxInstanceRadius, draw.maxInstanceRadius) : -1.0f;
                     continue;
                 }
                 groups.push_back({output, head, {}, {}});

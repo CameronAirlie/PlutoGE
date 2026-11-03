@@ -119,6 +119,9 @@ int main()
     project.GetManifest().runtimeRenderScale = 0.75f;
     project.GetManifest().runtimeUpscaleSharpness = 0.4f;
     project.GetManifest().rendering.occlusionCulling = PlutoGE::render::OcclusionMode::Cull;
+    project.GetManifest().rendering.retainShadowCascades = false;
+    project.GetManifest().rendering.shadowCasterMinimumTexels = 2.5f;
+    project.GetManifest().rendering.rayTracedMinimumInstanceRadius = 0.75f;
     project.GetManifest().loadingScreen = {"EMBERVAULT", {.95f, .48f, .12f}, "project://UI/loading.plutoloading"};
     assert(project.Save(&error));
     auto reloadedProject = Project::Load(projectPath, &error);
@@ -138,6 +141,7 @@ int main()
     assert(reloadedProject->GetManifest().runtimeRenderScale == 0.75f);
     assert(reloadedProject->GetManifest().runtimeUpscaleSharpness == 0.4f);
     assert(reloadedProject->GetManifest().rendering.occlusionCulling == PlutoGE::render::OcclusionMode::Cull);
+    assert(reloadedProject->GetManifest().rendering == project.GetManifest().rendering);
 
     const auto legacyProjectPath = projectRoot / "LegacyProject.plutoproject";
     std::ofstream legacyProject(legacyProjectPath);

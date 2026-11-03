@@ -366,6 +366,34 @@ namespace PlutoGE::render
             }
         }
 
+        // Hashes a trivially copyable array 64-bit words at a time, in four independent lanes. HashVctValue's byte-wise
+        // FNV spends a dependent multiply per byte, which over a foliage cell's thousands of instance matrices costs
+        // milliseconds; this digests the same bytes an order of magnitude faster.
+        template <typename T>
+        void HashVctArray(std::uint64_t &hash, std::span<const T> values)
+        {
+            static_assert(std::is_trivially_copyable_v<T>);
+            constexpr std::uint64_t Multiplier = 0x9e3779b97f4a7c15ull;
+            const auto bytes = std::as_bytes(values);
+            std::array<std::uint64_t, 4> lanes{hash, hash ^ 0x243f6a8885a308d3ull, hash ^ 0x13198a2e03707344ull,
+                                               hash ^ 0xa4093822299f31d0ull};
+            std::size_t offset = 0;
+            for (; offset + sizeof(std::uint64_t) * lanes.size() <= bytes.size(); offset += sizeof(std::uint64_t) * lanes.size())
+                for (std::size_t lane = 0; lane < lanes.size(); ++lane)
+                {
+                    std::uint64_t word;
+                    std::memcpy(&word, bytes.data() + offset + lane * sizeof(word), sizeof(word));
+                    lanes[lane] = (lanes[lane] ^ word) * Multiplier;
+                    lanes[lane] ^= lanes[lane] >> 29;
+                }
+            hash = 14695981039346656037ull;
+            for (const auto lane : lanes)
+                HashVctValue(hash, lane);
+            for (; offset < bytes.size(); ++offset)
+                HashVctValue(hash, bytes[offset]);
+            HashVctValue(hash, values.size());
+        }
+
         VctVoxelParameters VctLightingParameters(const BasicLighting &lighting, bool injectLocalLights,
             glm::vec3 origin, float size, std::uint32_t resolution, const glm::mat4 &shadowMatrix,
             bool vulkan, bool zeroToOne)
@@ -625,11 +653,7 @@ namespace PlutoGE::render
             HashVctValue(hash, draw.shadowBoundsCenter);
             HashVctValue(hash, draw.shadowBoundsRadius);
             if (draw.instanceModels && !draw.instanceModels->empty())
-            {
-                HashVctValue(hash, draw.instanceModels->size());
-                for (const auto &model : *draw.instanceModels)
-                    HashVctValue(hash, model);
-            }
+                HashVctArray(hash, std::span<const glm::mat4>(*draw.instanceModels));
             return hash;
         }
 
@@ -2219,21 +2243,26 @@ namespace PlutoGE::render
         if (virtualShadowsActive || cascadedShadowsActive || !lighting.pointLights.empty())
         {
             core::CpuScope signatureScope("Shadow signatures", core::CpuCategory::Rendering);
+            // Entries survive this many frames unused, so casters leaving and re-entering reach keep theirs.
+            constexpr std::uint64_t SignatureRetainFrames = 240, SignatureSweepInterval = 64;
+            const auto frame = ++m_shadowSignatureFrame;
             m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
-            m_shadowSignatureCache.resize(shadowDraws.size());
             for (std::size_t index = 0; index < shadowDraws.size(); ++index)
             {
                 const auto &draw = shadowDraws[index];
                 if (draw.mesh && draw.mesh->IsValid() && draw.castsShadow && draw.surfaceType != 1 && draw.alphaMode != 2)
                     {
-                        auto &cached = m_shadowSignatureCache[index];
                         const auto meshRevision = draw.mesh->GetRevision();
-                        if (!draw.preparationRevision || cached.packetRevision != draw.preparationRevision ||
-                            cached.meshRevision != meshRevision)
+                        if (draw.preparationRevision)
                         {
-                            cached = {draw.preparationRevision, meshRevision, ShadowDrawSignature(draw)};
+                            auto &cached = m_shadowSignatureCache[draw.preparationRevision];
+                            if (!cached.lastUsed || cached.meshRevision != meshRevision)
+                                cached = {meshRevision, ShadowDrawSignature(draw), frame};
+                            cached.lastUsed = frame;
+                            m_shadowDrawSignatures[index] = cached.signature;
                         }
-                        m_shadowDrawSignatures[index] = cached.signature;
+                        else
+                            m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
                         if (draw.shaderGraphProgram && !virtualShadowsActive)
                         {
                             HashVctValue(m_shadowDrawSignatures[index], draw.shaderGraphProgram->hash);
@@ -2247,6 +2276,9 @@ namespace PlutoGE::render
                     }
                     }
             }
+            if (frame % SignatureSweepInterval == 0)
+                std::erase_if(m_shadowSignatureCache, [&](const auto &entry)
+                    { return entry.second.lastUsed + SignatureRetainFrames < frame; });
         }
         // Coverage depth: opaque and alpha-tested surfaces' exact depth, rendered once before they are shaded.
         const bool depthPrepassActive = m_depthPrepass && std::ranges::all_of(m_coverageFragments,
@@ -2746,9 +2778,13 @@ namespace PlutoGE::render
                 std::array<bool, 4> cascadeNeedsUpdate{};
                 for (std::uint32_t cascade = 0; cascade < cascadeCount; ++cascade)
                 {
+                    // Casters narrower than the cascade resolves would only add aliasing under the filter.
+                    const float minimumCasterRadius = 0.5f * std::max(lighting.shadowCasterMinimumTexels, 0.0f) *
+                                                      lighting.shadowCascadeMetrics[cascade].x;
                     auto inputSignature = sceneSignature;
                     HashVctValue(inputSignature, lighting.shadowMatrices[cascade]);
                     HashVctValue(inputSignature, m_shadowResolutions[cascade]);
+                    HashVctValue(inputSignature, minimumCasterRadius);
                     if (m_shadowCacheValid[cascade] && m_shadowInputSignatures[cascade] == inputSignature)
                     {
                         ++m_frameStats.shadowCascadeCacheHits;
@@ -2765,6 +2801,11 @@ namespace PlutoGE::render
                         if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2 ||
                             !shadowFrustum.Intersects(draw))
                             continue;
+                        if (draw.maxInstanceRadius >= 0.0f && draw.maxInstanceRadius < minimumCasterRadius)
+                        {
+                            ++m_frameStats.shadowCastersBelowTexelSize;
+                            continue;
+                        }
                         indices.push_back(drawIndex);
                     }
                     const auto signature = ShadowContentSignature(
@@ -6198,6 +6239,7 @@ namespace PlutoGE::render
         if (settings.raySource != DdgiRaySource::Voxels && m_rayTracingScene && m_rayQueryDdgiRays)
         {
             const ScopedGpuTiming buildTiming(commands, "RHI DDGI / Acceleration structures");
+            m_rayTracingScene->SetSettings({.minimumInstanceRadius = std::max(lighting.rayTracedMinimumInstanceRadius, 0.0f)});
             if (m_rayTracingScene->Update(commands, draws))
             {
                 m_rayQueryDdgiRays->SetScene(*m_rayTracingScene, lighting);
@@ -6205,6 +6247,8 @@ namespace PlutoGE::render
                 m_frameStats.ddgiHardwareRays = true;
             }
             m_frameStats.rayTracedInstances = m_rayTracingScene->InstanceCount();
+            m_frameStats.rayTracedSkippedInstances = m_rayTracingScene->SkippedInstanceCount();
+            m_frameStats.rayTracedSceneRebuilt = m_rayTracingScene->Rebuilt();
         }
         // Probe states and light belong to the scene representation that traced them: positions relocated out of one
         // source's geometry (up to the relocation cap) and probes it classified inactive would otherwise stay stuck,

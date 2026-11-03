@@ -5154,6 +5154,21 @@ namespace PlutoGE::ui
                                 projectRendering.occlusionCulling = occlusionCulling ? render::OcclusionMode::Cull : render::OcclusionMode::Off;
                             if (projectRendering.occlusionCulling == render::OcclusionMode::Measure)
                                 warningText("Saved in Measure mode: hidden draws are counted but still drawn.");
+                            widgets::SettingsRow("Retain shadow cascades",
+                                "Cascaded shadow maps keep their placement while it still covers the view, so they "
+                                "redraw when casters change rather than whenever the camera moves. Shadows look the same.");
+                            widgets::ToggleSwitch("##RetainShadowCascades", &projectRendering.retainShadowCascades);
+                            widgets::SettingsRow("Smallest shadow caster",
+                                "Cascades skip casters narrower than this many of their texels, such as grass in the far "
+                                "cascades. 0 draws every caster.");
+                            ImGui::SliderFloat("##ShadowCasterMinTexels", &projectRendering.shadowCasterMinimumTexels,
+                                               0.0f, 4.0f, "%.1f texels");
+                            widgets::SettingsRow("Smallest ray-traced instance",
+                                "Hardware ray-traced GI leaves out objects whose bounding radius is below this, such as "
+                                "grass and debris, which cost far more to trace than the light they bounce. 0 traces "
+                                "everything.");
+                            ImGui::SliderFloat("##RayTracedMinRadius", &projectRendering.rayTracedMinimumInstanceRadius,
+                                               0.0f, 4.0f, "%.2f m");
                             widgets::EndSettingsTable();
                         }
                         widgets::EndCard();

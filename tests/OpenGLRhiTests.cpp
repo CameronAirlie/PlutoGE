@@ -792,6 +792,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return 0;
         }
 
+        if (argc > 1 && std::string_view(argv[1]) == "--opaque-shadow-batching")
+        {
+            CheckOpaqueShadowBatching(basicRenderer, device, [&](auto texture) {
+                std::vector<unsigned char> pixels(128 * 96 * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            }, false); // OpenGL RHI does not expose GPU scope timing.
+            return 0;
+        }
         CheckTextureMipRendering(basicRenderer, device, [&](render::rhi::TextureHandle texture) {
             glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
             GLint width = 0, height = 0;
@@ -809,16 +819,6 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             return pixels;
         });
-        if (argc > 1 && std::string_view(argv[1]) == "--opaque-shadow-batching")
-        {
-            CheckOpaqueShadowBatching(basicRenderer, device, [&](auto texture) {
-                std::vector<unsigned char> pixels(128 * 96 * 4);
-                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
-                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-                return pixels;
-            }, false); // OpenGL RHI does not expose GPU scope timing.
-            return 0;
-        }
         CheckLightClusters(basicRenderer, [&](auto texture) {
             std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
             glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
@@ -873,19 +873,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string_view(argv[1]) == "--shadows-only")
             return 0;
 
-        CheckParticlePointRendering(basicRenderer, [&](render::rhi::TextureHandle texture) {
-            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
-            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            return pixels;
-        });
-        CheckGlassRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
-        {
-            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
-            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-            return pixels;
-        });
+        // Particle points and glass run in their own modes (--particles-points-only, --transparency-only).
 
         constexpr std::array<render::BasicVertex, 8> cubeVertices = {{
             {{{-0.5f, -0.5f, -0.5f}}, {{-0.577f, -0.577f, -0.577f}}, {{0.0f, 0.0f}}},

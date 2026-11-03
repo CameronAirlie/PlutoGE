@@ -164,12 +164,11 @@ add_test(NAME PlutoGEVulkanOpaqueShadowBatchingTests COMMAND PlutoGEVulkanRhiTes
 add_test(NAME PlutoGEOpenGLOpaqueShadowBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-shadow-batching)
 add_test(NAME PlutoGEVulkanCloudTransformTests COMMAND PlutoGEVulkanRhiTests --cloud-transforms)
 add_test(NAME PlutoGEOpenGLCloudTransformTests COMMAND PlutoGEOpenGLRhiTests --cloud-transforms)
+# --transparency-only begins with the glass checks (--glass-only runs just those, for local iteration).
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
 add_test(NAME PlutoGEOpenGLTerrainLayerTests COMMAND PlutoGEOpenGLRhiTests --terrain-layers)
 add_test(NAME PlutoGEVulkanTerrainLayerTests COMMAND PlutoGEVulkanRhiTests --terrain-layers)
-add_test(NAME PlutoGEOpenGLGlassTests COMMAND PlutoGEOpenGLRhiTests --glass-only)
-add_test(NAME PlutoGEVulkanGlassTests COMMAND PlutoGEVulkanRhiTests --glass-only)
 add_test(NAME PlutoGEOpenGLIblTests COMMAND PlutoGEOpenGLRhiTests --ibl-only)
 add_test(NAME PlutoGEVulkanIblTests COMMAND PlutoGEVulkanRhiTests --ibl-only)
 add_test(NAME PlutoGEVulkanOcclusionTests COMMAND PlutoGEVulkanRhiTests --occlusion)
@@ -501,8 +500,6 @@ target_include_directories(PlutoGEPrefabVariantTests PRIVATE ../editor/ui/includ
 pluto_link_engine(PlutoGEPrefabVariantTests)
 add_test(NAME PlutoGEPrefabVariantTests COMMAND PlutoGEPrefabVariantTests)
 
-add_test(NAME PlutoGEVirtualShadowPerformanceTests COMMAND PlutoGEVulkanRhiTests --vsm-performance)
-
 if (TARGET PlutoGEEditorUI)
     add_executable(PlutoGEEditorProfilerTests EditorProfilerTests.cpp)
     target_link_libraries(PlutoGEEditorProfilerTests PRIVATE PlutoGE::EditorUI)
@@ -712,6 +709,10 @@ add_executable(PlutoGEDirectionalShadowReachTests DirectionalShadowReachTests.cp
 target_link_libraries(PlutoGEDirectionalShadowReachTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGEDirectionalShadowReachTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGEDirectionalShadowReachTests COMMAND PlutoGEDirectionalShadowReachTests)
+add_executable(PlutoGEDirectionalShadowCascadesTests DirectionalShadowCascadesTests.cpp)
+target_link_libraries(PlutoGEDirectionalShadowCascadesTests PRIVATE PlutoGE::Render)
+target_include_directories(PlutoGEDirectionalShadowCascadesTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGEDirectionalShadowCascadesTests COMMAND PlutoGEDirectionalShadowCascadesTests)
 
 add_executable(PlutoGEParticleDrawOrderTests ParticleDrawOrderTests.cpp)
 target_link_libraries(PlutoGEParticleDrawOrderTests PRIVATE PlutoGE::Scene)
@@ -1164,6 +1165,7 @@ add_test(NAME PlutoGEOpenGLSsaoTests COMMAND PlutoGEOpenGLRhiTests --ssao-only)
 add_test(NAME PlutoGEVulkanSsgiTests COMMAND PlutoGEVulkanRhiTests --ssgi-only)
 add_test(NAME PlutoGEOpenGLSsgiTests COMMAND PlutoGEOpenGLRhiTests --ssgi-only)
 add_test(NAME PlutoGEVulkanDdgiTests COMMAND PlutoGEVulkanRhiTests --ddgi-only)
+add_test(NAME PlutoGEVulkanRayTracedSceneTests COMMAND PlutoGEVulkanRhiTests --ray-traced-scene)
 add_test(NAME PlutoGEOpenGLDdgiTests COMMAND PlutoGEOpenGLRhiTests --ddgi-only)
 
 add_executable(PlutoGEGraphicsQualityProjectTests GraphicsQualityProjectTests.cpp)

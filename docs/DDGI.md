@@ -209,8 +209,15 @@ in place of the voxel march. Geometry is exact: no voxel leaks through thin wall
 probe visibility for leak reduction is an exact segment test. `SurfaceTolerance` is a centimetre instead of a voxel.
 
 - **Scene** (`raytracing/RayTracingScene`): one bottom-level acceleration structure per mesh range and geometry
-  revision, built when first seen (at most 64 per frame) and released after 240 frames unused; a top-level structure
-  rebuilt every frame over the GI draw list. GPU-skinned and transparent geometry is left out, as from voxel GI.
+  revision, built when first seen (at most 64 per frame) and released after 240 top-level builds unused; a top-level
+  structure over the GI draw list, rebuilt only when that list changes. Retained draw packets
+  (`BasicDraw::preparationRevision`) identify unchanged draws, so a static scene builds it once; a draw without one,
+  or a bottom level deferred by the budget, rebuilds it the next frame. Each draw has one hit record, which its
+  instances share through their custom index. GPU-skinned and transparent geometry is left out, as from voxel GI, and
+  so are draws whose largest instance's bounding radius (`BasicDraw::maxInstanceRadius`) is below
+  **Project Settings > Rendering > Performance > Smallest ray-traced instance** (`RAY_TRACED_MIN_INSTANCE_RADIUS`,
+  default 0.5 m): grass and debris add top-level instances far out of proportion to the light they bounce. The Vulkan
+  backend reads each bottom level's device address once at creation, not per top-level instance.
 - **Hits** are shaded from their material's mean diffuse reflectance and emission: textures are not sampled at hits,
   so each material's textures are averaged once when they are first read (base colour times the albedo texture's mean,
   less the metallic share from the metallic texture's mean; emission times the emission texture's mean). Imported
@@ -224,7 +231,8 @@ probe visibility for leak reduction is an exact segment test. `SurfaceTolerance`
 
 It needs Vulkan with `VK_KHR_acceleration_structure`, `VK_KHR_ray_query` and `VK_KHR_ray_tracing_position_fetch`
 (`IRenderDevice::GetRayTracingSupport` names what is missing; `PLUTO_VULKAN_RAY_TRACING=0` turns it off). Frame stats
-report `ddgiHardwareRays` and `rayTracedInstances`; the profiler shows **RHI DDGI / Acceleration structures**.
+report `ddgiHardwareRays`, `rayTracedInstances`, `rayTracedSkippedInstances` and `rayTracedSceneRebuilt`; the
+profiler shows **RHI DDGI / Acceleration structures** and an **RHI ray-traced GI scene** line.
 
 ## Cost
 

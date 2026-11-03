@@ -48,8 +48,10 @@ namespace PlutoGE::render
         void BeginFrame() { ++m_frame; m_uploadedRecords = 0; m_stagedIndices.clear(); m_bins.clear(); }
         // Uploads the array's records unless resident. Call outside rendering (uploads are recorded copies).
         // `previous` (same length) supplies last frame's matrices; without it each record repeats its model.
+        // `retained` arrays are immutable (renderer-retained packets, BasicDraw::preparationRevision) and upload once;
+        // others may change behind the same pointer, so they upload once per frame, in place.
         Range Prepare(const std::shared_ptr<const std::vector<glm::mat4>> &models,
-                      const std::shared_ptr<const std::vector<glm::mat4>> &previous);
+                      const std::shared_ptr<const std::vector<glm::mat4>> &previous, bool retained);
         // The array's records, prepared this frame; empty when it was not.
         [[nodiscard]] Range Find(const std::vector<glm::mat4> *models, const std::vector<glm::mat4> *previous) const;
         // Releases arrays not prepared within RetainFrames.
@@ -93,6 +95,8 @@ namespace PlutoGE::render
             std::shared_ptr<const std::vector<glm::mat4>> models, previous;
             std::uint32_t page = 0, first = 0, count = 0;
             std::uint64_t lastFrame = 0;
+            std::uint64_t uploadedFrame = 0;
+            bool retained = false;
         };
         struct Page
         {
@@ -108,6 +112,7 @@ namespace PlutoGE::render
         rhi::Buffer m_indexBuffer;
         std::size_t m_indexCapacity = 0;
         std::vector<std::uint32_t> m_stagedIndices;
+        std::vector<std::uint32_t> m_uploadedIndices; // the index buffer's contents, to skip unchanged uploads
         struct BinKeyHash
         {
             std::size_t operator()(const std::pair<const void *, const void *> &key) const noexcept

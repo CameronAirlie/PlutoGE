@@ -5,9 +5,10 @@ rainforest in ThirdPersonProject, and the engine work it needed. Read the plan f
 what is broken or unverified, how to work on it, and what to do next, in order.
 
 **One-line status.** M1 (scene with real assets) is built and reviewed in offscreen renders. Per-instance LOD,
-vegetation LODs and persistent instance storage are in the engine. The scene runs, but at about 127 ms a frame
-(goal: 16.6 ms at High). Frames sit just under the Vulkan per-frame uniform arena (32 MB), so the **editor viewport
-can still fail** with "Vulkan per-frame uniform arena exhausted". Nothing from this work is committed.
+vegetation LODs and persistent instance storage are in the engine. The scene runs, but at about 117 ms a frame
+(goal: 16.6 ms at High). Directional-shadow instancing now uses the instance storage too, so a frame uses about
+9.3 MB of the 32 MB Vulkan uniform arena (down from about 30.4 MB). The "uniform arena exhausted" error in the
+editor viewport is fixed. Nothing from this work is committed.
 
 ## 1. Repositories and uncommitted changes
 
@@ -64,12 +65,18 @@ need no manual registration.
 
 ## 3. Known problems (read before changing anything)
 
-1. **The uniform arena is still nearly full: about 30.4 MB of 32 MB per frame.** The editor adds more and fails.
-   - Instance matrices no longer go through it. What remains: per-draw uniforms for about 31k geometry draws (each
-     at least 256 bytes after alignment: object, material, the instance-storage block), shadow instance blocks
-     (`BasicShadowInstanceParameters`, 64 matrices = 4 KB per chunk) for about 9.5k shadow draws, and
-     point-shadow and VSM chunks.
-   - No breakdown by consumer exists yet. Add one first (count bytes per `Acquire*` caller) before optimizing.
+1. **Uniform arena: about 9.3 MB of 32 MB per frame at full density.** It is no longer close to the limit.
+   - CSM shadow casters with more than one instance now read `InstanceStorage` records
+     (`DirectionalShadow.slang shadowInstanceModel`, `ShadowInstanceStorage` at set 3 binding 3) and draw all
+     their instances in one call.
+   - What remains in the arena is mostly per-draw object and material uniforms for about 31k geometry draws.
+     Point shadows and `OpaqueShadow.slang` still use the 64-matrix chunks.
+   - **Threading rule:** shadow and geometry recording run as `ParallelRecording` worker jobs. Neither
+     `InstanceStorage` nor `PersistentParameterCache` (`m_geometryParameters`) is thread-safe. Every record and
+     uniform handle a job binds is prepared on the main thread before `ParallelRecording` starts
+     (`shadowInstanceRecords`, `shadowInstanceRanges`, `shadowInstancePlaceholder`, `shadowStorageOffBlock` in
+     `BasicRenderer.cpp`). Calling them from a job raced the geometry job and crashed or hung the runtime.
+   - No breakdown by consumer exists yet. Add one (count bytes per `Acquire*` caller) before optimizing further.
    - The arena is `TransientUniformSize` in `engine/render/src/rhi/vulkan/VulkanDevice.cpp`. Do not just raise
      it: that hides the scaling problem.
 2. **The full GPU suite has not passed since the instance-storage change.** An earlier full run overlapped a
@@ -141,10 +148,9 @@ need no manual registration.
 ## 5. Next steps, in order
 
 1. **Make the editor viewport reliable.**
-   - Measure uniform bytes per consumer, as in §3.1.
-   - Then move shadow instancing (`DirectionalShadow.slang` instanced, `OpaqueShadow.slang`, point shadows) onto
-     `InstanceStorage` records, the same way the geometry pass uses them: records persist, and each draw binds a
-     32-byte block.
+   - Done: CSM shadow instancing uses `InstanceStorage` records, and the arena error is gone (§3.1).
+   - Measure uniform bytes per consumer, then move `OpaqueShadow.slang` and point shadows onto the records the
+     same way.
    - Cut per-draw uniforms for instanced foliage (one draw per command and LOD is fine; the remaining waste is
      per-draw object and material blocks).
    - Exit when `uniform_bytes` is below 8 MB at full density and the editor opens Verdant cleanly.

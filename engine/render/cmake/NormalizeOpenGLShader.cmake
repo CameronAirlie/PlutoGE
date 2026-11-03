@@ -44,6 +44,12 @@ string(REGEX REPLACE "binding[ \t]*=[ \t]*1,[ \t]*set[ \t]*=[ \t]*3" "binding = 
 string(REGEX REPLACE "binding[ \t]*=[ \t]*3,[ \t]*set[ \t]*=[ \t]*3" "binding = 18" shader_source "${shader_source}")
 # Instance LOD bins (BasicLit.slang instanceIndices, BasicRenderer::InstanceIndexSlot): storage buffer binding 2.
 string(REGEX REPLACE "binding[ \t]*=[ \t]*2,[ \t]*set[ \t]*=[ \t]*3" "binding = 2" shader_source "${shader_source}")
+# Matrices nested in storage-buffer structs need row_major spelled out, like uniform blocks above (some drivers
+# ignore the global default there): the instance records (InstanceStorage.h).
+foreach(record_block IN ITEMS InstanceRecord ShadowInstanceRecord)
+    string(REPLACE "layout(std430, binding = 1) readonly buffer StructuredBuffer_${record_block}"
+        "layout(std430, row_major, binding = 1) readonly buffer StructuredBuffer_${record_block}" shader_source "${shader_source}")
+endforeach()
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*1" "binding = 8" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*1,[ \t]*set[ \t]*=[ \t]*1" "binding = 9" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*2,[ \t]*set[ \t]*=[ \t]*1" "binding = 10" shader_source "${shader_source}")

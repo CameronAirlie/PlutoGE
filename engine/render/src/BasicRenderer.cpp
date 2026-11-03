@@ -1000,6 +1000,11 @@ namespace PlutoGE::render
             shadowInstancedDescriptor.vertexShader = shaders.shadowInstancedVertex;
             *std::find_if(shadowInstancedDescriptor.resourceBindings.begin(),shadowInstancedDescriptor.resourceBindings.end(),[](const auto &b){return b.slot==16;}) =
                 {17, 3, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex};
+            // Storage casters (DirectionalShadow.slang shadowInstanceModel): records and their first-record block.
+            shadowInstancedDescriptor.resourceBindings.push_back(
+                {InstanceRecordSlot, 3, 1, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Vertex});
+            shadowInstancedDescriptor.resourceBindings.push_back(
+                {InstanceStorageSlot, 3, 3, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex});
             shadowInstancedDescriptor.debugName = "Directional instanced shadow pipeline";
             m_shadowInstancedPipeline = rhi::GraphicsPipeline(
                 device, device.CreateGraphicsPipeline(shadowInstancedDescriptor));
@@ -2218,6 +2223,24 @@ namespace PlutoGE::render
         };
         m_timingStats.beginFrameMs = elapsedMs(beginFrameStart, beginFrameEnd);
         core::CpuScope shadowScope("Shadows", core::CpuCategory::Rendering);
+        // Instance records serve shadow and camera passes alike; the frame begins before either uploads.
+        if (m_instanceStorage)
+            m_instanceStorage->BeginFrame();
+        if (!m_geometryParameters) m_geometryParameters = std::make_unique<PersistentParameterCache>();
+        // Instanced shadow pipelines declare both instance paths (DirectionalShadow.slang shadowInstanceModel); the
+        // unused one reads placeholders. Shadows record on worker threads and the parameter cache is not
+        // thread-safe, so every handle they bind is acquired here, on this thread.
+        std::vector<InstanceStorage::Range> shadowInstanceRecords;
+        std::vector<rhi::BufferHandle> shadowInstanceRanges;
+        static const BasicShadowInstanceParameters zeroShadowInstances{};
+        static const glm::uvec4 shadowStorageOff{0u};
+        const auto shadowInstancePlaceholder = m_geometryParameters->Acquire(*m_device, Bytes(zeroShadowInstances), 0xbb67ae8584caa73bull);
+        const auto shadowStorageOffBlock = m_geometryParameters->Acquire(*m_device, Bytes(shadowStorageOff), 0x3c6ef372fe94f82bull);
+        const auto BindShadowStorageOff = [&](rhi::ICommandContext &commands)
+        {
+            commands.BindUniformBuffer(InstanceStorageSlot, shadowStorageOffBlock);
+            commands.BindStorageBuffer(InstanceRecordSlot, m_instanceStoragePlaceholder.Get());
+        };
         const auto shadowRecordingStart = beginFrameEnd;
 
         if (shadowDraws.empty()) shadowDraws = draws;
@@ -2592,16 +2615,37 @@ namespace PlutoGE::render
         // Instanced draws' records upload here, outside rendering; resident arrays (static foliage) only stay bound.
         if (m_instanceStorage)
         {
-            m_instanceStorage->BeginFrame();
             const auto prepare = [&](const BasicDraw &draw)
             {
                 if (!draw.instanceModels || draw.instanceModels->empty()) return;
                 const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
                                          draw.previousInstanceModels->size() == draw.instanceModels->size();
-                m_instanceStorage->Prepare(draw.instanceModels, hasPrevious ? draw.previousInstanceModels : nullptr);
+                m_instanceStorage->Prepare(draw.instanceModels, hasPrevious ? draw.previousInstanceModels : nullptr,
+                                           draw.preparationRevision != 0);
             };
             for (const auto &draw : draws) prepare(draw);
             for (const auto &draw : m_selectionDraws) prepare(draw);
+            // Shadow casters record on worker threads, which must neither touch the storage nor the parameter
+            // cache: their records and first-record blocks are prepared here.
+            shadowInstanceRecords.assign(shadowDraws.size(), {});
+            shadowInstanceRanges.assign(shadowDraws.size(), {});
+            for (std::size_t index = 0; index < shadowDraws.size(); ++index)
+            {
+                const auto &draw = shadowDraws[index];
+                if (!draw.instanceModels || draw.instanceModels->size() <= 1 || !draw.castsShadow) continue;
+                const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
+                                         draw.previousInstanceModels->size() == draw.instanceModels->size();
+                const auto records = m_instanceStorage->Prepare(
+                    draw.instanceModels, hasPrevious ? draw.previousInstanceModels : nullptr, draw.preparationRevision != 0);
+                if (!records) continue;
+                const glm::uvec4 range{records.first, 1u, 0u, 0u};
+                std::size_t rangeKey = 0x6a09e667f3bcc909ull;
+                HashBatchValue(rangeKey, records.buffer.index);
+                HashBatchValue(rangeKey, records.buffer.generation);
+                HashBatchValue(rangeKey, records.first);
+                shadowInstanceRecords[index] = records;
+                shadowInstanceRanges[index] = m_geometryParameters->Acquire(*m_device, Bytes(range), rangeKey);
+            }
             // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone. Draws bin in
             // parallel; staging concatenates them in draw order.
             std::vector<std::size_t> chained;
@@ -2753,6 +2797,10 @@ namespace PlutoGE::render
                 const std::size_t shadowUploadCount = m_frameStats.shadowCascadeUpdates ? shadowDraws.size() : 0;
                 if (m_shadowObjectBuffers.size() < shadowUploadCount) m_shadowObjectBuffers.resize(shadowUploadCount);
                 std::vector<std::size_t> shadowInstanceBufferStarts(shadowUploadCount);
+                // Instanced casters read persistent records (shared with the geometry pass) instead of 4 KiB of
+                // matrices per 64-instance chunk in the per-frame uniform arena.
+                std::vector<InstanceStorage::Range> shadowRecords(shadowUploadCount);
+                std::vector<rhi::BufferHandle> shadowRecordRanges(shadowUploadCount); // each draw's first-record block
                 if (m_shadowMaterialBuffers.size() < shadowUploadCount) m_shadowMaterialBuffers.resize(shadowUploadCount);
                 const bool batchOpaqueShadows = m_opaqueShadowBatchingEnabled && m_opaqueShadowPipeline && m_opaqueShadowBatches;
                 std::size_t shadowInstanceBufferCursor = 0;
@@ -2767,7 +2815,16 @@ namespace PlutoGE::render
                                 {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Shadow graph material"}));
                         m_device->UpdateBuffer(m_shadowMaterialBuffers[drawIndex].Get(), 0,
                                 Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
-                        if (draw.instanceModels && draw.instanceModels->size() > 1)
+                        if (drawIndex < shadowInstanceRecords.size() && shadowInstanceRecords[drawIndex])
+                        {
+                            shadowRecords[drawIndex] = shadowInstanceRecords[drawIndex];
+                            shadowRecordRanges[drawIndex] = shadowInstanceRanges[drawIndex];
+                        }
+                        if (shadowRecords[drawIndex])
+                        {
+                            // Resident records: nothing to upload per chunk.
+                        }
+                        else if (draw.instanceModels && draw.instanceModels->size() > 1)
                         {
                             shadowInstanceBufferStarts[drawIndex] = shadowInstanceBufferCursor;
                             for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
@@ -2817,8 +2874,18 @@ namespace PlutoGE::render
                     const std::uint32_t count = (std::min)(draw.indexCount == 0 ? available : draw.indexCount, available);
                     if (count)
                     {
-                        if (instanced)
+                        if (instanced && drawIndex < shadowRecords.size() && shadowRecords[drawIndex])
                         {
+                            commands.BindStorageBuffer(InstanceRecordSlot, shadowRecords[drawIndex].buffer);
+                            commands.BindUniformBuffer(InstanceStorageSlot, shadowRecordRanges[drawIndex]);
+                            commands.BindUniformBuffer(17, shadowInstancePlaceholder);
+                            commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(draw.instanceModels->size()), draw.firstIndex);
+                            ++m_frameStats.shadowDrawsByCascade[cascade];
+                            m_frameStats.shadowInstances += draw.instanceModels->size();
+                        }
+                        else if (instanced)
+                        {
+                            BindShadowStorageOff(commands);
                             std::size_t bufferIndex = shadowInstanceBufferStarts[drawIndex];
                             for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
                             {
@@ -3056,6 +3123,7 @@ namespace PlutoGE::render
                         {
                             commands.BindPipeline(pipeline);
                             commands.BindUniformBuffer(0, m_pointShadowCameras[face].Get());
+                            if (instanced) BindShadowStorageOff(commands);
                             boundPointPipeline = pipeline;
                             boundPointMesh = nullptr; // OpenGL VAOs are pipeline-owned.
                             boundPointTextures.fill({}); boundPointSamplers.fill({});

@@ -60,6 +60,25 @@ cbuffer InstancedShadowObjects : register(b0, space3)
 {
     column_major float4x4 instanceModels[64];
 };
+// Instanced casters whose instances live in persistent storage (InstanceStorage.h): records shared with the
+// geometry pass, selected from this block's first record. Other instanced casters use instanceModels.
+struct ShadowInstanceRecord
+{
+    column_major float4x4 recordModel;
+    column_major float4x4 recordPreviousModel;
+};
+[[vk::binding(3, 3)]]
+cbuffer ShadowInstanceStorage : register(b3, space3)
+{
+    uint4 shadowInstanceRange; // x first record, y 1 for storage
+};
+[[vk::binding(1, 3)]] StructuredBuffer<ShadowInstanceRecord> shadowInstanceRecords : register(t1, space3);
+
+float4x4 shadowInstanceModel(uint instanceId)
+{
+    return shadowInstanceRange.y != 0 ? shadowInstanceRecords[shadowInstanceRange.x + instanceId].recordModel
+                                      : instanceModels[instanceId];
+}
 
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
@@ -81,8 +100,9 @@ VertexOutput vertexMain(VertexInput input)
 VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
     VertexOutput output;
-    float3 world = mul(instanceModels[instanceId], float4(input.position,1.0)).xyz;
-    float3 normal = normalize(mul((float3x3)instanceModels[instanceId],input.normal));
+    const float4x4 instanceModel = shadowInstanceModel(instanceId);
+    float3 world = mul(instanceModel, float4(input.position,1.0)).xyz;
+    float3 normal = normalize(mul((float3x3)instanceModel,input.normal));
     world += shaderGraphVertexOffset(graph,world,normal,normalize(graphCameraTime.xyz-world),
         graphCameraTime.w,input.uv*shadowAlpha.xy,graphColor,graphFactors.x,graphFactors.y,graphEmission.xyz);
     output.worldPosition = world;

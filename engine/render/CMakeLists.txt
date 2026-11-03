@@ -57,6 +57,7 @@ add_library(PlutoGERender
     src/CloudShadowMap.cpp
     src/atmosphere/CloudTemporalFilter.cpp
     src/InstanceStorage.cpp
+    src/InstanceBinning.cpp
     src/ImpostorDraws.cpp
     src/GpuInstanceCulling.cpp
     src/SkinningLodLayout.cpp

@@ -2166,6 +2166,7 @@ namespace PlutoGE::render
         const auto &rendererTiming = m_renderer->GetTimingStats();
         m_timingStats.beginFrameMs = rendererTiming.beginFrameMs;
         m_timingStats.shadowRecordingMs = rendererTiming.shadowRecordingMs;
+        m_timingStats.instancePreparationMs = rendererTiming.instancePreparationMs;
         m_timingStats.instanceBinningMs = rendererTiming.instanceBinningMs;
         m_timingStats.geometryRecordingMs = rendererTiming.geometryRecordingMs;
         m_timingStats.parallelRecording = rendererTiming.parallelRecording;

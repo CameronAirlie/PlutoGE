@@ -46,6 +46,7 @@ int main(int argc, char **argv)
             q.shadowDistance = 123.45678f + static_cast<float>(i);
             q.cascadedShadows = q.globalIllumination = q.volumetrics = q.depthOfField = i % 2 == 0;
             q.ambientOcclusion = q.reflections = q.bloom = q.motionBlur = i % 2 != 0;
+            q.foliageDetail = 0.3f + 0.123f * static_cast<float>(i);
         }
         Check(project->Save(&error), "Custom preset save failed");
         auto loaded = assets::Project::Load(path, &error);
@@ -73,11 +74,29 @@ int main(int argc, char **argv)
             "QUALITY_PRESET\t0\t1\t255\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0",
             "QUALITY_PRESET\t4\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0",
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t2\t0\t0\t0\t0\t0\t0",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t3",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\tx",
             "QUALITY_PRESET\t0"})
         {
             { std::ofstream file(path); file << "PLUTOPROJECT\t3\n" << record << '\n'; }
             Check(!assets::Project::Load(path, &error) && error.find("QUALITY_PRESET") != std::string::npos, "Malformed quality definition was not rejected");
         }
+        // Records written before foliage detail existed take their tier's engine default.
+        { std::ofstream file(path); file << "PLUTOPROJECT\t3\nQUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\n"; }
+        const auto legacyTier = assets::Project::Load(path, &error);
+        Check(legacyTier && legacyTier->GetManifest().graphicsQualityPresets.tiers[0].foliageDetail ==
+                                render::GraphicsQuality::FromPreset(render::GraphicsPreset::Low).foliageDetail,
+              "A legacy quality record did not take its tier's default foliage detail");
+        // A tier caps foliage detail; a disabled tier leaves it as authored.
+        render::BasicLighting lighting;
+        auto lowTier = render::GraphicsQuality::FromPreset(render::GraphicsPreset::Low);
+        lowTier.Apply(lighting);
+        Check(lighting.foliageDetail == lowTier.foliageDetail && lowTier.foliageDetail < 1.0f, "The Low tier did not cap foliage detail");
+        render::BasicLighting authored;
+        authored.foliageDetail = 0.4f;
+        lowTier.Apply(authored);
+        render::GraphicsQuality{}.Apply(authored);
+        Check(authored.foliageDetail == 0.4f, "A tier raised foliage detail, or a disabled tier changed it");
         if (argc > 1)
         {
             const auto activeProject = assets::Project::Load(argv[1], &error);

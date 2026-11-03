@@ -171,8 +171,8 @@ An ordinary frame does not rebuild the cell cache.
 ### Level of detail and culling per instance
 
 A cluster's command picks one LOD from the cell's bounds. The camera passes then refine it per instance
-(`BasicInstanceLodChain` in `BasicRenderer.h`, the binning before `ParallelRecording` in `BasicRenderer.cpp`). Each
-frame, every instance of a cluster with a LOD chain is:
+(`BasicInstanceLodChain` in `BasicRenderer.h`, `InstanceBinning` in `engine/render/src`). Each frame, every instance
+of a cluster with a LOD chain is:
 
 1. **Culled** when its bounding sphere lies outside the camera's side planes, or wholly beyond the cluster's draw
    distance (`BasicDraw::instanceDrawDistance`, from `RenderCommand::maxDrawDistance`). Without this, a visible
@@ -184,9 +184,24 @@ frame, every instance of a cluster with a LOD chain is:
    triangles on a tree a few dozen pixels across.
 
 Before any per-instance work, a cluster whose bounds lie wholly outside the view or beyond its draw distance is
-culled whole and given empty bins. Each LOD then draws once over its binned instances. The depth prepass uses the same bins as the shaded pass. The
-profiler reports the skipped instances ("outside the view or draw distance skipped"). Shadow passes keep the cluster
-LOD, floored by `MinShadowLod`, and are not culled per instance.
+culled whole (`InstanceView::ClusterVisible`). It is neither binned nor recorded: the camera passes make the same test
+before binding anything for a draw. A Verdant frame hands the renderer about 23,500 cluster draws, of which about
+21,900 fail this test. Staging empty bins for them, then recording each through both camera passes, cost 7 ms of
+binning and over 20 ms of geometry recording at 1080p on the Vega 8. Each remaining LOD draws once over its binned
+instances. The depth prepass uses the same bins as the shaded pass. The profiler reports the skipped instances
+("outside the view or draw distance skipped"), and instance preparation and binning CPU time separately. Shadow
+passes keep the cluster LOD, floored by `MinShadowLod`, and are not culled per instance.
+
+**Foliage detail** (`BasicLighting::foliageDetail`, capped per quality tier by `GraphicsQuality::foliageDetail`)
+scales every instance's projected radius before selection. CPU binning, GPU binning and the unbinned chunk fallback
+all take it from `InstanceView::lodProjection`, so they agree. Below 1, instances take coarser LODs, and hand over to
+their impostors, from nearer. The density cap then applies to the smaller size too, so its effective density falls
+with the square of the detail. Engine tiers: Low 0.6, Medium 0.75, High and Ultra 1. A project manifest's
+`QUALITY_PRESET` record carries it as a fifteenth field; older fourteen-field records take the tier's engine default.
+On Verdant at 1080p Low (Vega 8), 0.6 takes the opaque triangles from 2.27 M to 1.68 M and scene GPU time from 62 to
+52 ms. Below 0.6 little more is saved (1.5 M at 0.35): the rest is instances already at their last LOD and
+non-foliage geometry. Leaf-card LODs lose coverage as they thin (handover E3), so mid-distance canopies look sparser
+at 0.5 and below. The benchmark's `--foliage-detail=<value>` replaces the selected tier's value for comparisons.
 
 Without a LOD chain, or before the bins exist, a cluster falls back to chunks of 64 in instance order, each at the LOD
 its nearest instance needs (`InstanceChunkLod`). Instances should therefore be stored in spatial order; the level
@@ -419,4 +434,7 @@ command cache. Physics collision cells themselves are cached and revisioned.
 - `engine/scene/src/components/FoliageComponent.cpp`
 - `engine/scene/src/Scene.cpp`
 - `editor/ui/src/panels/InspectorPanel.cpp`
+- `engine/render/src/InstanceBinning.h`, `engine/render/src/InstanceBinning.cpp`
+- `engine/render/include/PlutoGE/render/GraphicsQuality.h` (foliage detail per tier)
 - `tests/FoliageCollisionTests.cpp`
+- `tests/InstanceLodChecks.h`, `tests/GpuInstanceCullingChecks.h`

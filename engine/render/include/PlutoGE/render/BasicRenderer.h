@@ -45,6 +45,7 @@ namespace PlutoGE::render
     class UpscalerSharpening;
     class CloudTemporalFilter;
     class InstanceStorage;
+    class InstanceBinning;
     class CloudNoiseVolume;
     class ScreenSpaceGuide;
     class ScreenSpaceAmbientOcclusion;
@@ -718,12 +719,19 @@ namespace PlutoGE::render
     };
     static_assert(sizeof(AmbientProbeVolumeParameters) == 96);
 
+    // The range of BasicLighting::foliageDetail.
+    inline constexpr float MinFoliageDetail = 0.25f, MaxFoliageDetail = 2.0f;
+
     struct BasicLighting
     {
         // Declare external surface-buffer consumers (for example readback tools).
         BasicPostProcessInput requiredGeometryInputs = BasicPostProcessInput::None;
         GeometryDiagnosticMode geometryDiagnosticMode = GeometryDiagnosticMode::None;
         OcclusionMode occlusionMode = OcclusionMode::Off;
+        // Scales instanced draws' projected sizes before their per-instance LOD selection (BasicInstanceLodChain), as
+        // foliage detail: below 1, instances take coarser LODs, and hand over to their impostors, from nearer. Clamped
+        // to [MinFoliageDetail, MaxFoliageDetail]. GraphicsQuality caps it per player tier.
+        float foliageDetail = 1.0f;
         std::vector<BasicPointLight> pointLights;
         // Spot sources for voxel GI; direct surface lighting has its own light path.
         struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; SpotCone cone; };
@@ -918,7 +926,8 @@ namespace PlutoGE::render
     {
         float beginFrameMs = 0.0f;
         float shadowRecordingMs = 0.0f;
-        // Instance record preparation and per-instance culling and LOD binning (part of shadowRecordingMs).
+        // Instance record preparation (storage residency and uploads), then per-instance culling and LOD binning.
+        float instancePreparationMs = 0.0f;
         float instanceBinningMs = 0.0f;
         float geometryRecordingMs = 0.0f;
         float postProcessRecordingMs = 0.0f;
@@ -1214,6 +1223,7 @@ namespace PlutoGE::render
         std::unique_ptr<UpscalerSharpening> m_upscalerSharpening;
         std::unique_ptr<CloudTemporalFilter> m_cloudTemporal;
         std::unique_ptr<InstanceStorage> m_instanceStorage;
+        std::unique_ptr<InstanceBinning> m_instanceBinning;
         rhi::Buffer m_instanceStoragePlaceholder;
         std::unique_ptr<CloudNoiseVolume> m_cloudNoise;
         // Surface guides by resolution divisor (full, half), shared by SSAO and SSR.

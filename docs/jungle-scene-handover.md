@@ -133,6 +133,18 @@ need no manual registration.
    | Cull whole clusters first | **42** | 5.4 | 30.7 | 2,207 | — | — |
    | Leaf cards, generated leaf masks, tree budgets 60 k / 40 k | **52** | — | — | — | — | 2.6 M |
 
+   **At 1920×1080, Low** (2026-11-03, same camera; internal 1129×635), each step cumulative:
+
+   | Step | Frame ms | Scene GPU ms | Geometry GPU ms | Recording CPU ms | Binning ms | Opaque triangles |
+   | --- | --- | --- | --- | --- | --- | --- |
+   | Before | 62.5 | 59.5 | 40.7 | 52.5 | 8.6 (+2.3 preparation) | 2.27 M |
+   | Culled clusters skipped before staging and recording | 63.8 | 62.2 | 43.4 | 20.4 | 1.8 | 2.27 M |
+   | Foliage detail 0.6 (Low tier default) | **54.1** | **52.3** | 36.8 | 19.2 | 1.7 | 1.68 M |
+
+   The frame is now GPU-bound. The shaded pass (about 30 ms) costs far more than the coverage prepass (6.5 ms) over
+   the same triangles, so the next lever is fragment cost: the alpha test the shaded pass repeats after the prepass,
+   and resolution.
+
    With cluster culling the frame is 57 ms (CPU-bound: 49 ms recording, of which instance binning is 10 ms). The
    benchmark CSV now has `instance_binning_ms`.
 

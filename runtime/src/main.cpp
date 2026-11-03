@@ -454,7 +454,11 @@ int RunRuntime(int argc, char **argv)
     if (projectBenchmark && engine.GetRenderDevice())
         engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
     if (projectBenchmark && projectBenchmark->quality)
-        engine.GetRhiRenderService().SetGraphicsQuality(engine.GetRhiRenderService().GetGraphicsPreset(*projectBenchmark->quality));
+    {
+        auto quality = engine.GetRhiRenderService().GetGraphicsPreset(*projectBenchmark->quality);
+        if (projectBenchmark->foliageDetail) quality.foliageDetail = *projectBenchmark->foliageDetail;
+        engine.GetRhiRenderService().SetGraphicsQuality(quality);
+    }
 
     if (!(projectBenchmark && projectBenchmark->frozenRender) && !project->GetManifest().scriptAssembly.empty())
     {
@@ -852,7 +856,7 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.pointShadowObjectUploads),
                         static_cast<double>(render.pointShadowInvalidations[1]), static_cast<double>(render.pointShadowInvalidations[2]),
                         static_cast<double>(render.pointShadowInvalidations[3]), static_cast<double>(render.pointShadowStaticFaceUpdates),
-                        render.instanceBinningMs, 0};
+                        render.instanceBinningMs, render.instancePreparationMs, 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)

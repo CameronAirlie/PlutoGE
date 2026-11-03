@@ -11,6 +11,7 @@
 #include "LightClusterGrid.h"
 #include "GpuDrivenOpaque.h"
 #include "GpuInstanceCulling.h"
+#include "InstanceBinning.h"
 #include "LtcTable.h"
 #include "gi/RayQueryDdgiRaySource.h"
 #include "raytracing/RayTracingScene.h"
@@ -143,27 +144,6 @@ namespace PlutoGE::render
             for (int axis = 0; axis < 3; ++axis)
                 offset[axis] = static_cast<float>(std::fmod(effect.parameters[6][axis] * time, period));
             return offset;
-        }
-
-        // An instance's world bounding sphere: its LOD chain's mesh sphere under the instance's largest axis scale.
-        struct InstanceSphere
-        {
-            glm::vec3 center{0.0f};
-            float radius = 0.0f;
-        };
-        InstanceSphere InstanceBounds(const BasicInstanceLodChain &chain, const glm::mat4 &model)
-        {
-            const float scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
-                                          glm::length(glm::vec3(model[2]))});
-            return {glm::vec3(model * glm::vec4(chain.boundsCenter, 1.0f)), chain.boundsRadius * scale};
-        }
-
-        // The sphere's projected radius in pixels. lodProjection is the projection's y scale times half the viewport
-        // height, so a radius over a distance gives pixels.
-        float ProjectedRadius(const InstanceSphere &sphere, const glm::vec3 &camera, float lodProjection)
-        {
-            const glm::vec3 offset = sphere.center - camera;
-            return sphere.radius / std::sqrt(std::max(glm::dot(offset, offset), 0.000001f)) * lodProjection;
         }
 
         // The LOD a chunk of an instanced draw needs: that of its instance nearest in projected size, chosen as
@@ -681,59 +661,6 @@ namespace PlutoGE::render
         {
             return std::as_bytes(values);
         }
-
-        struct ClipFrustum
-        {
-            struct Plane
-            {
-                glm::vec3 normal{0.0f};
-                float distance = 0.0f;
-            };
-
-            std::array<Plane, 6> planes{};
-
-            explicit ClipFrustum(const glm::mat4 &viewProjection)
-            {
-                const auto row = [&](int index)
-                {
-                    return glm::vec4(viewProjection[0][index], viewProjection[1][index],
-                                     viewProjection[2][index], viewProjection[3][index]);
-                };
-                const glm::vec4 row0 = row(0), row1 = row(1), row2 = row(2), row3 = row(3);
-                const std::array equations{row3 + row0, row3 - row0, row3 + row1,
-                                           row3 - row1, row2, row3 - row2};
-                for (std::size_t index = 0; index < equations.size(); ++index)
-                {
-                    const auto normal = glm::vec3(equations[index]);
-                    const float length = glm::length(normal);
-                    if (length > 0.000001f)
-                        planes[index] = {normal / length, equations[index].w / length};
-                }
-            }
-
-            [[nodiscard]] bool Intersects(const BasicDraw &draw) const
-            {
-                if (draw.shadowBoundsRadius < 0.0f || !std::isfinite(draw.shadowBoundsRadius))
-                    return true;
-                for (const auto &plane : planes)
-                {
-                    if (glm::dot(plane.normal, draw.shadowBoundsCenter) + plane.distance <
-                        -draw.shadowBoundsRadius)
-                        return false;
-                }
-                return true;
-            }
-
-            // Left, right, bottom and top only. These hold for any depth convention, so camera projections
-            // (reversed-Z) can use them; the camera's draw distances stand in for the far plane.
-            [[nodiscard]] bool SidesIntersect(const glm::vec3 &center, float radius) const
-            {
-                for (std::size_t index = 0; index < 4; ++index)
-                    if (glm::dot(planes[index].normal, center) + planes[index].distance < -radius)
-                        return false;
-                return true;
-            }
-        };
     }
 
     BasicRenderer::BasicRenderer() = default;
@@ -1537,6 +1464,7 @@ namespace PlutoGE::render
             m_cloudNoise = std::make_unique<CloudNoiseVolume>();
             if (!m_cloudNoise->Initialize(device)) throw std::runtime_error("Cloud noise lattice creation failed");
             m_instanceStorage = std::make_unique<InstanceStorage>(device);
+            m_instanceBinning = std::make_unique<InstanceBinning>();
             auto cloudTemporal = std::make_unique<CloudTemporalFilter>();
             if (cloudTemporal->Initialize(device, {shaders.cloudTemporal.vertex, shaders.cloudTemporal.fragment}))
                 m_cloudTemporal = std::move(cloudTemporal);
@@ -1699,6 +1627,7 @@ namespace PlutoGE::render
         m_cloudNoise.reset();
         m_cloudTemporal.reset();
         m_instanceStorage.reset();
+        m_instanceBinning.reset();
         m_instanceStoragePlaceholder.Reset();
         m_ambientOcclusion.reset();
         m_reflections.reset();
@@ -2657,6 +2586,9 @@ namespace PlutoGE::render
         // Instanced draws' records upload here, outside rendering; resident arrays (static foliage) only stay bound.
         const auto instanceBinningStart = std::chrono::steady_clock::now();
         core::CpuScope instanceBinningScope("Instance preparation and binning", core::CpuCategory::Rendering);
+        auto instancePreparationEnd = instanceBinningStart;
+        const InstanceView instanceView(viewProjection, lighting.cameraPosition, m_postProcessProjection[1][1],
+                                        static_cast<float>(m_height), lighting.foliageDetail);
         if (m_instanceStorage)
         {
             const auto prepare = [&](const BasicDraw &draw)
@@ -2690,11 +2622,11 @@ namespace PlutoGE::render
                 shadowInstanceRecords[index] = records;
                 shadowInstanceRanges[index] = m_geometryParameters->Acquire(*m_device, Bytes(range), rangeKey);
             }
+            instancePreparationEnd = std::chrono::steady_clock::now();
             // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone, leaving out
             // instances outside the view or beyond the draw's distance (a visible foliage cell is often mostly off
             // screen or out of range). The bins feed only the camera passes. GpuInstanceCulling bins the draws it
-            // supports on the GPU, also culling against the previous frame's depth; the rest bin here, in parallel,
-            // and staging concatenates them in draw order.
+            // supports on the GPU, also culling against the previous frame's depth; InstanceBinning bins the rest.
             const auto recordsOf = [&](const BasicDraw &draw)
             {
                 const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
@@ -2702,77 +2634,24 @@ namespace PlutoGE::render
                 return m_instanceStorage->Find(draw.instanceModels.get(), hasPrevious ? draw.previousInstanceModels.get() : nullptr);
             };
             const bool gpuBinning = m_gpuInstanceCulling && m_gpuInstanceCullingEnabled;
-            const ClipFrustum view(viewProjection);
-            std::vector<std::size_t> chained, culledClusters;
+            std::vector<InstanceBinning::Source> cpuSources;
             std::vector<GpuInstanceCulling::Source> gpuSources;
-            for (std::size_t index = 0; index < draws.size(); ++index)
+            for (const auto &draw : draws)
             {
-                const auto &draw = draws[index];
-                if (!draw.instanceLods || !draw.instanceModels || draw.instanceModels->size() <= 1) continue;
-                // A cluster wholly outside the view or beyond its draw distance draws nothing. It gets empty bins
-                // below instead of per-instance work (or the unbinned fallback, which would draw all of it).
-                if (draw.shadowBoundsRadius >= 0.0f && std::isfinite(draw.shadowBoundsRadius))
+                if (!IsBinnedInstanceDraw(draw)) continue;
+                // A cluster wholly outside the view or beyond its draw distance draws nothing: it is neither binned
+                // nor recorded (recordDraw makes the same test).
+                if (!instanceView.ClusterVisible(draw))
                 {
-                    const glm::vec3 offset = draw.shadowBoundsCenter - lighting.cameraPosition;
-                    const float reach = draw.instanceDrawDistance + draw.shadowBoundsRadius;
-                    if (glm::dot(offset, offset) > reach * reach ||
-                        !view.SidesIntersect(draw.shadowBoundsCenter, draw.shadowBoundsRadius))
-                    {
-                        culledClusters.push_back(index);
-                        continue;
-                    }
+                    m_frameStats.viewCulledInstances += draw.instanceModels->size();
+                    continue;
                 }
-                if (gpuBinning && GpuInstanceCulling::Supports(draw))
-                {
-                    if (const auto records = recordsOf(draw)) gpuSources.push_back({&draw, records});
-                }
-                else
-                    chained.push_back(index);
+                const auto records = recordsOf(draw);
+                if (!records) continue;
+                if (gpuBinning && GpuInstanceCulling::Supports(draw)) gpuSources.push_back({&draw, records});
+                else cpuSources.push_back({&draw, records});
             }
-            std::vector<std::vector<std::vector<std::uint32_t>>> binned(chained.size());
-            std::vector<std::size_t> culledByDraw(chained.size(), 0);
-            const float binProjection = std::abs(m_postProcessProjection[1][1]) * 0.5f * static_cast<float>(m_height);
-            core::TaskPool::Shared().RunRanges(chained.size(), 16, [&](std::size_t, std::size_t begin, std::size_t end)
-            {
-                for (std::size_t item = begin; item < end; ++item)
-                {
-                    const auto &draw = draws[chained[item]];
-                    const auto &chain = *draw.instanceLods;
-                    auto &bins = binned[item];
-                    bins.resize(chain.lods.size());
-                    const auto &models = *draw.instanceModels;
-                    for (std::uint32_t instance = 0; instance < models.size(); ++instance)
-                    {
-                        const auto sphere = InstanceBounds(chain, models[instance]);
-                        const glm::vec3 offset = sphere.center - lighting.cameraPosition;
-                        const float reach = draw.instanceDrawDistance + sphere.radius;
-                        if (glm::dot(offset, offset) > reach * reach || !view.SidesIntersect(sphere.center, sphere.radius))
-                        {
-                            ++culledByDraw[item];
-                            continue;
-                        }
-                        // Instances another draw covers (a mesh's impostor-sized ones) go in no bin of this draw.
-                        if (const auto lod = chain.Select(ProjectedRadius(sphere, lighting.cameraPosition, binProjection));
-                            lod != chain.NotDrawn())
-                            bins[lod].push_back(instance);
-                    }
-                }
-            });
-            for (const auto culled : culledByDraw) m_frameStats.viewCulledInstances += culled;
-            for (std::size_t item = 0; item < chained.size(); ++item)
-            {
-                const auto &draw = draws[chained[item]];
-                if (const auto records = recordsOf(draw))
-                    m_instanceStorage->StageBins(records, draw.instanceModels.get(), draw.instanceLods.get(), binned[item]);
-            }
-            for (const auto index : culledClusters)
-            {
-                const auto &draw = draws[index];
-                m_frameStats.viewCulledInstances += draw.instanceModels->size();
-                if (const auto records = recordsOf(draw))
-                    m_instanceStorage->StageBins(records, draw.instanceModels.get(), draw.instanceLods.get(),
-                                                 std::vector<std::vector<std::uint32_t>>(draw.instanceLods->lods.size()));
-            }
+            m_frameStats.viewCulledInstances += m_instanceBinning->Bin(cpuSources, instanceView, *m_instanceStorage);
             m_instanceStorage->UploadBins();
             if (gpuBinning)
             {
@@ -2784,14 +2663,15 @@ namespace PlutoGE::render
                     hierarchy->width != m_width || hierarchy->height != m_height ||
                     glm::distance(m_occlusionHierarchyCamera, lighting.cameraPosition) >= MaxOcclusionCameraTravel)
                     hierarchy = nullptr;
-                m_gpuInstanceCulling->Record(commands, gpuSources, {viewProjection, lighting.cameraPosition, binProjection, hierarchy});
+                m_gpuInstanceCulling->Record(commands, gpuSources, {viewProjection, lighting.cameraPosition, instanceView.lodProjection, hierarchy});
                 m_frameStats.gpuBinnedDraws = gpuSources.size();
             }
             m_frameStats.instanceRecordUploads = m_instanceStorage->UploadedRecords();
             m_frameStats.residentInstanceRecords = m_instanceStorage->ResidentRecords();
         }
         instanceBinningScope.End();
-        m_timingStats.instanceBinningMs = elapsedMs(instanceBinningStart, std::chrono::steady_clock::now());
+        m_timingStats.instancePreparationMs = elapsedMs(instanceBinningStart, instancePreparationEnd);
+        m_timingStats.instanceBinningMs = elapsedMs(instancePreparationEnd, std::chrono::steady_clock::now());
         // Shadows and geometry record into their own command contexts, on worker threads when the device allows,
         // and execute on the GPU in that order. Inside each job `commands` is the job's context. A job writes only
         // its own caches and statistics; everything both read is prepared before Run.
@@ -3618,8 +3498,6 @@ namespace PlutoGE::render
             commands.BindTexture(ContactShadowSlot, contactShadowsActive ? m_contactShadows->Mask() : m_fallbackDataTexture.Get(),
                                  m_shadowSampler.Get());
         };
-        // Pixels per unit of radius over distance, for instanced draws' per-chunk LOD (InstanceChunkLod).
-        const float lodProjection = std::abs(m_postProcessProjection[1][1]) * 0.5f * static_cast<float>(m_height);
         const auto recordDraw = [&](rhi::ICommandContext &commands, const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
@@ -3628,6 +3506,9 @@ namespace PlutoGE::render
             // Impostor cards draw only through their instance bins, with their own vertex stages (GeometryPipeline).
             const BasicImpostor *impostor = draw.impostor.get();
             if (impostor && (!m_impostorShaders.Available() || !instanced || !draw.instanceLods))
+                return;
+            // A binned cluster out of the view or beyond its draw distance has nothing to draw (and no bins).
+            if (instanced && IsBinnedInstanceDraw(draw) && !instanceView.ClusterVisible(draw))
                 return;
             // Occlusion-culled indirect draws keep their own buffer: the GPU writes their arguments.
             const bool streamed = objectStreaming && !instanced && !transparent &&
@@ -3917,7 +3798,7 @@ namespace PlutoGE::render
                         if (draw.instanceLods && !draw.instanceLods->lods.empty())
                         {
                             const auto lodIndex = InstanceChunkLod(*draw.instanceLods, *draw.instanceModels, first, instanceCount,
-                                                                   lighting.cameraPosition, lodProjection);
+                                                                   lighting.cameraPosition, instanceView.lodProjection);
                             // A chunk all of whose instances another draw covers (an impostor's) is not drawn here.
                             if (lodIndex == draw.instanceLods->NotDrawn()) continue;
                             const auto &lod = draw.instanceLods->lods[lodIndex];
@@ -4247,7 +4128,9 @@ namespace PlutoGE::render
         m_frameStats.asyncComputeSections = graphStats.asyncSections;
         const auto recordingEnd = std::chrono::steady_clock::now();
         // CPU time each pass took to record (they overlap when recorded in parallel).
-        m_timingStats.shadowRecordingMs = elapsedMs(shadowRecordingStart, recordingStart);
+        // Instance preparation and binning run in that span but are reported on their own.
+        m_timingStats.shadowRecordingMs = std::max(0.0f, elapsedMs(shadowRecordingStart, recordingStart) -
+                                                         m_timingStats.instancePreparationMs - m_timingStats.instanceBinningMs);
         for (const auto job : shadowJobs)
             m_timingStats.shadowRecordingMs += recording.JobMilliseconds()[job];
         geometryScope.End();

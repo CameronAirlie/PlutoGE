@@ -25,6 +25,9 @@ namespace PlutoGE::render
         bool bloom = true;
         bool depthOfField = true;
         bool motionBlur = true;
+        // Foliage detail ceiling (BasicLighting::foliageDetail): below 1, instanced foliage takes coarser LODs, and
+        // hands over to its impostors, from nearer.
+        float foliageDetail = 1.0f;
 
         bool operator==(const GraphicsQuality &) const = default;
 
@@ -32,7 +35,8 @@ namespace PlutoGE::render
         {
             return shadowResolution >= 256 && shadowResolution <= 8192 &&
                    shadowCascades >= 1 && shadowCascades <= 4 &&
-                   std::isfinite(shadowDistance) && shadowDistance >= 1 && shadowDistance <= 10000;
+                   std::isfinite(shadowDistance) && shadowDistance >= 1 && shadowDistance <= 10000 &&
+                   std::isfinite(foliageDetail) && foliageDetail >= MinFoliageDetail && foliageDetail <= MaxFoliageDetail;
         }
 
         [[nodiscard]] static GraphicsQuality FromPreset(GraphicsPreset preset)
@@ -46,12 +50,14 @@ namespace PlutoGE::render
                 result.cascadedShadows = true;
                 result.ambientOcclusion = result.globalIllumination = result.reflections = false;
                 result.volumetrics = result.bloom = result.depthOfField = result.motionBlur = false;
+                result.foliageDetail = 0.6f;
                 break;
             case GraphicsPreset::Medium:
                 result.shadowResolution = 1024; result.shadowCascades = 2; result.shadowDistance = 80;
                 result.cascadedShadows = true;
                 result.globalIllumination = result.reflections = result.volumetrics = false;
                 result.depthOfField = result.motionBlur = false;
+                result.foliageDetail = 0.75f;
                 break;
             case GraphicsPreset::High:
                 result.depthOfField = result.motionBlur = false;
@@ -74,6 +80,7 @@ namespace PlutoGE::render
             if (lighting.shadowCasterDistance > 0)
                 lighting.shadowCasterDistance = std::min(lighting.shadowCasterDistance, shadowDistance);
             if (cascadedShadows) lighting.shadowMethod = ShadowMethod::Cascaded;
+            lighting.foliageDetail = std::min(lighting.foliageDetail, foliageDetail);
         }
 
         [[nodiscard]] bool Allows(BasicPostProcessEffectType type) const noexcept

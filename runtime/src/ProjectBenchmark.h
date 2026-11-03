@@ -58,6 +58,8 @@ namespace PlutoGE
         // Project graphics tier applied before the scene loads. Frozen captures run
         // no scripts, so without it they render the scene's authored quality.
         std::optional<render::GraphicsPreset> quality;
+        // Replaces that tier's foliage detail (GraphicsQuality::foliageDetail); needs --quality.
+        std::optional<float> foliageDetail;
         // Swings the base camera's yaw by +/- this many degrees over CameraPanPeriodFrames,
         // after the scene update, so temporal reconstruction is measured under motion.
         float cameraPanDegrees = 0.0f;
@@ -83,10 +85,10 @@ namespace PlutoGE
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 12) // project, output, two counts and eight switches
+            if (args.size() < 2 || args.size() > 13) // project, output, two counts and nine switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
                                             "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--gpu-instance-culling] "
-                                            "[--quality=low|medium|high|ultra] [--camera-pan=<degrees>] "
+                                            "[--quality=low|medium|high|ultra] [--foliage-detail=<0.25..2>] [--camera-pan=<degrees>] "
                                             "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
             const auto count = [](std::string_view value, bool allowZero)
@@ -106,6 +108,7 @@ namespace PlutoGE
                 constexpr std::string_view capturePrefix = "--capture=";
                 constexpr std::string_view qualityPrefix = "--quality=";
                 constexpr std::string_view panPrefix = "--camera-pan=";
+                constexpr std::string_view foliagePrefix = "--foliage-detail=";
                 constexpr std::string_view disablePrefix = "--disable-effects=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
@@ -126,6 +129,16 @@ namespace PlutoGE
                     if (tier == tiers.end())
                         throw std::invalid_argument("Unknown benchmark quality: " + std::string(value));
                     result.quality = tier->second;
+                }
+                else if (value.starts_with(foliagePrefix) && !result.foliageDetail)
+                {
+                    const auto text = value.substr(foliagePrefix.size());
+                    float detail = 0.0f;
+                    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), detail);
+                    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() ||
+                        !(detail >= render::MinFoliageDetail && detail <= render::MaxFoliageDetail))
+                        throw std::invalid_argument("Foliage detail must be a number in [0.25, 2]");
+                    result.foliageDetail = detail;
                 }
                 else if (value.starts_with(panPrefix) && result.cameraPanDegrees == 0.0f)
                 {
@@ -168,6 +181,8 @@ namespace PlutoGE
             }
             if (result.geometryDiagnostic != render::GeometryDiagnosticMode::None && !result.frozenRender)
                 throw std::invalid_argument("Geometry diagnostic comparisons require --frozen-render");
+            if (result.foliageDetail && !result.quality)
+                throw std::invalid_argument("--foliage-detail replaces a tier's value and requires --quality");
             if (result.output.extension() != ".csv")
                 throw std::invalid_argument("Benchmark output must have a .csv extension");
             return result;
@@ -184,7 +199,7 @@ namespace PlutoGE
             "parallel_recording", "descriptor_cpu_ms", "descriptor_binds", "uniform_bytes", "persistent_uniform_bytes", "vsm_page_batches",
             "point_shadow_face_updates", "point_shadow_draws", "point_shadow_object_uploads",
             "point_shadow_invalid_projection", "point_shadow_invalid_casters", "point_shadow_invalid_content", "point_shadow_static_faces",
-            "instance_binning_ms", "gpu_observation_id"};
+            "instance_binning_ms", "instance_preparation_ms", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

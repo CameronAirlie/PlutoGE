@@ -733,7 +733,9 @@ namespace PlutoGE::assets
             {
                 int index = -1, enabled = -1, resolution = 0, cascades = 0;
                 float distance = 0;
-                bool valid = tokens.size() == 14;
+                // Fourteen fields, or fifteen with foliage detail (records written before it take the tier's
+                // engine default).
+                bool valid = tokens.size() == 14 || tokens.size() == 15;
                 if (valid)
                     valid = ParseInteger(tokens[1], index) && index >= 0 && index < 4 &&
                         ParseInteger(tokens[2], enabled) && (enabled == 0 || enabled == 1) &&
@@ -756,6 +758,9 @@ namespace PlutoGE::assets
                             valid = false;
                         *flags[flag] = value == 1;
                     }
+                    quality.foliageDetail = render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index)).foliageDetail;
+                    if (valid && tokens.size() == 15)
+                        valid = !tokens[14].empty() && ParseFloat(tokens[14], quality.foliageDetail);
                 }
                 if (!valid || !quality.IsValid())
                 {
@@ -1116,7 +1121,7 @@ namespace PlutoGE::assets
                 << q.shadowResolution << '\t' << q.shadowCascades << '\t' << q.shadowDistance << '\t'
                 << q.cascadedShadows << '\t' << q.ambientOcclusion << '\t' << q.globalIllumination << '\t'
                 << q.reflections << '\t' << q.volumetrics << '\t' << q.bloom << '\t'
-                << q.depthOfField << '\t' << q.motionBlur << '\n';
+                << q.depthOfField << '\t' << q.motionBlur << '\t' << q.foliageDetail << '\n';
         }
         output.precision(previousPrecision);
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';

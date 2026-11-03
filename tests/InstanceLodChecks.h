@@ -3,6 +3,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <array>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -94,4 +95,30 @@ inline void CheckInstanceLods(PlutoGE::render::BasicRenderer &renderer)
     std::cout << "Instance LODs: " << near << " triangles within 100 m, " << beyond << " instances skipped\n";
     if (near != 64u * 200u || beyond != 16u + 64u)
         throw std::runtime_error("Instances beyond the draw distance must be skipped by per-instance LOD binning");
+
+    // Foliage detail scales projected sizes before selection: at 0.5 the near instances (about 13 px) select as 6.5 px
+    // ones, whose 200-triangle LOD0 exceeds their density budget, so every instance draws the coarse LOD.
+    draw.instanceDrawDistance = std::numeric_limits<float>::max();
+    draw.instanceModels = models;
+    lighting.foliageDetail = 0.5f;
+    const auto coarse = triangles(true);
+    lighting.foliageDetail = 1.0f;
+    std::cout << "Instance LODs: " << coarse << " triangles at foliage detail 0.5\n";
+    if (coarse != 128u * 2u)
+        throw std::runtime_error("Reduced foliage detail must select coarser instance LODs");
+
+    // A cluster whose bounds lie wholly beyond its draw distance (or outside the view) is skipped before binning and
+    // recording: nothing is drawn, and every instance counts as culled.
+    draw.shadowBoundsCenter = {0.0f, 0.0f, -400.0f};
+    draw.shadowBoundsRadius = 20.0f;
+    draw.instanceDrawDistance = 100.0f;
+    const auto far = std::make_shared<std::vector<glm::mat4>>(models->begin() + 64, models->end());
+    draw.instanceModels = far;
+    const auto clusterTriangles = triangles(true);
+    const auto &clusterStats = renderer.GetFrameStats();
+    std::cout << "Instance LODs: " << clusterTriangles << " triangles and " << clusterStats.geometryDraws
+              << " draws for a cluster beyond its draw distance\n";
+    if (clusterTriangles != 0u || clusterStats.geometryDraws != 0u || clusterStats.viewCulledInstances != 64u)
+        throw std::runtime_error("A cluster beyond its draw distance must be skipped whole");
+    draw.shadowBoundsRadius = -1.0f;
 }

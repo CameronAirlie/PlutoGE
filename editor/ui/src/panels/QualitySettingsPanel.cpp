@@ -59,6 +59,11 @@ namespace PlutoGE::ui
         changed |= Effect("Bloom and lens flare", quality.bloom, "Allows bloom and lens flare.");
         changed |= Effect("Depth of field", quality.depthOfField, "Allows the depth-of-field post-process effect.");
         changed |= Effect("Motion blur", quality.motionBlur, "Allows the motion-blur post-process effect.");
+        ImGui::SeparatorText("Foliage");
+        changed |= ImGui::SliderFloat("Foliage detail", &quality.foliageDetail, render::MinFoliageDetail,
+                                      render::MaxFoliageDetail, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        Help("Caps the detail of instanced foliage. Below 1, plants switch to coarser LODs, and trees to their "
+             "impostors, from nearer: 0.5 does so at twice the screen size.");
         ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::Button("Reset this tier to engine defaults"))
@@ -75,6 +80,6 @@ namespace PlutoGE::ui
         ImGui::EndDisabled();
         if (ImGui::Button("Preview tier in Scene viewport") && m_preview) m_preview(quality);
         Help("Requires RHI preview. Applies this tier to the Scene viewport only. Use the Game viewport Quality popup to preview there.");
-        ImGui::TextWrapped("Edits update preset definitions. Apply a tier again to update an existing preview or runtime selection. Display resolution, VSync, upscaling, texture residency, particles and mesh LOD are independent.");
+        ImGui::TextWrapped("Edits update preset definitions. Apply a tier again to update an existing preview or runtime selection. Display resolution, VSync, upscaling, texture residency, particles and non-foliage mesh LOD are independent.");
     }
 }

@@ -71,21 +71,26 @@ inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, Re
         renderer.Render(projection * lighting.view, lighting, std::span(&draw, 1));
         return std::pair(readPixels(renderer.GetColorTexture()), renderer.GetFrameStats().gpuBinnedDraws);
     };
-    const auto [cpu, cpuBinned] = render(false);
-    const auto [gpu, gpuBinned] = render(true);
-    std::size_t different = 0, drawn = 0;
-    for (std::size_t texel = 0; texel + 3 < cpu.size(); texel += 4)
+    // At reduced foliage detail too: both take the view's scaled projection.
+    for (const float detail : {1.0f, 0.5f})
     {
-        different += cpu[texel] != gpu[texel] || cpu[texel + 1] != gpu[texel + 1] || cpu[texel + 2] != gpu[texel + 2];
-        drawn += static_cast<unsigned>(cpu[texel]) > 128u;
+        lighting.foliageDetail = detail;
+        const auto [cpu, cpuBinned] = render(false);
+        const auto [gpu, gpuBinned] = render(true);
+        std::size_t different = 0, drawn = 0;
+        for (std::size_t texel = 0; texel + 3 < cpu.size(); texel += 4)
+        {
+            different += cpu[texel] != gpu[texel] || cpu[texel + 1] != gpu[texel + 1] || cpu[texel + 2] != gpu[texel + 2];
+            drawn += static_cast<unsigned>(cpu[texel]) > 128u;
+        }
+        std::cout << "GPU instance culling (foliage detail " << detail << "): " << gpuBinned << " draws binned on the GPU, "
+                  << different << " of " << cpu.size() / 4 << " pixels differ from CPU binning (" << drawn << " lit)\n";
+        renderer.SetGpuInstanceCulling(false);
+        if (cpuBinned != 0 || gpuBinned != 1)
+            throw std::runtime_error("GPU instance culling must bin the instanced draw only when enabled");
+        if (drawn == 0)
+            throw std::runtime_error("The instance culling scene drew nothing");
+        if (different != 0)
+            throw std::runtime_error("GPU instance culling must draw what CPU binning draws");
     }
-    std::cout << "GPU instance culling: " << gpuBinned << " draws binned on the GPU, " << different << " of "
-              << cpu.size() / 4 << " pixels differ from CPU binning (" << drawn << " lit)\n";
-    renderer.SetGpuInstanceCulling(false);
-    if (cpuBinned != 0 || gpuBinned != 1)
-        throw std::runtime_error("GPU instance culling must bin the instanced draw only when enabled");
-    if (drawn == 0)
-        throw std::runtime_error("The instance culling scene drew nothing");
-    if (different != 0)
-        throw std::runtime_error("GPU instance culling must draw what CPU binning draws");
 }

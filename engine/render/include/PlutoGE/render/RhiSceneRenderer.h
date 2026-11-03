@@ -80,7 +80,7 @@ namespace PlutoGE::render
         // Casters skipped by cascades too coarse to resolve them (BasicLighting::shadowCasterMinimumTexels).
         std::size_t shadowCastersBelowTexelSize = 0;
         // Hardware ray-traced GI: instances in the top level, and whether it was rebuilt this frame.
-        std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0;
+        std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0, rayTracedOutOfRangeInstances = 0;
         bool rayTracedSceneRebuilt = false;
         std::size_t recordedGeometryDepthDrawCount = 0;
         std::uint32_t geometryColorOutputs = 0;

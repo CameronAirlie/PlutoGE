@@ -38,11 +38,14 @@ namespace PlutoGE::render
         {
             RenderCommand input;
             std::uint64_t materialRevision = 0;
+            // The LOD the list draws the command at (its LOD policy), not the camera's: lists whose LOD does not
+            // follow the camera (shadow casters, GI's scene) keep their packets as camera LODs change.
+            std::uint32_t lod = 0;
             BasicDraw draw;
             bool valid = false;
             bool emitted = false;
 
-            bool Matches(const RenderCommand &command, std::uint64_t revision) const
+            bool Matches(const RenderCommand &command, std::uint64_t revision, std::uint32_t listLod) const
             {
                 // Array contents can mutate behind const shared_ptrs. Do not
                 // infer pose/instance revisions from pointer equality; only a
@@ -50,7 +53,7 @@ namespace PlutoGE::render
                 const bool common = valid && Cacheable(command) &&
                        materialRevision == revision && input.mesh == command.mesh &&
                        input.material == command.material && input.submeshIndex == command.submeshIndex &&
-                       input.lodIndex == command.lodIndex && input.minShadowLodIndex == command.minShadowLodIndex &&
+                       lod == listLod && input.minShadowLodIndex == command.minShadowLodIndex &&
                        input.castsShadow == command.castsShadow && input.probeDebug == command.probeDebug;
                 if (!common) return false;
                 if (command.sourceObject && command.sourceRevision)
@@ -61,10 +64,11 @@ namespace PlutoGE::render
                        std::memcmp(&input.model[0][0], &command.model[0][0], sizeof(float) * 16) == 0 &&
                        std::memcmp(&input.previousModel[0][0], &command.previousModel[0][0], sizeof(float) * 16) == 0;
             }
-            void Store(const RenderCommand &command, std::uint64_t revision, const BasicDraw *packet)
+            void Store(const RenderCommand &command, std::uint64_t revision, std::uint32_t listLod, const BasicDraw *packet)
             {
                 input = command;
                 materialRevision = revision;
+                lod = listLod;
                 emitted = packet != nullptr;
                 if (packet)
                     draw = *packet;
@@ -98,12 +102,15 @@ namespace PlutoGE::render
         // a coarser caster than the visible list for the same command.
         static RetainedKey Key(const RenderCommand &command, std::uint32_t drawLod, bool emissiveGi)
         { return {command.sourceObject, command.material, command.submeshIndex, drawLod, emissiveGi}; }
+        // The key's drawLod already pins the geometry; the packet may come from a list with another LOD policy, so the
+        // caller sets its own Entry::lod on the copy.
         const Entry *FindRetained(const RenderCommand &command, std::uint64_t revision, std::uint32_t drawLod, bool emissiveGi,
                                   std::uint64_t frame)
         {
             if (!CanRetain(command)) return nullptr;
             const auto found = retained.find(Key(command, drawLod, emissiveGi));
-            if (found == retained.end() || !found->second.packet.Matches(command, revision)) return nullptr;
+            if (found == retained.end() || !found->second.packet.Matches(command, revision, found->second.packet.lod))
+                return nullptr;
             found->second.lastUse = frame;
             return &found->second.packet;
         }
@@ -147,7 +154,8 @@ namespace PlutoGE::render
                 return hash;
             }
 
-            template<class Revision> void Reconcile(RenderCommandView commands, Revision revision)
+            template<class Revision, class ListLod>
+            void Reconcile(RenderCommandView commands, Revision revision, ListLod listLod)
             {
                 // Animation invalidates individual packets every frame, but
                 // usually leaves list slots in the same order. Retain storage
@@ -189,7 +197,7 @@ namespace PlutoGE::render
                     while (*link != end)
                     {
                         const auto candidate = *link;
-                        if (previous[candidate].Matches(commands[i], materialRevision))
+                        if (previous[candidate].Matches(commands[i], materialRevision, listLod(commands[i])))
                         {
                             entries[i] = std::move(previous[candidate]);
                             *link = candidateNext[candidate];

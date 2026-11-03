@@ -512,7 +512,8 @@ namespace PlutoGE::ui
                << " beyond their shadow distance, " << rhiScene.shadowCastersBelowTexelSize
                << " below cascade texel size (in redrawn cascades)\n";
         report << "RHI ray-traced GI scene: " << rhiScene.rayTracedInstances << " instances, "
-               << rhiScene.rayTracedSkippedInstances << " too small to trace; top level "
+               << rhiScene.rayTracedSkippedInstances << " too small, " << rhiScene.rayTracedOutOfRangeInstances
+               << " beyond the probe volume's reach; top level "
                << (rhiScene.rayTracedSceneRebuilt ? "rebuilt" : "reused") << "\n";
         report << "RHI directional shadows: " << rhiScene.directionalShadowStatus << "\n";
         if (rhiScene.virtualShadowsActive)

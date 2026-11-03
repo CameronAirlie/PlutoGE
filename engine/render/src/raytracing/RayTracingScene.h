@@ -44,6 +44,11 @@ namespace PlutoGE::render
             // units, are left out: grass and debris add top-level instances far out of proportion to the light they
             // bounce or block. 0 traces every draw.
             float minimumInstanceRadius = 0.0f;
+            // Draws whose bounds lie wholly farther than `range` from `center` are left out: rays from a probe volume
+            // seldom reach far, and the rest of a large map is most of its instances. 0 traces at every distance.
+            // Callers snap `center` so the traced set changes only every so often as the camera travels.
+            glm::vec3 center{0.0f};
+            float range = 0.0f;
             bool operator==(const Settings &) const = default;
         };
 
@@ -61,8 +66,9 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::AccelerationStructureHandle TopLevel() const noexcept { return m_topLevel.Get(); }
         [[nodiscard]] rhi::BufferHandle Instances() const noexcept { return m_instanceRecords.Get(); }
         [[nodiscard]] std::size_t InstanceCount() const noexcept { return m_instanceCount; }
-        // Instances of traceable draws the settings left out at the last top-level build.
+        // Instances of traceable draws the settings left out at the last top-level build: too small, or out of range.
         [[nodiscard]] std::size_t SkippedInstanceCount() const noexcept { return m_skippedInstanceCount; }
+        [[nodiscard]] std::size_t OutOfRangeInstanceCount() const noexcept { return m_outOfRangeInstanceCount; }
         // Whether the last Update rebuilt the top level (false when it reused the previous one).
         [[nodiscard]] bool Rebuilt() const noexcept { return m_rebuilt; }
         [[nodiscard]] std::size_t BottomLevelCount() const noexcept { return m_bottomLevels.size(); }
@@ -78,8 +84,9 @@ namespace PlutoGE::render
             std::uint64_t lastUsed = 0;
         };
 
-        // Traceable, and not too small for the settings.
-        [[nodiscard]] bool Traced(const BasicDraw &draw) const noexcept;
+        // Traceable draws the settings keep or leave out.
+        enum class Selection { Traced, TooSmall, OutOfRange };
+        [[nodiscard]] Selection Select(const BasicDraw &draw) const noexcept;
         // Identifies the traced input: every traced draw's retained packet with its geometry and surface. None when a
         // traced draw is not retained (its packet may change in place), which forces a rebuild.
         [[nodiscard]] std::optional<std::uint64_t> InputSignature(std::span<const BasicDraw> draws) const;
@@ -91,7 +98,7 @@ namespace PlutoGE::render
         std::uint32_t m_topLevelCapacity = 0;
         rhi::Buffer m_instanceRecords;
         std::size_t m_recordCapacity = 0;
-        std::size_t m_instanceCount = 0, m_skippedInstanceCount = 0;
+        std::size_t m_instanceCount = 0, m_skippedInstanceCount = 0, m_outOfRangeInstanceCount = 0;
         std::vector<rhi::AccelerationStructureInstance> m_instances;
         std::vector<RayTracedInstance> m_records;
         // The last top level's input, valid when it held every traced draw (no bottom level was deferred).

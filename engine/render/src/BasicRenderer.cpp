@@ -637,6 +637,20 @@ namespace PlutoGE::render
             return hash;
         }
 
+        // What DDGI's hardware rays trace: draws within reach of the probe volume around the camera, at least the size
+        // the project traces. The reach is the widest cascade's half diagonal plus a quarter for rays leaving it; the
+        // centre snaps to twice that cascade's probe spacing, so the traced set (and the top level) changes only every
+        // few dozen metres of travel. The snap is added to the reach so the volume always stays covered.
+        RayTracingScene::Settings RayTracedSceneSettings(const DdgiGridSettings &grid, const BasicLighting &lighting)
+        {
+            constexpr float RayReach = 1.25f;
+            const int widest = std::max(grid.cascades, 1) - 1;
+            const float snap = std::max(2.0f * grid.CascadeSpacing(widest), 1.0f);
+            return {.minimumInstanceRadius = std::max(lighting.rayTracedMinimumInstanceRadius, 0.0f),
+                    .center = glm::round(lighting.cameraPosition / snap) * snap,
+                    .range = RayReach * 0.5f * glm::length(grid.Extent(widest)) + snap};
+        }
+
         std::uint64_t ShadowDrawSignature(const BasicDraw &draw)
         {
             std::uint64_t hash = 14695981039346656037ull;
@@ -6239,7 +6253,7 @@ namespace PlutoGE::render
         if (settings.raySource != DdgiRaySource::Voxels && m_rayTracingScene && m_rayQueryDdgiRays)
         {
             const ScopedGpuTiming buildTiming(commands, "RHI DDGI / Acceleration structures");
-            m_rayTracingScene->SetSettings({.minimumInstanceRadius = std::max(lighting.rayTracedMinimumInstanceRadius, 0.0f)});
+            m_rayTracingScene->SetSettings(RayTracedSceneSettings(settings.grid, lighting));
             if (m_rayTracingScene->Update(commands, draws))
             {
                 m_rayQueryDdgiRays->SetScene(*m_rayTracingScene, lighting);
@@ -6248,6 +6262,7 @@ namespace PlutoGE::render
             }
             m_frameStats.rayTracedInstances = m_rayTracingScene->InstanceCount();
             m_frameStats.rayTracedSkippedInstances = m_rayTracingScene->SkippedInstanceCount();
+            m_frameStats.rayTracedOutOfRangeInstances = m_rayTracingScene->OutOfRangeInstanceCount();
             m_frameStats.rayTracedSceneRebuilt = m_rayTracingScene->Rebuilt();
         }
         // Probe states and light belong to the scene representation that traced them: positions relocated out of one

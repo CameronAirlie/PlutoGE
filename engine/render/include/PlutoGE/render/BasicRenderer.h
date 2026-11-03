@@ -869,9 +869,10 @@ namespace PlutoGE::render
         // frames one sweep of the whole volume takes.
         std::uint32_t ddgiProbesTraced = 0, ddgiProbesReset = 0, ddgiRaysScheduled = 0, ddgiFramesPerSweep = 0;
         // True when DDGI traced with hardware ray queries this frame, with this many instances; those left out as too
-        // small (BasicLighting::rayTracedMinimumInstanceRadius); whether the top level was rebuilt this frame.
+        // small (BasicLighting::rayTracedMinimumInstanceRadius) or beyond the probe volume's reach; whether the top
+        // level was rebuilt this frame.
         bool ddgiHardwareRays = false;
-        std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0;
+        std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0, rayTracedOutOfRangeInstances = 0;
         bool rayTracedSceneRebuilt = false;
         std::size_t geometryDepthDraws = 0;
         std::uint32_t geometryColorOutputs = 0;

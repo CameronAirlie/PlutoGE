@@ -230,7 +230,23 @@ inline void CheckRayTracedSceneReuse(PlutoGE::render::BasicRenderer &renderer, P
     const auto &stats = renderer.GetFrameStats();
     Require(stats.rayTracedSceneRebuilt && stats.rayTracedInstances == 1 && stats.rayTracedSkippedInstances == 1,
             "The ray-traced size threshold did not leave out exactly the small draw");
-    std::cout << "Ray-traced scene reuse, invalidation and size threshold passed\n";
+
+    // Draws beyond the probe volume's reach are left out, and a camera step within the snapped centre's cell keeps
+    // the top level.
+    scene.lighting.rayTracedMinimumInstanceRadius = 0.0f;
+    auto distant = floor;
+    distant.preparationRevision = 0x7004;
+    distant.model = glm::translate(glm::mat4(1.0f), glm::vec3(20000.0f, 0.0f, 0.0f));
+    distant.shadowBoundsCenter = glm::vec3(20000.0f, 0.0f, 0.0f);
+    distant.shadowBoundsRadius = 5.0f;
+    const std::array ranged{draws[0], draws[1], distant};
+    (void)scene.Render(ranged, std::span(&ddgi, 1), 2);
+    Require(renderer.GetFrameStats().rayTracedInstances == 2 && renderer.GetFrameStats().rayTracedOutOfRangeInstances == 1,
+            "A draw beyond the probe volume's reach was traced");
+    scene.Look({0.05f, 1.0f, 3.5f}, {0.05f, 0.3f, 0});
+    (void)scene.Render(ranged, std::span(&ddgi, 1), 1);
+    Require(!renderer.GetFrameStats().rayTracedSceneRebuilt, "A small camera step rebuilt the ray-traced scene");
+    std::cout << "Ray-traced scene reuse, invalidation, size threshold and range passed\n";
 }
 
 inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE::render::rhi::IRenderDevice &device)

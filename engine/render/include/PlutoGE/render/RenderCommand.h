@@ -77,4 +77,16 @@ namespace PlutoGE::render
         const auto lodCount = static_cast<uint32_t>(command.mesh->GetSubmeshLodCount(command.submeshIndex));
         return std::min(requested, lodCount > 0 ? lodCount - 1 : 0u);
     }
+
+    // The LOD global illumination's scene (voxel and ray-traced) uses: independent of the camera, so GI's scene does
+    // not change, and its caches stay valid, as LODs change with view distance. Occluders need no more detail than
+    // shadow casters, so it is the producer's caster floor, never finer than its render floor.
+    inline uint32_t SelectGiSceneLod(const RenderCommand &command)
+    {
+        const uint32_t requested = std::max(command.GetMinLodIndex(), command.minShadowLodIndex);
+        if (!command.mesh)
+            return requested;
+        const auto lodCount = static_cast<uint32_t>(command.mesh->GetSubmeshLodCount(command.submeshIndex));
+        return std::min(requested, lodCount > 0 ? lodCount - 1 : 0u);
+    }
 }

@@ -60,6 +60,7 @@ namespace PlutoGE::render
         m_recordCapacity = 0;
         m_instanceCount = 0;
         m_skippedInstanceCount = 0;
+        m_outOfRangeInstanceCount = 0;
         m_builtSignature.reset();
         m_rebuilt = false;
         m_device = nullptr;
@@ -71,9 +72,18 @@ namespace PlutoGE::render
                draw.surfaceType != 1 && draw.alphaMode != 2;
     }
 
-    bool RayTracingScene::Traced(const BasicDraw &draw) const noexcept
+    RayTracingScene::Selection RayTracingScene::Select(const BasicDraw &draw) const noexcept
     {
-        return Traceable(draw) && !(draw.maxInstanceRadius >= 0.0f && draw.maxInstanceRadius < m_settings.minimumInstanceRadius);
+        if (draw.maxInstanceRadius >= 0.0f && draw.maxInstanceRadius < m_settings.minimumInstanceRadius)
+            return Selection::TooSmall;
+        if (m_settings.range > 0.0f && draw.shadowBoundsRadius >= 0.0f)
+        {
+            const float reach = m_settings.range + draw.shadowBoundsRadius;
+            const glm::vec3 offset = draw.shadowBoundsCenter - m_settings.center;
+            if (glm::dot(offset, offset) > reach * reach)
+                return Selection::OutOfRange;
+        }
+        return Selection::Traced;
     }
 
     std::optional<std::uint64_t> RayTracingScene::InputSignature(std::span<const BasicDraw> draws) const
@@ -86,11 +96,14 @@ namespace PlutoGE::render
             hash *= 1099511628211ull;
         };
         mix(std::bit_cast<std::uint32_t>(m_settings.minimumInstanceRadius));
+        mix(std::bit_cast<std::uint32_t>(m_settings.range));
+        for (int axis = 0; axis < 3; ++axis)
+            mix(std::bit_cast<std::uint32_t>(m_settings.center[axis]));
         for (const auto &draw : draws)
         {
             if (!Traceable(draw))
                 continue;
-            // A traceable draw left out still counts: crossing the size threshold must rebuild.
+            // A traceable draw left out still counts: crossing a threshold must rebuild.
             if (!draw.preparationRevision)
                 return std::nullopt;
             mix(draw.preparationRevision);
@@ -119,6 +132,7 @@ namespace PlutoGE::render
         m_instances.clear();
         m_records.clear();
         m_skippedInstanceCount = 0;
+        m_outOfRangeInstanceCount = 0;
         std::size_t built = 0;
         bool complete = true;
         for (const auto &draw : draws)
@@ -127,9 +141,9 @@ namespace PlutoGE::render
                 continue;
             const std::size_t instanceCount = draw.instanceModels && !draw.instanceModels->empty()
                 ? draw.instanceModels->size() : 1;
-            if (!Traced(draw))
+            if (const auto selection = Select(draw); selection != Selection::Traced)
             {
-                m_skippedInstanceCount += instanceCount;
+                (selection == Selection::TooSmall ? m_skippedInstanceCount : m_outOfRangeInstanceCount) += instanceCount;
                 continue;
             }
             const auto [firstIndex, indexCount] = IndexRange(draw);

@@ -1047,9 +1047,16 @@ namespace PlutoGE::render
             const auto materialRevision = [&](const RenderCommand &command) {
                 return command.material ? prepareMaterial(command.material).revision : std::uint64_t{0};
             };
+            // The LOD each list draws: the camera's for the visible list, the shared caster policy for shadows (which
+            // may be coarser than the view), and a camera-independent one for GI's scene, so its packets (and the
+            // ray-traced scene built over them) stay fixed as the camera moves.
+            const auto listLod = [&](const RenderCommand &command) -> std::uint32_t {
+                return giOnly ? SelectGiSceneLod(command) : shadowOnly ? SelectShadowCasterLod(command) : command.lodIndex;
+            };
             bool unchanged = cache.entries.size() == sourceCommands.size();
             for (size_t i = 0; i < sourceCommands.size() && unchanged; ++i)
-                unchanged = cache.entries[i].Matches(sourceCommands[i], materialRevision(sourceCommands[i]));
+                unchanged = cache.entries[i].Matches(sourceCommands[i], materialRevision(sourceCommands[i]),
+                                                     listLod(sourceCommands[i]));
             if (unchanged)
             {
                 m_timingStats.reusedDrawPackets += sourceCommands.size();
@@ -1061,7 +1068,7 @@ namespace PlutoGE::render
                     cache.entries[i].input.mesh == sourceCommands[i].mesh &&
                     cache.entries[i].input.material == sourceCommands[i].material &&
                     cache.entries[i].input.submeshIndex == sourceCommands[i].submeshIndex;
-            cache.Reconcile(sourceCommands, materialRevision);
+            cache.Reconcile(sourceCommands, materialRevision, listLod);
             auto &destination = cache.draws;
             if (!patch) destination.clear();
             destination.reserve(sourceCommands.size());
@@ -1070,7 +1077,8 @@ namespace PlutoGE::render
                 const auto &command = sourceCommands[i];
                 const auto revision = materialRevision(command);
                 auto &entry = cache.entries[i];
-                if (entry.Matches(command, revision))
+                const auto lod = listLod(command);
+                if (entry.Matches(command, revision, lod))
                 {
                     if (entry.emitted && !patch)
                         destination.push_back(entry.draw);
@@ -1083,18 +1091,17 @@ namespace PlutoGE::render
                     (shadowOnly && (!command.castsShadow ||
                                     (command.material && !prepareMaterial(command.material).draw.castsShadow))))
                 {
-                    entry.Store(command, revision, nullptr);
+                    entry.Store(command, revision, lod, nullptr);
                     continue;
                 }
-                const bool emissiveGi = giOnly && command.lodIndex != 0 && command.material &&
+                // Small emissive submeshes must not disappear from the GI source with simplified geometry.
+                const bool emissiveGi = giOnly && lod != 0 && command.material &&
                     glm::any(glm::greaterThan(command.material->ReadConfig().emission, glm::vec3(0.0f)));
-                // Small emissive submeshes must not disappear from the GI source
-                // when the camera selects simplified geometry. Shadow lists use
-                // the shared caster policy, which may be coarser than the view.
-                std::uint32_t drawLod = emissiveGi ? 0u : shadowOnly ? SelectShadowCasterLod(command) : command.lodIndex;
+                std::uint32_t drawLod = emissiveGi ? 0u : lod;
                 if (const auto *shared = preparation.FindRetained(command, revision, drawLod, emissiveGi, m_preparationFrame))
                 {
                     entry = *shared;
+                    entry.lod = lod;
                     if (patch) destination[i] = entry.draw; else destination.push_back(entry.draw);
                     ++m_timingStats.reusedDrawPackets;
                     ++m_timingStats.sharedDrawPacketHits;
@@ -1161,7 +1168,7 @@ namespace PlutoGE::render
                 // an index count of 0 as "to the end of the mesh".
                 if (indexCount == 0)
                 {
-                    entry.Store(command, revision, nullptr);
+                    entry.Store(command, revision, lod, nullptr);
                     continue;
                 }
                 if (rigidMesh)
@@ -1262,7 +1269,7 @@ namespace PlutoGE::render
                 draw.preparationRevision = Cacheable(command) ? preparation.NextRevision() : 0;
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
-                entry.Store(command, revision, &draw);
+                entry.Store(command, revision, lod, &draw);
                 preparation.Retain(entry, drawLod, emissiveGi, m_preparationFrame);
                 if (patch) destination[i] = std::move(draw); else destination.push_back(std::move(draw));
                 ++m_timingStats.rebuiltDrawPackets;
@@ -2186,6 +2193,7 @@ namespace PlutoGE::render
         m_timingStats.shadowCastersBelowTexelSize = frameStats.shadowCastersBelowTexelSize;
         m_timingStats.rayTracedInstances = frameStats.rayTracedInstances;
         m_timingStats.rayTracedSkippedInstances = frameStats.rayTracedSkippedInstances;
+        m_timingStats.rayTracedOutOfRangeInstances = frameStats.rayTracedOutOfRangeInstances;
         m_timingStats.rayTracedSceneRebuilt = frameStats.rayTracedSceneRebuilt;
         m_timingStats.occlusion = frameStats.occlusion;
         m_timingStats.occlusionActive = frameStats.occlusionActive;

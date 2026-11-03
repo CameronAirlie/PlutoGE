@@ -216,8 +216,16 @@ probe visibility for leak reduction is an exact segment test. `SurfaceTolerance`
   instances share through their custom index. GPU-skinned and transparent geometry is left out, as from voxel GI, and
   so are draws whose largest instance's bounding radius (`BasicDraw::maxInstanceRadius`) is below
   **Project Settings > Rendering > Performance > Smallest ray-traced instance** (`RAY_TRACED_MIN_INSTANCE_RADIUS`,
-  default 0.5 m): grass and debris add top-level instances far out of proportion to the light they bounce. The Vulkan
-  backend reads each bottom level's device address once at creation, not per top-level instance.
+  default 0.5 m): grass and debris add top-level instances far out of proportion to the light they bounce. Draws
+  wholly beyond the probe volume's reach (the widest cascade's half diagonal, times 1.25) are left out too, around a
+  centre snapped to twice that cascade's probe spacing, so the traced set changes only every few dozen metres of
+  travel (`RayTracedSceneSettings` in `BasicRenderer.cpp`). The Vulkan backend reads each bottom level's device
+  address once at creation, not per top-level instance.
+- **Stable scene**: the GI draw list does not follow the camera. Static commands are submitted whether or not the
+  camera sees them (`Renderer::IsRenderCommandAcceptedForSubmission`), and GI packets draw a camera-independent LOD
+  (`SelectGiSceneLod`: the producer's caster floor) rather than the view's, so walking neither changes the list nor
+  rebuilds its packets. The preparation cache compares each list's own LOD (`RhiDrawPreparationCache::Entry::lod`);
+  shadow lists use the caster LOD, so they too keep packets while the view LOD changes beneath their floor.
 - **Hits** are shaded from their material's mean diffuse reflectance and emission: textures are not sampled at hits,
   so each material's textures are averaged once when they are first read (base colour times the albedo texture's mean,
   less the metallic share from the metallic texture's mean; emission times the emission texture's mean). Imported

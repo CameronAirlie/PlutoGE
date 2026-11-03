@@ -106,26 +106,28 @@ int main() try
     commands[1].model[3].x = 3;
     commands[2].submeshIndex = 1;
     const auto revision = [](const auto &) { return uint64_t{7}; };
-    packets.Reconcile(commands, revision);
+    // The visible list's LOD policy: the camera's.
+    const auto lod = [](const render::RenderCommand &command) { return command.lodIndex; };
+    packets.Reconcile(commands, revision, lod);
     render::BasicDraw draw;
     for (size_t i = 0; i < commands.size(); ++i)
-        packets.entries[i].Store(commands[i], 7, &draw);
+        packets.entries[i].Store(commands[i], 7, lod(commands[i]), &draw);
     auto *storage = packets.entries.data();
     commands[2].model[3].x = 5;
-    packets.Reconcile(commands, revision);
-    Require(packets.entries.data() == storage && packets.entries[0].Matches(commands[0], 7), "Stable packets were evicted");
-    Require(!packets.entries[2].Matches(commands[2], 7), "Moved packet reused");
+    packets.Reconcile(commands, revision, lod);
+    Require(packets.entries.data() == storage && packets.entries[0].Matches(commands[0], 7, lod(commands[0])), "Stable packets were evicted");
+    Require(!packets.entries[2].Matches(commands[2], 7, lod(commands[2])), "Moved packet reused");
     std::swap(commands[0], commands[1]);
-    packets.Reconcile(commands, revision);
-    Require(packets.entries[0].Matches(commands[0], 7) && packets.entries[1].Matches(commands[1], 7),
+    packets.Reconcile(commands, revision, lod);
+    Require(packets.entries[0].Matches(commands[0], 7, lod(commands[0])) && packets.entries[1].Matches(commands[1], 7, lod(commands[1])),
         "Repeated-mesh reorder rebuilt unchanged producer packets");
-    Require(!packets.entries[1].Matches(commands[1], 8), "Material revision ignored");
+    Require(!packets.entries[1].Matches(commands[1], 8, lod(commands[1])), "Material revision ignored");
     commands[0].previousModel[3].y = 4;
-    Require(!packets.entries[0].Matches(commands[0], 7), "Motion history ignored");
+    Require(!packets.entries[0].Matches(commands[0], 7, lod(commands[0])), "Motion history ignored");
     commands[0].lodIndex = 1;
-    Require(!packets.entries[0].Matches(commands[0], 7), "LOD ignored");
+    Require(!packets.entries[0].Matches(commands[0], 7, lod(commands[0])), "LOD ignored");
     commands.resize(1);
-    packets.Reconcile(commands, revision);
+    packets.Reconcile(commands, revision, lod);
     Require(packets.entries.size() == 1, "Membership removal ignored");
 
     scene::Scene scene;

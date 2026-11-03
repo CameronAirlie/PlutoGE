@@ -1411,6 +1411,10 @@ namespace PlutoGE::render
         // Avoid testing every camera plane only to accept them afterward.
         if (command.castsShadow && command.material && command.material->ReadConfig().castsShadow)
             return true;
+        // Global illumination (voxel and ray-traced) reads the static scene from this list, off screen as well.
+        // Culling it by the camera would leave out what is behind the view and change GI's scene on every turn.
+        if (command.isStatic)
+            return true;
 
         for (const auto &frustum : m_submissionFrustums)
         {

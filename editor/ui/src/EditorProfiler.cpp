@@ -434,7 +434,8 @@ namespace PlutoGE::ui
         report << "RHI translation / Texture creation + mipmaps: " << rhiScene.textureUploadMs
                << " ms (" << rhiScene.textureUploadCount << " attempts)\n";
         report << "RHI recorded geometry: " << rhiScene.recordedGeometryDrawCount << " draws, "
-               << rhiScene.recordedGeometryInstanceCount << " instances\n";
+               << rhiScene.recordedGeometryInstanceCount << " instances (" << rhiScene.viewCulledInstanceCount
+               << " outside the view or draw distance skipped)\n";
         report << "RHI geometry coverage: " << rhiScene.recordedGeometryDepthDrawCount << " depth draws; "
                << rhiScene.geometryColorOutputs << " color outputs\n";
         report << "VSM CPU cluster bounds: " << rhiScene.virtualShadows.clusterBoundsBuilds << " builds / "

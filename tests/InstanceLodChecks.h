@@ -65,4 +65,31 @@ inline void CheckInstanceLods(PlutoGE::render::BasicRenderer &renderer)
         throw std::runtime_error("Without a chain every instance must draw the draw's own range");
     if (chunked != 64u * 200u + 64u * 2u)
         throw std::runtime_error("The far instance chunk must draw its coarse LOD and the near chunk LOD0");
+
+    // Beyond the screen-radius thresholds, a LOD too dense for its projected size gives way to the next: at 7 px the
+    // thresholds keep LOD0, but its 200 triangles exceed the budget of a 7 px disc.
+    if (chain->Select(20.0f) != 0u || chain->Select(7.0f) != 1u)
+        throw std::runtime_error("Instance LOD selection must cap triangles per projected pixel");
+
+    // Binned instances outside the view are skipped: add some behind the camera and far to each side.
+    auto withHidden = std::make_shared<std::vector<glm::mat4>>(*models);
+    for (int i = 0; i < 8; ++i)
+    {
+        withHidden->push_back(glm::translate(glm::mat4(1), glm::vec3(i * 2.0f - 7.0f, 0.0f, 5.0f)));
+        withHidden->push_back(glm::translate(glm::mat4(1), glm::vec3(i % 2 ? 40.0f : -40.0f, 0.0f, -10.0f - i)));
+    }
+    draw.instanceModels = withHidden;
+    const auto culled = triangles(true);
+    const auto skipped = renderer.GetFrameStats().viewCulledInstances;
+    std::cout << "Instance LODs: " << culled << " triangles with " << skipped << " instances outside the view\n";
+    if (culled != chunked || skipped != 16u)
+        throw std::runtime_error("Instances outside the view must be skipped by per-instance LOD binning");
+
+    // So are instances beyond the draw distance: at 100 m the far chunk (400 m away) goes.
+    draw.instanceDrawDistance = 100.0f;
+    const auto near = triangles(true);
+    const auto beyond = renderer.GetFrameStats().viewCulledInstances;
+    std::cout << "Instance LODs: " << near << " triangles within 100 m, " << beyond << " instances skipped\n";
+    if (near != 64u * 200u || beyond != 16u + 64u)
+        throw std::runtime_error("Instances beyond the draw distance must be skipped by per-instance LOD binning");
 }

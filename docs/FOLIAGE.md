@@ -168,17 +168,30 @@ lazily and cached. It is regenerated only when:
 
 An ordinary frame does not rebuild the cell cache.
 
-### Level of detail per instance chunk
+### Level of detail and culling per instance
 
-A cluster's command picks one LOD from the cell's bounds. The camera passes then refine it. The renderer draws a
-cluster's instances in chunks of 64, and each chunk takes the LOD its nearest instance needs, chosen as the mesh
-would choose it for that instance alone (`BasicInstanceLodChain`, `InstanceChunkLod` in `BasicRenderer.cpp`). A tree
-beside the camera draws in full detail while the far side of its cell draws coarse LODs. The depth prepass picks the
-same LOD as the shaded pass. Shadow passes keep the cluster LOD, floored by `MinShadowLod`.
+A cluster's command picks one LOD from the cell's bounds. The camera passes then refine it per instance
+(`BasicInstanceLodChain` in `BasicRenderer.h`, the binning before `ParallelRecording` in `BasicRenderer.cpp`). Each
+frame, every instance of a cluster with a LOD chain is:
 
-Chunks follow instance order, so instances should be stored in spatial order. The level kit's
-`levelkit.vegetation` sorts each type by cell, then along a Morton curve. With per-chunk LOD, a cell's size sets
-only culling granularity and draw count. Large cells (64–128 m) with well-filled chunks are cheaper than small ones.
+1. **Culled** when its bounding sphere lies outside the camera's side planes, or wholly beyond the cluster's draw
+   distance (`BasicDraw::instanceDrawDistance`, from `RenderCommand::maxDrawDistance`). Without this, a visible
+   48–128 m cell draws all of its instances, and the runtime, which hands every scene command to the RHI renderer,
+   draws whole cells past their draw distance.
+2. **Assigned a LOD** by its own projected radius against the mesh's screen-radius thresholds, then coarsened while
+   that LOD spends more than `BasicInstanceLodChain::MaxTrianglesPerPixel` (0.5) triangles per pixel of the projected
+   bounding disc. The shared thresholds alone would leave a multi-million-triangle scan with tens of thousands of
+   triangles on a tree a few dozen pixels across.
+
+Each LOD then draws once over its binned instances. The depth prepass uses the same bins as the shaded pass. The
+profiler reports the skipped instances ("outside the view or draw distance skipped"). Shadow passes keep the cluster
+LOD, floored by `MinShadowLod`, and are not culled per instance.
+
+Without a LOD chain, or before the bins exist, a cluster falls back to chunks of 64 in instance order, each at the LOD
+its nearest instance needs (`InstanceChunkLod`). Instances should therefore be stored in spatial order; the level
+kit's `levelkit.vegetation` sorts each type by cell, then along a Morton curve. With per-instance LOD and culling, a
+cell's size sets only cluster culling granularity and draw count, so large cells (64–128 m) are cheaper than small
+ones.
 
 ### Instance storage
 
@@ -205,6 +218,10 @@ chain:
 
 The vegetation profile prunes small islands first. When topology-preserving simplification stalls at more than
 twice its target, it falls back to clustering.
+
+The chain ends at 0.25% of the source. For sources of millions of triangles that is still thousands of triangles per
+instance (a 3.9 M-triangle jacaranda keeps about 9,700), and the triangle-density rule above cannot go further than the
+last LOD. Such trees need a deeper chain or impostors at distance.
 
 ## Physics representation
 

@@ -144,22 +144,35 @@ namespace PlutoGE::render
             return offset;
         }
 
+        // An instance's world bounding sphere: its LOD chain's mesh sphere under the instance's largest axis scale.
+        struct InstanceSphere
+        {
+            glm::vec3 center{0.0f};
+            float radius = 0.0f;
+        };
+        InstanceSphere InstanceBounds(const BasicInstanceLodChain &chain, const glm::mat4 &model)
+        {
+            const float scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
+                                          glm::length(glm::vec3(model[2]))});
+            return {glm::vec3(model * glm::vec4(chain.boundsCenter, 1.0f)), chain.boundsRadius * scale};
+        }
+
+        // The sphere's projected radius in pixels. lodProjection is the projection's y scale times half the viewport
+        // height, so a radius over a distance gives pixels.
+        float ProjectedRadius(const InstanceSphere &sphere, const glm::vec3 &camera, float lodProjection)
+        {
+            const glm::vec3 offset = sphere.center - camera;
+            return sphere.radius / std::sqrt(std::max(glm::dot(offset, offset), 0.000001f)) * lodProjection;
+        }
+
         // The LOD a chunk of an instanced draw needs: that of its instance nearest in projected size, chosen as
-        // Mesh::SelectSubmeshLod would choose it for that instance alone. lodProjection is the projection's y scale
-        // times half the viewport height, so a radius over a distance gives pixels.
+        // Mesh::SelectSubmeshLod would choose it for that instance alone.
         std::uint32_t InstanceChunkLod(const BasicInstanceLodChain &chain, const std::vector<glm::mat4> &models,
                                        std::size_t first, std::size_t count, const glm::vec3 &camera, float lodProjection)
         {
             float largest = 0.0f;
             for (std::size_t index = first; index < first + count; ++index)
-            {
-                const auto &model = models[index];
-                const float scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
-                                              glm::length(glm::vec3(model[2]))});
-                const glm::vec3 offset = glm::vec3(model * glm::vec4(chain.boundsCenter, 1.0f)) - camera;
-                const float distance = std::sqrt(std::max(glm::dot(offset, offset), 0.000001f));
-                largest = std::max(largest, chain.boundsRadius * scale / distance * lodProjection);
-            }
+                largest = std::max(largest, ProjectedRadius(InstanceBounds(chain, models[index]), camera, lodProjection));
             return chain.Select(largest);
         }
 
@@ -668,7 +681,7 @@ namespace PlutoGE::render
             return std::as_bytes(values);
         }
 
-        struct ShadowFrustum
+        struct ClipFrustum
         {
             struct Plane
             {
@@ -678,7 +691,7 @@ namespace PlutoGE::render
 
             std::array<Plane, 6> planes{};
 
-            explicit ShadowFrustum(const glm::mat4 &viewProjection)
+            explicit ClipFrustum(const glm::mat4 &viewProjection)
             {
                 const auto row = [&](int index)
                 {
@@ -707,6 +720,16 @@ namespace PlutoGE::render
                         -draw.shadowBoundsRadius)
                         return false;
                 }
+                return true;
+            }
+
+            // Left, right, bottom and top only. These hold for any depth convention, so camera projections
+            // (reversed-Z) can use them; the camera's draw distances stand in for the far plane.
+            [[nodiscard]] bool SidesIntersect(const glm::vec3 &center, float radius) const
+            {
+                for (std::size_t index = 0; index < 4; ++index)
+                    if (glm::dot(planes[index].normal, center) + planes[index].distance < -radius)
+                        return false;
                 return true;
             }
         };
@@ -2646,14 +2669,18 @@ namespace PlutoGE::render
                 shadowInstanceRecords[index] = records;
                 shadowInstanceRanges[index] = m_geometryParameters->Acquire(*m_device, Bytes(range), rangeKey);
             }
-            // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone. Draws bin in
-            // parallel; staging concatenates them in draw order.
+            // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone, leaving out
+            // instances outside the view or beyond the draw's distance (a visible foliage cell is often mostly off
+            // screen or out of range). The bins feed only the camera passes. Draws bin in parallel; staging
+            // concatenates them in draw order.
             std::vector<std::size_t> chained;
             for (std::size_t index = 0; index < draws.size(); ++index)
                 if (draws[index].instanceLods && draws[index].instanceModels && draws[index].instanceModels->size() > 1)
                     chained.push_back(index);
             std::vector<std::vector<std::vector<std::uint32_t>>> binned(chained.size());
+            std::vector<std::size_t> culledByDraw(chained.size(), 0);
             const float binProjection = std::abs(m_postProcessProjection[1][1]) * 0.5f * static_cast<float>(m_height);
+            const ClipFrustum view(viewProjection);
             core::TaskPool::Shared().RunRanges(chained.size(), 16, [&](std::size_t, std::size_t begin, std::size_t end)
             {
                 for (std::size_t item = begin; item < end; ++item)
@@ -2664,9 +2691,20 @@ namespace PlutoGE::render
                     bins.resize(chain.lods.size());
                     const auto &models = *draw.instanceModels;
                     for (std::uint32_t instance = 0; instance < models.size(); ++instance)
-                        bins[InstanceChunkLod(chain, models, instance, 1, lighting.cameraPosition, binProjection)].push_back(instance);
+                    {
+                        const auto sphere = InstanceBounds(chain, models[instance]);
+                        const glm::vec3 offset = sphere.center - lighting.cameraPosition;
+                        const float reach = draw.instanceDrawDistance + sphere.radius;
+                        if (glm::dot(offset, offset) > reach * reach || !view.SidesIntersect(sphere.center, sphere.radius))
+                        {
+                            ++culledByDraw[item];
+                            continue;
+                        }
+                        bins[chain.Select(ProjectedRadius(sphere, lighting.cameraPosition, binProjection))].push_back(instance);
+                    }
                 }
             });
+            for (const auto culled : culledByDraw) m_frameStats.viewCulledInstances += culled;
             for (std::size_t item = 0; item < chained.size(); ++item)
             {
                 const auto &draw = draws[chained[item]];
@@ -2764,7 +2802,7 @@ namespace PlutoGE::render
                         continue;
                     }
                     m_shadowInputSignatures[cascade] = inputSignature;
-                    const ShadowFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
+                    const ClipFrustum shadowFrustum(lighting.shadowMatrices[cascade]);
                     auto &indices = m_shadowCascadeDrawIndices[cascade];
                     indices.clear();
                     indices.reserve(shadowDraws.size());
@@ -3038,7 +3076,7 @@ namespace PlutoGE::render
                         auto &key = pointFaceKeys[face];
                         key = {14695981039346656037ull, 14695981039346656037ull, 14695981039346656037ull};
                         HashVctValue(key.projection, frameParameters.pointShadowMatrices[face]);
-                        const ShadowFrustum frustum(frameParameters.pointShadowMatrices[face]);
+                        const ClipFrustum frustum(frameParameters.pointShadowMatrices[face]);
                         auto &indices = m_pointShadowFaceDraws[face];
                         indices.clear();
                         for (std::size_t index = 0; index < shadowDraws.size(); ++index)
@@ -5628,7 +5666,7 @@ namespace PlutoGE::render
                 shadow.clearColorValue[0] = shadow.clearDepthValue = 1.0f;
                 commands.BeginRendering(shadow); commands.BindPipeline(m_shadowPipeline.Get());
                 commands.BindUniformBuffer(0, cameraBuffer.Get());
-                const ShadowFrustum shadowFrustum(cascade.pendingShadowMatrix);
+                const ClipFrustum shadowFrustum(cascade.pendingShadowMatrix);
                 const std::size_t budget = std::min<std::size_t>(remainingCommands, VctUpdateBudget(settings.commandBudget, updateSpeed));
                 std::size_t submitted = 0;
                 while (cascade.nextShadowDraw < cascade.pendingDraws.size() && submitted < budget && remainingIndices > 0)

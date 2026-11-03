@@ -5,17 +5,26 @@ rainforest in ThirdPersonProject, and the engine work it needed. Read the plan f
 what is broken or unverified, how to work on it, and what to do next, in order.
 
 **One-line status.** M1 (scene with real assets) is built and reviewed in offscreen renders. Per-instance LOD,
-vegetation LODs and persistent instance storage are in the engine. The scene runs, but at about 117 ms a frame
-(goal: 16.6 ms at High). Directional-shadow instancing now uses the instance storage too, so a frame uses about
-9.3 MB of the 32 MB Vulkan uniform arena (down from about 30.4 MB). The "uniform arena exhausted" error in the
-editor viewport is fixed. Nothing from this work is committed.
+vegetation LODs and persistent instance storage are in the engine. Directional-shadow instancing uses the instance
+storage too, so a frame uses about 9.3 MB of the 32 MB Vulkan uniform arena, and the "uniform arena exhausted" error
+in the editor viewport is fixed. The work up to that point is committed (engine `45e90be4` on `vulkanrhi`, sample
+`6a41eb9`).
+
+**2026-11-03 performance pass (uncommitted, engine only).** Per-instance view and draw-distance culling plus a
+triangle-density cap on per-instance LOD took the trailhead benchmark on the Vega 8 iGPU from 1365 ms to 400 ms of
+scene GPU time (§3.3). Most of what is left is canopy trees already at their coarsest LOD (§3.8).
 
 ## 1. Repositories and uncommitted changes
 
-Two repositories. Neither has commits for this work, and the user has their own uncommitted edits in the sample
-(Basin scene, Basin post-process, the project file). Leave those alone.
+Two repositories. Paths differ between the user's machines. On the Vega 8 machine the engine is
+`C:\Users\Cameron.Airlie\dev\PlutoGE` (build tree `out/build/msvc18`) and the sample is `D:\dev\ThirdPersonProject`.
+The user has their own uncommitted edits in the sample (Basin model metas, the project file). Leave those alone.
 
-**Engine** (`C:\Users\cam\dev\PlutoGE`, branch `vulkanrhi`):
+The tables below list the files of the committed work. The 2026-11-03 pass changed `BasicRenderer.{h,cpp}`,
+`RhiSceneRenderer.{h,cpp}`, `editor/ui/src/EditorProfiler.cpp`, `editor/ui/src/panels/ProfilerPanel.cpp`,
+`tests/InstanceLodChecks.h`, `docs/FOLIAGE.md` and this file.
+
+**Engine** (branch `vulkanrhi`):
 
 | Area | Files |
 | --- | --- |
@@ -25,7 +34,7 @@ Two repositories. Neither has commits for this work, and the user has their own 
 | Tests | `tests/InstanceLodChecks.h` (new), `tests/LargeMeshOptimizationTests.cpp`, `tests/VulkanRhiTests.cpp`, `tests/OpenGLRhiTests.cpp`, `tests/CMakeLists.txt` |
 | Docs | `docs/FOLIAGE.md` (per-chunk LOD, instance storage, vegetation LODs), this file |
 
-**Sample** (`S:\PlutoGE\PlutoGE_Samples\ThirdPersonProject`):
+**Sample:**
 
 | Area | Files |
 | --- | --- |
@@ -88,7 +97,8 @@ need no manual registration.
    - Likely suspects if others fail: any pipeline built from the instanced geometry descriptor that strips bindings
      (see the depth-variant filter in `GeometryRendering.cpp`), and any shader including `BasicLit.slang` that
      still indexes `instances[instanceId]` directly.
-3. **Frame cost at full density (benchmark, 1280×720, High, this machine; Basin is 12.5 ms here):**
+3. **Frame cost at full density (benchmark, 1280×720, High, on the machine the earlier work used; Basin is 12.5 ms
+   there):**
 
    | Scope | ms |
    | --- | --- |
@@ -98,6 +108,20 @@ need no manual registration.
    | Post | 11 |
 
    Triangles are 88 M across about 4.5 instanced passes. The rest is draw count (31k) and alpha-tested overdraw.
+
+   **On the user's Vega 8 iGPU** (2026-11-03; `--benchmark-project … 60 60 --frozen-render --quality=low`,
+   1280×720, the startup camera at the trailhead), each step cumulative:
+
+   | Step | Scene GPU ms | Coverage depth ms | Main pass ms | Draws | Instance draws | Opaque triangles |
+   | --- | --- | --- | --- | --- | --- | --- |
+   | Before (HEAD `45e90be4`) | 1365 | 533 | 831 | 27,419 | 1,767,931 | 64.4 M |
+   | Skip instances outside the view | 1187 | 486 | 698 | 17,477 | 1,115,448 | 38.4 M |
+   | Triangle-density cap (0.5 per pixel) | 506 | 174 | 328 | 17,345 | 1,115,448 | 35.3 M |
+   | Skip instances beyond the draw distance | **400** | 141 | 254 | 2,354 | 36,670 | 23.7 M |
+
+   "Instance draws" counts an instance once per submesh. A density cap of 0.25 measured the same as 0.5 (509 ms),
+   because the instances it would coarsen are already at their last LOD, so 0.5 stays. The user's editor capture
+   (455×358 viewport, before these changes) showed 314 ms GPU with 24.5 M triangles.
 4. **Shadow passes do not use per-instance LOD.** They use the cluster LOD (from 128 m cell bounds, so fine),
    floored by `MinShadowLod`. The scene compensates with high shadow floors and short shadow distances.
 5. **The vegetation LOD thresholds** (`kVegetationLodTargets` in `MeshImporter.cpp`) were picked by reasoning,
@@ -111,6 +135,17 @@ need no manual registration.
    - No wind.
 7. **Verdant DDGI uses voxel rays.** Hardware rays rebuilt acceleration structures over all plants every frame
    (17.7 ms). Masked leaves are opaque to hardware rays anyway (plan E11).
+8. **Canopy trees bottom out at their coarsest LOD** (after the pass above). Estimated from the trailhead: canopy and
+   understorey trees are about 89% of the triangles, and about 94% of canopy instances already draw their chain's
+   last LOD. That LOD is 0.25% of sources of 1.1–3.9 M triangles, so 2.7–9.7 k triangles each, and the canopy has no
+   draw distance. Only a deeper vegetation chain (needs reimporting the Verdant models) or impostors (E6) will reduce
+   this; a canopy draw distance in `verdant.py` is the content-side stopgap.
+9. **The editor and runtime cull foliage differently.** The editor viewport calls
+   `Renderer::PrepareVisibleRenderCommands`, which copies each partly visible cluster's surviving instances into
+   pooled scratch arrays (`CullRenderCommandInstances`). The runtime hands every scene command to the RHI renderer
+   unculled. Per-instance binning now culls by view and draw distance in both, so for clusters with a LOD chain the
+   editor's scratch copy is redundant. It also costs more than it saves, because scratch arrays are not retained and
+   re-upload their instance records every frame. Skip that copy for commands the RHI bins.
 
 ## 4. How to work on it
 
@@ -156,6 +191,12 @@ need no manual registration.
    - Exit when `uniform_bytes` is below 8 MB at full density and the editor opens Verdant cleanly.
 2. **Pass the full GPU suite** on both backends, per §3.2.
 3. **Draw count and overdraw.**
+   - Done (2026-11-03): CPU per-instance view and draw-distance culling and a triangle-density cap in the LOD
+     binning (§3.3).
+   - Next, the biggest lever: canopy triangles at the last LOD (§3.8). Extend `kVegetationLodTargets` with coarser
+     steps, or better an absolute per-mesh triangle floor, then reimport the Verdant models and check the review
+     renders. Impostors (E6) after that.
+   - Drop the editor's redundant scratch-array instance culling for binned clusters (§3.9).
    - Bin shadows by instance too, or at least by chunk.
    - Consider skipping the coverage depth prepass for instanced alpha-tested foliage; measure both.
    - Then GPU culling (plan E8 proper): compute frustum and HiZ culling per instance, writing the bins.

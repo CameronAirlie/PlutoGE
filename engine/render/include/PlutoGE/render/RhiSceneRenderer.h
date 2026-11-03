@@ -75,6 +75,7 @@ namespace PlutoGE::render
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
         std::size_t recordedGeometryDrawCount = 0;
         std::size_t recordedGeometryInstanceCount = 0;
+        std::size_t viewCulledInstanceCount = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
         std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
         std::size_t reusedOpaqueBatchGroups = 0, rebuiltOpaqueBatchGroups = 0;

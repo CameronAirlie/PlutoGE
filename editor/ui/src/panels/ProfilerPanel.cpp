@@ -264,9 +264,10 @@ namespace PlutoGE::ui
         ImGui::Text("    Texture reads: %.2f ms; creation + mipmaps: %.2f ms (%llu attempts)",
                     rhiScene.textureReadMs, rhiScene.textureUploadMs,
                     static_cast<unsigned long long>(rhiScene.textureUploadCount));
-        ImGui::Text("  Recorded: %llu geometry draws / %llu instances",
+        ImGui::Text("  Recorded: %llu geometry draws / %llu instances (%llu outside the view or draw distance skipped)",
                     static_cast<unsigned long long>(rhiScene.recordedGeometryDrawCount),
-                    static_cast<unsigned long long>(rhiScene.recordedGeometryInstanceCount));
+                    static_cast<unsigned long long>(rhiScene.recordedGeometryInstanceCount),
+                    static_cast<unsigned long long>(rhiScene.viewCulledInstanceCount));
         ImGui::Text("  Internal: %u x %u; output: %u x %u", rhiScene.renderSize.width, rhiScene.renderSize.height,
                     rhiScene.outputSize.width, rhiScene.outputSize.height);
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)

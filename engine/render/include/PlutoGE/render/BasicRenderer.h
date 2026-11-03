@@ -25,7 +25,9 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <numbers>
 #include <span>
 #include <string>
 #include <utility>
@@ -466,14 +468,22 @@ namespace PlutoGE::render
         glm::vec3 boundsCenter{0.0f}; // the mesh's bounding sphere, in its own space
         float boundsRadius = 0.0f;
         std::uint32_t minimumLod = 0;
+        // Most triangles a LOD may spend per pixel of the instance's projected bounding disc. The screen-radius
+        // thresholds are shared by every mesh, so on its own a multi-million-triangle scan would keep tens of
+        // thousands of triangles on a tree a few dozen pixels across; past this density the next coarser LOD is taken.
+        static constexpr float MaxTrianglesPerPixel = 0.5f;
         // The LOD index (into lods) for an instance whose bounding sphere projects to `pixels` in radius.
         [[nodiscard]] std::uint32_t Select(float pixels) const
         {
+            if (lods.empty()) return 0u;
+            const auto last = static_cast<std::uint32_t>(lods.size() - 1);
             std::uint32_t selected = 0;
             for (std::uint32_t lod = 0; lod < lods.size(); ++lod)
                 if (pixels <= lods[lod].maxScreenRadiusPixels) selected = lod;
-            return lods.empty() ? 0u : std::min<std::uint32_t>(std::max(selected, minimumLod),
-                                                               static_cast<std::uint32_t>(lods.size() - 1));
+            selected = std::min(std::max(selected, minimumLod), last);
+            const float budget = MaxTrianglesPerPixel * std::numbers::pi_v<float> * pixels * pixels;
+            while (selected < last && static_cast<float>(lods[selected].indexCount / 3) > budget) ++selected;
+            return selected;
         }
     };
 
@@ -543,6 +553,9 @@ namespace PlutoGE::render
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
         // With instanceModels: per-chunk LOD selection in the camera passes (shadows keep firstIndex/indexCount).
         std::shared_ptr<const BasicInstanceLodChain> instanceLods;
+        // With instanceLods: the camera passes skip instances whose bounds lie wholly beyond this distance (the
+        // producer's draw distance, RenderCommand::maxDrawDistance, which otherwise only culls whole clusters).
+        float instanceDrawDistance = std::numeric_limits<float>::max();
         // Authoritative object history survives visibility and draw-order changes.
         std::optional<glm::mat4> previousModel;
         // Optional current world-space AABB. Negative extents select the
@@ -796,6 +809,9 @@ namespace PlutoGE::render
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
+        // Instances of LOD-binned draws left out because their bounds lie outside the camera's view or beyond the
+        // draw's instanceDrawDistance.
+        std::size_t viewCulledInstances = 0;
         // Instance records uploaded this frame and resident across frames (InstanceStorage).
         std::size_t instanceRecordUploads = 0;
         std::size_t residentInstanceRecords = 0;

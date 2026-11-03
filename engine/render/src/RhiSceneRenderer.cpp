@@ -1258,6 +1258,7 @@ namespace PlutoGE::render
                         chain = std::move(built);
                     }
                     draw.instanceLods = chain;
+                    draw.instanceDrawDistance = command.maxDrawDistance;
                 }
                 draw.preparationRevision = Cacheable(command) ? preparation.NextRevision() : 0;
                 if (!command.material)
@@ -2135,6 +2136,7 @@ namespace PlutoGE::render
         m_timingStats.geometryParameterReuses = frameStats.geometryParameterReuses;
         m_timingStats.recordedGeometryDrawCount = frameStats.geometryDraws;
         m_timingStats.recordedGeometryInstanceCount = frameStats.geometryInstances;
+        m_timingStats.viewCulledInstanceCount = frameStats.viewCulledInstances;
         m_timingStats.glassPanes = frameStats.glassPanes;
         m_timingStats.glassSnapshots = frameStats.glassSnapshots;
         m_timingStats.glassDepthSnapshots = frameStats.glassDepthSnapshots;

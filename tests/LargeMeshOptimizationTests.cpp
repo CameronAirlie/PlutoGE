@@ -1,4 +1,5 @@
 #include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/import/FoliageCards.h"
 #include "PlutoGE/import/MeshTriangleBudget.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/ModelAsset.h"
@@ -422,6 +423,38 @@ int main(int argc, char **argv)
         Expect(reduced.applied && reduced.keptTriangles <= 2000 && reduced.keptTriangles >= 1000,
                "Cards must be reduced to their budget by whole cards");
         Expect(area > 1700.0f && area < 2300.0f, "Dropped cards must be made up by enlarging the rest");
+    }
+    {
+        // A modelled leaf (a gently curved 4 x 3 grid, 24 triangles, UVs over one atlas cell) becomes one quad over its
+        // UV rectangle; a part whose UVs do not map onto it (a twig, all one texel) stays as it is.
+        render::MeshData mesh;
+        for (int y = 0; y <= 3; ++y)
+            for (int x = 0; x <= 4; ++x)
+            {
+                const float u = 0.2f + 0.05f * static_cast<float>(x), v = 0.5f + 0.1f * static_cast<float>(y);
+                const float bend = 0.02f * static_cast<float>((x - 2) * (x - 2));
+                mesh.vertices.push_back({{0.1f * static_cast<float>(x), 0.1f * static_cast<float>(y), bend}, {0, 0, 1}, {u, v},
+                                         {1, 0, 0, 1}});
+            }
+        for (std::uint32_t y = 0; y < 3; ++y)
+            for (std::uint32_t x = 0; x < 4; ++x)
+            {
+                const std::uint32_t a = y * 5 + x;
+                mesh.indices.insert(mesh.indices.end(), {a, a + 1, a + 6, a, a + 6, a + 5});
+            }
+        const auto twig = static_cast<std::uint32_t>(mesh.vertices.size());
+        for (int corner = 0; corner < 6; ++corner)
+            mesh.vertices.push_back({{2.0f + 0.1f * static_cast<float>(corner % 3), 0.1f * static_cast<float>(corner / 3), 0.0f},
+                                     {0, 0, 1}, {0.9f, 0.9f}, {1, 0, 0, 1}});
+        mesh.indices.insert(mesh.indices.end(), {twig, twig + 1, twig + 3, twig + 1, twig + 4, twig + 3,
+                                                 twig + 1, twig + 2, twig + 4, twig + 2, twig + 5, twig + 4});
+        const auto cards = assetimport::MakeLeafCards(mesh, mesh.indices);
+        std::cout << "Leaf cards: " << mesh.indices.size() / 3 << " triangles -> " << cards.Triangles() << '\n';
+        Expect(cards.Triangles() == 2 + 4, "A modelled leaf must become one quad and a twig must stay as it is");
+        bool spansCell = false;
+        for (const auto &vertex : cards.vertices)
+            spansCell = spansCell || (std::abs(vertex.uv[0] - 0.4f) < 1e-4f && std::abs(vertex.uv[1] - 0.8f) < 1e-4f);
+        Expect(spansCell, "A leaf card must span its leaf's UV rectangle");
     }
     // Alternating cook settings must preserve both disk cache variants.
     // Native skinned LODs preserve vertex payloads and the original index range.

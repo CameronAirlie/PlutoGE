@@ -25,7 +25,7 @@ namespace PlutoGE::assetimport
         static constexpr std::uint32_t FlagMask = 31u;
         // Part of the artifact settings of models with vegetation LODs: bump whenever the vegetation LOD chain's output
         // changes, so their cached imports are rebuilt (other models are unaffected).
-        static constexpr std::uint32_t VegetationLodVersion = 2;
+        static constexpr std::uint32_t VegetationLodVersion = 3;
 
         [[nodiscard]] std::uint32_t ToFlags() const
         {

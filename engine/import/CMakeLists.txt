@@ -3,6 +3,7 @@ add_library(PlutoGEImport
     src/ImportedModelHierarchy.cpp
     src/MeshImporter.cpp
     src/MeshTriangleBudget.cpp
+    src/FoliageCards.cpp
     src/ImpostorBaker.cpp
 )
 

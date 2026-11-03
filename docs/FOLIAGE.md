@@ -218,7 +218,9 @@ among submeshes by their triangles), so every model's distant LODs end at a few 
 | 4 | 0.8% | 1,500 | 55 px |
 | 5 | 0.25% | 500 | 25 px |
 
-The vegetation profile prunes small islands first. When topology-preserving simplification stalls at more than
+Leaf submeshes take card LODs instead: each LOD keeps an evenly spread, enlarged subset of the leaf cards, with its own
+vertices so enlarging does not move the finer LODs' leaves. Other submeshes prune small islands first. When
+topology-preserving simplification stalls at more than
 twice its target, it retries permissively with only tearing seams locked, and falls back to clustering only if that
 stalls too (at small targets clustering turns bark into spikes). `VegetationLodVersion` in the artifact settings
 rebuilds vegetation imports when the chain changes.
@@ -230,18 +232,29 @@ A model's **Triangle budget** (Content Browser; `MODEL_TRIANGLE_BUDGET` in its `
 its LODs are built (`ApplyTriangleBudget`, `engine/import/include/PlutoGE/import/MeshTriangleBudget.h`); its original
 geometry is dropped and unused vertices compacted, so the import is also smaller and faster to cook.
 
-- Each distinct submesh range gets a share of the budget by its triangles. Opaque ranges (trunks, rocks) are
-  weighted four times alpha-masked ones, because silhouettes need geometry and leaves get their shape from texture.
+- Leaf submeshes (any non-opaque material) become **leaf cards** first (`MakeLeafCards`,
+  `engine/import/include/PlutoGE/import/FoliageCards.h`). A modelled leaf whose UVs map affinely onto it becomes one
+  quad over its UV rectangle, so the texture's alpha keeps its outline: a 24-triangle scanned leaf becomes 2 triangles
+  with no change in shape. Parts that do not fit (twigs, wrapped UVs) are kept as they are.
+- Each distinct submesh range gets a share of the budget by its triangles, leaf ranges weighted six times opaque ones:
+  leaves define what a plant looks like, and its branches mostly hide behind them.
+- **Leaf** ranges over their share keep an evenly spread subset of whole leaves, each enlarged about its centre (at most
+  twice) so that the canopy covers about as much as before (`ThinCards`). Leaves are never simplified, because
+  simplification collapses each leaf into a stray triangle.
 - **Opaque** ranges are simplified, retrying permissively with only tearing seams locked (UV and skin seams) when
   split normals or seams lock them. The finest LOD never falls back to clustering, which smears texture coordinates.
-- **Alpha-masked** ranges are cards: each card is simplified, then whole cards are dropped, spread evenly over the
-  surface, and the rest enlarged about their centres (at most 1.75 times) to keep the surface's coverage.
 - A range is never emptied, and skinned meshes ignore the budget.
 - The artifact settings include the budget and `TriangleBudgetVersion`, so changing either reimports affected
   models only.
 
-The plan's asset rules (`docs/JUNGLE_SCENE_PLAN.md` section 2) set the budgets the Verdant level kit uses: 25,000 for
-canopy and understorey trees, 6,000 for shrubs, plants, rocks and roots, 800 for ground cover.
+The plan's asset rules (`docs/JUNGLE_SCENE_PLAN.md` section 2) set the budgets the Verdant level kit uses: 60,000 for
+canopy trees and 40,000 for understorey (the plan's upper limits, since scanned canopies need room for leaves),
+12,000 for deadwood, 6,000 for shrubs, plants, rocks and roots, 800 for ground cover.
+
+Leaf cards need the outline in the texture's alpha. Scanned trees with modelled leaves often ship a plain colour map,
+because their geometry carves the outline. The level kit masks those at install (`levelkit.leaf_masks`): it draws the
+leaves' own triangles in UV space and keys out the atlas's black filler, writing `<colour>_alpha.png` and making the
+material MASK. `leaf_masks.repair_installed` applies it to models already installed.
 
 ### Impostors
 

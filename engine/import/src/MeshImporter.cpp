@@ -1,6 +1,7 @@
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/import/MeshImporter.h"
+#include "PlutoGE/import/FoliageCards.h"
 #include "PlutoGE/import/MeshTriangleBudget.h"
 #include "SimplificationSeamLocks.h"
 #include "SkinWeightAttributeSlots.h"
@@ -175,7 +176,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 41;
+        constexpr uint32_t kCookedMeshCacheVersion = 42;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -1946,8 +1947,24 @@ namespace PlutoGE::assetimport
         // clustering when topology-preserving simplification stalls.
         enum class LodProfile { Standard, Vegetation };
 
+        // Each submesh's surface from its material (leaves are any non-opaque material), for the triangle budget and the
+        // vegetation LODs.
+        std::vector<TriangleBudgetSurface> SubmeshSurfaces(const std::vector<render::Submesh> &submeshes,
+                                                           const std::vector<ImportedMaterialData> &materials)
+        {
+            std::vector<TriangleBudgetSurface> surfaces;
+            surfaces.reserve(submeshes.size());
+            for (const auto &submesh : submeshes)
+                surfaces.push_back(submesh.materialIndex < materials.size() ? SurfaceFor(materials[submesh.materialIndex].alphaMode)
+                                                                            : TriangleBudgetSurface::Solid);
+            return surfaces;
+        }
+
+        // `surfaces` (one per submesh, SubmeshSurfaces): with the vegetation profile, leaf submeshes (Cards) get card LODs
+        // (FoliageCards.h) that drop whole leaves and enlarge the rest, instead of simplified ones whose leaves collapse
+        // into stray triangles.
         void GenerateSubmeshLods(render::MeshData &meshData, std::vector<render::Submesh> &submeshes, bool generateSimplifiedLods,
-                                 LodProfile profile = LodProfile::Standard)
+                                 LodProfile profile = LodProfile::Standard, std::span<const TriangleBudgetSurface> surfaces = {})
         {
             if (meshData.vertices.empty() || meshData.indices.empty())
             {
@@ -1972,12 +1989,15 @@ namespace PlutoGE::assetimport
                 uint32_t indexCount = 0;
                 float minDistanceFactor = 0.0f;
                 float maxScreenRadiusPixels = std::numeric_limits<float>::max();
+                // Card LODs index the submesh's own new vertices (PendingSubmeshLods::vertices), not the mesh's.
+                bool ownVertices = false;
             };
 
             struct PendingSubmeshLods
             {
                 std::vector<unsigned int> indices;
                 std::vector<PendingLodRange> lods;
+                std::vector<render::MeshVertexData> vertices;
             };
 
             struct SourceRangeKey
@@ -2061,10 +2081,48 @@ namespace PlutoGE::assetimport
             for (const auto submeshIndex : eligibleSubmeshIndices) modelTriangles += submeshes[submeshIndex].indexCount / 3;
 
             std::vector<PendingSubmeshLods> pendingLods(submeshes.size());
+            // A LOD step's index target for a submesh: its share of the step's ratio, within the model-wide cap.
+            const auto lodTargetIndices = [&](const render::Submesh &submesh, const LodTarget &lodTarget)
+            {
+                float targetIndices = static_cast<float>(submesh.indexCount) * lodTarget.targetRatio;
+                if (lodTarget.maxModelTriangles != 0)
+                    targetIndices = std::min(targetIndices, 3.0f * static_cast<float>(lodTarget.maxModelTriangles) *
+                                                                static_cast<float>(submesh.indexCount / 3) /
+                                                                static_cast<float>(modelTriangles));
+                return AlignIndexCountToTriangles(static_cast<uint32_t>(targetIndices));
+            };
             const auto generateSubmeshLods = [&](size_t submeshIndex)
             {
                 const auto &submesh = submeshes[submeshIndex];
                 auto &pending = pendingLods[submeshIndex];
+                // Leaves: each LOD keeps an evenly spread, enlarged subset of the leaf cards, with vertices of its own
+                // (enlarging must not move the finer LODs' leaves).
+                if (vegetation && submeshIndex < surfaces.size() && surfaces[submeshIndex] == TriangleBudgetSurface::Cards)
+                {
+                    const auto cards = MakeLeafCards(meshData, std::span<const std::uint32_t>(meshData.indices).subspan(
+                                                                   submesh.indexOffset, submesh.indexCount));
+                    std::uint32_t previousTriangles = submesh.indexCount / 3;
+                    for (const auto &lodTarget : kLodTargets)
+                    {
+                        const std::uint32_t targetTriangles = lodTargetIndices(submesh, lodTarget) / 3;
+                        if (targetTriangles == 0 || targetTriangles >= previousTriangles) continue;
+                        const auto lod = cards.Triangles() > targetTriangles ? ThinCards(cards, targetTriangles) : cards;
+                        if (lod.Triangles() == 0 || lod.Triangles() >= previousTriangles) continue;
+                        const auto vertexBase = static_cast<std::uint32_t>(pending.vertices.size());
+                        const auto localIndexOffset = static_cast<uint32_t>(pending.indices.size());
+                        pending.vertices.insert(pending.vertices.end(), lod.vertices.begin(), lod.vertices.end());
+                        for (const auto index : lod.indices) pending.indices.push_back(vertexBase + index);
+                        pending.lods.push_back(PendingLodRange{
+                            .localIndexOffset = localIndexOffset,
+                            .indexCount = static_cast<uint32_t>(lod.indices.size()),
+                            .minDistanceFactor = lodTarget.minDistanceFactor,
+                            .maxScreenRadiusPixels = lodTarget.maxScreenRadiusPixels,
+                            .ownVertices = true,
+                        });
+                        previousTriangles = static_cast<std::uint32_t>(lod.Triangles());
+                    }
+                    return;
+                }
                 // Simplification builds vertex-sized working arrays. A scene-wide
                 // vertex buffer here makes thousands of small submeshes quadratic
                 // in scene size and also measures error against the whole scene.
@@ -2169,12 +2227,7 @@ namespace PlutoGE::assetimport
                 };
                 for (const auto &lodTarget : kLodTargets)
                 {
-                    float targetIndices = static_cast<float>(submesh.indexCount) * lodTarget.targetRatio;
-                    if (lodTarget.maxModelTriangles != 0)
-                        targetIndices = std::min(targetIndices, 3.0f * static_cast<float>(lodTarget.maxModelTriangles) *
-                                                                    static_cast<float>(submesh.indexCount / 3) /
-                                                                    static_cast<float>(modelTriangles));
-                    const uint32_t targetIndexCount = AlignIndexCountToTriangles(static_cast<uint32_t>(targetIndices));
+                    const uint32_t targetIndexCount = lodTargetIndices(submesh, lodTarget);
                     if (targetIndexCount < 3 || targetIndexCount >= submesh.indexCount)
                     {
                         continue;
@@ -2225,6 +2278,13 @@ namespace PlutoGE::assetimport
                     continue;
                 }
 
+                // Card LODs bring vertices of their own: append them and rebase their indices.
+                const auto vertexBase = static_cast<uint32_t>(meshData.vertices.size());
+                meshData.vertices.insert(meshData.vertices.end(), pending.vertices.begin(), pending.vertices.end());
+                for (const auto &pendingLod : pending.lods)
+                    if (pendingLod.ownVertices)
+                        for (uint32_t i = 0; i < pendingLod.indexCount; ++i)
+                            pending.indices[pendingLod.localIndexOffset + i] += vertexBase;
                 const uint32_t globalIndexOffset = static_cast<uint32_t>(meshData.indices.size());
                 meshData.indices.insert(meshData.indices.end(), pending.indices.begin(), pending.indices.end());
                 auto &submesh = submeshes[submeshIndex];
@@ -2268,13 +2328,8 @@ namespace PlutoGE::assetimport
                                      const std::vector<ImportedMaterialData> &materials, const MeshCookOptions &cookOptions)
         {
             if (cookOptions.triangleBudget == 0) return;
-            // Alpha-masked submeshes (leaves) are cards: the budget drops and enlarges whole cards rather than
-            // collapsing them.
-            std::vector<TriangleBudgetSurface> surfaces;
-            for (const auto &submesh : submeshes)
-                surfaces.push_back(submesh.materialIndex < materials.size() &&
-                                   materials[submesh.materialIndex].alphaMode == render::AlphaMode::Mask
-                                       ? TriangleBudgetSurface::Cards : TriangleBudgetSurface::Solid);
+            // Leaves become cards that the budget thins whole, rather than simplified ones.
+            const auto surfaces = SubmeshSurfaces(submeshes, materials);
             const auto result = ApplyTriangleBudget(meshData, submeshes, cookOptions.triangleBudget,
                                                     cookOptions.vegetationLods ? TriangleBudgetSimplification::PruneIslands
                                                                                : TriangleBudgetSimplification::PreserveTopology,
@@ -4782,7 +4837,8 @@ namespace PlutoGE::assetimport
                 profile->optimizeMs = ElapsedMilliseconds(optimizeStart);
             }
             GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods,
-                                cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard);
+                                cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard,
+                                SubmeshSurfaces(asset.submeshes, asset.materials));
             OptimizeGeneratedLodRanges(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             DeduplicateImportedMaterials(asset);
             return asset;
@@ -5024,7 +5080,8 @@ namespace PlutoGE::assetimport
             ApplyCookTriangleBudget(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, parsedMeshAsset.materials, cookOptions);
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods,
-                                cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard);
+                                cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard,
+                                SubmeshSurfaces(parsedMeshAsset.submeshes, parsedMeshAsset.materials));
             OptimizeGeneratedLodRanges(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             DeduplicateImportedMaterials(parsedMeshAsset);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);

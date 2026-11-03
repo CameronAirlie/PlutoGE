@@ -1,16 +1,15 @@
 #include "PlutoGE/import/MeshTriangleBudget.h"
 
+#include "PlutoGE/import/FoliageCards.h"
 #include "SimplificationSeamLocks.h"
 
 #include <meshoptimizer.h>
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <execution>
 #include <limits>
 #include <map>
-#include <numeric>
 #include <unordered_map>
 #include <utility>
 
@@ -25,7 +24,14 @@ namespace PlutoGE::assetimport
             std::uint32_t indexCount = 0;
             TriangleBudgetSurface surface = TriangleBudgetSurface::Solid;
             std::uint32_t targetTriangles = 0;
-            std::vector<std::uint32_t> simplified; // global vertex indices
+            // The range's geometry before sharing the budget (leaf cards for Cards) and after reduction: Solid ranges
+            // keep global vertex indices in `simplified`; Cards ranges carry their own vertices in `cards`.
+            CardGeometry cards;
+            std::vector<std::uint32_t> simplified;
+            [[nodiscard]] std::uint32_t Triangles() const
+            {
+                return static_cast<std::uint32_t>(surface == TriangleBudgetSurface::Cards ? cards.Triangles() : indexCount / 3);
+            }
         };
 
         constexpr std::uint32_t AlignToTriangles(std::uint64_t indexCount)
@@ -33,96 +39,10 @@ namespace PlutoGE::assetimport
             return static_cast<std::uint32_t>(indexCount - indexCount % 3);
         }
 
-        glm::vec3 Position(const render::MeshData &meshData, std::uint32_t vertex)
-        {
-            const auto &position = meshData.vertices[vertex].position;
-            return {position[0], position[1], position[2]};
-        }
-
-        float Area(const render::MeshData &meshData, std::span<const std::uint32_t> indices)
-        {
-            float area = 0.0f;
-            for (std::size_t i = 0; i + 2 < indices.size(); i += 3)
-            {
-                const glm::vec3 a = Position(meshData, indices[i]);
-                area += 0.5f * glm::length(glm::cross(Position(meshData, indices[i + 1]) - a, Position(meshData, indices[i + 2]) - a));
-            }
-            return area;
-        }
-
-        // The triangles of each connected part (sharing vertices) of an index list: one list of first indices each.
-        std::vector<std::vector<std::uint32_t>> Islands(std::span<const std::uint32_t> indices)
-        {
-            std::unordered_map<std::uint32_t, std::uint32_t> parent;
-            const auto find = [&](std::uint32_t vertex)
-            {
-                auto root = vertex;
-                while (parent.at(root) != root) root = parent.at(root);
-                while (parent.at(vertex) != root) vertex = std::exchange(parent.at(vertex), root);
-                return root;
-            };
-            for (const auto vertex : indices) parent.try_emplace(vertex, vertex);
-            for (std::size_t i = 0; i + 2 < indices.size(); i += 3)
-                for (std::size_t corner = 1; corner < 3; ++corner)
-                    if (const auto a = find(indices[i]), b = find(indices[i + corner]); a != b) parent.at(b) = a;
-            std::unordered_map<std::uint32_t, std::size_t> islandByRoot;
-            std::vector<std::vector<std::uint32_t>> islands;
-            for (std::uint32_t i = 0; i + 2 < indices.size(); i += 3)
-            {
-                const auto [found, inserted] = islandByRoot.try_emplace(find(indices[i]), islands.size());
-                if (inserted) islands.emplace_back();
-                islands[found->second].push_back(i);
-            }
-            return islands;
-        }
-
-        // Keeps whole cards, in an order that spreads them over the surface (a hash of each card's first vertex),
-        // until the next would pass the target; at least one card stays.
-        void DropCards(std::vector<std::uint32_t> &indices, std::uint32_t targetTriangles)
-        {
-            auto islands = Islands(indices);
-            const auto order = [&](const std::vector<std::uint32_t> &island)
-            {
-                std::uint64_t hash = indices[island.front()] * 0x9E3779B97F4A7C15ull;
-                return hash ^ (hash >> 29);
-            };
-            std::ranges::sort(islands, {}, order);
-            std::vector<std::uint32_t> kept;
-            for (const auto &island : islands)
-            {
-                if (!kept.empty() && kept.size() / 3 + island.size() > targetTriangles) continue;
-                for (const auto first : island) kept.insert(kept.end(), indices.begin() + first, indices.begin() + first + 3);
-            }
-            indices = std::move(kept);
-        }
-
-        // Enlarges each kept card about its centre so that the cards cover as much as the source did.
-        void EnlargeCards(render::MeshData &meshData, std::span<const std::uint32_t> source, std::span<const std::uint32_t> kept)
-        {
-            const float keptArea = Area(meshData, kept);
-            if (keptArea <= 0.0f) return;
-            const float scale = std::clamp(std::sqrt(Area(meshData, source) / keptArea), 1.0f, MaxCardEnlargement);
-            if (scale <= 1.001f) return;
-            for (const auto &island : Islands(kept))
-            {
-                std::vector<std::uint32_t> vertices;
-                for (const auto first : island) vertices.insert(vertices.end(), kept.begin() + first, kept.begin() + first + 3);
-                std::ranges::sort(vertices);
-                vertices.erase(std::unique(vertices.begin(), vertices.end()), vertices.end());
-                glm::vec3 centre{0.0f};
-                for (const auto vertex : vertices) centre += Position(meshData, vertex);
-                centre /= static_cast<float>(vertices.size());
-                for (const auto vertex : vertices)
-                {
-                    const glm::vec3 position = centre + (Position(meshData, vertex) - centre) * scale;
-                    meshData.vertices[vertex].position = {position.x, position.y, position.z};
-                }
-            }
-        }
-
-        // Simplifies one range toward its target without clustering. Positions and the attributes that shape shading
-        // (normal, UV) guide the simplifier; vertices are local to the range so its working arrays stay range-sized.
-        void SimplifyRange(const render::MeshData &meshData, BudgetRange &range, TriangleBudgetSimplification simplification)
+        // Simplifies a Solid range toward its target without clustering. Positions and the attributes that shape
+        // shading (normal, UV) guide the simplifier; vertices are local to the range so its working arrays stay
+        // range-sized.
+        void SimplifySolid(const render::MeshData &meshData, BudgetRange &range, TriangleBudgetSimplification simplification)
         {
             std::unordered_map<std::uint32_t, std::uint32_t> localByGlobal;
             std::vector<std::uint32_t> globalByLocal;
@@ -174,22 +94,21 @@ namespace PlutoGE::assetimport
             }
             range.simplified.resize(count);
             for (std::size_t i = 0; i < count; ++i) range.simplified[i] = globalByLocal[result[i]];
-            if (range.surface == TriangleBudgetSurface::Cards && count / 3 > range.targetTriangles)
-                DropCards(range.simplified, range.targetTriangles);
         }
 
         // Shares the budget among ranges by weighted triangles, never more than a range has; what a capped range
         // cannot use goes to the others.
         void ShareBudget(std::vector<BudgetRange> &ranges, std::uint32_t budget)
         {
+            const auto weight = [](const BudgetRange &range)
+            { return static_cast<double>(range.Triangles()) * (range.surface == TriangleBudgetSurface::Cards ? CardBudgetWeight : 1.0f); };
             std::vector<bool> capped(ranges.size(), false);
             double remaining = budget;
             for (int pass = 0; pass < 4; ++pass)
             {
                 double weights = 0.0;
                 for (std::size_t i = 0; i < ranges.size(); ++i)
-                    if (!capped[i])
-                        weights += ranges[i].indexCount / 3 * (ranges[i].surface == TriangleBudgetSurface::Solid ? SolidBudgetWeight : 1.0f);
+                    if (!capped[i]) weights += weight(ranges[i]);
                 if (weights <= 0.0) break;
                 const double perWeight = remaining / weights;
                 bool changed = false;
@@ -197,12 +116,11 @@ namespace PlutoGE::assetimport
                 {
                     if (capped[i]) continue;
                     auto &range = ranges[i];
-                    const double share = perWeight * range.indexCount / 3 *
-                                         (range.surface == TriangleBudgetSurface::Solid ? SolidBudgetWeight : 1.0f);
+                    const double share = perWeight * weight(range);
                     range.targetTriangles = std::max<std::uint32_t>(1u, static_cast<std::uint32_t>(share));
-                    if (share >= range.indexCount / 3)
+                    if (share >= range.Triangles())
                     {
-                        range.targetTriangles = range.indexCount / 3;
+                        range.targetTriangles = range.Triangles();
                         remaining -= range.targetTriangles;
                         capped[i] = changed = true;
                     }
@@ -263,27 +181,42 @@ namespace PlutoGE::assetimport
             return result;
         }
 
-        ShareBudget(ranges, budget);
-        std::for_each(std::execution::par, ranges.begin(), ranges.end(),
-                      [&](BudgetRange &range) { SimplifyRange(meshData, range, simplification); });
-        // After every range is simplified: cards move their own vertices, which the other ranges never reference.
-        for (const auto &range : ranges)
+        // Leaves become cards first, so the budget is shared on what they will cost.
+        std::for_each(std::execution::par, ranges.begin(), ranges.end(), [&](BudgetRange &range)
+        {
             if (range.surface == TriangleBudgetSurface::Cards)
-                EnlargeCards(meshData, std::span(meshData.indices).subspan(range.indexOffset, range.indexCount), range.simplified);
+                range.cards = MakeLeafCards(meshData, std::span(meshData.indices).subspan(range.indexOffset, range.indexCount));
+        });
+        ShareBudget(ranges, budget);
+        std::for_each(std::execution::par, ranges.begin(), ranges.end(), [&](BudgetRange &range)
+        {
+            if (range.surface == TriangleBudgetSurface::Solid) SimplifySolid(meshData, range, simplification);
+            else if (range.cards.Triangles() > range.targetTriangles) range.cards = ThinCards(range.cards, range.targetTriangles);
+        });
 
+        // Cards bring their own vertices: append them, then lay the ranges out in order.
         std::vector<unsigned int> indices;
-        std::vector<std::uint32_t> offsets(ranges.size());
+        std::vector<std::uint32_t> offsets(ranges.size()), counts(ranges.size());
         for (std::size_t index = 0; index < ranges.size(); ++index)
         {
+            auto &range = ranges[index];
             offsets[index] = static_cast<std::uint32_t>(indices.size());
-            indices.insert(indices.end(), ranges[index].simplified.begin(), ranges[index].simplified.end());
-            result.keptTriangles += ranges[index].simplified.size() / 3;
+            if (range.surface == TriangleBudgetSurface::Cards)
+            {
+                const auto base = static_cast<std::uint32_t>(meshData.vertices.size());
+                meshData.vertices.insert(meshData.vertices.end(), range.cards.vertices.begin(), range.cards.vertices.end());
+                for (const auto vertex : range.cards.indices) indices.push_back(base + vertex);
+            }
+            else
+                indices.insert(indices.end(), range.simplified.begin(), range.simplified.end());
+            counts[index] = static_cast<std::uint32_t>(indices.size()) - offsets[index];
+            result.keptTriangles += counts[index] / 3;
         }
         for (auto &submesh : submeshes)
         {
             const auto rangeIndex = rangeByKey.at({submesh.indexOffset, submesh.indexCount});
             submesh.indexOffset = offsets[rangeIndex];
-            submesh.indexCount = static_cast<std::uint32_t>(ranges[rangeIndex].simplified.size());
+            submesh.indexCount = counts[rangeIndex];
             submesh.lods.clear();
         }
         meshData.indices = std::move(indices);

@@ -6,6 +6,11 @@ scene needs (ordered and scoped as independent modules), and how the scene is bu
 
 Status: planned, 2026-11-02. Engine capabilities and gaps were surveyed against the code on this date.
 
+**Progress (2026-11-03):** M1 is built (Verdant Gorge, ThirdPersonProject). Per-instance LOD (E4), the vegetation
+LOD profile, persistent instance storage (part of E8), level-kit scatter (E9) and a density hook (E13) are done. The
+scene runs at about 127 ms a frame and is close to the Vulkan uniform arena limit. See
+[the handover](jungle-scene-handover.md) for state, known problems and next steps.
+
 ## 1. Target
 
 **Place.** "Verdant Gorge": about 600 × 600 m of playable rainforest inside a 1 km terrain. It has four zones:

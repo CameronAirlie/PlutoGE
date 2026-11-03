@@ -13,7 +13,7 @@ float4 depthVertexMain(VertexInput input) : SV_Position
 [shader("vertex")]
 float4 depthInstancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID) : SV_Position
 {
-    float4 position = mul(viewProjection, mul(instances[instanceId].model, float4(input.position, 1.0)));
+    float4 position = mul(viewProjection, mul(instanceObject(instanceId).model, float4(input.position, 1.0)));
     position.xy += temporalClipOffset.xy * position.w;
     return position;
 }

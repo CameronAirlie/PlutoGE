@@ -1231,6 +1231,34 @@ namespace PlutoGE::render
                 draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
+                // Camera passes pick each instance chunk's LOD (foliage clusters span many LODs' distances).
+                if (rigidMesh && !shadowOnly && !emissiveGi && lodCount > 1 && command.instanceModels &&
+                    command.instanceModels->size() > 1)
+                {
+                    const std::uint64_t key = (std::uint64_t(command.submeshIndex) << 8) | command.GetMinLodIndex();
+                    auto &chain = rigidMesh->instanceLods[key];
+                    if (!chain)
+                    {
+                        auto built = std::make_shared<BasicInstanceLodChain>();
+                        built->boundsCenter = command.mesh->GetBounds().center;
+                        built->boundsRadius = command.mesh->GetBounds().radius;
+                        built->minimumLod = command.GetMinLodIndex();
+                        const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
+                        for (std::size_t lod = 0; lod < lodCount; ++lod)
+                        {
+                            const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, lod);
+                            std::uint32_t lodFirst = range.indexOffset;
+                            if (const auto canonical = rigidMesh->canonicalGeometry.find(GeometryRangeKey({range.indexOffset, range.indexCount}));
+                                canonical != rigidMesh->canonicalGeometry.end())
+                                lodFirst = canonical->second;
+                            built->lods.push_back({lodFirst, range.indexCount,
+                                                   lod < submesh.lods.size() ? submesh.lods[lod].maxScreenRadiusPixels
+                                                                             : std::numeric_limits<float>::max()});
+                        }
+                        chain = std::move(built);
+                    }
+                    draw.instanceLods = chain;
+                }
                 draw.preparationRevision = Cacheable(command) ? preparation.NextRevision() : 0;
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);

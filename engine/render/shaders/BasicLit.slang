@@ -156,11 +156,48 @@ struct InstanceObjectParameters
     float4 debugParameters;
 };
 
+// Streamed objects and transient instance chunks: up to 64 per block, selected by the instance index.
 [[vk::binding(0, 3)]]
 cbuffer InstancedObjectParameters : register(b0, space3)
 {
     InstanceObjectParameters instances[64];
 };
+
+// Instanced draws whose instances live in persistent storage (InstanceStorage.h): their matrices come from records,
+// optionally through per-instance LOD bins, and their shared constants from this block.
+struct InstanceRecord
+{
+    column_major float4x4 model;
+    column_major float4x4 previousModel;
+};
+[[vk::binding(3, 3)]]
+cbuffer InstanceStorageParameters : register(b3, space3)
+{
+    uint4 instanceRange;            // x first record or bin entry, y 1 for storage, z 1 through bins
+    float4 instanceDebugParameters; // normalized LOD, outline width, probe debug
+};
+[[vk::binding(1, 3)]] StructuredBuffer<InstanceRecord> instanceRecords : register(t1, space3);
+// Per-instance LOD bins: record indices grouped by LOD (InstanceStorage::StageBins). A struct element gives the
+// OpenGL block its own name: GL links storage blocks by name, and a plain uint buffer would collide with the
+// fragment stage's light cluster masks.
+struct InstanceIndex
+{
+    uint record;
+};
+[[vk::binding(2, 3)]] StructuredBuffer<InstanceIndex> instanceIndices : register(t2, space3);
+
+InstanceObjectParameters instanceObject(uint instanceId)
+{
+    if (instanceRange.y == 0)
+        return instances[instanceId];
+    const uint index = instanceRange.z != 0 ? instanceIndices[instanceRange.x + instanceId].record : instanceRange.x + instanceId;
+    const InstanceRecord record = instanceRecords[index];
+    InstanceObjectParameters result;
+    result.model = record.model;
+    result.previousModel = record.previousModel;
+    result.debugParameters = instanceDebugParameters;
+    return result;
+}
 
 #ifdef PLUTO_BINDLESS_MATERIAL
 #include "BindlessMaterials.slang"
@@ -1053,7 +1090,7 @@ VertexOutput vertexMain(VertexInput input)
 // index avoids requiring SPIR-V's BaseInstance capability on affected drivers.
 VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
-    const InstanceObjectParameters instance = instances[instanceId];
+    const InstanceObjectParameters instance = instanceObject(instanceId);
     return transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
 }
 

@@ -2485,6 +2485,11 @@ namespace PlutoGE::ui
                 ImGui::SeparatorText("Import Settings");
                 ImGui::BeginDisabled(!m_modelSettingsValid);
                 ImGui::Checkbox("Generate LODs", &m_modelSettingsDraft.generateLods);
+                ImGui::BeginDisabled(!m_modelSettingsDraft.generateLods);
+                ImGui::Checkbox("Vegetation LODs", &m_modelSettingsDraft.vegetationLods);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("A deeper LOD chain for trees and plants: distant LODs drop small parts such as leaves.");
+                ImGui::EndDisabled();
                 ImGui::Checkbox("Optimize vertex cache", &m_modelSettingsDraft.optimizeVertexCache);
                 ImGui::Checkbox("Optimize overdraw", &m_modelSettingsDraft.optimizeOverdraw);
                 ImGui::EndDisabled();

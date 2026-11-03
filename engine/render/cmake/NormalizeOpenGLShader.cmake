@@ -38,6 +38,12 @@ string(REPLACE "layout(std140) uniform" "layout(std140, row_major) uniform" shad
 # uses deliberately flattened register indices and this removes only `set`.
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*2" "binding = 16" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*3" "binding = 17" shader_source "${shader_source}")
+# Instance records (BasicLit.slang instanceRecords, BasicRenderer::InstanceRecordSlot): storage buffer binding 1.
+string(REGEX REPLACE "binding[ \t]*=[ \t]*1,[ \t]*set[ \t]*=[ \t]*3" "binding = 1" shader_source "${shader_source}")
+# Instance storage parameters (BasicLit.slang InstanceStorageParameters, BasicRenderer::InstanceStorageSlot): uniform 18.
+string(REGEX REPLACE "binding[ \t]*=[ \t]*3,[ \t]*set[ \t]*=[ \t]*3" "binding = 18" shader_source "${shader_source}")
+# Instance LOD bins (BasicLit.slang instanceIndices, BasicRenderer::InstanceIndexSlot): storage buffer binding 2.
+string(REGEX REPLACE "binding[ \t]*=[ \t]*2,[ \t]*set[ \t]*=[ \t]*3" "binding = 2" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*0,[ \t]*set[ \t]*=[ \t]*1" "binding = 8" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*1,[ \t]*set[ \t]*=[ \t]*1" "binding = 9" shader_source "${shader_source}")
 string(REGEX REPLACE "binding[ \t]*=[ \t]*2,[ \t]*set[ \t]*=[ \t]*1" "binding = 10" shader_source "${shader_source}")

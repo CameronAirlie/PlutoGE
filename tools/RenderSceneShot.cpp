@@ -185,10 +185,17 @@ int main(int argc, char **argv) try
                     draws.push_back(draw);
                 }
         }
-        // Foliage is instanced at runtime; expand each instance into an ordinary draw here.
+        // Views draw foliage as the runtime does: instanced clusters with per-chunk LOD. The top-down map bake expands
+        // each instance into an ordinary draw.
         for (auto *foliage : entity->GetComponents<scene::FoliageComponent>())
         {
             if (!foliage->IsEnabled() || (topDown && !foliage->IsStatic())) continue;
+            if (!topDown)
+            {
+                const auto &clusters = foliage->GetRenderCommands();
+                draws.insert(draws.end(), clusters.begin(), clusters.end());
+                continue;
+            }
             for (std::size_t typeIndex = 0; typeIndex < foliage->GetTypeCount(); ++typeIndex)
             {
                 const auto *type = foliage->GetType(typeIndex);
@@ -268,11 +275,27 @@ int main(int argc, char **argv) try
         const auto bytes = std::as_bytes(texture.GetRgba8Pixels());
         return std::vector<std::byte>(bytes.begin(), bytes.end());
     };
+    // As the runtime's visibility pass does: draws beyond their draw distance are not seen, casters beyond their shadow
+    // distance cast nothing (foliage layers set both; zero or unset means any distance).
+    const glm::vec3 eye = glm::vec3(glm::inverse(view.view)[3]);
+    const auto within = [&](const render::RenderCommand &draw, float distance)
+    {
+        if (distance <= 0.0f || distance == std::numeric_limits<float>::max()) return true;
+        const float reach = distance + std::max(draw.worldBounds.radius, 0.0f);
+        const glm::vec3 offset = draw.worldBounds.center - eye;
+        return glm::dot(offset, offset) <= reach * reach;
+    };
+    std::vector<render::RenderCommand> visible, casters;
+    for (const auto &draw : draws)
+    {
+        if (topDown || within(draw, draw.maxDrawDistance)) visible.push_back(draw);
+        if (topDown || (draw.castsShadow && within(draw, draw.maxShadowDistance))) casters.push_back(draw);
+    }
     for (int frame = 0; frame < 16; ++frame)
     {
         if (simulateSeconds > 0)
             for (auto *system : world->GetParticleSystemComponents()) system->Update(step);
-        if (!renderer.Render(width, height, view, lighting, draws, draws, effects,
+        if (!renderer.Render(width, height, view, lighting, visible, casters, effects,
                              atmosphere, pixels, render::PostProcessDebugView::None, true, world.get()))
             throw std::runtime_error("Scene render failed");
     }

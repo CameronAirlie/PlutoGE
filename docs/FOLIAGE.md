@@ -168,6 +168,44 @@ lazily and cached. It is regenerated only when:
 
 An ordinary frame does not rebuild the cell cache.
 
+### Level of detail per instance chunk
+
+A cluster's command picks one LOD from the cell's bounds. The camera passes then refine it. The renderer draws a
+cluster's instances in chunks of 64, and each chunk takes the LOD its nearest instance needs, chosen as the mesh
+would choose it for that instance alone (`BasicInstanceLodChain`, `InstanceChunkLod` in `BasicRenderer.cpp`). A tree
+beside the camera draws in full detail while the far side of its cell draws coarse LODs. The depth prepass picks the
+same LOD as the shaded pass. Shadow passes keep the cluster LOD, floored by `MinShadowLod`.
+
+Chunks follow instance order, so instances should be stored in spatial order. The level kit's
+`levelkit.vegetation` sorts each type by cell, then along a Morton curve. With per-chunk LOD, a cell's size sets
+only culling granularity and draw count. Large cells (64–128 m) with well-filled chunks are cheaper than small ones.
+
+### Instance storage
+
+Instanced draws read their instances' matrices from persistent storage buffers (`InstanceStorage` in
+`engine/render/src`). Each frame a draw binds one 32-byte uniform: its first record and the constants every instance
+shares. Retained foliage clusters upload their records once, and an unchanged forest costs no per-frame instance
+uploads. Before, every chunk copied 64 × 144 bytes into the per-frame uniform arena, which a dense forest exhausted.
+Arrays unused for four frames are released, and their pages are reused once no frame in flight can read them.
+
+### Vegetation LODs
+
+Scanned plants often carry millions of triangles in thousands of disconnected leaves and twigs. The standard
+importer LODs lock every island's border, so they barely reduce such a mesh. Turn on **Vegetation LODs** in a
+model's import settings (Content Browser; `MODEL_OPTIONS` bit 8, `MeshImportOptions::vegetationLods`) for a deeper
+chain:
+
+| LOD | Share of triangles | Used until (projected radius) |
+| --- | --- | --- |
+| 1 | 25% | 420 px |
+| 2 | 8% | 220 px |
+| 3 | 2.5% | 110 px |
+| 4 | 0.8% | 55 px |
+| 5 | 0.25% | 25 px |
+
+The vegetation profile prunes small islands first. When topology-preserving simplification stalls at more than
+twice its target, it falls back to clustering.
+
 ## Physics representation
 
 Every populated collision cell becomes one static Bullet compound body. Each
@@ -222,7 +260,9 @@ Start with these values and profile representative scenes:
 Very small cells increase Bullet object and render-command counts. Very large
 cells make a small foliage edit rebuild a larger compound and reduce culling
 granularity. A cell should normally contain tens or hundreds of trees, not one
-tree and not an entire forest.
+tree and not an entire forest. Per-chunk LOD (above) makes the render side favour
+larger cells. The Verdant Gorge sample uses 128 m for trees, rocks and deadwood,
+and 48–64 m for ground cover.
 
 ## Serialization and compatibility
 

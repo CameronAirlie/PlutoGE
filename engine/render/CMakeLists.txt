@@ -56,6 +56,7 @@ add_library(PlutoGERender
     src/CloudOcclusion.cpp
     src/CloudShadowMap.cpp
     src/atmosphere/CloudTemporalFilter.cpp
+    src/InstanceStorage.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiTerrainLayerCache.cpp

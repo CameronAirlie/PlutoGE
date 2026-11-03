@@ -12,6 +12,7 @@
 #include "FogRenderingChecks.h"
 #include "CloudShadowChecks.h"
 #include "CloudTemporalChecks.h"
+#include "InstanceLodChecks.h"
 #include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -531,6 +532,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--night-sky")
         {
             CheckNightSky(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--instance-lods")
+        {
+            CheckInstanceLods(renderer);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--cloud-temporal")

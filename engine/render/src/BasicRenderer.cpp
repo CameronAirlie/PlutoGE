@@ -39,6 +39,7 @@
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/CloudShadowMap.h"
 #include "atmosphere/CloudTemporalFilter.h"
+#include "InstanceStorage.h"
 #include "PostProcessParameterBlock.h"
 
 #include <cstddef>
@@ -143,6 +144,25 @@ namespace PlutoGE::render
             return offset;
         }
 
+        // The LOD a chunk of an instanced draw needs: that of its instance nearest in projected size, chosen as
+        // Mesh::SelectSubmeshLod would choose it for that instance alone. lodProjection is the projection's y scale
+        // times half the viewport height, so a radius over a distance gives pixels.
+        std::uint32_t InstanceChunkLod(const BasicInstanceLodChain &chain, const std::vector<glm::mat4> &models,
+                                       std::size_t first, std::size_t count, const glm::vec3 &camera, float lodProjection)
+        {
+            float largest = 0.0f;
+            for (std::size_t index = first; index < first + count; ++index)
+            {
+                const auto &model = models[index];
+                const float scale = std::max({glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])),
+                                              glm::length(glm::vec3(model[2]))});
+                const glm::vec3 offset = glm::vec3(model * glm::vec4(chain.boundsCenter, 1.0f)) - camera;
+                const float distance = std::sqrt(std::max(glm::dot(offset, offset), 0.000001f));
+                largest = std::max(largest, chain.boundsRadius * scale / distance * lodProjection);
+            }
+            return chain.Select(largest);
+        }
+
         GraphShadowMaterial ShadowMaterial(const BasicDraw &draw, glm::vec3 camera, float time)
         {
             GraphShadowMaterial data{glm::vec4(draw.uvScale,draw.alphaCutoff,draw.baseColor.a),
@@ -214,6 +234,13 @@ namespace PlutoGE::render
         };
         constexpr std::size_t kMaxInstancesPerDraw = 64;
         static_assert(OpaqueShadowBatches::Capacity == kMaxInstancesPerDraw);
+        // InstancedObjectParameters in BasicLit.slang: an instanced draw's first record and shared constants.
+        struct alignas(16) BasicInstanceDrawParameters
+        {
+            glm::uvec4 range{0u};
+            glm::vec4 debugParameters{0.0f};
+        };
+
         struct alignas(16) BasicInstanceObjectParameters
         {
             std::array<BasicObjectParameters, kMaxInstancesPerDraw> instances{};
@@ -804,6 +831,15 @@ namespace PlutoGE::render
             instancedDescriptor.vertexShader = shaders.instancedVertex;
             instancedDescriptor.resourceBindings.back() =
                 {17, 3, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex};
+            instancedDescriptor.resourceBindings.push_back(
+                {InstanceRecordSlot, 3, 1, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Vertex});
+            instancedDescriptor.resourceBindings.push_back(
+                {InstanceIndexSlot, 3, 2, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Vertex});
+            instancedDescriptor.resourceBindings.push_back(
+                {InstanceStorageSlot, 3, 3, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex});
+            // Instanced pipelines declare both instance paths: a path not in use binds these placeholders.
+            m_instanceStoragePlaceholder = rhi::Buffer(device, device.CreateBuffer(
+                {sizeof(InstanceStorage::Record), rhi::BufferUsage::Storage, "Instance storage placeholder"}));
             m_geometryDescriptors = {descriptor, instancedDescriptor};
             m_compactFragments = shaders.compactFragments;
             m_coverageFragments = shaders.coverageFragments;
@@ -1463,6 +1499,7 @@ namespace PlutoGE::render
                 m_upscalerSharpening = std::move(upscalerSharpening);
             m_cloudNoise = std::make_unique<CloudNoiseVolume>();
             if (!m_cloudNoise->Initialize(device)) throw std::runtime_error("Cloud noise lattice creation failed");
+            m_instanceStorage = std::make_unique<InstanceStorage>(device);
             auto cloudTemporal = std::make_unique<CloudTemporalFilter>();
             if (cloudTemporal->Initialize(device, {shaders.cloudTemporal.vertex, shaders.cloudTemporal.fragment}))
                 m_cloudTemporal = std::move(cloudTemporal);
@@ -1615,6 +1652,8 @@ namespace PlutoGE::render
         m_upscalerSharpening.reset();
         m_cloudNoise.reset();
         m_cloudTemporal.reset();
+        m_instanceStorage.reset();
+        m_instanceStoragePlaceholder.Reset();
         m_ambientOcclusion.reset();
         m_reflections.reset();
         m_globalIllumination.reset();
@@ -2550,6 +2589,54 @@ namespace PlutoGE::render
             commands.EndRendering();
         }
         shadowScope.End();
+        // Instanced draws' records upload here, outside rendering; resident arrays (static foliage) only stay bound.
+        if (m_instanceStorage)
+        {
+            m_instanceStorage->BeginFrame();
+            const auto prepare = [&](const BasicDraw &draw)
+            {
+                if (!draw.instanceModels || draw.instanceModels->empty()) return;
+                const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
+                                         draw.previousInstanceModels->size() == draw.instanceModels->size();
+                m_instanceStorage->Prepare(draw.instanceModels, hasPrevious ? draw.previousInstanceModels : nullptr);
+            };
+            for (const auto &draw : draws) prepare(draw);
+            for (const auto &draw : m_selectionDraws) prepare(draw);
+            // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone. Draws bin in
+            // parallel; staging concatenates them in draw order.
+            std::vector<std::size_t> chained;
+            for (std::size_t index = 0; index < draws.size(); ++index)
+                if (draws[index].instanceLods && draws[index].instanceModels && draws[index].instanceModels->size() > 1)
+                    chained.push_back(index);
+            std::vector<std::vector<std::vector<std::uint32_t>>> binned(chained.size());
+            const float binProjection = std::abs(m_postProcessProjection[1][1]) * 0.5f * static_cast<float>(m_height);
+            core::TaskPool::Shared().RunRanges(chained.size(), 16, [&](std::size_t, std::size_t begin, std::size_t end)
+            {
+                for (std::size_t item = begin; item < end; ++item)
+                {
+                    const auto &draw = draws[chained[item]];
+                    const auto &chain = *draw.instanceLods;
+                    auto &bins = binned[item];
+                    bins.resize(chain.lods.size());
+                    const auto &models = *draw.instanceModels;
+                    for (std::uint32_t instance = 0; instance < models.size(); ++instance)
+                        bins[InstanceChunkLod(chain, models, instance, 1, lighting.cameraPosition, binProjection)].push_back(instance);
+                }
+            });
+            for (std::size_t item = 0; item < chained.size(); ++item)
+            {
+                const auto &draw = draws[chained[item]];
+                const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
+                                         draw.previousInstanceModels->size() == draw.instanceModels->size();
+                const auto records = m_instanceStorage->Find(draw.instanceModels.get(),
+                                                             hasPrevious ? draw.previousInstanceModels.get() : nullptr);
+                if (records)
+                    m_instanceStorage->StageBins(records, draw.instanceModels.get(), draw.instanceLods.get(), binned[item]);
+            }
+            m_instanceStorage->UploadBins();
+            m_frameStats.instanceRecordUploads = m_instanceStorage->UploadedRecords();
+            m_frameStats.residentInstanceRecords = m_instanceStorage->ResidentRecords();
+        }
         // Shadows and geometry record into their own command contexts, on worker threads when the device allows,
         // and execute on the GPU in that order. Inside each job `commands` is the job's context. A job writes only
         // its own caches and statistics; everything both read is prepared before Run.
@@ -3276,6 +3363,21 @@ namespace PlutoGE::render
         }
         GeometryObjectStream::Slot objectSlot;
         rhi::BufferHandle boundObjectBlock;
+        // Instanced pipelines declare both instance paths (BasicLit.slang instanceObject); the path a draw does not use
+        // reads placeholders: a zero object block for storage draws, storage switched off for streamed objects.
+        constexpr std::size_t StreamedPlaceholderKey = 0x9e3779b97f4a7c15ull, StorageOffKey = 0xc2b2ae3d27d4eb4full;
+        const auto streamedBlockPlaceholder = [&]
+        {
+            static const BasicInstanceObjectParameters zero{};
+            return m_geometryParameters->Acquire(*m_device, Bytes(zero), StreamedPlaceholderKey);
+        };
+        const auto bindInstanceStorageOff = [&](rhi::ICommandContext &commands)
+        {
+            static const BasicInstanceDrawParameters off{};
+            commands.BindUniformBuffer(InstanceStorageSlot, m_geometryParameters->Acquire(*m_device, Bytes(off), StorageOffKey));
+            commands.BindStorageBuffer(InstanceRecordSlot, m_instanceStoragePlaceholder.Get());
+            commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStoragePlaceholder.Get());
+        };
         rhi::BufferHandle boundMaterial;
         bool recordingParticleBoundary = false;
         // Camera, light clusters, probes and reflection captures: bound once per pass.
@@ -3302,6 +3404,8 @@ namespace PlutoGE::render
             commands.BindTexture(ContactShadowSlot, contactShadowsActive ? m_contactShadows->Mask() : m_fallbackDataTexture.Get(),
                                  m_shadowSampler.Get());
         };
+        // Pixels per unit of radius over distance, for instanced draws' per-chunk LOD (InstanceChunkLod).
+        const float lodProjection = std::abs(m_postProcessProjection[1][1]) * 0.5f * static_cast<float>(m_height);
         const auto recordDraw = [&](rhi::ICommandContext &commands, const BasicDraw &draw, bool transparent, std::size_t historyIndex)
         {
             if (!draw.mesh || !draw.mesh->IsValid())
@@ -3481,40 +3585,102 @@ namespace PlutoGE::render
             {
                 if (instanced)
                 {
-                    for (std::size_t first = 0; first < draw.instanceModels->size(); first += kMaxInstancesPerDraw)
+                    const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
+                                             draw.previousInstanceModels->size() == draw.instanceModels->size();
+                    const auto records = m_instanceStorage->Find(draw.instanceModels.get(),
+                                                                 hasPrevious ? draw.previousInstanceModels.get() : nullptr);
+                    if (!records)
+                        throw std::logic_error("Instanced draw recorded without prepared instance records");
+                    commands.BindStorageBuffer(InstanceRecordSlot, records.buffer);
+                    // The streamed-object block is declared too; any block of its size satisfies it.
+                    commands.BindUniformBuffer(17, streamedBlockPlaceholder());
+                    const auto instanceDebug = glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f,
+                                                         draw.probeDebug.x, draw.probeDebug.y);
+                    const auto *binned = draw.instanceLods && m_instanceStorage->IndexBuffer()
+                        ? m_instanceStorage->FindBins(draw.instanceModels.get(), draw.instanceLods.get()) : nullptr;
+                    if (binned)
                     {
-                        BasicInstanceObjectParameters parameters{};
-                        const auto instanceCount = std::min(kMaxInstancesPerDraw, draw.instanceModels->size() - first);
-                        bool movingInstances = false;
-                        const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
-                                                 draw.previousInstanceModels->size() == draw.instanceModels->size();
-                        for (std::size_t instance = 0; instance < instanceCount; ++instance)
+                        // Per-instance LOD: one draw per LOD over that LOD's binned instances.
+                        commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStorage->IndexBuffer());
+                        const auto &chain = *draw.instanceLods;
+                        for (std::size_t lod = 0; lod < binned->bins.size(); ++lod)
                         {
-                            const auto &model = (*draw.instanceModels)[first + instance];
-                            const auto &previous = hasPrevious ? (*draw.previousInstanceModels)[first + instance] : model;
-                            movingInstances |= model != previous;
-                            parameters.instances[instance] = {model, previous,
-                                glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, draw.probeDebug.x, draw.probeDebug.y)};
+                            const auto bin = binned->bins[lod];
+                            const auto &range = chain.lods[lod];
+                            if (bin.count == 0 || range.firstIndex >= draw.mesh->m_indexCount) continue;
+                            const auto lodCount = std::min(range.indexCount, draw.mesh->m_indexCount - range.firstIndex);
+                            // Vulkan's instance index includes the first instance, so a bin's offset rides on the draw
+                            // and its constants stay cached; OpenGL draws have no first instance and carry it here.
+                            const bool firstInstance = m_device->GetApi() == rhi::GraphicsApi::Vulkan;
+                            const BasicInstanceDrawParameters parameters{
+                                glm::uvec4(firstInstance ? 0u : bin.first, 1u, 1u, 0u), instanceDebug};
+                            if (firstInstance)
+                            {
+                                std::size_t binKey = 0x51ed27f9u;
+                                for (int component = 0; component < 4; ++component)
+                                    HashBatchValue(binKey, instanceDebug[component]);
+                                commands.BindUniformBuffer(InstanceStorageSlot,
+                                                           m_geometryParameters->Acquire(*m_device, Bytes(parameters), binKey));
+                            }
+                            else
+                                commands.BindUniformBuffer(InstanceStorageSlot,
+                                                           m_geometryParameters->AcquireTransient(*m_device, Bytes(parameters)));
+                            boundObjectBlock = {};
+                            commands.DrawIndexedInstanced(lodCount, bin.count, range.firstIndex, 0, firstInstance ? bin.first : 0u);
+                            ++m_frameStats.geometryDraws;
+                            m_frameStats.geometryInstances += bin.count;
+                            m_frameStats.geometryTriangles[draw.outlinePass ? 3 : transparent ? 2 : draw.alphaMode == 1 ? 1 : 0] +=
+                                static_cast<std::uint64_t>(lodCount / 3) * bin.count;
                         }
+                    }
+                    else
+                    {
+                    // The index-bin slot is declared by the pipeline: keep it bound to valid storage.
+                    commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStorage->IndexBuffer() ? m_instanceStorage->IndexBuffer()
+                                                                                                    : m_instanceStoragePlaceholder.Get());
+                    // Without a LOD chain the whole array is one draw; with one, each 64-instance chunk takes its LOD.
+                    const std::size_t chunkSize = draw.instanceLods ? kMaxInstancesPerDraw : draw.instanceModels->size();
+                    for (std::size_t first = 0; first < draw.instanceModels->size(); first += chunkSize)
+                    {
+                        const auto instanceCount = std::min(chunkSize, draw.instanceModels->size() - first);
+                        std::uint32_t chunkFirstIndex = draw.firstIndex, chunkIndexCount = drawCount;
+                        if (draw.instanceLods && !draw.instanceLods->lods.empty())
+                        {
+                            const auto &lod = draw.instanceLods->lods[InstanceChunkLod(
+                                *draw.instanceLods, *draw.instanceModels, first, instanceCount, lighting.cameraPosition, lodProjection)];
+                            if (lod.firstIndex < draw.mesh->m_indexCount)
+                            {
+                                chunkFirstIndex = lod.firstIndex;
+                                chunkIndexCount = std::min(lod.indexCount, draw.mesh->m_indexCount - lod.firstIndex);
+                            }
+                        }
+                        const BasicInstanceDrawParameters parameters{
+                            glm::uvec4(records.first + static_cast<std::uint32_t>(first), 1u, 0u, 0u),
+                            glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, draw.probeDebug.x, draw.probeDebug.y)};
                         std::size_t instanceKey = 0;
-                        HashBatchValue(instanceKey, draw.instanceModels.get());
-                        HashBatchValue(instanceKey, first);
-                        const auto instanceBuffer = movingInstances
-                            ? m_geometryParameters->AcquireTransient(*m_device, Bytes(parameters))
-                            : m_geometryParameters->Acquire(*m_device, Bytes(parameters), instanceKey);
-                        commands.BindUniformBuffer(17, instanceBuffer);
+                        HashBatchValue(instanceKey, records.buffer.index);
+                        HashBatchValue(instanceKey, records.buffer.generation);
+                        HashBatchValue(instanceKey, parameters.range.x);
+                        HashBatchValue(instanceKey, parameters.debugParameters.x);
+                        HashBatchValue(instanceKey, parameters.debugParameters.y);
+                        HashBatchValue(instanceKey, parameters.debugParameters.z);
+                        HashBatchValue(instanceKey, parameters.debugParameters.w);
+                        commands.BindUniformBuffer(InstanceStorageSlot, m_geometryParameters->Acquire(*m_device, Bytes(parameters), instanceKey));
                         boundObjectBlock = {};
-                        commands.DrawIndexedInstanced(drawCount, static_cast<std::uint32_t>(instanceCount), draw.firstIndex);
+                        commands.DrawIndexedInstanced(chunkIndexCount, static_cast<std::uint32_t>(instanceCount), chunkFirstIndex);
                         ++m_frameStats.geometryDraws;
                         m_frameStats.geometryInstances += instanceCount;
                         m_frameStats.geometryTriangles[draw.outlinePass ? 3 : transparent ? 2 : draw.alphaMode == 1 ? 1 : 0] +=
-                            static_cast<std::uint64_t>(drawCount / 3) * instanceCount;
+                            static_cast<std::uint64_t>(chunkIndexCount / 3) * instanceCount;
+                    }
                     }
                 }
                 else if (streamed)
                 {
                     if (boundObjectBlock != objectSlot.block)
                     {
+                        // Rebinding the object block follows every pass boundary and storage draw: switch storage off.
+                        bindInstanceStorageOff(commands);
                         commands.BindUniformBuffer(17, objectSlot.block);
                         boundObjectBlock = objectSlot.block;
                     }
@@ -4612,6 +4778,8 @@ namespace PlutoGE::render
         }
         if (m_cloudTemporal)
             m_cloudTemporal->EndFrame(cloudVolumes);
+        if (m_instanceStorage)
+            m_instanceStorage->EndFrame();
         composeTranslucency();
         composeCameras();
         evaluateTemporalUpscaler();

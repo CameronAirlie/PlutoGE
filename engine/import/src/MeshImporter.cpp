@@ -33,6 +33,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <type_traits>
@@ -250,6 +251,7 @@ namespace PlutoGE::assetimport
             bool optimizeVertexCache = false;
             bool optimizeOverdraw = false;
             bool assimpQualityPostProcess = false;
+            bool vegetationLods = false;
 
             uint32_t ToFlags() const
             {
@@ -259,6 +261,7 @@ namespace PlutoGE::assetimport
                 flags |= assimpQualityPostProcess ? 4u : 0u;
                 flags |= generateTangents ? 8u : 0u;
                 flags |= optimizeVertexCache ? 16u : 0u;
+                flags |= vegetationLods ? 32u : 0u;
                 return flags;
             }
         };
@@ -271,6 +274,7 @@ namespace PlutoGE::assetimport
                 .optimizeVertexCache = requested.optimizeVertexCache || ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_VERTEX_CACHE", false),
                 .optimizeOverdraw = requested.optimizeOverdraw || ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", false),
                 .assimpQualityPostProcess = ReadBooleanEnvironmentFlag("PLUTOGE_ASSIMP_QUALITY_POSTPROCESS", false),
+                .vegetationLods = requested.vegetationLods,
             };
         }
 
@@ -1927,7 +1931,14 @@ namespace PlutoGE::assetimport
             return (indexCount / 3) * 3;
         }
 
-        void GenerateSubmeshLods(render::MeshData &meshData, std::vector<render::Submesh> &submeshes, bool generateSimplifiedLods)
+        // Standard keeps silhouettes and UV seams for props and architecture. Vegetation goes far deeper: its source
+        // meshes (scanned trees with modelled leaves) carry millions of triangles in thousands of small islands, which
+        // a border-locked simplifier cannot reduce; distant LODs prune the smallest islands and fall back to sloppy
+        // clustering when topology-preserving simplification stalls.
+        enum class LodProfile { Standard, Vegetation };
+
+        void GenerateSubmeshLods(render::MeshData &meshData, std::vector<render::Submesh> &submeshes, bool generateSimplifiedLods,
+                                 LodProfile profile = LodProfile::Standard)
         {
             if (meshData.vertices.empty() || meshData.indices.empty())
             {
@@ -1977,11 +1988,22 @@ namespace PlutoGE::assetimport
                 }
             };
 
-            constexpr std::array<LodTarget, 3> kLodTargets{{
+            constexpr std::array<LodTarget, 3> kStandardLodTargets{{
                 {.targetRatio = 0.55f, .minDistanceFactor = 8.0f, .maxScreenRadiusPixels = 260.0f, .error = 0.012f},
                 {.targetRatio = 0.30f, .minDistanceFactor = 16.0f, .maxScreenRadiusPixels = 150.0f, .error = 0.020f},
                 {.targetRatio = 0.12f, .minDistanceFactor = 32.0f, .maxScreenRadiusPixels = 80.0f, .error = 0.040f},
             }};
+            // A tree fills a large part of the screen long before its detail is visible, so the first step comes early.
+            constexpr std::array<LodTarget, 5> kVegetationLodTargets{{
+                {.targetRatio = 0.25f, .minDistanceFactor = 4.0f, .maxScreenRadiusPixels = 420.0f, .error = 0.02f},
+                {.targetRatio = 0.08f, .minDistanceFactor = 8.0f, .maxScreenRadiusPixels = 220.0f, .error = 0.05f},
+                {.targetRatio = 0.025f, .minDistanceFactor = 16.0f, .maxScreenRadiusPixels = 110.0f, .error = 0.10f},
+                {.targetRatio = 0.008f, .minDistanceFactor = 32.0f, .maxScreenRadiusPixels = 55.0f, .error = 0.20f},
+                {.targetRatio = 0.0025f, .minDistanceFactor = 64.0f, .maxScreenRadiusPixels = 25.0f, .error = 0.35f},
+            }};
+            const bool vegetation = profile == LodProfile::Vegetation;
+            const std::span<const LodTarget> kLodTargets = vegetation ? std::span<const LodTarget>(kVegetationLodTargets)
+                                                                      : std::span<const LodTarget>(kStandardLodTargets);
             for (auto &submesh : submeshes)
             {
                 submesh.lods.clear();
@@ -2086,7 +2108,12 @@ namespace PlutoGE::assetimport
                 std::vector<unsigned int> simplified(submesh.indexCount);
                 const auto simplify = [&](uint32_t targetIndexCount, float error)
                 {
-                    return meshopt_simplifyWithAttributes(
+                    // Vegetation islands (leaves, twigs) are all border: locking borders would freeze them, and the
+                    // smallest are the first detail that may disappear with distance.
+                    const unsigned int options = vegetation
+                        ? meshopt_SimplifyPrune
+                        : meshopt_SimplifyLockBorder | (permissive ? meshopt_SimplifyPermissive : 0u);
+                    size_t count = meshopt_simplifyWithAttributes(
                         simplified.data(),
                         localIndices.data(),
                         submesh.indexCount,
@@ -2094,9 +2121,16 @@ namespace PlutoGE::assetimport
                         localPositions.size(),
                         sizeof(localPositions.front()),
                         attributes.data(), attributeCount * sizeof(float),
-                        attributeWeights.data(), attributeCount, permissive ? seamLocks.data() : nullptr,
+                        attributeWeights.data(), attributeCount, permissive && !vegetation ? seamLocks.data() : nullptr,
                         targetIndexCount,
-                        error, meshopt_SimplifyLockBorder | (permissive ? meshopt_SimplifyPermissive : 0u));
+                        error, options);
+                    // Clustering reaches any target regardless of topology; it is coarse, so only distant
+                    // vegetation LODs whose careful simplification stalled well above the target use it.
+                    if (vegetation && count > targetIndexCount * 2u)
+                        count = meshopt_simplifySloppy(simplified.data(), localIndices.data(), submesh.indexCount,
+                                                       localPositions.front().data(), localPositions.size(),
+                                                       sizeof(localPositions.front()), targetIndexCount, error);
+                    return count;
                 };
                 for (const auto &lodTarget : kLodTargets)
                 {
@@ -2107,7 +2141,7 @@ namespace PlutoGE::assetimport
                     }
 
                     size_t simplifiedIndexCount = simplify(targetIndexCount, lodTarget.error);
-                    if (!permissive && pending.lods.empty() && simplifiedIndexCount >= submesh.indexCount)
+                    if (!vegetation && !permissive && pending.lods.empty() && simplifiedIndexCount >= submesh.indexCount)
                     {
                         seamLocks = BuildTearingSeamLocks(meshData.vertices, globalByLocal, localPositions);
                         permissive = true;
@@ -4684,7 +4718,8 @@ namespace PlutoGE::assetimport
             {
                 profile->optimizeMs = ElapsedMilliseconds(optimizeStart);
             }
-            GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods);
+            GenerateSubmeshLods(asset.meshData, asset.submeshes, cookOptions.generateLods,
+                                cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard);
             OptimizeGeneratedLodRanges(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             DeduplicateImportedMaterials(asset);
             return asset;
@@ -4924,7 +4959,8 @@ namespace PlutoGE::assetimport
             const auto optimizeStart = ImportClock::now();
             GenerateMissingTangents(parsedMeshAsset.meshData);
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
-            GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods);
+            GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods,
+                                cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard);
             OptimizeGeneratedLodRanges(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw);
             DeduplicateImportedMaterials(parsedMeshAsset);
             profile.optimizeMs = ElapsedMilliseconds(optimizeStart);

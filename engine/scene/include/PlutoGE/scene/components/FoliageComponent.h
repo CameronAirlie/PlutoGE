@@ -101,6 +101,9 @@ namespace PlutoGE::scene
 
         void Update(float deltaTime) override;
         void SubmitRenderCommands();
+        // The instanced draws SubmitRenderCommands submits (one per type, cell and submesh), rebuilt when stale. For
+        // tools that render a scene outside the engine's renderer and must draw foliage as the runtime does.
+        const std::vector<render::RenderCommand> &GetRenderCommands();
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;

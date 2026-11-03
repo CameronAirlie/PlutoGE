@@ -9,6 +9,7 @@
 #include "FogRenderingChecks.h"
 #include "CloudShadowChecks.h"
 #include "CloudTemporalChecks.h"
+#include "InstanceLodChecks.h"
 #include "CloudTransformChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -683,6 +684,11 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--instance-lods")
+        {
+            CheckInstanceLods(basicRenderer);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--cloud-temporal")

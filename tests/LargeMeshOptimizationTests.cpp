@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
 #include <cassert>
+#include <cmath>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -294,6 +295,63 @@ int main(int argc, char **argv)
             assert(lod.indexCount <= previousIndexCount);
             previousIndexCount = lod.indexCount;
         }
+    }
+    {
+        // A canopy of leaf cards: thousands of disconnected quads, every vertex on a border. The standard profile locks
+        // borders and so barely reduces it; the vegetation profile must take its coarsest LOD to a few percent.
+        const auto leavesBinaryPath = lodTestDirectory / "leaves.bin";
+        const auto leavesGltfPath = lodTestDirectory / "leaves.gltf";
+        std::vector<float> leafPositions;
+        std::vector<std::uint32_t> leafIndices;
+        std::uint32_t seed = 12345u;
+        const auto random = [&seed] { seed = seed * 1664525u + 1013904223u; return static_cast<float>(seed >> 8) / 16777216.0f; };
+        constexpr std::uint32_t leaves = 3000;
+        for (std::uint32_t leaf = 0; leaf < leaves; ++leaf)
+        {
+            const float cx = random() * 6.0f - 3.0f, cy = random() * 4.0f + 2.0f, cz = random() * 6.0f - 3.0f;
+            const float size = 0.05f + random() * 0.15f, angle = random() * 6.2831853f;
+            const float ax = std::cos(angle) * size, az = std::sin(angle) * size;
+            const auto base = static_cast<std::uint32_t>(leafPositions.size() / 3);
+            leafPositions.insert(leafPositions.end(), {cx - ax, cy, cz - az, cx + ax, cy, cz + az,
+                                                       cx + ax, cy + size, cz + az, cx - ax, cy + size, cz - az});
+            leafIndices.insert(leafIndices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        }
+        std::ofstream leavesBinary(leavesBinaryPath, std::ios::binary | std::ios::trunc);
+        leavesBinary.write(reinterpret_cast<const char *>(leafPositions.data()), static_cast<std::streamsize>(leafPositions.size() * sizeof(float)));
+        leavesBinary.write(reinterpret_cast<const char *>(leafIndices.data()), static_cast<std::streamsize>(leafIndices.size() * sizeof(std::uint32_t)));
+        leavesBinary.close();
+        const auto leafPositionBytes = leafPositions.size() * sizeof(float);
+        const auto leafIndexBytes = leafIndices.size() * sizeof(std::uint32_t);
+        std::ofstream leavesGltf(leavesGltfPath, std::ios::trunc);
+        leavesGltf << "{\"asset\":{\"version\":\"2.0\"},"
+                   << "\"buffers\":[{\"uri\":\"leaves.bin\",\"byteLength\":" << leafPositionBytes + leafIndexBytes << "}],"
+                   << "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":0,\"byteLength\":" << leafPositionBytes << ",\"target\":34962},"
+                   << "{\"buffer\":0,\"byteOffset\":" << leafPositionBytes << ",\"byteLength\":" << leafIndexBytes << ",\"target\":34963}],"
+                   << "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":" << leafPositions.size() / 3
+                   << ",\"type\":\"VEC3\",\"min\":[-3.2,2,-3.2],\"max\":[3.2,6.2,3.2]},"
+                   << "{\"bufferView\":1,\"componentType\":5125,\"count\":" << leafIndices.size() << ",\"type\":\"SCALAR\"}],"
+                   << "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                   << "\"nodes\":[{\"mesh\":0}],\"scenes\":[{\"nodes\":[0]}],\"scene\":0}";
+        leavesGltf.close();
+        // The coarsest LOD's share of the triangles, or -1 when the chain is malformed.
+        const auto coarsest = [&](bool vegetation) -> double
+        {
+            assetimport::MeshImportOptions leafOptions{true, true, true};
+            leafOptions.vegetationLods = vegetation;
+            const auto asset = importer.ImportMeshSourceAsset(leavesGltfPath.string(), leafOptions);
+            if (asset.submeshes.size() != 1) return -1.0;
+            const auto &lods = asset.submeshes.front().lods;
+            for (std::size_t lod = 1; lod < lods.size(); ++lod)
+                if (lods[lod].indexCount > lods[lod - 1].indexCount || lods[lod].indexCount % 3 != 0) return -1.0;
+            return static_cast<double>(lods.back().indexCount) / static_cast<double>(lods.front().indexCount);
+        };
+        const double standardRatio = coarsest(false), vegetationRatio = coarsest(true);
+        std::cout << "Leaf-card LODs: standard coarsest " << standardRatio << ", vegetation " << vegetationRatio << '\n';
+        assert(standardRatio > 0.0 && vegetationRatio > 0.0);
+        assert(vegetationRatio <= 0.05);
+        assert(vegetationRatio < standardRatio * 0.5);
+        assetimport::MeshImportOptions flags{true, true, true, true};
+        assert(flags.ToFlags() == 15 && assetimport::MeshImportOptions::FromFlags(15).vegetationLods);
     }
     // Alternating cook settings must preserve both disk cache variants.
     // Native skinned LODs preserve vertex payloads and the original index range.

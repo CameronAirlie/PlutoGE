@@ -116,8 +116,9 @@ namespace PlutoGE::assets
             else if (fields[0] == "MODEL_OPTIONS")
             {
                 std::uint32_t flags = 0;
-                if (options || fields.size() != 2 || !Number(fields[1], flags) || (flags & ~7u) != 0) return invalid();
-                parsed.meshOptions = {(flags & 1u) != 0, (flags & 2u) != 0, (flags & 4u) != 0};
+                if (options || fields.size() != 2 || !Number(fields[1], flags) ||
+                    (flags & ~assetimport::MeshImportOptions::FlagMask) != 0) return invalid();
+                parsed.meshOptions = assetimport::MeshImportOptions::FromFlags(flags);
                 options = true;
             }
             else if (fields[0] == "MODEL_OBJECT")

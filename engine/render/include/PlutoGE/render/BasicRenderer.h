@@ -41,6 +41,7 @@ namespace PlutoGE::render
     class BackgroundMotion;
     class UpscalerSharpening;
     class CloudTemporalFilter;
+    class InstanceStorage;
     class CloudNoiseVolume;
     class ScreenSpaceGuide;
     class ScreenSpaceAmbientOcclusion;
@@ -450,6 +451,32 @@ namespace PlutoGE::render
     };
     inline constexpr std::size_t BasicSurfaceTextureCount = static_cast<std::size_t>(BasicSurfaceTexture::Count);
 
+    // An instanced draw's LOD chain (foliage), so each instance chunk takes the LOD its nearest instance needs
+    // rather than the LOD of the whole cluster: a 64 m foliage cell beside the camera would otherwise draw every
+    // tree in it at full detail. Index ranges are in the draw's mesh; thresholds follow Mesh::SelectSubmeshLod.
+    struct BasicInstanceLod
+    {
+        std::uint32_t firstIndex = 0;
+        std::uint32_t indexCount = 0;
+        float maxScreenRadiusPixels = 0.0f;
+    };
+    struct BasicInstanceLodChain
+    {
+        std::vector<BasicInstanceLod> lods;
+        glm::vec3 boundsCenter{0.0f}; // the mesh's bounding sphere, in its own space
+        float boundsRadius = 0.0f;
+        std::uint32_t minimumLod = 0;
+        // The LOD index (into lods) for an instance whose bounding sphere projects to `pixels` in radius.
+        [[nodiscard]] std::uint32_t Select(float pixels) const
+        {
+            std::uint32_t selected = 0;
+            for (std::uint32_t lod = 0; lod < lods.size(); ++lod)
+                if (pixels <= lods[lod].maxScreenRadiusPixels) selected = lod;
+            return lods.empty() ? 0u : std::min<std::uint32_t>(std::max(selected, minimumLod),
+                                                               static_cast<std::uint32_t>(lods.size() - 1));
+        }
+    };
+
     struct BasicDraw
     {
         const BasicMesh *mesh = nullptr;
@@ -514,6 +541,8 @@ namespace PlutoGE::render
         float normalizedLod = 0.0f;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
+        // With instanceModels: per-chunk LOD selection in the camera passes (shadows keep firstIndex/indexCount).
+        std::shared_ptr<const BasicInstanceLodChain> instanceLods;
         // Authoritative object history survives visibility and draw-order changes.
         std::optional<glm::mat4> previousModel;
         // Optional current world-space AABB. Negative extents select the
@@ -767,6 +796,9 @@ namespace PlutoGE::render
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
         std::size_t geometryDraws = 0;
         std::size_t geometryInstances = 0;
+        // Instance records uploaded this frame and resident across frames (InstanceStorage).
+        std::size_t instanceRecordUploads = 0;
+        std::size_t residentInstanceRecords = 0;
         std::size_t glassPanes = 0, glassSnapshots = 0;
         std::size_t glassDepthSnapshots = 0, glassSnapshotReuseHits = 0;
         float glassBoundsCpuMs = 0, glassGroupingCpuMs = 0, glassDamageCpuMs = 0;
@@ -842,6 +874,12 @@ namespace PlutoGE::render
         static constexpr std::uint32_t SurfaceTextureSlot = 33;
         // The rectangle-light LTC table (LtcAreaLights.slang ltcTable, set 0 binding 8).
         static constexpr std::uint32_t LtcTableSlot = 8;
+        // Instanced draws' records (BasicLit.slang instanceRecords, set 3 binding 1; OpenGL storage binding 1).
+        static constexpr std::uint32_t InstanceRecordSlot = 1;
+        // Instanced draws' per-instance LOD bins (BasicLit.slang instanceIndices, set 3 binding 2; OpenGL binding 2).
+        static constexpr std::uint32_t InstanceIndexSlot = 2;
+        // Instanced draws' storage parameters (BasicLit.slang InstanceStorageParameters, set 3 binding 3; OpenGL 18).
+        static constexpr std::uint32_t InstanceStorageSlot = 18;
         // The sky lighting atlas in volumetric fog, for the cloud shadow map (VolumetricFog.slang cloudShadowAtlas).
         static constexpr std::uint32_t CloudShadowAtlasSlot = 16;
         static constexpr std::uint32_t SurfaceTextureBinding = 26;
@@ -1089,6 +1127,8 @@ namespace PlutoGE::render
         std::unique_ptr<BackgroundMotion> m_backgroundMotion;
         std::unique_ptr<UpscalerSharpening> m_upscalerSharpening;
         std::unique_ptr<CloudTemporalFilter> m_cloudTemporal;
+        std::unique_ptr<InstanceStorage> m_instanceStorage;
+        rhi::Buffer m_instanceStoragePlaceholder;
         std::unique_ptr<CloudNoiseVolume> m_cloudNoise;
         // Surface guides by resolution divisor (full, half), shared by SSAO and SSR.
         std::array<std::unique_ptr<ScreenSpaceGuide>, 2> m_screenSpaceGuides;

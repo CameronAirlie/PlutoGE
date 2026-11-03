@@ -168,9 +168,12 @@ namespace PlutoGE::render
                 // The standard coverage shader only consumes camera, object,
                 // material constants and base alpha. Graph coverage retains the
                 // full layout because its fragment evaluation can use lighting.
+                // Instanced depth shaders read instances through either path (BasicLit.slang instanceObject).
                 std::erase_if(descriptor.resourceBindings, [depthResources](const auto &binding) {
-                    return !((binding.type == rhi::ResourceBindingType::UniformBuffer &&
-                        (binding.slot == 0 || binding.slot == 16 || binding.slot == 17 ||
+                    return !((binding.type == rhi::ResourceBindingType::StorageBuffer &&
+                              (binding.slot == InstanceRecordSlot || binding.slot == InstanceIndexSlot)) ||
+                        (binding.type == rhi::ResourceBindingType::UniformBuffer &&
+                        (binding.slot == 0 || binding.slot == 16 || binding.slot == 17 || binding.slot == InstanceStorageSlot ||
                             (depthResources == DepthResources::Alpha && binding.slot == 8))) ||
                         (depthResources == DepthResources::Alpha && binding.type == rhi::ResourceBindingType::SampledTexture && binding.slot == 9));
                 });

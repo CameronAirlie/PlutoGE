@@ -182,6 +182,8 @@ add_test(NAME PlutoGEVulkanCloudShadowTests COMMAND PlutoGEVulkanRhiTests --clou
 add_test(NAME PlutoGEOpenGLCloudShadowTests COMMAND PlutoGEOpenGLRhiTests --cloud-shadows)
 add_test(NAME PlutoGEVulkanCloudTemporalTests COMMAND PlutoGEVulkanRhiTests --cloud-temporal)
 add_test(NAME PlutoGEOpenGLCloudTemporalTests COMMAND PlutoGEOpenGLRhiTests --cloud-temporal)
+add_test(NAME PlutoGEVulkanInstanceLodTests COMMAND PlutoGEVulkanRhiTests --instance-lods)
+add_test(NAME PlutoGEOpenGLInstanceLodTests COMMAND PlutoGEOpenGLRhiTests --instance-lods)
 add_test(NAME PlutoGEVulkanNightSkyTests COMMAND PlutoGEVulkanRhiTests --night-sky)
 add_test(NAME PlutoGEOpenGLNightSkyTests COMMAND PlutoGEOpenGLRhiTests --night-sky)
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)

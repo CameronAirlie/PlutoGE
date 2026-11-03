@@ -541,28 +541,34 @@ namespace PlutoGE::scene
         (void)deltaTime;
     }
 
+    const std::vector<render::RenderCommand> &FoliageComponent::GetRenderCommands()
+    {
+        if (auto *owner = GetOwner())
+        {
+            const glm::mat4 ownerTransform = owner->GetWorldTransform();
+            if (m_renderCommandCacheDirty ||
+                !m_hasCachedRenderCommandModel ||
+                !AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, ownerTransform))
+            {
+                RebuildRenderCommandCache(ownerTransform);
+            }
+        }
+        return m_cachedRenderCommands;
+    }
+
     void FoliageComponent::SubmitRenderCommands()
     {
-        auto *owner = GetOwner();
-        if (!owner)
+        if (!GetOwner())
+        {
+            return;
+        }
+        const auto &commands = GetRenderCommands();
+        if (commands.empty())
         {
             return;
         }
 
-        const glm::mat4 ownerTransform = owner->GetWorldTransform();
-        if (m_renderCommandCacheDirty ||
-            !m_hasCachedRenderCommandModel ||
-            !AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, ownerTransform))
-        {
-            RebuildRenderCommandCache(ownerTransform);
-        }
-
-        if (m_cachedRenderCommands.empty())
-        {
-            return;
-        }
-
-        core::Engine::GetInstance().GetRenderer().SubmitSortedRenderCommands(m_cachedRenderCommands, true);
+        core::Engine::GetInstance().GetRenderer().SubmitSortedRenderCommands(commands, true);
     }
 
     std::vector<std::size_t> FoliageComponent::GetBakeSubmeshes(std::size_t typeIndex) const

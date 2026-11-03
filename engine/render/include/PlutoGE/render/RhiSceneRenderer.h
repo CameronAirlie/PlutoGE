@@ -306,6 +306,8 @@ namespace PlutoGE::render
           std::unordered_map<std::uint64_t, std::uint32_t> canonicalGeometry;
           std::unordered_map<std::uint64_t, ShadowGeometryCluster> localBounds;
           std::uint64_t contentRevision = 0;
+          // Instanced draws' LOD chains by submesh and minimum LOD (BasicDraw::instanceLods).
+          std::unordered_map<std::uint64_t, std::shared_ptr<const BasicInstanceLodChain>> instanceLods;
       };
       std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh

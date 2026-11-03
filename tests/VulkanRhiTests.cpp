@@ -2,6 +2,7 @@
 #include "ContactShadowRenderingChecks.h"
 #include "AreaLightRenderingChecks.h"
 #include "MaterialOcclusionRenderingChecks.h"
+#include "TwoSidedShadingChecks.h"
 #include "SurfaceLayerRenderingChecks.h"
 #include "RectLightRenderingChecks.h"
 #include "RayTracingChecks.h"
@@ -658,6 +659,7 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--area-lights")
             return 0;
         CheckMaterialOcclusion(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        CheckTwoSidedShading(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--material-occlusion")
             return 0;
         CheckSurfaceLayers(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });

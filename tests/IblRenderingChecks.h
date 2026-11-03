@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include <glm/gtc/matrix_transform.hpp>
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/RenderCommand.h"
@@ -230,6 +231,9 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
         }
         scene.SetBakedProbeVolume(grid);
     };
+    // From here the probes light the quad's +z side. Clip space stays world space, but the camera moves to that side: the quad
+    // is two-sided, and from z = 0 it shows, and shades, its back, which faces away from the probe.
+    camera = CameraData{glm::translate(glm::mat4(1), glm::vec3(0, 0, -2)), glm::translate(glm::mat4(1), glm::vec3(0, 0, 2))};
     for (const auto offset : {glm::vec2(0), glm::vec2(.7f,-.7f), glm::vec2(-.7f,.7f)}) {
         grid.positions[7] = glm::vec4(offset,1,1);
         planeDepths(.5f);

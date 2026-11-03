@@ -1185,6 +1185,14 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Coverage must remain intact for these controlled cost comparisons.
     const bool skipDetailTextures = !transparentPass && pointParameters.w == 5.0 && shaderGraph.header.x == 0;
     const bool glass = transparentPass && glassParameters.x > 0.5;
+    // A two-sided surface (leaves) seen from behind shades its far side, whose normal is the near side's reversed.
+    // Facing comes from the interpolated geometric normal rather than SV_IsFrontFace, which mirrored instances in a
+    // batch drawn without culling invert. Without this, a leaf's underside kept the upper side's normal, facing away
+    // from the viewer: its specular reached the grazing Fresnel limit and mirrored the sky in grey.
+    const float3 toCamera = cameraPositionAmbient.xyz - input.worldPosition;
+    const bool shadedBackFace = materialTwoSided != 0 && dot(input.worldNormal, toCamera) < 0.0;
+    // The receiver orientation (shadow bias, probe hemispheres) follows the side being shaded.
+    const float3 geometricNormal = shadedBackFace ? -input.worldNormal : input.worldNormal;
     float3 normal = normalize(input.worldNormal);
     if (hasNormalTexture != 0 && !skipDetailTextures)
     {
@@ -1195,7 +1203,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         const float3 bitangent = normalize(cross(normal, tangent)) * input.worldTangent.w;
         normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + normal * tangentNormal.z);
     }
-    if ((transparentPass || alphaMode == 2) && dot(normal, cameraPositionAmbient.xyz - input.worldPosition) < 0.0)
+    if (shadedBackFace)
+        normal = -normal;
+    else if ((transparentPass || alphaMode == 2) && dot(normal, toCamera) < 0.0)
         normal = -normal;
     float sampledMetallic = 1.0;
     if (hasMetallicTexture != 0 && !skipDetailTextures)
@@ -1421,7 +1431,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         // perturbation is a lighting detail and can point the bias back into
         // the geometry, which becomes visible as acne in wider cascades.
         float3 shadowNormal = pointReceiverNormal;
-        if (dot(shadowNormal, input.worldNormal) < 0.0)
+        if (dot(shadowNormal, geometricNormal) < 0.0)
             shadowNormal = -shadowNormal;
         const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
         const float slope = 1.0 - shadowNdotl;
@@ -1527,7 +1537,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Use the actual receiver plane for hemisphere rejection and ray offsets;
     // normal maps affect SH evaluation, not which side of a wall a probe is on.
     float3 ambientReceiverNormal=pointReceiverNormal;
-    if (dot(ambientReceiverNormal,input.worldNormal)<0) ambientReceiverNormal=-ambientReceiverNormal;
+    if (dot(ambientReceiverNormal,geometricNormal)<0) ambientReceiverNormal=-ambientReceiverNormal;
     if ((transparentPass || alphaMode==2) && dot(ambientReceiverNormal,normal)<0) ambientReceiverNormal=-ambientReceiverNormal;
     // Inside a baked volume the grid supplies all diffuse environment light,
     // including under captures. Opaque surfaces can defer it to the

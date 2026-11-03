@@ -176,7 +176,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 42;
+        constexpr uint32_t kCookedMeshCacheVersion = 43;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -2097,10 +2097,12 @@ namespace PlutoGE::assetimport
                 auto &pending = pendingLods[submeshIndex];
                 // Leaves: each LOD keeps an evenly spread, enlarged subset of the leaf cards, with vertices of its own
                 // (enlarging must not move the finer LODs' leaves).
-                if (vegetation && submeshIndex < surfaces.size() && surfaces[submeshIndex] == TriangleBudgetSurface::Cards)
+                const auto cards = vegetation && submeshIndex < surfaces.size() && surfaces[submeshIndex] == TriangleBudgetSurface::Cards
+                    ? MakeLeafCards(meshData, std::span<const std::uint32_t>(meshData.indices).subspan(submesh.indexOffset, submesh.indexCount))
+                    : CardGeometry{};
+                // Only where cards stand for most of the leaves; large leaves take the simplified LODs below.
+                if (cards.MostlyCards())
                 {
-                    const auto cards = MakeLeafCards(meshData, std::span<const std::uint32_t>(meshData.indices).subspan(
-                                                                   submesh.indexOffset, submesh.indexCount));
                     std::uint32_t previousTriangles = submesh.indexCount / 3;
                     for (const auto &lodTarget : kLodTargets)
                     {

@@ -53,8 +53,10 @@ namespace PlutoGE::assetimport
 
         // The quad over a leaf's UV rectangle, from the least-squares affine map position = A (u, v, 1); none when its
         // UVs are degenerate or the leaf strays too far from that map (it is not one flat-mapped leaf).
-        bool LeafQuad(std::span<const render::MeshVertexData> vertices, std::span<const std::uint32_t> leaf, CardGeometry &out)
+        bool LeafQuad(std::span<const render::MeshVertexData> vertices, std::span<const std::uint32_t> indices,
+                      std::span<const std::uint32_t> part, std::span<const std::uint32_t> leaf, CardGeometry &out)
         {
+            if (part.size() > MaxCardLeafTriangles) return false;
             glm::dmat3 normal(0.0);
             glm::dmat3 rhs(0.0); // columns: x, y, z right-hand sides
             glm::vec2 low(std::numeric_limits<float>::max()), high(std::numeric_limits<float>::lowest());
@@ -79,8 +81,19 @@ namespace PlutoGE::assetimport
             const auto at = [&](glm::vec2 uv) { return glm::vec3(map * glm::dvec3(uv, 1.0)); };
             const float size = glm::length(highPosition - lowPosition);
             for (const auto index : leaf)
-                if (glm::length(at(glm::vec2(vertices[index].uv[0], vertices[index].uv[1])) - Position(vertices[index])) > 0.35f * size)
+                if (glm::length(at(glm::vec2(vertices[index].uv[0], vertices[index].uv[1])) - Position(vertices[index])) >
+                    MaxCardFitError * size)
                     return false;
+            // The leaf must fill enough of its UV rectangle for the card to show it rather than its neighbours.
+            float uvArea = 0.0f;
+            for (const auto first : part)
+            {
+                const auto uv = [&](std::size_t corner)
+                { return glm::vec2(vertices[indices[first + corner]].uv[0], vertices[indices[first + corner]].uv[1]); };
+                const glm::vec2 a = uv(1) - uv(0), b = uv(2) - uv(0);
+                uvArea += 0.5f * std::abs(a.x * b.y - a.y * b.x);
+            }
+            if (uvArea < MinCardUvFill * (high.x - low.x) * (high.y - low.y)) return false;
 
             const glm::vec3 uAxis(map[0]), vAxis(map[1]);
             glm::vec3 cardNormal = glm::cross(uAxis, vAxis);
@@ -122,11 +135,18 @@ namespace PlutoGE::assetimport
     CardGeometry MakeLeafCards(const render::MeshData &mesh, std::span<const std::uint32_t> indices)
     {
         CardGeometry cards;
+        cards.sourceTriangles = indices.size() / 3;
         std::unordered_map<std::uint32_t, std::uint32_t> copied;
         for (const auto &part : Parts(indices))
         {
             const auto leaf = PartVertices(indices, part);
-            if (part.size() >= 4 && LeafQuad(mesh.vertices, leaf, cards)) continue;
+            if (part.size() >= 4 && LeafQuad(mesh.vertices, indices, part, leaf, cards))
+            {
+                cards.cardedSourceTriangles += part.size();
+                continue;
+            }
+            // Parts of fewer than 4 triangles are already as cheap as cards: authored leaf cards.
+            if (part.size() < 4) cards.cardedSourceTriangles += part.size();
             // Kept as it is.
             for (const auto first : part)
                 for (std::size_t corner = 0; corner < 3; ++corner)

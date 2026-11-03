@@ -14,6 +14,7 @@
 #include "CloudTemporalChecks.h"
 #include "InstanceLodChecks.h"
 #include "ImpostorChecks.h"
+#include "EditorFoliageChecks.h"
 #include "GpuInstanceCullingChecks.h"
 #include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
@@ -382,6 +383,11 @@ int main(int argc, char **argv)
         {
             CheckRenderOptimizations(renderer, device, shaders,
                 [&](auto texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--editor-foliage")
+        {
+            CheckEditorFoliage(device, shaders);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--preparation-cache")

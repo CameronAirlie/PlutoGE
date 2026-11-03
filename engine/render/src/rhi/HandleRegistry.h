@@ -103,6 +103,15 @@ namespace PlutoGE::render::rhi::detail
             return m_slotCount.load(std::memory_order_relaxed) - m_freeIndices.size();
         }
 
+        // Visits every resource while holding off inserts and removes (for diagnostics on rare paths: it blocks
+        // threads that create resources meanwhile).
+        template <typename Function>
+        void ForEachLocked(Function &&function)
+        {
+            std::lock_guard lock(m_writeMutex);
+            ForEach(std::forward<Function>(function));
+        }
+
         // Not for use while other threads insert or remove.
         template <typename Function>
         void ForEach(Function &&function)

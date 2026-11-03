@@ -217,6 +217,15 @@ namespace PlutoGE::render
             return glm::dot(offset, offset) <= maximumCenterDistance * maximumCenterDistance;
         }
 
+        // Producer-retained instance arrays (foliage clusters, whose identity and revision vouch for them) reach the RHI
+        // renderer whole once their cluster is visible: it culls and bins their instances itself, keeping their records
+        // and parameter blocks resident while the array is the same one. A culled copy per frame would move both every
+        // frame, re-uploading records and minting cached uniform blocks until the per-frame uniform arena overflows.
+        bool RetainsInstances(const RenderCommand &command)
+        {
+            return command.instanceModels && command.sourceObject != 0 && command.sourceRevision != 0;
+        }
+
         RenderCommand CullRenderCommandInstances(
             const RenderCommand &command,
             const glm::vec3 &cameraPosition,
@@ -1761,7 +1770,8 @@ namespace PlutoGE::render
         for (std::size_t candidate = 0; candidate < m_visibilityCandidates.size(); ++candidate)
         {
             const auto commandIndex = m_visibilityCandidates[candidate].first;
-            if (commandIndex < m_sceneCommandRefs.size() && m_sceneCommandRefs[commandIndex]->instanceModels)
+            if (commandIndex < m_sceneCommandRefs.size() && m_sceneCommandRefs[commandIndex]->instanceModels &&
+                !RetainsInstances(*m_sceneCommandRefs[commandIndex]))
                 instanceCulls.push_back({candidate, {}});
         }
         while (m_visibleInstanceModelPool.size() < instanceCulls.size())
@@ -1789,7 +1799,7 @@ namespace PlutoGE::render
             if (commandIndex >= m_sceneCommandRefs.size())
                 continue;
             const auto &command = *m_sceneCommandRefs[commandIndex];
-            if (!command.instanceModels)
+            if (!command.instanceModels || RetainsInstances(command))
             {
                 m_visibleCommandRefs.push_back(&command);
                 continue;

@@ -2912,7 +2912,46 @@ namespace PlutoGE::render
                 // matrices per 64-instance chunk in the per-frame uniform arena.
                 std::vector<InstanceStorage::Range> shadowRecords(shadowUploadCount);
                 std::vector<rhi::BufferHandle> shadowRecordRanges(shadowUploadCount); // each draw's first-record block
-                if (m_shadowMaterialBuffers.size() < shadowUploadCount) m_shadowMaterialBuffers.resize(shadowUploadCount);
+                // Casters share few materials (a foliage cell's thousands of draws, one), so each distinct material is
+                // uploaded once: static ones as immutable cached records, animated or view-dependent ones into a
+                // buffer this frame owns. A draw's material is its program and the leading lanes ShadowMaterial fills.
+                m_shadowMaterials.assign(shadowUploadCount, {});
+                struct ShadowMaterialIdentity
+                {
+                    std::array<glm::vec4, 5> lanes;
+                    const ShaderGraphProgram *program;
+                    bool operator==(const ShadowMaterialIdentity &) const = default;
+                };
+                std::unordered_map<std::size_t, std::vector<std::pair<ShadowMaterialIdentity, rhi::BufferHandle>>> shadowMaterialsByKey;
+                std::size_t animatedShadowMaterials = 0;
+                const auto shadowMaterial = [&](const BasicDraw &draw)
+                {
+                    const auto *program = draw.shaderGraphProgram.get();
+                    auto material = ShadowMaterial(draw, program && program->usesViewDirection ? lighting.cameraPosition : glm::vec3(0.0f),
+                                                   program && program->usesTime ? graphTime : 0.0f);
+                    const ShadowMaterialIdentity identity{{material.alpha, material.color, material.factors, material.emission,
+                                                           material.cameraTime}, program};
+                    std::size_t key = 0x510e527fade682d1ull;
+                    HashBatchValue(key, program);
+                    for (const auto &lane : identity.lanes) HashBatchValue(key, lane);
+                    auto &bucket = shadowMaterialsByKey[key];
+                    for (const auto &[known, handle] : bucket)
+                        if (known == identity) return handle;
+                    rhi::BufferHandle handle;
+                    if (program && (program->usesTime || program->usesViewDirection))
+                    {
+                        if (animatedShadowMaterials == m_shadowMaterialBuffers.size())
+                            m_shadowMaterialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
+                                {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Shadow graph material"}));
+                        handle = m_shadowMaterialBuffers[animatedShadowMaterials++].Get();
+                        m_device->UpdateBuffer(handle, 0, Bytes(material));
+                    }
+                    else
+                        handle = m_geometryParameters->Acquire(*m_device, Bytes(material), key);
+                    bucket.emplace_back(identity, handle);
+                    ++m_frameStats.shadowMaterialUploads;
+                    return handle;
+                };
                 const bool batchOpaqueShadows = m_opaqueShadowBatchingEnabled && m_opaqueShadowPipeline && m_opaqueShadowBatches;
                 std::size_t shadowInstanceBufferCursor = 0;
                 for (std::size_t drawIndex = 0; drawIndex < shadowUploadCount; ++drawIndex)
@@ -2921,11 +2960,7 @@ namespace PlutoGE::render
                     if (m_shadowVisibleInAnyCascade[drawIndex] != 0u &&
                         !(batchOpaqueShadows && OpaqueShadowBatches::Eligible(draw)))
                     {
-                        if (!m_shadowMaterialBuffers[drawIndex])
-                            m_shadowMaterialBuffers[drawIndex] = rhi::Buffer(*m_device, m_device->CreateBuffer(
-                                {sizeof(GraphShadowMaterial), rhi::BufferUsage::Uniform, "Shadow graph material"}));
-                        m_device->UpdateBuffer(m_shadowMaterialBuffers[drawIndex].Get(), 0,
-                                Bytes(ShadowMaterial(draw,lighting.cameraPosition,graphTime)));
+                        m_shadowMaterials[drawIndex] = shadowMaterial(draw);
                         if (drawIndex < shadowInstanceRecords.size() && shadowInstanceRecords[drawIndex])
                         {
                             shadowRecords[drawIndex] = shadowInstanceRecords[drawIndex];
@@ -2973,7 +3008,7 @@ namespace PlutoGE::render
                         : (instanced ? m_shadowInstancedPipeline.Get() : m_shadowPipeline.Get()));
                     commands.BindUniformBuffer(0, camera);
                     {
-                        commands.BindUniformBuffer(8, m_shadowMaterialBuffers[drawIndex].Get());
+                        commands.BindUniformBuffer(8, m_shadowMaterials[drawIndex]);
                         commands.BindTexture(9, draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
                         commands.BindTexture(10,draw.normalTexture ? draw.normalTexture : m_fallbackNormalTexture.Get(),m_fallbackSampler.Get());
                         commands.BindTexture(11,draw.metallicTexture ? draw.metallicTexture : m_fallbackDataTexture.Get(),m_fallbackSampler.Get());

@@ -131,6 +131,7 @@ need no manual registration.
    | Skip instances beyond the draw distance | 400 | 141 | 254 | 2,354 | 36,670 | 23.7 M |
    | Triangle budgets, LOD caps, impostors (reimported) | 43 | 5.4 | 32.3 | 2,206 | 43,926 | 1.7 M |
    | Cull whole clusters first | **42** | 5.4 | 30.7 | 2,207 | — | — |
+   | Leaf cards, generated leaf masks, tree budgets 60 k / 40 k | **52** | — | — | — | — | 2.6 M |
 
    With cluster culling the frame is 57 ms (CPU-bound: 49 ms recording, of which instance binning is 10 ms). The
    benchmark CSV now has `instance_binning_ms`.
@@ -159,12 +160,16 @@ need no manual registration.
      up close. Mid-distance trees still thin out until E3 (coverage-preserving alpha mips).
    - Impostors read a little warmer and brighter than the lit meshes at distance; compare the aerial and lookout
      renders before tuning.
-9. **The editor and runtime cull foliage differently.** The editor viewport calls
-   `Renderer::PrepareVisibleRenderCommands`, which copies each partly visible cluster's surviving instances into
-   pooled scratch arrays (`CullRenderCommandInstances`). The runtime hands every scene command to the RHI renderer
-   unculled. Per-instance binning now culls by view and draw distance in both, so for clusters with a LOD chain the
-   editor's scratch copy is redundant. It also costs more than it saves, because scratch arrays are not retained and
-   re-upload their instance records every frame. Skip that copy for commands the RHI bins.
+9. **Resolved: "Vulkan per-frame uniform arena exhausted" in large editor viewports.**
+   - Cause: the editor's `Renderer::PrepareVisibleRenderCommands` copied each partly visible foliage cluster's
+     instances into per-frame scratch arrays.
+   - Effect: their records moved every frame, so uniform blocks cached by record offset (shadow instance ranges,
+     the 64-instance chunk path) were minted afresh each frame. They filled the 16 MiB persistent region and spilled
+     into the 32 MiB per-frame arena; bigger viewports had more partly visible clusters.
+   - Fix: producer-retained arrays (`sourceObject` and `sourceRevision` set) now pass through whole, as in the
+     runtime, and the RHI renderer culls their instances (`RetainedRenderSceneTests`).
+   - The exhaustion error now lists the arena's largest consumers by buffer debug name (`UniformArenaReport` in
+     `VulkanDevice.cpp`), so a recurrence says what to fix.
 10. **GPU instance culling is off by default.** `GpuInstanceCulling` (count, scan and scatter compute passes, with
     occlusion against the previous frame's depth hierarchy) draws the same images as CPU binning on both backends
     (`--gpu-instance-culling` tests). Measured at the trailhead with cluster culling, though, it lost:

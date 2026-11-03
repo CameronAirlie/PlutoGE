@@ -56,7 +56,7 @@ namespace PlutoGE::assetimport
 
     // Part of the artifact settings of budgeted models: bump whenever ApplyTriangleBudget's output changes, so their
     // cached imports are rebuilt (models without a budget are unaffected).
-    inline constexpr std::uint32_t TriangleBudgetVersion = 6;
+    inline constexpr std::uint32_t TriangleBudgetVersion = 7;
 
     inline constexpr float CardBudgetWeight = 6.0f;
 }

@@ -150,4 +150,19 @@ void CheckOpaqueShadowBatching(PlutoGE::render::BasicRenderer &renderer,
                   << " ms, batched GPU " << gpu[1] / gpuSamples[1] << " ms";
     else std::cout << "; GPU timing unavailable on this backend";
     std::cout << "; draws 649 -> 11, rendered casters 649, moving casters 9\n";
+
+    // Unbatched casters (masked foliage is never batched) upload each distinct material once, not once per draw:
+    // a foliage cell's thousands of caster draws once exhausted the per-frame uniform arena.
+    for (unsigned variant = 0; variant < 2; ++variant)
+    {
+        for (std::size_t i = 0; i < casters.size(); ++i)
+        {
+            casters[i].alphaMode = 1;
+            casters[i].baseColor = {1, 1, i % 2 && variant ? .5f : 1.0f, .5f};
+        }
+        renderer.SetOpaqueShadowBatchingEnabled(true); renderer.SetStaticShadowCachingEnabled(false); render();
+        const auto &stats = renderer.GetFrameStats();
+        require(stats.ShadowDraws() == 649u && stats.shadowMaterialUploads == variant + 1u,
+                "Masked casters sharing a material uploaded it per draw");
+    }
 }

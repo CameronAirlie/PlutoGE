@@ -184,8 +184,14 @@ namespace PlutoGE::assetimport
         // Leaves become cards first, so the budget is shared on what they will cost.
         std::for_each(std::execution::par, ranges.begin(), ranges.end(), [&](BudgetRange &range)
         {
-            if (range.surface == TriangleBudgetSurface::Cards)
-                range.cards = MakeLeafCards(meshData, std::span(meshData.indices).subspan(range.indexOffset, range.indexCount));
+            if (range.surface != TriangleBudgetSurface::Cards) return;
+            range.cards = MakeLeafCards(meshData, std::span(meshData.indices).subspan(range.indexOffset, range.indexCount));
+            // Large leaves (broadleaf plants) keep their shape better simplified than carded or thinned.
+            if (!range.cards.MostlyCards())
+            {
+                range.surface = TriangleBudgetSurface::Solid;
+                range.cards = {};
+            }
         });
         ShareBudget(ranges, budget);
         std::for_each(std::execution::par, ranges.begin(), ranges.end(), [&](BudgetRange &range)

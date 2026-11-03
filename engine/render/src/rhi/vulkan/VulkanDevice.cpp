@@ -234,6 +234,8 @@ namespace PlutoGE::render::rhi::vulkan
             std::array<std::uint64_t, 3> uniformEpochs{};
             std::size_t size = 0;
             BufferUsage usage{};
+            // For uniform buffers: what made them, for the arena exhaustion report.
+            std::string debugName;
         };
 
         // Top-level instance inputs are rewritten each frame into one of this many regions: the frames in flight.
@@ -1383,7 +1385,7 @@ namespace PlutoGE::render::rhi::vulkan
                 {
                     aligned = (cursor + uniformAlignment - 1) & ~(uniformAlignment - 1);
                     if (aligned + resource.size > TransientUniformSize)
-                        throw std::runtime_error("Vulkan per-frame uniform arena exhausted");
+                        throw std::runtime_error("Vulkan per-frame uniform arena exhausted (" + UniformArenaReport() + ")");
                 } while (!arena.cursor.compare_exchange_weak(cursor, aligned + resource.size, std::memory_order_relaxed));
             }
             std::memcpy(static_cast<std::byte *>(arena.mapped) + aligned,
@@ -1394,6 +1396,36 @@ namespace PlutoGE::render::rhi::vulkan
             uniformBytesUploaded.fetch_add(resource.size, std::memory_order_relaxed);
             if (persistent) persistentUniformBytesUploaded.fetch_add(resource.size, std::memory_order_relaxed);
             return aligned;
+        }
+
+        // The largest consumers of this frame's uniform arena, by buffer debug name: which uniforms were copied into it
+        // this frame (not living in the persistent region), how many and how many bytes. Built only when the arena is
+        // exhausted, so it costs nothing otherwise.
+        std::string UniformArenaReport()
+        {
+            const auto epoch = uniformArenas[activeFrameIndex].epoch;
+            std::unordered_map<std::string, std::pair<std::size_t, std::size_t>> byName; // count, bytes
+            std::size_t persistentFallbacks = 0;
+            buffers.ForEachLocked([&](const BufferResource &resource)
+            {
+                if (resource.usage != BufferUsage::Uniform) return;
+                if (std::atomic_ref(const_cast<VkDeviceSize &>(resource.persistentOffset)).load(std::memory_order_relaxed) != VK_WHOLE_SIZE)
+                    return;
+                if (std::atomic_ref(const_cast<std::uint64_t &>(resource.uniformEpochs[activeFrameIndex])).load(std::memory_order_relaxed) != epoch)
+                    return;
+                auto &entry = byName[resource.debugName.empty() ? std::string("unnamed") : resource.debugName];
+                ++entry.first;
+                entry.second += AlignUniform(resource.size);
+                persistentFallbacks += resource.immutable ? 1 : 0;
+            });
+            std::vector<std::pair<std::string, std::pair<std::size_t, std::size_t>>> rows(byName.begin(), byName.end());
+            std::ranges::sort(rows, [](const auto &a, const auto &b) { return a.second.second > b.second.second; });
+            std::string report = std::to_string(TransientUniformSize >> 20) + " MiB; largest:";
+            for (std::size_t row = 0; row < std::min<std::size_t>(rows.size(), 6); ++row)
+                report += " " + rows[row].first + " x" + std::to_string(rows[row].second.first) + " = " +
+                          std::to_string(rows[row].second.second >> 10) + " KiB;";
+            report += " " + std::to_string(persistentFallbacks) + " immutable uniforms fell back from a full persistent region";
+            return report;
         }
 
         // Moves a buffer that has stopped changing into the persistent region. Its copy in each frame slot is then
@@ -4744,6 +4776,7 @@ namespace PlutoGE::render::rhi::vulkan
         resource.immutable = descriptor.immutable;
         if (descriptor.usage == BufferUsage::Uniform)
         {
+            resource.debugName = descriptor.debugName;
             resource.uniformData.resize(descriptor.size);
             resource.lastUniformWrite = m_impl->uniformFrame.load(std::memory_order_relaxed);
             if (descriptor.immutable) resource.persistentOffset = m_impl->AllocatePersistentUniform(descriptor.size);

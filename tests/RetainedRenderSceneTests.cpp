@@ -291,6 +291,23 @@ int main() try
                 { return !command.second.empty() && command.second.size() < 40; }),
                 "Visibility test scene culled no instances");
         Require(prepare(true) == serial, "Parallel visibility changed the visible commands or their order");
+
+        // A producer-retained cluster (foliage: identity and revision set) straddling the frustum reaches the renderer
+        // whole and as the same array: the RHI renderer culls its instances, and keeps its records resident.
+        Renderer retained;
+        RenderCommand cluster{.mesh = &cube};
+        auto instances = std::make_shared<std::vector<glm::mat4>>();
+        for (int instance = 0; instance < 40; ++instance)
+            instances->push_back(glm::translate(glm::mat4(1), glm::vec3(float(instance) * 2 - 40, 0, -10)));
+        cluster.instanceModels = instances;
+        cluster.worldBounds = {glm::vec3(0, 0, -10), 45.0f};
+        cluster.sourceObject = 1;
+        cluster.sourceRevision = 1;
+        retained.SubmitRenderCommand(cluster);
+        retained.PrepareVisibleRenderCommands(camera, 512);
+        const auto view = retained.GetVisibleRenderCommandView();
+        Require(view.size() == 1 && (*view.begin()).instanceModels.get() == instances.get(),
+                "A retained instance array was copied or culled by the editor's visibility pass");
     }
     std::cout << "Retained scene lifecycle, borrowed views and incremental batching passed\n";
 }

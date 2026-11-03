@@ -35,7 +35,10 @@
 // Unlike assert, holds in Release builds too (NDEBUG compiles assert out).
 static void Expect(bool condition, const char *message)
 {
-    if (!condition) throw std::runtime_error(message);
+    if (condition) return;
+    // An uncaught exception ends the process without a word on Windows: say what failed first.
+    std::cerr << "FAILED: " << message << std::endl;
+    throw std::runtime_error(message);
 }
 
 int main(int argc, char **argv)

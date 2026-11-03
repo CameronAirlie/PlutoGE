@@ -893,6 +893,8 @@ namespace PlutoGE::render
         bool virtualShadowsActive = false;
         std::string directionalShadowStatus = "Disabled";
         std::size_t shadowObjectUploads = 0;
+        // Distinct cascade caster materials this frame (each shared by every draw using it).
+        std::size_t shadowMaterialUploads = 0;
         std::size_t shadowInstances = 0;
         std::size_t shadowCascadeUpdates = 0;
         std::size_t shadowCascadeCacheHits = 0;
@@ -1269,6 +1271,8 @@ namespace PlutoGE::render
         rhi::GraphicsPipeline m_shadowPipeline;
         rhi::GraphicsPipeline m_shadowInstancedPipeline;
         rhi::GraphicsPipeline m_maskedShadowPipeline, m_maskedShadowInstancedPipeline;
+        // Cascade casters' materials: this frame's handle per draw, and the buffers animated materials upload into.
+        std::vector<rhi::BufferHandle> m_shadowMaterials;
         std::vector<rhi::Buffer> m_shadowMaterialBuffers;
         rhi::GraphicsPipeline m_displayPipeline;
         rhi::GraphicsPipeline m_selectionOutlinePipeline;

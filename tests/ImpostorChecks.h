@@ -90,9 +90,9 @@ inline void CheckImpostors(PlutoGE::render::BasicRenderer &renderer, PlutoGE::re
         return renderer.GetFrameStats();
     };
 
-    // 0.71 / 3 * 55 px is about 13 px: the mesh; at 6 m about 6.5 px: a card.
+    // 0.71 / 1.5 * 55 px is about 26 px: the mesh at LOD0 (its density limit is about 21 px); at 6 m about 6.5 px: a card.
     auto mixed = std::make_shared<std::vector<glm::mat4>>();
-    mixed->push_back(glm::translate(glm::mat4(1), glm::vec3(0.0f, 0.0f, -3.0f)));
+    mixed->push_back(glm::translate(glm::mat4(1), glm::vec3(0.0f, 0.0f, -1.5f)));
     mixed->push_back(glm::translate(glm::mat4(1), glm::vec3(1.0f, 0.0f, -6.0f)));
     const auto stats = render(mixed);
     std::cout << "Impostors: " << stats.geometryTriangles[0] << " mesh and " << stats.geometryTriangles[1]

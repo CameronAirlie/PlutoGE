@@ -36,7 +36,7 @@ namespace PlutoGE::render
     // passes take it from one place, so they agree on which draws and LODs each instance falls in.
     struct InstanceView
     {
-        // `projectionScale` is the projection's y scale and `height` the render height in pixels. `detail` scales
+        // `projectionScale` is the projection's y scale and `height` the displayed (output) height in pixels. `detail` scales
         // every instance's projected size before LOD selection (BasicLighting::foliageDetail): below 1, instances
         // take coarser LODs, and hand over to their impostors, from nearer.
         InstanceView(const glm::mat4 &viewProjection, const glm::vec3 &camera, float projectionScale, float height,

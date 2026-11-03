@@ -2,6 +2,8 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <array>
+#include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -36,7 +38,7 @@ inline void CheckInstanceLods(PlutoGE::render::BasicRenderer &renderer)
 
     auto models = std::make_shared<std::vector<glm::mat4>>();
     for (int i = 0; i < 64; ++i)
-        models->push_back(glm::translate(glm::mat4(1), glm::vec3((i % 8) * 0.2f - 0.7f, (i / 8) * 0.2f - 0.7f, -3.0f)));
+        models->push_back(glm::translate(glm::mat4(1), glm::vec3((i % 8) * 0.2f - 0.7f, (i / 8) * 0.2f - 0.7f, -1.2f)));
     for (int i = 0; i < 64; ++i)
         models->push_back(glm::translate(glm::mat4(1), glm::vec3((i % 8) * 4.0f - 14.0f, (i / 8) * 4.0f - 14.0f, -400.0f)));
     auto chain = std::make_shared<BasicInstanceLodChain>();
@@ -71,8 +73,34 @@ inline void CheckInstanceLods(PlutoGE::render::BasicRenderer &renderer)
 
     // Beyond the screen-radius thresholds, a LOD too dense for its projected size gives way to the next: at 7 px the
     // thresholds keep LOD0, but its 200 triangles exceed the budget of a 7 px disc.
-    if (chain->Select(20.0f) != 0u || chain->Select(7.0f) != 1u)
+    if (chain->Select(30.0f) != 0u || chain->Select(7.0f) != 1u)
         throw std::runtime_error("Instance LOD selection must cap triangles per projected pixel");
+
+    // Near a switch (here LOD0's density limit, about 21 px) an instance bins into both LODs with complementary
+    // dither codes, so the change fades instead of popping; away from it, into one LOD drawn whole.
+    const float densitySwitch = std::sqrt(200.0f / (BasicInstanceLodChain::MaxTrianglesPerPixel * 3.14159265f));
+    const auto across = chain->SelectBlend(densitySwitch);
+    if (across.count != 2 || across.lods[0] != 0u || across.lods[1] != 1u ||
+        across.codes[1] != (BasicInstanceLodChain::DitherCoarser | across.codes[0]) || across.codes[0] == 0u ||
+        std::abs(int(across.codes[0]) - 64) > 2)
+        throw std::runtime_error("An instance at a LOD switch must draw both LODs with complementary dithers");
+    for (const float pixels : {30.0f, 7.0f})
+    {
+        const auto whole = chain->SelectBlend(pixels);
+        if (whole.count != 1 || whole.codes[0] != 0u || whole.lods[0] != chain->Select(pixels))
+            throw std::runtime_error("An instance away from a switch must draw one LOD whole, as Select chooses");
+    }
+    // A mesh handing small instances to its impostor and the impostor's chain derive the same fade at the hand-over,
+    // each drawing only its own side.
+    auto meshSide = *chain, impostorSide = *chain;
+    meshSide.minScreenRadiusPixels = impostorSide.maxScreenRadiusPixels = 40.0f;
+    const auto meshBlend = meshSide.SelectBlend(40.0f), impostorBlend = impostorSide.SelectBlend(40.0f);
+    if (meshBlend.count != 1 || impostorBlend.count != 1 || meshBlend.codes[0] == 0u ||
+        impostorBlend.codes[0] != (BasicInstanceLodChain::DitherCoarser | meshBlend.codes[0]))
+        throw std::runtime_error("A mesh and its impostor must crossfade at their hand-over");
+    if (meshSide.SelectBlend(55.0f).count != 1 || impostorSide.SelectBlend(55.0f).count != 0 ||
+        meshSide.SelectBlend(28.0f).count != 0 || impostorSide.SelectBlend(28.0f).count != 1)
+        throw std::runtime_error("Outside the hand-over band only one of mesh and impostor may draw an instance");
 
     // Binned instances outside the view are skipped: add some behind the camera and far to each side.
     auto withHidden = std::make_shared<std::vector<glm::mat4>>(*models);
@@ -96,7 +124,7 @@ inline void CheckInstanceLods(PlutoGE::render::BasicRenderer &renderer)
     if (near != 64u * 200u || beyond != 16u + 64u)
         throw std::runtime_error("Instances beyond the draw distance must be skipped by per-instance LOD binning");
 
-    // Foliage detail scales projected sizes before selection: at 0.5 the near instances (about 13 px) select as 6.5 px
+    // Foliage detail scales projected sizes before selection: at 0.5 the near instances (about 30 px) select as 15 px
     // ones, whose 200-triangle LOD0 exceeds their density budget, so every instance draws the coarse LOD.
     draw.instanceDrawDistance = std::numeric_limits<float>::max();
     draw.instanceModels = models;

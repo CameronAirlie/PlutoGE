@@ -144,7 +144,7 @@ uint itemSlot(uint item, out uint record)
         if (pixels <= lodValue(draw.thresholds, lod)) selected = lod;
     selected = min(max(selected, draw.lodInfo.y), lastLod);
     // BasicInstanceLodChain::MaxTrianglesPerPixel over the projected bounding disc.
-    const float budget = 0.5 * 3.14159265 * pixels * pixels;
+    const float budget = 0.15 * 3.14159265 * pixels * pixels;
     while (selected < lastLod && lodValue(draw.triangles, selected) > budget) ++selected;
     return draw.items.w + selected;
 }

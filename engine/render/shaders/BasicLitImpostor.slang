@@ -42,6 +42,7 @@ VertexOutput impostorCard(uint vertexId, uint instanceId)
     output.worldTangent = float4(normalize(mul(linear, basis.right)), 1.0);
     // Frame (x, y) occupies atlas cell (x, y); rows run down the image, against the frame's up axis.
     output.uv = (frame + float2(corner.x * 0.5 + 0.5, 0.5 - corner.y * 0.5)) / framesPerSide;
+    output.lodFade = instanceLodFade(instanceId);
     return output;
 }
 

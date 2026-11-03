@@ -23,7 +23,9 @@
 
 #include "PlutoGE/render/rhi/Resource.h"
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -501,10 +503,24 @@ namespace PlutoGE::render
         // than the impostor's threshold to its impostor draw, whose chain covers just those.
         float minScreenRadiusPixels = 0.0f;
         float maxScreenRadiusPixels = std::numeric_limits<float>::infinity();
-        // Most triangles a LOD may spend per pixel of the instance's projected bounding disc. The screen-radius
-        // thresholds are shared by every mesh, so on its own a multi-million-triangle scan would keep tens of
-        // thousands of triangles on a tree a few dozen pixels across; past this density the next coarser LOD is taken.
-        static constexpr float MaxTrianglesPerPixel = 0.5f;
+        // Most triangles a LOD may spend per pixel of the instance's projected bounding disc. The importer's
+        // screen-radius thresholds are shared by every mesh of a profile, so they suit no mesh in particular: a
+        // multi-million-triangle scan would keep tens of thousands of triangles on a tree a few dozen pixels across,
+        // while a 60k-triangle tree would leave full detail while still filling much of the screen. 0.15 keeps Verdant's
+        // canopy close to full detail at about a third of its triangles (BasicLighting::foliageDetail scales it).
+        static constexpr float MaxTrianglesPerPixel = 0.15f;
+        // Replaces the mesh's switch radii with this density's: each LOD is kept until it would spend more than
+        // MaxTrianglesPerPixel, so a mesh changes detail where its own triangle counts say it should. `triangles[lod]`
+        // is the whole mesh's at that LOD, so a tree's bark and leaf submeshes switch together. Select, SelectBlend and
+        // GPU binning all read the result.
+        void ApplyTriangleDensity(std::span<const float> triangles)
+        {
+            for (std::size_t lod = 1; lod < lods.size() && lod <= triangles.size(); ++lod)
+            {
+                const float density = std::sqrt(triangles[lod - 1] / (MaxTrianglesPerPixel * std::numbers::pi_v<float>));
+                lods[lod].maxScreenRadiusPixels = std::min(density, lods[lod - 1].maxScreenRadiusPixels);
+            }
+        }
         // The LOD index (into lods) for an instance whose bounding sphere projects to `pixels` in radius, or
         // NotDrawn() when this draw does not cover that size.
         [[nodiscard]] std::uint32_t NotDrawn() const { return static_cast<std::uint32_t>(lods.size()); }
@@ -519,6 +535,89 @@ namespace PlutoGE::render
             const float budget = MaxTrianglesPerPixel * std::numbers::pi_v<float> * pixels * pixels;
             while (selected < last && static_cast<float>(lods[selected].indexCount / 3) > budget) ++selected;
             return selected;
+        }
+
+        // Instances within this fraction of a switch radius draw both sides of the switch, dithered against each
+        // other (BasicLit.slang lodDitherDiscards), so a LOD or impostor change fades in instead of popping.
+        static constexpr float TransitionWidth = 0.15f;
+        // Dither codes in an instance bin entry's top byte (InstanceStorage::StageBins): the low seven bits are the
+        // fade (1..126 of 127), and the top bit marks the coarser side, which draws where the finer one does not.
+        static constexpr std::uint32_t DitherShift = 24, IndexMask = (1u << DitherShift) - 1;
+        static constexpr std::uint8_t DitherCoarser = 0x80, DitherSteps = 127;
+        struct Blend
+        {
+            std::array<std::uint32_t, 2> lods{};
+            std::array<std::uint8_t, 2> codes{};
+            std::uint32_t count = 0;
+        };
+        // The LODs (at most two) this draw bins an instance of radius `pixels` into, with their dither codes; 0 is
+        // drawn whole. Sides another draw covers (a mesh's impostor-sized instances) are left out: both draws derive
+        // the same fade from the same switch radius, so their dithers complement each other.
+        [[nodiscard]] Blend SelectBlend(float pixels) const
+        {
+            Blend result;
+            if (lods.empty() || !(pixels > 0.0f)) return result;
+            // Levels run from -1 (above this draw's range) through the LODs to lods.size() (below it). Switch k sits
+            // between levels k - 1 and k, at the radius below which level k is taken (Select's rules), clamped into
+            // the draw's range and non-increasing. Equal switches enclose empty levels and act as one.
+            const auto count = static_cast<std::uint32_t>(lods.size());
+            constexpr std::uint32_t MaxSwitches = 16;
+            if (count + 1 > MaxSwitches)
+            {
+                if (const auto lod = Select(pixels); lod != NotDrawn()) result = {{lod, 0}, {0, 0}, 1};
+                return result;
+            }
+            const auto first = std::min(minimumLod, count - 1);
+            std::array<float, MaxSwitches> switches{};
+            float bound = maxScreenRadiusPixels;
+            for (std::uint32_t k = 0; k <= count; ++k)
+            {
+                float radius = maxScreenRadiusPixels;
+                if (k == count) radius = minScreenRadiusPixels;
+                else if (k > first)
+                    // The finer level also needs enough pixels for its triangles (MaxTrianglesPerPixel).
+                    radius = std::max(lods[k].maxScreenRadiusPixels,
+                                      std::sqrt(static_cast<float>(lods[k - 1].indexCount / 3) /
+                                                (MaxTrianglesPerPixel * std::numbers::pi_v<float>)));
+                bound = std::min(bound, std::max(radius, minScreenRadiusPixels));
+                switches[k] = bound;
+            }
+            const auto add = [&](std::int64_t level, std::uint8_t code)
+            {
+                if (level < 0 || level >= count) return;
+                result.lods[result.count] = static_cast<std::uint32_t>(std::max<std::int64_t>(level, first));
+                result.codes[result.count++] = code;
+            };
+            // The coarsest level a switch leads to: past every switch equal to it.
+            const auto coarserLevel = [&](std::uint32_t k)
+            {
+                while (k < count && switches[k + 1] == switches[k]) ++k;
+                return static_cast<std::int64_t>(k);
+            };
+            for (std::uint32_t k = 0; k <= count; ++k)
+            {
+                const float radius = switches[k];
+                if (!std::isfinite(radius) || !(radius > 0.0f)) continue;
+                const float upper = radius * (1.0f + TransitionWidth);
+                if (pixels > upper || pixels < radius * (1.0f - TransitionWidth)) continue;
+                const float fade = std::clamp((upper - pixels) / (2.0f * TransitionWidth * radius), 0.0f, 1.0f);
+                const auto steps = static_cast<std::uint32_t>(std::lround(fade * DitherSteps));
+                const auto finer = static_cast<std::int64_t>(k) - 1, coarser = coarserLevel(k);
+                if (steps == 0) add(finer, 0);
+                else if (steps >= DitherSteps) add(coarser, 0);
+                else
+                {
+                    add(finer, static_cast<std::uint8_t>(steps));
+                    add(coarser, static_cast<std::uint8_t>(DitherCoarser | steps));
+                }
+                return result;
+            }
+            // Outside every band: the last level whose switch the radius is below.
+            std::int64_t level = -1;
+            for (std::uint32_t k = 0; k <= count; ++k)
+                if (pixels < switches[k]) level = k;
+            add(level, 0);
+            return result;
         }
     };
 

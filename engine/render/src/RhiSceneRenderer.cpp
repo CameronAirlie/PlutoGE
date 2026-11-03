@@ -1269,6 +1269,17 @@ namespace PlutoGE::render
                                                    lod < submesh.lods.size() ? submesh.lods[lod].maxScreenRadiusPixels
                                                                              : std::numeric_limits<float>::max()});
                         }
+                        // The whole mesh's triangles per LOD (a submesh without one keeps its coarsest).
+                        std::vector<float> meshTriangles(lodCount, 0.0f);
+                        for (std::size_t part = 0; part < command.mesh->GetSubmeshCount(); ++part)
+                        {
+                            const auto partLods = command.mesh->GetSubmeshLodCount(part);
+                            if (partLods == 0) continue;
+                            for (std::size_t lod = 0; lod < lodCount; ++lod)
+                                meshTriangles[lod] += static_cast<float>(
+                                    command.mesh->GetSubmeshLodRange(part, std::min(lod, partLods - 1)).indexCount / 3);
+                        }
+                        built->ApplyTriangleDensity(meshTriangles);
                         chain = std::move(built);
                     }
                     draw.instanceLods = chain;

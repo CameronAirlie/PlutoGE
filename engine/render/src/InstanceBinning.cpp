@@ -63,10 +63,12 @@ namespace PlutoGE::render
                         ++m_culled[item];
                         continue;
                     }
-                    // Instances another draw covers (a mesh's impostor-sized ones) go in no bin of this draw.
-                    if (const auto lod = chain.Select(ProjectedRadius(sphere, view.camera, view.lodProjection));
-                        lod != chain.NotDrawn())
-                        bins[lod].push_back(instance);
+                    // Instances another draw covers (a mesh's impostor-sized ones) go in no bin of this draw; those near
+                    // a switch go in both sides' bins, with dither codes in the entries' top byte.
+                    const auto blend = chain.SelectBlend(ProjectedRadius(sphere, view.camera, view.lodProjection));
+                    for (std::uint32_t side = 0; side < blend.count; ++side)
+                        bins[blend.lods[side]].push_back(instance |
+                            (std::uint32_t(blend.codes[side]) << BasicInstanceLodChain::DitherShift));
                 }
             }
         });

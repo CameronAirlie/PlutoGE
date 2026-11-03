@@ -178,10 +178,21 @@ of a cluster with a LOD chain is:
    distance (`BasicDraw::instanceDrawDistance`, from `RenderCommand::maxDrawDistance`). Without this, a visible
    48–128 m cell draws all of its instances, and the runtime, which hands every scene command to the RHI renderer,
    draws whole cells past their draw distance.
-2. **Assigned a LOD** by its own projected radius against the mesh's screen-radius thresholds, then coarsened while
-   that LOD spends more than `BasicInstanceLodChain::MaxTrianglesPerPixel` (0.5) triangles per pixel of the projected
-   bounding disc. The shared thresholds alone would leave a multi-million-triangle scan with tens of thousands of
-   triangles on a tree a few dozen pixels across.
+2. **Assigned a LOD** by its own projected radius, measured on the displayed image (the output height, not an
+   upscaler's lower render height), as the scene's mesh LODs are. The switch radii come from triangle density, not
+   the importer's shared thresholds. When the chain is built, `BasicInstanceLodChain::ApplyTriangleDensity` keeps
+   each LOD until the whole mesh would spend more than `MaxTrianglesPerPixel` (0.15) triangles per pixel of the
+   projected bounding disc. A mesh therefore changes detail where its own triangle counts say it should, and a tree's
+   bark and leaves switch together. The shared vegetation thresholds dropped a 60k-triangle tree to 25% of its
+   triangles while it still filled the screen. They would also leave a multi-million-triangle scan with tens of
+   thousands of triangles on a tree a few dozen pixels across. On Verdant, 0.15 keeps the canopy close to full
+   detail at about a third of the triangles that full detail costs.
+3. **Crossfaded** near a switch. An instance within `TransitionWidth` (15%) of a switch radius bins into both LODs
+   (`BasicInstanceLodChain::SelectBlend`). Its bin entries carry complementary dither codes in their top byte, and
+   the shaded and depth passes discard by screen-space interleaved gradient noise (`BasicLit.slang`
+   `lodDitherDiscards`), which a temporal resolve turns into a blend. The hand-over to an impostor fades the same way:
+   the mesh's chain and the impostor's derive the same fade from the same radius. GPU instance culling selects the
+   same LODs without the crossfade.
 
 Before any per-instance work, a cluster whose bounds lie wholly outside the view or beyond its draw distance is
 culled whole (`InstanceView::ClusterVisible`). It is neither binned nor recorded: the camera passes make the same test
@@ -195,8 +206,8 @@ passes keep the cluster LOD, floored by `MinShadowLod`, and are not culled per i
 **Foliage detail** (`BasicLighting::foliageDetail`, capped per quality tier by `GraphicsQuality::foliageDetail`)
 scales every instance's projected radius before selection. CPU binning, GPU binning and the unbinned chunk fallback
 all take it from `InstanceView::lodProjection`, so they agree. Below 1, instances take coarser LODs, and hand over to
-their impostors, from nearer. The density cap then applies to the smaller size too, so its effective density falls
-with the square of the detail. Engine tiers: Low 0.6, Medium 0.75, High and Ultra 1. A project manifest's
+their impostors, from nearer. The switch radii scale with it, so the effective triangle density falls with the
+square of the detail. Engine tiers: Low 0.6, Medium 0.75, High and Ultra 1. A project manifest's
 `QUALITY_PRESET` record carries it as a fifteenth field; older fourteen-field records take the tier's engine default.
 On Verdant at 1080p Low (Vega 8), 0.6 takes the opaque triangles from 2.27 M to 1.68 M and scene GPU time from 62 to
 52 ms. Below 0.6 little more is saved (1.5 M at 0.35): the rest is instances already at their last LOD and

@@ -1,5 +1,7 @@
 #include "InstanceStorage.h"
 
+#include "PlutoGE/render/BasicRenderer.h"
+
 #include <algorithm>
 #include <cstring>
 #include <span>
@@ -92,6 +94,9 @@ namespace PlutoGE::render
         return {m_pages[found->second.page].buffer.Get(), found->second.first};
     }
 
+    // Bin entries hold a record index below the dither code (BasicInstanceLodChain::DitherShift).
+    static_assert(InstanceStorage::PageRecords <= BasicInstanceLodChain::IndexMask + 1);
+
     void InstanceStorage::StageBins(const Range &records, const void *models, const void *chain,
                                     const std::vector<std::vector<std::uint32_t>> &instancesByLod)
     {
@@ -101,8 +106,10 @@ namespace PlutoGE::render
         {
             result.bins[lod] = {static_cast<std::uint32_t>(m_stagedIndices.size()),
                                 static_cast<std::uint32_t>(instancesByLod[lod].size())};
-            for (const auto instance : instancesByLod[lod])
-                m_stagedIndices.push_back(records.first + instance);
+            // Entries keep their dither code (BasicInstanceLodChain::DitherShift) above the record index.
+            for (const auto entry : instancesByLod[lod])
+                m_stagedIndices.push_back((records.first + (entry & BasicInstanceLodChain::IndexMask)) |
+                                          (entry & ~BasicInstanceLodChain::IndexMask));
         }
     }
 

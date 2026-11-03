@@ -75,6 +75,8 @@ struct VertexOutput
 #ifdef PLUTO_BINDLESS_MATERIAL
     nointerpolation uint materialIndex : TEXCOORD9;
 #endif
+    // LOD crossfade (instanceLodFade): 0 drawn whole, f > 0 the finer side, -f the coarser side of a switch.
+    nointerpolation float lodFade : TEXCOORD10;
 };
 
 struct FragmentOutput
@@ -193,13 +195,42 @@ InstanceObjectParameters instanceObject(uint instanceId)
     // z: 0 records from x, 1 through bins from entry x, 2 through the GPU-written bin whose offset is header entry x
     // (InstanceCulling.slang, where draws have no first instance).
     const uint first = instanceRange.z == 2 ? instanceIndices[instanceRange.x].record : instanceRange.x;
-    const uint index = instanceRange.z != 0 ? instanceIndices[first + instanceId].record : first + instanceId;
+    // CPU bin entries carry a dither code above the record index (instanceLodFade); GPU-written entries have none.
+    const uint index = instanceRange.z != 0 ? instanceIndices[first + instanceId].record & 0x00ffffffu : first + instanceId;
     const InstanceRecord record = instanceRecords[index];
     InstanceObjectParameters result;
     result.model = record.model;
     result.previousModel = record.previousModel;
     result.debugParameters = instanceDebugParameters;
     return result;
+}
+
+// Interleaved gradient noise with a golden-ratio step per frame.
+float interleavedGradientNoise(float2 pixel, float frame)
+{
+    const float noise = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
+    return frac(noise + frame * 0.61803398875);
+}
+
+// An instance's LOD crossfade, from its CPU bin entry (BasicInstanceLodChain::SelectBlend): instances near a LOD or
+// impostor switch draw on both sides with complementary dithers. Positive f keeps the finer side where the dither
+// noise is at least f; negative keeps the coarser side where it is below -f.
+float instanceLodFade(uint instanceId)
+{
+    if (instanceRange.y == 0 || instanceRange.z != 1)
+        return 0.0;
+    const uint code = instanceIndices[instanceRange.x + instanceId].record >> 24;
+    const float fade = float(code & 0x7fu) / 127.0;
+    return (code & 0x80u) != 0u ? -fade : fade;
+}
+// Whether a crossfading fragment belongs to the other side of its switch. Interleaved gradient noise in screen space;
+// under a temporal resolve (temporalClipOffset.z) it varies per frame, so the dither averages into a blend.
+bool lodDitherDiscards(float lodFade, float2 pixel)
+{
+    if (lodFade == 0.0)
+        return false;
+    const float noise = interleavedGradientNoise(floor(pixel), temporalClipOffset.z > 0.5 ? temporalClipOffset.w : 0.0);
+    return lodFade > 0.0 ? noise < lodFade : noise >= -lodFade;
 }
 
 #ifdef PLUTO_BINDLESS_MATERIAL
@@ -747,13 +778,6 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
 }
 
 
-// Interleaved gradient noise with a golden-ratio step per frame.
-float interleavedGradientNoise(float2 pixel, float frame)
-{
-    const float noise = frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
-    return frac(noise + frame * 0.61803398875);
-}
-
 float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 worldDy,
                             float slope, float2 pixel, out float rawVisibility, out float normalizedLevel)
 {
@@ -1079,6 +1103,7 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
     output.uv2 = input.uv2;
     output.worldPosition = worldPosition.xyz;
     output.worldTangent = float4(normalize(mul((float3x3)objectModel, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
+    output.lodFade = 0.0;
     return output;
 }
 
@@ -1094,7 +1119,9 @@ VertexOutput vertexMain(VertexInput input)
 VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
     const InstanceObjectParameters instance = instanceObject(instanceId);
-    return transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
+    VertexOutput output = transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
+    output.lodFade = instanceLodFade(instanceId);
+    return output;
 }
 
 #ifdef PLUTO_BINDLESS_MATERIAL
@@ -1144,6 +1171,9 @@ SurfaceDerivatives surfaceDerivatives(VertexOutput input)
     result.worldDy = ddy(input.worldPosition);
     result.normalDx = ddx(input.worldNormal);
     result.normalDy = ddy(input.worldNormal);
+    // After the derivatives, so a crossfade's discarded neighbours still supply them.
+    if (lodDitherDiscards(input.lodFade, input.position.xy))
+        discard;
     return result;
 }
 

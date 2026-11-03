@@ -2637,8 +2637,10 @@ namespace PlutoGE::render
         const auto instanceBinningStart = std::chrono::steady_clock::now();
         core::CpuScope instanceBinningScope("Instance preparation and binning", core::CpuCategory::Rendering);
         auto instancePreparationEnd = instanceBinningStart;
+        // LODs and impostor hand-overs are chosen on the displayed image, as the scene's mesh LODs are
+        // (Renderer::UpdateRenderCommandLods): an upscaler's lower render height must not coarsen them.
         const InstanceView instanceView(viewProjection, lighting.cameraPosition, m_postProcessProjection[1][1],
-                                        static_cast<float>(m_height), lighting.foliageDetail);
+                                        static_cast<float>(std::max(m_outputHeight, m_height)), lighting.foliageDetail);
         if (m_instanceStorage)
         {
             const auto prepare = [&](const BasicDraw &draw)

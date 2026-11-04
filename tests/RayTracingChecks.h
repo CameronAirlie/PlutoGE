@@ -4,6 +4,7 @@
 #include <glm/glm.hpp>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 #include <string>

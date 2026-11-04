@@ -592,6 +592,7 @@ if(TARGET PlutoGEEditorUI)
     add_test(NAME PlutoGEAssetReferencePickerTests COMMAND PlutoGEAssetReferencePickerTests)
     add_executable(PlutoGEEditorVulkanTextureTests EditorVulkanTextureTests.cpp)
     target_link_libraries(PlutoGEEditorVulkanTextureTests PRIVATE PlutoGE::EditorUI)
+    pluto_link_engine(PlutoGEEditorVulkanTextureTests)
     add_test(NAME PlutoGEEditorVulkanTextureTests COMMAND PlutoGEEditorVulkanTextureTests)
 endif()
 

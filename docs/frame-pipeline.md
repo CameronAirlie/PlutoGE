@@ -74,8 +74,8 @@ Render thread:               [record, submit, present N+1   ]
   retargeting, layers, hierarchy) across the task pool, then IK, ragdoll and timing serially. Base-pose evaluation touches
   only the component and immutable clip and skeleton data. A pose read during the pass is still evaluated on demand, so
   results equal per-component evaluation (`PlutoGEAnimationPoseBatchTests`). `Scene::SetParallelAnimationEnabled`.
-- **Visibility.** `Renderer::UpdateRenderCommandLods` (LOD selection and frustum, distance and size tests) and instance
-  culling run in ordered ranges (`TaskPool::RunRanges`), concatenated in order. `Renderer::SetParallelVisibilityEnabled`.
+- **Visibility.** `RenderSceneFrontend::UpdateRenderCommandLods` (LOD selection and frustum, distance and size tests) and instance
+  culling run in ordered ranges (`TaskPool::RunRanges`), concatenated in order. `RenderSceneFrontend::SetParallelVisibilityEnabled`.
 - **Task pool.** Batches from different threads now run at the same time and share the workers, so the game thread's
   batches no longer wait for the render thread's parallel recording (or the reverse).
 

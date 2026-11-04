@@ -141,7 +141,7 @@ Behavior:
    - Vulkan: GLFW_NO_API plus Vulkan surface.
 6. Instantiate the selected IRenderDevice.
 7. Fall back to OpenGL only after showing a clear Vulkan initialization error.
-During migration, retain a hidden developer option for Legacy OpenGL versus RHI OpenGL. Remove it once parity is reached.
+During migration, retain a hidden developer option for Legacy OpenGL versus RHI OpenGL. Remove it once parity is reached. (Done: the option and the legacy renderer are gone.)
 Phase 9: Cross-Backend Test
 Automate a rendering test for each backend:
 1. Open a hidden 256x256 window.
@@ -166,10 +166,10 @@ After the basic test passes on both APIs, migrate in this order:
 9. TAA and temporal upscaling.
 10. Particles and compute workloads.
 11. Clouds, ocean, terrain.
-12. SSAO, SSR, GI, VCT, RSM, and other complex effects.
+12. SSAO, SSR, GI, VCT, RSM, and other complex effects. (LPV and RSM were removed rather than migrated.)
 13. Profiling and debug views.
 14. Remove GL types from scene/editor modules.
-15. Delete the legacy renderer and direct GL code.
+15. Delete the legacy renderer and direct GL code. (Done in 2026-11; see [legacy OpenGL removal plan](legacy-opengl-removal-plan.md).)
 First Implementation Slice
 The first development milestone should include only:
 - Manifest graphics API setting.

@@ -72,7 +72,7 @@ Coordinates and returned heights/velocities are in the ocean entity's local spac
 
 ## Limits
 
-These effects target the RHI OpenGL and Vulkan paths; the legacy OceanPass retains its previous wave model. Foam is procedural and has no persistent history, wakes, spray or collision interaction. Shoreline wash and caustics use visible opaque scene depth, so hidden or transparent receivers cannot contribute. Caustics are an artistic focusing approximation, not refracted light transport, and currently appear when viewing the bottom through the surface. Water depth for dispersion is uniform; there is no bathymetry-driven shoaling or coastal refraction. Surface intersections remain an approximation at very grazing angles and extreme steepness.
+These effects run on both the OpenGL and Vulkan renderers. Foam is procedural and has no persistent history, wakes, spray or collision interaction. Shoreline wash and caustics use visible opaque scene depth, so hidden or transparent receivers cannot contribute. Caustics are an artistic focusing approximation, not refracted light transport, and currently appear when viewing the bottom through the surface. Water depth for dispersion is uniform; there is no bathymetry-driven shoaling or coastal refraction. Surface intersections remain an approximation at very grazing angles and extreme steepness.
 
 Physical-sky reflections and directional shadows remain supported. Off-screen scene reflections, local point/spot lights, water motion/depth output, and complete transparent/temporal integration remain future work. No mesh, asset migration, or additional post-process component is needed.
 

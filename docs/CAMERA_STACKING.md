@@ -81,9 +81,6 @@ Runtime UI is drawn after the stack has been resolved.
 - The overlay covers only pixels where it writes depth: opaque and
   alpha-tested surfaces. Transparent-only surfaces, glass and particles on
   overlays are not composited.
-- Camera stacking needs the RHI renderer (Vulkan, or the editor's RHI
-  preview). The legacy OpenGL runtime path renders only the base camera and
-  ignores tag filters.
 - RenderType, OverlayOrder and the tag lists cannot yet be set from C#
   scripts. To show or hide an overlay at runtime, set the overlay camera
   component's `Enabled` property.

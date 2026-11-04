@@ -13,7 +13,7 @@ Implements the four items under "Not implemented" in [SURFACE_LIGHTING.md](SURFA
 
 The renderer is forward+: `BasicLit.slang` lights every surface in the geometry pass and writes G-buffer-style
 targets that the post passes (SSAO, DDGI, SSGI, SSR, probe resolve) read. Every phase targets the Vulkan and OpenGL
-RHI renderers; the legacy OpenGL renderer is left as it is, as for the existing surface-lighting features.
+RHI renderers. (The legacy OpenGL renderer, untouched by this plan, has since been removed.)
 
 ## Design principles
 

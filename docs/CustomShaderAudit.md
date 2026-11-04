@@ -4,7 +4,7 @@ The previous graph only generated legacy geometry GLSL. The OpenGL/Vulkan RHI sc
 
 ## Implemented
 
-- A validated, topologically ordered surface program shared by legacy GLSL and OpenGL/Vulkan RHI. Existing nodes now execute in the RHI renderer, including instanced draws and transparent surface draws. Output controls albedo, world-space normal, metallic, roughness, opacity and emission.
+- A validated, topologically ordered surface program for the OpenGL/Vulkan RHI. Existing nodes now execute in the RHI renderer, including instanced draws and transparent surface draws. Output controls albedo, world-space normal, metallic, roughness, opacity and emission.
 - Named Float, Vec2, Vec3 and Color parameters with defaults, Parameter nodes and explicit per-material overrides. Save preserves overrides; graph saves refresh loaded materials. Switching shaders retains unmatched overrides without applying them to unrelated parameters. A changed parameter type requires resetting that override.
 - Unlit mode on any graph asset.
 - Vec2, Vec3 and Color nodes expose both packed and scalar outputs. Enable Component Pins to combine scalar inputs; disable it to split a packed input. Existing links keep their pin names.
@@ -32,7 +32,7 @@ The previous graph only generated legacy geometry GLSL. The OpenGL/Vulkan RHI sc
 - **Additional material passes** reference up to four graph assets, rendered as transparent overlays on the same mesh after the base material. Nested dependencies are checked and total expansion is capped at 32 passes. Equal-depth overlays retain their declared order. Each pass can use its own displacement, tessellation and textures. These are material overlays, not arbitrary custom render targets or render-graph scheduling.
 - **Live material preview** renders the unsaved graph on a sphere in the graph editor, including material passes and additional textures. The material editor preview resolves graph parameters and texture overrides too. The small per-node diagrams remain illustrative.
 
-Graph surface evaluation now participates in conventional shadow alpha testing, voxel GI, CPU baking and legacy transparency. Graph casters select conventional shadows instead of the virtual-shadow path. Voxel rebuilds capture one animation time for all chunks. Graph-dependent bakes use the CPU path and snapshot time; view-dependent expressions use a normal-incidence view convention. Bake albedo, opacity, normal, emission and displacement come from the graph. Raw normal texture sampling still requires explicit world-space conversion.
+Graph surface evaluation now participates in conventional shadow alpha testing, voxel GI, CPU baking and transparency. Graph casters select conventional shadows instead of the virtual-shadow path. Voxel rebuilds capture one animation time for all chunks. Graph-dependent bakes use the CPU path and snapshot time; view-dependent expressions use a normal-incidence view convention. Bake albedo, opacity, normal, emission and displacement come from the graph. Raw normal texture sampling still requires explicit world-space conversion.
 
 ### Example assets
 

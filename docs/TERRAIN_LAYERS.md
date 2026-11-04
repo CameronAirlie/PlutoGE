@@ -75,8 +75,8 @@ Notes for extending it:
   matching constants and loops in `TerrainLayers.slang`.
 - **Per-layer features** (detail normals, triplanar rock, distance tiling) belong in `sampleTerrainLayers`; per-layer
   scalars go into `BasicTerrainLayers::tiling`/`tint` and the parameter block, which never rebuild the arrays.
-- **The macro albedo** is the terrain material's ordinary albedo, so GI voxelization, probe baking and the legacy
-  OpenGL renderer see the painted colours without knowing about layers.
+- **The macro albedo** is the terrain material's ordinary albedo, so GI voxelization and probe baking see the
+  painted colours without knowing about layers.
 - **Surface queries.** `TerrainWeightMap::DominantLayer` gives the layer under a point (footsteps, decals, AI).
 
 - **Painting cost.** Painting patches textures in place: `TerrainLayerStack` records the painted rectangle,

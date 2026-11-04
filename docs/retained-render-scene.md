@@ -48,9 +48,9 @@ store pointers to persistent records; only culled instance arrays need transient
 command copies. GI selection also builds references instead of copying commands.
 The existing RHI packet cache continues sharing prepared rigid data across passes.
 
-Legacy OpenGL passes and callers of `GetSceneRenderCommands` /
-`GetVisibleRenderCommands` still receive contiguous compatibility snapshots.
-Materializing legacy commands is isolated from the modern view path. Existing
+Callers of `GetSceneRenderCommands` / `GetVisibleRenderCommands` still
+receive contiguous compatibility snapshots, materialized apart from the view
+path. Existing
 terrain, foliage, skinned and procedural submission APIs remain supported.
 
 Visibility and LOD selection still scan the scene. Component enumeration also

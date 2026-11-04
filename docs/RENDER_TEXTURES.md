@@ -57,8 +57,6 @@ the asset's path in `src`, relative to the document like any other image:
 - Give the element an explicit size in RCSS. The texture's natural size is
   read when the document loads, so later changes to **Texture Size** do not
   resize elements that rely on it.
-- This needs the RHI UI renderer; the legacy OpenGL UI renderer leaves the
-  image blank.
 
 ## Limitations
 
@@ -69,8 +67,6 @@ the asset's path in `src`, relative to the document like any other image:
 - Each render texture has its own renderer, which costs one extra scene render
   per frame plus memory for its own render targets. Render-texture cameras use
   cascaded shadow maps instead of virtual shadow maps to keep memory down.
-- Render textures need the RHI renderer (Vulkan, or the editor's RHI preview).
-  The legacy OpenGL runtime path leaves them blank.
 - Target textures cannot yet be assigned from C# scripts. To pause an
   offscreen camera, set the camera component's `Enabled` property; the
   texture then keeps its last image.

@@ -22,7 +22,7 @@ Direct light is also attenuated by the fog above each point (`heightFogSunTransm
 
 The analytical tail stops at opaque geometry or the ocean surface. Sky rays integrate to infinity: upward rays through exponential height fog have finite optical depth, while horizontal and descending rays through nonzero density become opaque. Lowering the height offset therefore clears upward views but does not make an infinite horizontal medium transparent. Near and far radiance compose front-to-back using the near transmittance, without overlapping density or increasing ray-march steps for distant surfaces.
 
-`FogIntegration.slang` owns the finite and infinite density integrals, direct-light transmittance, scattering midpoints and shadow-distance fade. It is shared by RHI fog, glass, particles and the generated legacy GLSL source, so it stays scalar-only. `FogEnvironment.slang` owns `fogPointRadiance`, the per-point lighting shared by RHI fog, glass and particles: physical-sky ambient light, direct sunlight with a normalized phase function, cloud occlusion and fog self-attenuation. Legacy fog retains its environment prepass. Existing serialized **Max Distance** values load as **Shadow Detail Distance**.
+`FogIntegration.slang` owns the finite and infinite density integrals, direct-light transmittance, scattering midpoints and shadow-distance fade. It is shared by RHI fog, glass and particles. `FogEnvironment.slang` owns `fogPointRadiance`, the per-point lighting shared by RHI fog, glass and particles: physical-sky ambient light, direct sunlight with a normalized phase function, cloud occlusion and fog self-attenuation. Existing serialized **Max Distance** values load as **Shadow Detail Distance**.
 
 **Max Opacity** scales the height-fog layer's opacity and in-scattering rather than clamping them. A clamp made every surface beyond a fixed distance sit behind the same veil, so the ground lost its depth gradient while distant objects kept constant contrast. Scaling keeps contrast falling with distance and approaches the cap only asymptotically. New effects default to 1, which is unaffected.
 
@@ -34,7 +34,7 @@ Fog, glass and particle fog dim and tint their lighting under the scene's volume
 - sky visibility along the zenith chord, scaled by the two-stream diffusivity factor 1.66;
 - the cloud-base radiance that replaces the blocked sky: the cloud's ambient fill plus isotropically scattered sunlight reaching mid-cloud, in the cloud's colour and albedo.
 
-This is coarse by design. Gaps between individual clouds do not cast light shafts, and broken clouds transmit somewhat more light than their mean. Surfaces are not yet cloud-shadowed. The legacy renderer has no cloud occlusion or density noise.
+This is coarse by design. Gaps between individual clouds do not cast light shafts, and broken clouds transmit somewhat more light than their mean. Surfaces are not yet cloud-shadowed.
 
 `BasicPostProcessEffect::volumetricResolutionDivisor` selects the trace scale: 1 uses the full-resolution reference, 2 is the default, and larger values are capped at 4. Missing optional trace/composite shader packages retain the full-resolution path. Reconstruction is spatial; it introduces no independent temporal history or camera-cut invalidation requirements. Small cloud features can soften, and thin foreground features may reject fog where no depth-compatible ray exists. Use divisor 1 where those tradeoffs are unsuitable.
 

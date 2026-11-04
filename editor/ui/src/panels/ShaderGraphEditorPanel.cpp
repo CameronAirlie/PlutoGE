@@ -1468,9 +1468,6 @@ namespace PlutoGE::ui
         }
         ImGui::SameLine();
         ImGui::Checkbox("Previews", &m_showNodePreviews);
-        const bool customLighting=std::any_of(m_graph.links.begin(),m_graph.links.end(),[&](const auto &link){
-            return link.toPin=="Direct Lighting" && std::any_of(m_graph.nodes.begin(),m_graph.nodes.end(),[&](const auto &node){return node.id==link.toNodeId && node.kind==render::ShaderGraphNodeKind::Output;});});
-        if(customLighting) ImGui::TextDisabled("Custom direct lighting: OpenGL/Vulkan RHI; legacy renderer uses PBR.");
         if (ImGui::Checkbox("Unlit surface", &m_graph.unlit)) m_dirty = true;
         if(ImGui::SliderInt("Tessellation subdivisions",&m_graph.tessellation,0,3))m_dirty=true;
         if (ImGui::Checkbox("Outline pass", &m_graph.outline.enabled)) m_dirty = true;

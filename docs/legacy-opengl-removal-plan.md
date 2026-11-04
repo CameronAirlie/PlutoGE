@@ -5,6 +5,9 @@ pipeline. The Vulkan and OpenGL render hardware interface (RHI) backends stay.
 OpenGL projects keep working, but they render through `OpenGLDevice`,
 `RhiRenderService` and `RhiSceneRenderer`.
 
+**Status: complete (2026-11-04).** All four phases are done; each phase's status
+note below records what changed and where it differed from the plan.
+
 ## Decisions
 
 - **LPV and RSM:** removed. They have no RHI version. DDGI, SSGI and VCTGI cover
@@ -271,6 +274,71 @@ Phases 1 and 2. `SceneBaker.cpp` no longer has a GL bake compute, so it needs no
    authoring guide and its pinned inventory. They currently list GL3-only
    filters and world surfaces.
 
+Status (2026-11-04): done, uncommitted. The removal is complete. Several items
+were already done in earlier phases:
+- The RmlUi authoring guide, reference and integration notes already listed what
+  parses but does not render (Phase 2).
+- The GL block in `ShaderGraphRenderingChecks.h` and the `opengl` variant of
+  `TextureRefreshTests` were gone, and `PlutoGEOpenGLShaderGraphTests` passes.
+- `Renderer.h` no longer exists, and nothing includes it.
+
+Done here:
+- **Data:** the RocketLeg `Main.plutoscene` inline camera stack loses its LPV
+  and RSM entries. The remaining effects are renumbered and the count is
+  updated, as a re-save would write them. The SceneComposite `Indirect Debug
+  View` keeps the value `0` (None), now saved with the three current options,
+  in the scene and in `main.plutopostprocess`. The SSGI Step Size, Depth Weight
+  and Normal Weight values, removed with the legacy SSGI, go from both files
+  too. A temporary check loaded the preset and the scene, found no parameter the
+  effects do not know, and re-saved the scene's camera stack unchanged apart
+  from adding the Tone Mapping Curve default, a newer parameter. The
+  editor's recovery autosaves under `.plutoge-editor/` are untouched.
+- **VCT shader checks:** `PostProcessInitializationTests` no longer initialised
+  any post-process effect; it only ran the Slang VCT probe-cache,
+  stationary-lighting and emission-coverage checks. They stay on
+  `GlTestProgram.h`, as Phase 2 decided: they test shader maths, and the RHI
+  VCT suites already run the same shaders. Porting them to RHI compute would
+  add device plumbing without testing more. The target is renamed
+  `PlutoGEVctShaderTests` (ctest `PlutoGEVctProbeCacheTests` and
+  `PlutoGEVctEmissionCoverageTests`) so its name says what it tests.
+- **Tests kept:** the outline check in `OpenGLRhiTests` and the OpenGL branch
+  of `EditorLoadingScreenTests` exercise the OpenGL RHI and the ImGui OpenGL
+  compositor, not the legacy renderer.
+- **`FakeEffect`** in `CameraStackTests` stubbed the legacy `Initialize` and
+  `Apply`. The test now adds the real effects by type.
+- **Leftovers in code:**
+  - The OpenGL context guards around post-process mutations
+    (`EnsurePostProcessMutationContext` in `CameraComponent`, and its editor
+    copy) are gone, as is the `CameraComponent` destructor that only called
+    one. Effects own no GL objects. For the same reason the editor no longer
+    clears and rebuilds its camera's effects around a graphics API switch.
+  - The post-process stack analysis no longer warns that an effect "only works
+    with the legacy OpenGL renderer". Every registered effect has an RHI
+    adapter, and `RhiPostProcessAdapterTests` now checks that for every
+    registered type instead of a fixed list.
+  - The shader graph editor's "legacy renderer uses PBR" note and stale
+    comments about the legacy GLSL path, the GL3 RmlUi renderer and
+    `Renderer::` methods (now `RenderSceneFrontend`) are gone or updated.
+- **Docs:** reference docs no longer describe the legacy renderer as available
+  or list its differences. Historical plans and handoffs keep their text, with
+  a short note where an item was removed (`rhi-implementation-plan.md`,
+  `rhi-postprocess-next-agent.md`, `render-performance-optimization-plan.md`,
+  `surface-lighting-extensions-plan.md`). Dated investigations are unchanged.
+- **Warnings:**
+  - LNK4217 in `PlutoGERmlUiAntialiasingTests` and
+    `PlutoGERmlDocumentPreviewTests`: RmlUi's static-library usage requirement
+    (`RMLUI_STATIC_LIB`, already `PUBLIC` on `RmlUi::Core`) does not reach
+    every consumer through the engine's cyclic library graph and the tests'
+    `LINK_GROUP`. For example, `PlutoGEScene` gets it but `PlutoGEEditorUI`,
+    which links Scene publicly, does not. Targets that include RmlUi headers
+    therefore link `RmlUi::Core` directly, as the other RmlUi tests already
+    did. The editor's per-source `RMLUI_STATIC_LIB` property, which
+    duplicated RmlUi's own static/shared logic, is replaced the same way.
+  - C4267 in `BasicRenderer::SetGeometryArenaEnabled`: `GeometryArena` takes a
+    `std::uint32_t` stride, like the RHI vertex layouts, so the caller passes
+    `std::uint32_t{sizeof(BasicVertex)}`. The braces reject a narrowing
+    conversion at compile time.
+
 ## Measuring
 
 - **When:** record a clean build of `PlutoGERender`, a clean full build, and
@@ -289,6 +357,10 @@ Phases 1 and 2. `SceneBaker.cpp` no longer has a GL bake compute, so it needs no
   of the rebuild is the large RHI units and the dependencies `--clean-first`
   rebuilds with them, such as OpenAL. The full suite runs 257 tests in 283 s
   of `ctest -j4` wall time, with no baseline failures left.
+- **After Phase 4 (uncommitted):** the build has no warnings from project
+  code. The suite runs 257 tests (the renamed VCT entry replaces the old one)
+  in 504 s of `ctest -j4` wall time. Only `PlutoGEOpenGLOceanTests` timed out
+  under `-j4`; it passes alone in 26 s.
 - **Baseline failures:** compare against the known failing suites at HEAD.
 - **Skip:** don't run the OpenGL DDGI suite on the Vega 8 iGPU, because it
   crashes the driver.

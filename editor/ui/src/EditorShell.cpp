@@ -99,28 +99,15 @@
 
 namespace PlutoGE::ui
 {
-    namespace
-    {
-        bool EnsureEditorPostProcessContext()
-        {
-            auto &engine = core::Engine::GetInstance();
-            auto &window = engine.GetWindow();
-            return engine.GetConfig().graphicsApi != render::rhi::GraphicsApi::OpenGL ||
-                   !window.IsOpen() || window.EnsureOpenGLContextCurrent(true);
-        }
-    }
-
     bool EditorShell::EditorViewportCamera::SetPostProcessPresetAssetReference(std::string assetReference)
     {
-        if (!EnsureEditorPostProcessContext())
-            return false;
         return postProcess.SetPreset(core::Engine::GetInstance().GetAssetManager(), std::move(assetReference));
     }
 
     bool EditorShell::EditorViewportCamera::RefreshPostProcessPreset()
     {
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        if (!postProcess.IsOutOfDate(assets) || !EnsureEditorPostProcessContext())
+        if (!postProcess.IsOutOfDate(assets))
             return false;
         return postProcess.Refresh(assets);
     }
@@ -5542,8 +5529,6 @@ namespace PlutoGE::ui
             {
                 const auto requestedApi = *m_pendingGraphicsApi;
                 m_pendingGraphicsApi.reset();
-                const auto savedEditorEffects = BuildProjectEditorPostProcessEffects(m_editorCamera);
-                const std::string savedEditorPreset = m_editorCamera.GetPostProcessPresetAssetReference();
 
                 // Release every resource tied to the old device/context before
                 // Engine::Shutdown destroys the native window.
@@ -5554,10 +5539,6 @@ namespace PlutoGE::ui
                 m_editorSceneRenderService->Shutdown();
                 m_gameSceneRenderService->Shutdown();
                 m_panelManager.ShutdownImGui();
-                // Editor post-process effects can own legacy OpenGL objects.
-                // Destroy them while the old context is still current and
-                // recreate their backend resources after the switch.
-                m_editorCamera.ClearPostProcessEffects();
 
                 const auto previousConfig = m_engine.GetConfig();
                 auto config = previousConfig;
@@ -5599,7 +5580,6 @@ namespace PlutoGE::ui
                     viewportPanel2->SetGraphicsApi(previousConfig.graphicsApi);
                     viewportPanel->Initialize();
                     viewportPanel2->Initialize();
-                    ApplyProjectEditorPostProcessEffects(savedEditorEffects, m_editorCamera);
                     m_statusMessage = "Graphics API switch failed; restored the previous renderer. See PlutoGEEditor.log.";
                     continue;
                 }
@@ -5627,10 +5607,6 @@ namespace PlutoGE::ui
                 }
                 else
                 {
-                    if (savedEditorPreset.empty() ||
-                        !m_editorCamera.SetPostProcessPresetAssetReference(savedEditorPreset))
-                        ApplyProjectEditorPostProcessEffects(savedEditorEffects, m_editorCamera);
-
                     std::string scriptError;
                     ReloadProjectScriptAssembly(&scriptError);
                     if (!scriptError.empty())

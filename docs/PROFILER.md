@@ -49,8 +49,8 @@ chart and hierarchy implementation lives in `ProfilerTimeline.cpp`. CPU category
 costs are calculated once from exclusive sample times at capture submission.
 
 Instrumentation covers the editor loop, scene phases, individual component and
-managed script update/fixed/late calls, animation, viewport rendering, legacy
-render passes, RHI translation/setup/recording, shadows, geometry, post-processing,
+managed script update/fixed/late calls, animation, viewport rendering,
+RHI translation/setup/recording, shadows, geometry, post-processing,
 Vulkan frame/presentation fence waits and swapchain acquisition, editor panels,
 presentation, and event polling. It does not instrument arbitrary managed method
 bodies or worker threads. A distinct render-thread lane is not shown because the

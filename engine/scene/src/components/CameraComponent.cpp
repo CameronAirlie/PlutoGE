@@ -26,14 +26,6 @@ namespace PlutoGE::scene
         constexpr const char *kEffectPrefix = "PostProcessEffects.";
         constexpr const char *kEffectParamsPrefix = "Params.";
 
-        bool EnsurePostProcessMutationContext()
-        {
-            auto &engine = core::Engine::GetInstance();
-            auto &window = engine.GetWindow();
-            return engine.GetConfig().graphicsApi != render::rhi::GraphicsApi::OpenGL ||
-                   !window.IsOpen() || window.EnsureOpenGLContextCurrent(true);
-        }
-
         PropertyType ToScenePropertyType(render::PostProcessParameterType parameterType)
         {
             switch (parameterType)
@@ -127,11 +119,6 @@ namespace PlutoGE::scene
         EmplacePostProcessEffect<render::SceneCompositeEffect>();
     }
 
-    CameraComponent::~CameraComponent()
-    {
-        EnsurePostProcessMutationContext();
-    }
-
     void CameraComponent::Update(float deltaTime)
     {
         RefreshPostProcessPreset();
@@ -183,10 +170,6 @@ namespace PlutoGE::scene
 
     void CameraComponent::ClearPostProcessEffects()
     {
-        if (!EnsurePostProcessMutationContext())
-        {
-            return;
-        }
         m_postProcess.GetEffects().clear();
     }
 
@@ -194,11 +177,6 @@ namespace PlutoGE::scene
     {
         auto &effects = m_postProcess.GetEffects();
         if (index >= effects.size())
-        {
-            return false;
-        }
-
-        if (!EnsurePostProcessMutationContext())
         {
             return false;
         }
@@ -270,18 +248,13 @@ namespace PlutoGE::scene
 
     bool CameraComponent::SetPostProcessPresetAssetReference(std::string assetReference)
     {
-        if (!EnsurePostProcessMutationContext())
-        {
-            return false;
-        }
-
         return m_postProcess.SetPreset(core::Engine::GetInstance().GetAssetManager(), std::move(assetReference));
     }
 
     bool CameraComponent::RefreshPostProcessPreset()
     {
         auto &assets = core::Engine::GetInstance().GetAssetManager();
-        if (!m_postProcess.IsOutOfDate(assets) || !EnsurePostProcessMutationContext())
+        if (!m_postProcess.IsOutOfDate(assets))
             return false;
         return m_postProcess.Refresh(assets);
     }

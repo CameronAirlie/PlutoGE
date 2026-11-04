@@ -431,8 +431,9 @@ int main()
         !HasInput(InputsFor(BasicPostProcessEffectType::TAA), BasicPostProcessInput::History))
         return 13;
 
-    for (const char *type : {"SSAO", "LSAO", "SSGI", "SSR", "VolumetricFog", "SceneComposite"})
-        if (!IsRhiPostProcessEffectSupported(type))
+    // The RHI renderer is the only renderer, so every registered effect needs an adapter.
+    for (const auto &descriptor : GetPostProcessEffectDescriptors())
+        if (!IsRhiPostProcessEffectSupported(descriptor.typeName))
             return 14;
 
     // Editors group effects by the registry's stage; it must order effects exactly as the renderer does.

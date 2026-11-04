@@ -5,7 +5,7 @@ updates continuously from the scene. Unlike [ambient probe grids](ambient-probe-
 lights, opening doors and changing emissive materials change the bounce light within a few frames. Unlike voxel cone
 traced GI, the sky is occluded too, so interiors darken without manual volumes. The probes also occlude the sky in
 reflections: where SSR finds no hit, glossy surfaces indoors reflect the probes' light instead of a sky they cannot
-see. It works on Vulkan and OpenGL RHI; the legacy OpenGL renderer skips it.
+see. It works on Vulkan and OpenGL.
 
 ## Using it
 
@@ -222,7 +222,7 @@ probe visibility for leak reduction is an exact segment test. `SurfaceTolerance`
   travel (`RayTracedSceneSettings` in `BasicRenderer.cpp`). The Vulkan backend reads each bottom level's device
   address once at creation, not per top-level instance.
 - **Stable scene**: the GI draw list does not follow the camera. Static commands are submitted whether or not the
-  camera sees them (`Renderer::IsRenderCommandAcceptedForSubmission`), and GI packets draw a camera-independent LOD
+  camera sees them (`RenderSceneFrontend::IsRenderCommandAcceptedForSubmission`), and GI packets draw a camera-independent LOD
   (`SelectGiSceneLod`: the producer's caster floor) rather than the view's, so walking neither changes the list nor
   rebuilds its packets. The preparation cache compares each list's own LOD (`RhiDrawPreparationCache::Entry::lod`);
   shadow lists use the caster LOD, so they too keep packets while the view LOD changes beneath their floor.

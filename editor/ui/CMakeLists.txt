@@ -144,10 +144,10 @@ target_link_libraries(PlutoGEEditorUI PUBLIC
 # The ImGui OpenGL compositor presents the editor on OpenGL hosts.
 target_link_libraries(PlutoGEEditorUI PRIVATE PlutoGE::glad)
 
-get_target_property(PLUTO_EDITOR_RMLUI_TYPE RmlUi::Core TYPE)
-if (PLUTO_EDITOR_RMLUI_TYPE STREQUAL "STATIC_LIBRARY")
-    set_source_files_properties(src/RmlDocumentPreview.cpp PROPERTIES COMPILE_DEFINITIONS RMLUI_STATIC_LIB)
-endif()
+# Link RmlUi directly where its headers are included: its usage requirements
+# (RMLUI_STATIC_LIB) do not reliably reach through the engine's cyclic
+# library graph.
+target_link_libraries(PlutoGEEditorUI PRIVATE RmlUi::Core)
 
 target_compile_definitions(PlutoGEEditorUI PRIVATE
     PLUTO_RHI_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")

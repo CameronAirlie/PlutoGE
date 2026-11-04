@@ -1,4 +1,3 @@
-// Shared by the Slang voxelizer and the embedded legacy GLSL voxelizer.
 // Clip the original triangle to a unit raster cell, not its conservative bounds.
 // Working relative to the cell keeps the area calculation stable on large grids.
 float vctCross(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }

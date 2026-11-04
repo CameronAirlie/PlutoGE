@@ -1,7 +1,7 @@
 // Bytecode interpreter for shader graphs. Renderers use it until a graph's
 // generated variant (ShaderGraphCodegen.cpp) is available, and on backends
 // without runtime specialisation. Instruction semantics live in
-// ShaderGraphCommon.slang. The legacy GLSL path inlines that include textually.
+// ShaderGraphCommon.slang.
 #include "ShaderGraphCommon.slang"
 
 // Interpreter state for one surface sample. A Direct Lighting program is

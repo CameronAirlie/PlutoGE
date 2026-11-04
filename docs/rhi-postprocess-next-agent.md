@@ -12,7 +12,7 @@
 - Shared Slang fullscreen infrastructure emits GLSL for OpenGL RHI and SPIR-V for Vulkan.
 - Tone mapping, gamma correction, FXAA, color grading, and chromatic aberration run through `BasicRenderer` on both RHI backends.
 - `RhiPostProcessAdapter` is the typed boundary from editor-facing `IPostProcessEffect` objects to backend-neutral packets.
-- Chromatic aberration is registered in the effect factory/dropdown and has a legacy OpenGL compatibility implementation.
+- Chromatic aberration is registered in the effect factory/dropdown and had a legacy OpenGL compatibility implementation (since removed with the legacy renderer).
 
 ## Required implementation order
 
@@ -61,7 +61,7 @@ Migrate SSAO/LSAO, SSR, SSGI, volumetric fog, depth of field, and motion blur. E
 - TAA owns double-buffered color/depth/normal history through graph history resources.
 - Temporal SSAO/SSGI histories use the same invalidation service.
 - At this handoff, LPV, RSM and VCTGI awaited volume resource support. VCTGI has
-  since been implemented; LPV/RSM still have no RHI post-process adapters.
+  since been implemented; LPV and RSM were removed instead of ported.
 
 ### 7. Verification
 

@@ -17,7 +17,7 @@ allocates or falls back to cascades. Unsupported devices, missing shaders,
 draw-chunk overflow, and vertex-deforming or masked shader graphs disable
 directional shadows with a profiler diagnostic. Opaque fragment-only graphs and
 standard texture alpha masks are supported. Select Cascaded explicitly when
-needed. The legacy OpenGL render-pass pipeline retains its cascade implementation.
+needed.
 This directional shadow-method setting does not select point/spot shadow paths.
 See [default behavior](VSM_DEFAULT.md).
 

@@ -17,7 +17,7 @@ its own:
 | Contact shadows | `shaders/ContactShadows.slang`, `ScreenSpaceContactShadows` | Light > **Contact Shadow Length** |
 | Tone mapping curves | `shaders/ColorOperations.slang` `toneMapCurve` | Tone Mapping > **Curve** |
 
-They work on the Vulkan and OpenGL RHI renderers; the legacy OpenGL renderer has none of them.
+They work on both the Vulkan and OpenGL renderers.
 
 ## Microfacet BRDF
 
@@ -86,7 +86,7 @@ the form factor times its albedo.
 Rectangles pack after points and spots in the 32 local-light slots, reusing their lanes (`pointDirectionSpot.w` = 2,
 `pointShape` = half-height and right axis times half-width; `localLightType` decodes them). Limits: no shadow maps
 (contact shadows apply); shader-graph custom lighting and voxel GI see a point at the centre with a hemispherical
-cosine; the legacy OpenGL renderer, particles and the probe baker treat them as point lights.
+cosine; particles and the probe baker treat them as point lights.
 
 ## Material ambient occlusion
 

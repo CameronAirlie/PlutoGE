@@ -265,14 +265,15 @@ target_link_libraries(PlutoGEModelAssetTests PRIVATE
 
 add_test(NAME PlutoGEModelAssetTests COMMAND PlutoGEModelAssetTests)
 
-add_executable(PlutoGEPostProcessInitializationTests
-    PostProcessInitializationTests.cpp
+# Runs the Slang-generated VCT shaders through tests/GlTestProgram.h to check their maths.
+add_executable(PlutoGEVctShaderTests
+    VctShaderTests.cpp
 )
 
-pluto_link_engine(PlutoGEPostProcessInitializationTests)
+pluto_link_engine(PlutoGEVctShaderTests)
 
-add_test(NAME PlutoGEPostProcessInitializationTests COMMAND PlutoGEPostProcessInitializationTests)
-add_test(NAME PlutoGEVctEmissionCoverageTests COMMAND PlutoGEPostProcessInitializationTests --vct-coverage)
+add_test(NAME PlutoGEVctProbeCacheTests COMMAND PlutoGEVctShaderTests)
+add_test(NAME PlutoGEVctEmissionCoverageTests COMMAND PlutoGEVctShaderTests --vct-coverage)
 
 add_executable(PlutoGERuntimeUITests
     RuntimeUITests.cpp
@@ -569,7 +570,7 @@ target_include_directories(PlutoGERmlFontRasterScaleTests PRIVATE ${CMAKE_SOURCE
 target_compile_features(PlutoGERmlFontRasterScaleTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGERmlFontRasterScaleTests COMMAND PlutoGERmlFontRasterScaleTests)
 pluto_link_engine(PlutoGERmlUiAntialiasingTests)
-target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Platform)
+target_link_libraries(PlutoGERmlUiAntialiasingTests PRIVATE PlutoGE::Platform RmlUi::Core)
 target_compile_definitions(PlutoGERmlUiAntialiasingTests PRIVATE PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 add_test(NAME PlutoGEVulkanUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests)
 add_test(NAME PlutoGEOpenGLUiAntialiasing COMMAND PlutoGERmlUiAntialiasingTests --opengl)
@@ -754,7 +755,7 @@ target_compile_features(PlutoGERmlDocumentEditSessionTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGERmlDocumentEditSessionTests COMMAND PlutoGERmlDocumentEditSessionTests)
 if(TARGET PlutoGEEditorUI)
     add_executable(PlutoGERmlDocumentPreviewTests RmlDocumentPreviewTests.cpp)
-    target_link_libraries(PlutoGERmlDocumentPreviewTests PRIVATE PlutoGE::EditorUI)
+    target_link_libraries(PlutoGERmlDocumentPreviewTests PRIVATE PlutoGE::EditorUI RmlUi::Core)
     target_compile_definitions(PlutoGERmlDocumentPreviewTests PRIVATE
         PLUTO_RML_TEST_FONT="${CMAKE_SOURCE_DIR}/editor/resources/fonts/MartianMono-StdRg.ttf")
     pluto_link_engine(PlutoGERmlDocumentPreviewTests)
@@ -1183,13 +1184,13 @@ foreach(target IN ITEMS
         PlutoGENativeUIRenderTests
         PlutoGEOpenGLRhiTests
         PlutoGEPostProcessEditorTests
-        PlutoGEPostProcessInitializationTests
         PlutoGERhiOceanTests
         PlutoGERmlDocumentPreviewTests
         PlutoGERmlUiAntialiasingTests
         PlutoGERuntimeProfilerTests
         PlutoGESceneLoadingTests
         PlutoGEUIThemeEditorTests
+        PlutoGEVctShaderTests
         PlutoGEVulkanPresentationTests
     )
     if (TARGET ${target})

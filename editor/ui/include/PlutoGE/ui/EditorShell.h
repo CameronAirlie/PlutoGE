@@ -119,8 +119,7 @@ namespace PlutoGE::ui
             const std::string &GetPostProcessPresetAssetReference() const { return postProcess.GetPresetReference(); }
             // Re-applies the preset if it was saved or previewed since it was last applied.
             bool RefreshPostProcessPreset();
-            // Destroys the effects, forgetting the preset. Effects can own OpenGL objects, so the old context must
-            // still be current.
+            // Destroys the effects, forgetting the preset.
             void ClearPostProcessEffects() { postProcess.SetInlineEffects({}); }
 
             bool AddPostProcessEffectByType(std::string_view typeName)

@@ -254,7 +254,7 @@ namespace PlutoGE::render::rhi::opengl
             }
 
             glViewport(0, 0, static_cast<GLsizei>(info.width), static_cast<GLsizei>(info.height));
-            // The editor shares this context with ImGui and the legacy renderer.
+            // The editor shares this context with ImGui.
             // Never inherit a UI clip rectangle into an RHI render pass.
             glDisable(GL_SCISSOR_TEST);
             GLbitfield clearMask = 0;

@@ -967,117 +967,99 @@ PROPERTY	TransparentBackground	4	false	0
 PROPERTY	FilterLightsByTags	4	false	0
 PROPERTY	RenderRuntimeUI	4	true	0
 PROPERTY	PostProcessPresetAsset	2		0
-PROPERTY	PostProcessEffectCount	1	11	0
+PROPERTY	PostProcessEffectCount	1	9	0
 PROPERTY	PostProcessEffects.0.Type	2	SSGI	0
 PROPERTY	PostProcessEffects.0.Enabled	4	false	0
 PROPERTY	PostProcessEffects.0.Params.Intensity	0	1.350000	0
 PROPERTY	PostProcessEffects.0.Params.Ray Distance	0	7.500000	0
-PROPERTY	PostProcessEffects.0.Params.Step Size	0	0.080000	0
 PROPERTY	PostProcessEffects.0.Params.Thickness	0	0.450000	0
 PROPERTY	PostProcessEffects.0.Params.Samples	1	6	0
 PROPERTY	PostProcessEffects.0.Params.Steps	1	10	0
 PROPERTY	PostProcessEffects.0.Params.Blur Radius	1	2	0
-PROPERTY	PostProcessEffects.0.Params.Depth Weight	0	20.000000	0
-PROPERTY	PostProcessEffects.0.Params.Normal Weight	0	12.000000	0
 PROPERTY	PostProcessEffects.0.Params.Temporal Blend	0	0.880000	0
 PROPERTY	PostProcessEffects.0.Params.History Depth Threshold	0	0.030000	0
 PROPERTY	PostProcessEffects.0.Params.History Normal Threshold	0	0.900000	0
 PROPERTY	PostProcessEffects.0.Params.Half Resolution	4	true	0
 PROPERTY	PostProcessEffects.0.Params.Indirect Only	4	false	0
-PROPERTY	PostProcessEffects.1.Type	2	LPV	0
-PROPERTY	PostProcessEffects.1.Enabled	4	false	0
-PROPERTY	PostProcessEffects.1.Params.Grid Resolution	1	16	0
-PROPERTY	PostProcessEffects.1.Params.Horizontal Coverage	0	96.000000	0
-PROPERTY	PostProcessEffects.1.Params.Vertical Coverage	0	40.000000	0
-PROPERTY	PostProcessEffects.1.Params.Forward Bias	0	0.350000	0
-PROPERTY	PostProcessEffects.1.Params.Recenter Hysteresis	0	0.330000	0
-PROPERTY	PostProcessEffects.2.Type	2	RSM	0
-PROPERTY	PostProcessEffects.2.Enabled	4	false	0
-PROPERTY	PostProcessEffects.2.Params.Quality	6	2	3	Low	Medium	High
-PROPERTY	PostProcessEffects.2.Params.Intensity	0	1.000000	0
-PROPERTY	PostProcessEffects.2.Params.Sample Radius	0	256.000000	0
-PROPERTY	PostProcessEffects.2.Params.Max Distance	0	96.000000	0
-PROPERTY	PostProcessEffects.2.Params.Normal Bias	0	0.050000	0
-PROPERTY	PostProcessEffects.2.Params.Debug Output	6	0	5	Indirect	Center Flux	Occupied Samples	Coverage	Sample Count
-PROPERTY	PostProcessEffects.3.Type	2	AutoExposure	0
-PROPERTY	PostProcessEffects.3.Enabled	4	true	0
-PROPERTY	PostProcessEffects.3.Params.Key Value	0	0.200000	0
-PROPERTY	PostProcessEffects.3.Params.Min Exposure	0	0.100000	0
-PROPERTY	PostProcessEffects.3.Params.Max Exposure	0	1.500000	0
-PROPERTY	PostProcessEffects.3.Params.Adapt Up	0	0.180000	0
-PROPERTY	PostProcessEffects.3.Params.Adapt Down	0	0.060000	0
-PROPERTY	PostProcessEffects.4.Type	2	TAA	0
-PROPERTY	PostProcessEffects.4.Enabled	4	true	0
-PROPERTY	PostProcessEffects.4.Params.Quality	6	0	2	Balanced	High
-PROPERTY	PostProcessEffects.4.Params.History Weight	0	0.900000	0
-PROPERTY	PostProcessEffects.4.Params.Stationary History Weight	0	0.940000	0
-PROPERTY	PostProcessEffects.4.Params.Motion History Weight	0	0.550000	0
-PROPERTY	PostProcessEffects.4.Params.Sharpening	0	0.180000	0
-PROPERTY	PostProcessEffects.4.Params.Depth Rejection Threshold	0	0.003500	0
-PROPERTY	PostProcessEffects.4.Params.Normal Rejection Threshold	0	0.820000	0
-PROPERTY	PostProcessEffects.4.Params.Velocity Rejection Scale	0	80.000000	0
-PROPERTY	PostProcessEffects.4.Params.Jitter Strength	0	1.000000	0
-PROPERTY	PostProcessEffects.4.Params.Jitter Enabled	4	true	0
-PROPERTY	PostProcessEffects.4.Params.Jitter Debug	4	false	0
-PROPERTY	PostProcessEffects.5.Type	2	MotionBlur	0
+PROPERTY	PostProcessEffects.1.Type	2	AutoExposure	0
+PROPERTY	PostProcessEffects.1.Enabled	4	true	0
+PROPERTY	PostProcessEffects.1.Params.Key Value	0	0.200000	0
+PROPERTY	PostProcessEffects.1.Params.Min Exposure	0	0.100000	0
+PROPERTY	PostProcessEffects.1.Params.Max Exposure	0	1.500000	0
+PROPERTY	PostProcessEffects.1.Params.Adapt Up	0	0.180000	0
+PROPERTY	PostProcessEffects.1.Params.Adapt Down	0	0.060000	0
+PROPERTY	PostProcessEffects.2.Type	2	TAA	0
+PROPERTY	PostProcessEffects.2.Enabled	4	true	0
+PROPERTY	PostProcessEffects.2.Params.Quality	6	0	2	Balanced	High
+PROPERTY	PostProcessEffects.2.Params.History Weight	0	0.900000	0
+PROPERTY	PostProcessEffects.2.Params.Stationary History Weight	0	0.940000	0
+PROPERTY	PostProcessEffects.2.Params.Motion History Weight	0	0.550000	0
+PROPERTY	PostProcessEffects.2.Params.Sharpening	0	0.180000	0
+PROPERTY	PostProcessEffects.2.Params.Depth Rejection Threshold	0	0.003500	0
+PROPERTY	PostProcessEffects.2.Params.Normal Rejection Threshold	0	0.820000	0
+PROPERTY	PostProcessEffects.2.Params.Velocity Rejection Scale	0	80.000000	0
+PROPERTY	PostProcessEffects.2.Params.Jitter Strength	0	1.000000	0
+PROPERTY	PostProcessEffects.2.Params.Jitter Enabled	4	true	0
+PROPERTY	PostProcessEffects.2.Params.Jitter Debug	4	false	0
+PROPERTY	PostProcessEffects.3.Type	2	MotionBlur	0
+PROPERTY	PostProcessEffects.3.Enabled	4	false	0
+PROPERTY	PostProcessEffects.3.Params.Quality	6	0	3	Balanced	High	Cinematic
+PROPERTY	PostProcessEffects.3.Params.Strength	0	1.000000	0
+PROPERTY	PostProcessEffects.3.Params.Shutter Fraction	0	0.500000	0
+PROPERTY	PostProcessEffects.3.Params.Max Blur Radius	0	20.000000	0
+PROPERTY	PostProcessEffects.3.Params.Velocity Threshold	0	0.350000	0
+PROPERTY	PostProcessEffects.3.Params.Depth Separation Scale	0	40.000000	0
+PROPERTY	PostProcessEffects.3.Params.Center Weight	0	1.000000	0
+PROPERTY	PostProcessEffects.4.Type	2	DepthOfField	0
+PROPERTY	PostProcessEffects.4.Enabled	4	false	0
+PROPERTY	PostProcessEffects.4.Params.Quality	6	1	3	Balanced	High	Cinematic
+PROPERTY	PostProcessEffects.4.Params.Auto Focus	4	true	0
+PROPERTY	PostProcessEffects.4.Params.Focus Distance	0	8.000000	0
+PROPERTY	PostProcessEffects.4.Params.Focal Length (mm)	0	50.000000	0
+PROPERTY	PostProcessEffects.4.Params.F-Stop	0	2.800000	0
+PROPERTY	PostProcessEffects.4.Params.Sensor Width (mm)	0	36.000000	0
+PROPERTY	PostProcessEffects.4.Params.Max Blur Radius	0	5.000000	0
+PROPERTY	PostProcessEffects.4.Params.Near Blur Scale	0	1.250000	0
+PROPERTY	PostProcessEffects.4.Params.Far Blur Scale	0	1.000000	0
+PROPERTY	PostProcessEffects.4.Params.Focus Speed	0	5.000000	0
+PROPERTY	PostProcessEffects.4.Params.Focus X	0	0.500000	0
+PROPERTY	PostProcessEffects.4.Params.Focus Y	0	0.500000	0
+PROPERTY	PostProcessEffects.4.Params.Focus Window	0	0.080000	0
+PROPERTY	PostProcessEffects.5.Type	2	LensFlare	0
 PROPERTY	PostProcessEffects.5.Enabled	4	false	0
-PROPERTY	PostProcessEffects.5.Params.Quality	6	0	3	Balanced	High	Cinematic
-PROPERTY	PostProcessEffects.5.Params.Strength	0	1.000000	0
-PROPERTY	PostProcessEffects.5.Params.Shutter Fraction	0	0.500000	0
-PROPERTY	PostProcessEffects.5.Params.Max Blur Radius	0	20.000000	0
-PROPERTY	PostProcessEffects.5.Params.Velocity Threshold	0	0.350000	0
-PROPERTY	PostProcessEffects.5.Params.Depth Separation Scale	0	40.000000	0
-PROPERTY	PostProcessEffects.5.Params.Center Weight	0	1.000000	0
-PROPERTY	PostProcessEffects.6.Type	2	DepthOfField	0
-PROPERTY	PostProcessEffects.6.Enabled	4	false	0
-PROPERTY	PostProcessEffects.6.Params.Quality	6	1	3	Balanced	High	Cinematic
-PROPERTY	PostProcessEffects.6.Params.Auto Focus	4	true	0
-PROPERTY	PostProcessEffects.6.Params.Focus Distance	0	8.000000	0
-PROPERTY	PostProcessEffects.6.Params.Focal Length (mm)	0	50.000000	0
-PROPERTY	PostProcessEffects.6.Params.F-Stop	0	2.800000	0
-PROPERTY	PostProcessEffects.6.Params.Sensor Width (mm)	0	36.000000	0
-PROPERTY	PostProcessEffects.6.Params.Max Blur Radius	0	5.000000	0
-PROPERTY	PostProcessEffects.6.Params.Near Blur Scale	0	1.250000	0
-PROPERTY	PostProcessEffects.6.Params.Far Blur Scale	0	1.000000	0
-PROPERTY	PostProcessEffects.6.Params.Focus Speed	0	5.000000	0
-PROPERTY	PostProcessEffects.6.Params.Focus X	0	0.500000	0
-PROPERTY	PostProcessEffects.6.Params.Focus Y	0	0.500000	0
-PROPERTY	PostProcessEffects.6.Params.Focus Window	0	0.080000	0
-PROPERTY	PostProcessEffects.7.Type	2	LensFlare	0
-PROPERTY	PostProcessEffects.7.Enabled	4	false	0
-PROPERTY	PostProcessEffects.7.Params.Texture Path	2		0
-PROPERTY	PostProcessEffects.7.Params.Intensity	0	0.350000	0
-PROPERTY	PostProcessEffects.7.Params.Threshold	0	1.000000	0
-PROPERTY	PostProcessEffects.7.Params.Scale	0	1.000000	0
-PROPERTY	PostProcessEffects.7.Params.Ghost Dispersal	0	0.550000	0
-PROPERTY	PostProcessEffects.8.Type	2	ToneMapping	0
+PROPERTY	PostProcessEffects.5.Params.Texture Path	2		0
+PROPERTY	PostProcessEffects.5.Params.Intensity	0	0.350000	0
+PROPERTY	PostProcessEffects.5.Params.Threshold	0	1.000000	0
+PROPERTY	PostProcessEffects.5.Params.Scale	0	1.000000	0
+PROPERTY	PostProcessEffects.5.Params.Ghost Dispersal	0	0.550000	0
+PROPERTY	PostProcessEffects.6.Type	2	ToneMapping	0
+PROPERTY	PostProcessEffects.6.Enabled	4	true	0
+PROPERTY	PostProcessEffects.6.Params.Exposure	0	1.000000	0
+PROPERTY	PostProcessEffects.6.Params.Gamma	0	2.200000	0
+PROPERTY	PostProcessEffects.7.Type	2	ColorGrading	0
+PROPERTY	PostProcessEffects.7.Enabled	4	true	0
+PROPERTY	PostProcessEffects.7.Params.Preset	6	0	9	Custom	Neutral	Filmic	Cinematic	Teal & Orange	Vintage	Bleach Bypass	Noir	Dreamy
+PROPERTY	PostProcessEffects.7.Params.Brightness	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Contrast	0	1.000000	0
+PROPERTY	PostProcessEffects.7.Params.Saturation	0	1.000000	0
+PROPERTY	PostProcessEffects.7.Params.Temperature	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Tint	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Vibrance	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Lift	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Gamma	0	1.000000	0
+PROPERTY	PostProcessEffects.7.Params.Gain	0	1.000000	0
+PROPERTY	PostProcessEffects.7.Params.Fade	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Vignette	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Film Grain	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Shadow Color	5	0.000000,0.550000,0.480000,1.0	0
+PROPERTY	PostProcessEffects.7.Params.Shadow Color Strength	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Highlight Color	5	1.000000,0.360000,0.080000,1.0	0
+PROPERTY	PostProcessEffects.7.Params.Highlight Color Strength	0	0.000000	0
+PROPERTY	PostProcessEffects.7.Params.Split Balance	0	0.500000	0
+PROPERTY	PostProcessEffects.8.Type	2	SceneComposite	0
 PROPERTY	PostProcessEffects.8.Enabled	4	true	0
-PROPERTY	PostProcessEffects.8.Params.Exposure	0	1.000000	0
-PROPERTY	PostProcessEffects.8.Params.Gamma	0	2.200000	0
-PROPERTY	PostProcessEffects.9.Type	2	ColorGrading	0
-PROPERTY	PostProcessEffects.9.Enabled	4	true	0
-PROPERTY	PostProcessEffects.9.Params.Preset	6	0	9	Custom	Neutral	Filmic	Cinematic	Teal & Orange	Vintage	Bleach Bypass	Noir	Dreamy
-PROPERTY	PostProcessEffects.9.Params.Brightness	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Contrast	0	1.000000	0
-PROPERTY	PostProcessEffects.9.Params.Saturation	0	1.000000	0
-PROPERTY	PostProcessEffects.9.Params.Temperature	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Tint	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Vibrance	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Lift	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Gamma	0	1.000000	0
-PROPERTY	PostProcessEffects.9.Params.Gain	0	1.000000	0
-PROPERTY	PostProcessEffects.9.Params.Fade	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Vignette	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Film Grain	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Shadow Color	5	0.000000,0.550000,0.480000,1.0	0
-PROPERTY	PostProcessEffects.9.Params.Shadow Color Strength	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Highlight Color	5	1.000000,0.360000,0.080000,1.0	0
-PROPERTY	PostProcessEffects.9.Params.Highlight Color Strength	0	0.000000	0
-PROPERTY	PostProcessEffects.9.Params.Split Balance	0	0.500000	0
-PROPERTY	PostProcessEffects.10.Type	2	SceneComposite	0
-PROPERTY	PostProcessEffects.10.Enabled	4	true	0
-PROPERTY	PostProcessEffects.10.Params.Enable SSGI	4	true	0
-PROPERTY	PostProcessEffects.10.Params.Indirect Debug View	6	0	5	None	LPV Only	SSGI Only	Combined Indirect	RSM Only
+PROPERTY	PostProcessEffects.8.Params.Enable SSGI	4	true	0
+PROPERTY	PostProcessEffects.8.Params.Indirect Debug View	6	0	3	None	SSGI Only	Combined Indirect
 END_COMPONENT
 ENTITY	209	0	0	ArenaTV	0.000000,17.891432,-19.821785	21.019314,0.000000,0.000000	16.426798,16.426794,16.426794
 COMPONENT	209	MeshComponent	1

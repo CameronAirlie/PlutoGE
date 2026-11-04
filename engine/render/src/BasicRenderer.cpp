@@ -1775,7 +1775,7 @@ namespace PlutoGE::render
         // OpenGL rejects indirect draws from an index buffer bound at an offset, which arena meshes need.
         if (enabled && m_device && m_device->GetApi() == rhi::GraphicsApi::Vulkan)
         {
-            if (!m_geometryArena) m_geometryArena = std::make_unique<GeometryArena>(*m_device, sizeof(BasicVertex));
+            if (!m_geometryArena) m_geometryArena = std::make_unique<GeometryArena>(*m_device, std::uint32_t{sizeof(BasicVertex)});
         }
         else
             m_geometryArena.reset();   // Meshes already in it keep their ranges alive.
@@ -2638,7 +2638,7 @@ namespace PlutoGE::render
         core::CpuScope instanceBinningScope("Instance preparation and binning", core::CpuCategory::Rendering);
         auto instancePreparationEnd = instanceBinningStart;
         // LODs and impostor hand-overs are chosen on the displayed image, as the scene's mesh LODs are
-        // (Renderer::UpdateRenderCommandLods): an upscaler's lower render height must not coarsen them.
+        // (RenderSceneFrontend::UpdateRenderCommandLods): an upscaler's lower render height must not coarsen them.
         const InstanceView instanceView(viewProjection, lighting.cameraPosition, m_postProcessProjection[1][1],
                                         static_cast<float>(std::max(m_outputHeight, m_height)), lighting.foliageDetail);
         if (m_instanceStorage)

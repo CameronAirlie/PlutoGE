@@ -19,7 +19,8 @@ namespace PlutoGE::render
 
     // Basic RmlUi renderer used by both RHI backends. It intentionally
     // implements RmlUi's core geometry, texture, transform, and scissor
-    // and clip-mask contract; advanced layer filters remain on the legacy GL3 renderer.
+    // and clip-mask contract. Layer filters, shaders and masks are not rendered;
+    // docs/RMLUI_AUTHORING.md lists what parses but does not draw.
     class RmlUiRhiRenderer final : public Rml::RenderInterface
     {
     public:

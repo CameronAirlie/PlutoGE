@@ -96,6 +96,11 @@ profile can now distinguish backend audio, occlusion queries, and true submissio
 
 ## 1080p GPU pass
 
+> This pass optimised the legacy OpenGL renderer, which has since been removed (see the
+> [legacy OpenGL removal plan](legacy-opengl-removal-plan.md)). The items about the world-position
+> G-buffer attachment, OpenGL state caching, `Shader` uniform names and uniform buffers, and
+> the LPV and RSM effects, went with it.
+
 - [ ] Remove the redundant `RGB32F` world-position G-buffer attachment after migrating every
   consumer to depth reconstruction. Ambient lighting, direct lighting, SSR, and decals have
   been migrated; LPV, SSGI, RSM, VCTGI, and shared post-process bindings remain.

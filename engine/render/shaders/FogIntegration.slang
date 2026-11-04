@@ -1,8 +1,7 @@
 #ifndef PLUTO_FOG_INTEGRATION
 #define PLUTO_FOG_INTEGRATION
 
-// Scalar-only helpers are also embedded in the legacy GLSL path. Density is
-// extinction per world unit at heightOffset; sunlight and ambient use the same
+// Density is extinction per world unit at heightOffset; sunlight and ambient use the same
 // integral so the analytical tail cannot introduce a second fog layer.
 float heightFogOpticalDepth(float density, float falloff, float heightOffset,
                            float startHeight, float directionY, float distance)

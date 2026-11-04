@@ -3,7 +3,6 @@
 Existing `.plutomaterial` assets with `SurfaceType=Glass` now render through the
 backend-neutral RHI transparency pass on OpenGL and Vulkan. No asset conversion
 is required. Standard materials using `AlphaMode=Blend` also use the pass.
-The legacy OpenGL renderer remains available for compatibility.
 
 ## Material setup
 

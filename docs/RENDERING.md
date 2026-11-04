@@ -27,9 +27,9 @@ reference SSR technique's **Adaptive Rays** setting is described in
 
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
 Both backends render scenes through `RhiSceneRenderer`/`BasicRenderer`, in the
-editor and the standalone runtime. The legacy OpenGL render-pass pipeline no
-longer runs and is being deleted; see the
-[legacy OpenGL removal plan](legacy-opengl-removal-plan.md).
+editor and the standalone runtime. It is the only renderer: the legacy
+OpenGL render-pass pipeline has been removed (see the
+[legacy OpenGL removal plan](legacy-opengl-removal-plan.md)).
 
 CMake finds `slangc` and builds `PlutoGERhiShaders`, generating GLSL and SPIR-V
 from shared Slang sources. Without the compiler, configure warns and skips
@@ -97,8 +97,7 @@ SSR strength is bounded to [0,1] and retains the existing roughness fade. Diffus
 AO excludes environmental specular, so AO cannot invalidate the replaceable
 fallback. Directional specular occlusion is not supplied by diffuse AO.
 
-These changes apply to Vulkan and OpenGL RHI rendering. The retained legacy
-OpenGL lighting-pass implementation is separate. SSR still cannot discover
+These changes apply to Vulkan and OpenGL RHI rendering. SSR still cannot discover
 occluded or off-screen geometry: local reflection captures remain necessary for
 those cases. Glass keeps its separate refraction/reflection compositor and uses
 the same filtered sky fallback.

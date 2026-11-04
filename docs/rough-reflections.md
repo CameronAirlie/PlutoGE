@@ -1,8 +1,7 @@
 # Rough screen-space reflections
 
 SSR integrates a single-scattering isotropic GGX microfacet reflection lobe with
-16 deterministic stratified directions per shaded pixel (per half-resolution
-pixel in the legacy renderer). Perceptual roughness maps to alpha = roughness^2.
+16 deterministic stratified directions per shaded pixel. Perceptual roughness maps to alpha = roughness^2.
 Each sample is weighted by BRDF * N.L / PDF, including Smith masking and Schlick
 Fresnel. Metal F0 comes from albedo; dielectric F0 is 0.04. Roughness changes the
 angular distribution. An artistic multiplier of (1 - roughness) fades SSR to

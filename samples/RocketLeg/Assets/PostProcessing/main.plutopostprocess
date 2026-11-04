@@ -49,16 +49,13 @@ Parameter 0 "Secondary Bounce" "1.000000" 0
 Parameter 1 "Voxelization Budget" "8" 0
 Parameter 4 "Debug View" "0" 4 "None" "Irradiance" "Indirect Lighting" "Probes"
 Parameter 0 "Probe Debug Radius" "0.150000" 0
-Effect "SSGI" 1 14
+Effect "SSGI" 1 11
 Parameter 0 "Intensity" "1.000000" 0
 Parameter 0 "Ray Distance" "4.000000" 0
-Parameter 0 "Step Size" "0.080000" 0
 Parameter 0 "Thickness" "0.450000" 0
 Parameter 1 "Samples" "2" 0
 Parameter 1 "Steps" "16" 0
 Parameter 1 "Blur Radius" "2" 0
-Parameter 0 "Depth Weight" "20.000000" 0
-Parameter 0 "Normal Weight" "12.000000" 0
 Parameter 0 "Temporal Blend" "0.880000" 0
 Parameter 0 "History Depth Threshold" "0.030000" 0
 Parameter 0 "History Normal Threshold" "0.900000" 0
@@ -155,4 +152,4 @@ Parameter 0 "Highlight Color Strength" "0.000000" 0
 Parameter 0 "Split Balance" "0.500000" 0
 Effect "SceneComposite" 1 2
 Parameter 3 "Enable SSGI" "false" 0
-Parameter 4 "Indirect Debug View" "0" 5 "None" "LPV Only" "SSGI Only" "Combined Indirect" "RSM Only"
+Parameter 4 "Indirect Debug View" "0" 3 "None" "SSGI Only" "Combined Indirect"

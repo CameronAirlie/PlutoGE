@@ -2,7 +2,7 @@
 
 Shader graphs can replace direct lighting using ordinary nodes. Connect a colour to the **Direct Lighting** pin on the Output node; leave it disconnected to use standard PBR. Keep **Unlit surface** disabled. The graph is evaluated for each active directional/point light, and the renderer adds those contributions together. Ambient/environment lighting and emission are added separately.
 
-This runs in the OpenGL and Vulkan **RHI** renderers, including the material editor's live preview. The legacy deferred renderer keeps PBR surface lighting; it does not evaluate the Direct Lighting branch. Glass keeps its physical lighting/transmission model. Shadow casting, voxelization and baking use the surface outputs, not the custom light response.
+This runs in the OpenGL and Vulkan **RHI** renderers, including the material editor's live preview. Glass keeps its physical lighting/transmission model. Shadow casting, voxelization and baking use the surface outputs, not the custom light response.
 
 ## Lighting inputs
 

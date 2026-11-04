@@ -1,7 +1,6 @@
 // Shader-graph bytecode layout and instruction semantics. Shared by the
 // bytecode interpreter (ShaderGraphEvaluation.slang), per-graph generated code
-// (ShaderGraphCodegen.cpp) and the legacy GLSL path, which translates this file
-// textually. Keep it free of backend resources and GLSL-incompatible syntax.
+// (ShaderGraphCodegen.cpp). Keep it free of backend resources.
 float2 shaderGraphScreenUV(float3 worldPosition);
 struct ShaderGraphData
 {

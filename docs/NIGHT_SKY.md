@@ -58,8 +58,6 @@ and sets `directionalIsMoon` when the moon has the light. Atmosphere passes
   pinch at the poles. Each is sized to the pixel footprint with constant
   flux. Very wide fields of view at low resolution under-sample them.
 - Twinkle uses the post-process time, which wraps about every 68 seconds.
-- The legacy OpenGL render-pass pipeline places the moon with this model,
-  but keeps its simpler look and does not light the scene with the moon.
 
 ## Extension points
 

@@ -32,16 +32,6 @@ namespace
             throw std::runtime_error(message);
     }
 
-    class FakeEffect final : public render::IPostProcessEffect
-    {
-    public:
-        explicit FakeEffect(std::string type) : m_type(std::move(type)) {}
-        std::string GetTypeName() const override { return m_type; }
-
-    private:
-        std::string m_type;
-    };
-
     CameraComponent *AddCamera(Scene &scene, CameraRenderType type, Entity *parent = nullptr)
     {
         auto *entity = scene.AddEntity(std::make_unique<Entity>(), parent);
@@ -164,7 +154,7 @@ namespace
         overlay->SetTagFilter(CameraTagFilter({"Weapon"}, {}));
         overlay->GetCamera()->SetFOV(60.0f);
         for (const char *type : {"AutoExposure", "TAA", "MotionBlur", "ToneMapping", "FXAA"})
-            overlay->EmplacePostProcessEffect<FakeEffect>(type);
+            Require(overlay->AddPostProcessEffectByType(type), "Overlay test effects must be registered");
 
         const std::array commands{
             render::RenderCommand{.ownerEntity = world->GetID()},

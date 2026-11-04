@@ -1,7 +1,6 @@
 #pragma once
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -17,7 +16,7 @@
 
 // Disabling a post-process effect must remove all of its cost, not only its output: a camera holding a disabled
 // effect must record exactly the GPU work, and produce exactly the image, of the same camera without it. Checked for
-// every effect type the RHI renderer supports, alone and all together. GPU scopes are compared when the backend reports
+// every registered effect type, alone and all together. GPU scopes are compared when the backend reports
 // them (`requireGpuScopes` fails the check when it does not).
 template <class Device>
 void CheckDisabledPostProcessEffects(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders,
@@ -107,7 +106,6 @@ void CheckDisabledPostProcessEffects(Device &device, const PlutoGE::render::Basi
     std::vector<std::string> checked;
     for (const auto &type : GetRegisteredPostProcessEffectTypes())
     {
-        if (!IsRhiPostProcessEffectSupported(type)) continue;
         auto effect = CreatePostProcessEffect(type);
         require(effect != nullptr, "Could not create post-process effect " + type);
         effect->SetEnabled(false);

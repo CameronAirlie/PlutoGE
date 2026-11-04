@@ -1,6 +1,5 @@
 #include "PlutoGE/ui/postprocess/PostProcessViews.h"
 
-#include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/ui/postprocess/PostProcessPresetSession.h"
 
 #include <algorithm>
@@ -87,8 +86,6 @@ namespace PlutoGE::ui::postprocess
             }
             if (const auto [first, inserted] = firstOfType.emplace(effect.typeName, index); !inserted)
                 add(Severity::Warning, index, name + " is in the stack more than once. Remove the extra copy.");
-            if (effect.enabled && !render::IsRhiPostProcessEffectSupported(effect.typeName))
-                add(Severity::Note, index, name + " only works with the legacy OpenGL renderer; the scene renderer ignores it.");
         }
 
         if (!enabled("ToneMapping"))

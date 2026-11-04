@@ -1,6 +1,6 @@
 # RHI particles, point lights, and thumbnails
 
-The editor and runtime pass the scene to `RhiSceneRenderer`, which collects enabled point lights and particle systems. Legacy OpenGL rendering remains available, while the RHI path uses portable vertex buffers and Slang shaders.
+The editor and runtime pass the scene to `RhiSceneRenderer`, which collects enabled point lights and particle systems. It uses portable vertex buffers and Slang shaders.
 
 Particles use the existing CPU simulator, including collisions and sub-emitters. Local-space particles follow emitter transforms. Rendering preserves lifetime color/size/fades, rotation, flipbooks, soft depth intersections, volumetric smoke, directional and local smoke lighting, material emission, and trails. Particle colors are premultiplied for the RHI blend state. The particle pass runs before glass and temporal/display processing, without writing opaque depth or G-buffer attachments. GPU transform-feedback simulation is not used by this path.
 

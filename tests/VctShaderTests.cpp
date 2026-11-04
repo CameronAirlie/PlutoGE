@@ -11,7 +11,7 @@ int main(int argc, char** argv)
 {
     PlutoGE::platform::Window window;
     if (!window.Create({
-            .title = "PlutoGE post-process initialization test",
+            .title = "PlutoGE VCT shader test",
             .width = 64,
             .height = 64,
             .resizable = false,

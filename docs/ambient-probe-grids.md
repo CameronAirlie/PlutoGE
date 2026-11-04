@@ -59,8 +59,7 @@ consistently lit between coarse samples instead of imprinting the ray-map patter
 Rebake grids created before this change to obtain surface normals. Older grids
 remain readable and use approximate triangle reconstruction from ray endpoints.
 Visibility is conservative and approximate: narrow openings and closely spaced
-surfaces may need smaller spacing. The legacy OpenGL pipeline retains the older
-RGB volume sampling path.
+surfaces may need smaller spacing.
 
 The ambient-only bake snapshots current lights (including lights marked dynamic),
 emissive surfaces and the physical sky. Ordinary full-scene baking retains its

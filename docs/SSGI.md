@@ -4,8 +4,7 @@
 beside them, emissive panels light their surroundings, and corners pick up the colour of nearby surfaces. It relights
 only the part of the hemisphere its rays find blocked. Rays that miss, or leave the screen, keep the ambient light
 already there (sky, reflection captures, baked probes or [DDGI](DDGI.md)), so it layers on any of them. That is
-also why it adds nothing under an open sky. The Vulkan and OpenGL RHI renderers use the technique described here; the
-legacy OpenGL renderer keeps its older implementation.
+also why it adds nothing under an open sky.
 
 ## Using it
 

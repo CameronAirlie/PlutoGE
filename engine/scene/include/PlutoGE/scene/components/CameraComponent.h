@@ -33,7 +33,6 @@ namespace PlutoGE::scene
     {
     public:
         explicit CameraComponent(render::Camera *camera = nullptr, bool createDefaultEffects = true);
-        ~CameraComponent() override;
 
         void Update(float deltaTime) override;
 

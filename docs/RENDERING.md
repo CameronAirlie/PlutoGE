@@ -26,9 +26,10 @@ reference SSR technique's **Adaptive Rays** setting is described in
 [SSR adaptive rays and filtering](ssr-adaptive-rays-and-filter.md).
 
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
-Vulkan scene rendering uses `RhiSceneRenderer`/`BasicRenderer`; the engine also
-retains its legacy OpenGL render-pass pipeline. A feature in that legacy pipeline
-does not automatically have an RHI implementation.
+Both backends render scenes through `RhiSceneRenderer`/`BasicRenderer`, in the
+editor and the standalone runtime. The legacy OpenGL render-pass pipeline no
+longer runs and is being deleted; see the
+[legacy OpenGL removal plan](legacy-opengl-removal-plan.md).
 
 CMake finds `slangc` and builds `PlutoGERhiShaders`, generating GLSL and SPIR-V
 from shared Slang sources. Without the compiler, configure warns and skips
@@ -48,7 +49,7 @@ graphics driver is still required at runtime.
 | Voxel GI | [World cache](vct-world-cache.md) and [secondary bounce](vct-secondary-bounce.md); requires suitable scene/settings and resource support |
 | Water | [Procedural wave model and water effects](OCEAN_WATER_EFFECTS.md), including foam, ripples and caustics; not a fluid simulation |
 | Stylized materials | [Toon shaders](ToonShaders.md) and [outlines](OutlineShaders.md) |
-| Upscaling | Spatial upscaling; optional Vulkan [FSR 2](FSR2.md) and [DLSS Super Resolution](DLSS.md), subject to build flags, SDKs and hardware |
+| Upscaling | Optional Vulkan [FSR 2](FSR2.md) and [DLSS Super Resolution](DLSS.md), subject to build flags, SDKs and hardware. The Spatial setting scales the Game Viewport's render resolution with a bilinear stretch; the standalone runtime renders at native resolution |
 | UI | Native runtime UI and RmlUi, with OpenGL/Vulkan rendering integrations |
 
 ## Environmental lighting and reflection composition

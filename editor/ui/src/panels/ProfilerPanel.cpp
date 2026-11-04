@@ -357,7 +357,6 @@ namespace PlutoGE::ui
         for (const auto &scope : rhi.gpuScopes)
             ImGui::Text("%s: %.2f ms GPU, %.2f ms CPU recording", scope.name.c_str(),
                         scope.milliseconds, scope.cpuMilliseconds);
-        ImGui::Text("Renderer begin frame: %.2f ms", frameTimingStats.rendererBeginFrameMs);
         ImGui::Text("Editor UI total: %.2f ms", frameTimingStats.editorUiMs);
         ImGui::Text("ImGui frame begin: %.2f ms", timingStats.beginPanelUpdateMs);
         ImGui::Text("Editor chrome: %.2f ms", frameTimingStats.editorChromeMs);
@@ -386,7 +385,7 @@ namespace PlutoGE::ui
                         presentation.presentQueueMs);
         }
         ImGui::Text("Event polling: %.2f ms", frameTimingStats.eventPollingMs);
-        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, (selected ? selected->durationMs : m_profiler->GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
+        ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, (selected ? selected->durationMs : m_profiler->GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
         ImGui::Separator();
         ImGui::Text("ImGui render: %.2f ms", timingStats.imguiRenderMs);
         ImGui::Text("ImGui submission total: %.2f ms", timingStats.endPanelUpdateTotalMs);

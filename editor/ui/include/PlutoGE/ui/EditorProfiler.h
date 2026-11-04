@@ -40,7 +40,6 @@ namespace PlutoGE::ui
         float sceneFoliageSubmissionMs = 0.0f;
         float scenePhysicsMs = 0.0f;
         float viewportRenderMs = 0.0f;
-        float rendererBeginFrameMs = 0.0f;
         float editorUiMs = 0.0f;
         float editorChromeMs = 0.0f;
         float presentMs = 0.0f;

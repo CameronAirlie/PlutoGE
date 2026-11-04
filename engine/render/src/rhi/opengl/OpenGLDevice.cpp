@@ -669,6 +669,8 @@ namespace PlutoGE::render::rhi::opengl
         // capability-test the entry point instead of requiring core 4.5.
         if (glad_glClipControl)
             glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
+        // Filter across cube faces, as Vulkan always does, so cube sampling has no seams.
+        glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
         m_impl->context = std::make_unique<OpenGLCommandContext>(*m_impl);
     }
 

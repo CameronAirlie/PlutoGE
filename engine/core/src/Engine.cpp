@@ -295,32 +295,14 @@ namespace PlutoGE::core
             m_window.Close();
             return false;
         }
-        if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
+        m_window.SetResizeCallback([this](int width, int height)
         {
-            m_window.SetResizeCallback([this](int width, int height)
-            {
-                if (width > 0 && height > 0)
-                    static_cast<void>(m_rhiRenderService->Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
-            });
-        }
-
+            if (width > 0 && height > 0)
+                static_cast<void>(m_rhiRenderService->Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
+        });
+        // Baked lightmaps are still created as GL textures (removal plan, Phase 3).
         if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
-        {
             m_textureManager->SetWindow(&m_window);
-            render::RendererConfig rendererConfig;
-            rendererConfig.window = &m_window;
-            rendererConfig.enableProfiling = m_config.isEditorHost || m_config.enableProfiling;
-            if (!m_renderer->Initialize(rendererConfig))
-            {
-                std::cerr << "Failed to initialize renderer." << std::endl;
-                m_textureManager->SetWindow(nullptr);
-                m_rhiRenderService->Shutdown();
-                m_swapchain.reset();
-                m_renderDevice.reset();
-                m_window.Close();
-                return false;
-            }
-        }
 
         if (!m_audioSystem->Initialize())
         {
@@ -343,10 +325,6 @@ namespace PlutoGE::core
         if (m_swapchain && !m_swapchain->SetVSyncEnabled(enabled))
             return false;
         m_config.vSync = enabled;
-        // The swapchain owns actual presentation. Keep the legacy OpenGL
-        // renderer's cached state coherent for its remaining callers.
-        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
-            m_renderer->SetVSyncEnabled(enabled);
         return true;
     }
 
@@ -601,8 +579,6 @@ namespace PlutoGE::core
         scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: audio");
         m_audioSystem->Shutdown();
         scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: renderer");
-        if (!m_config.headless && m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
-            m_renderer->Shutdown();
         m_textureManager->SetWindow(nullptr);
         m_rhiRenderService->Shutdown();
         m_swapchain.reset();

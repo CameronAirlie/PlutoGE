@@ -293,6 +293,11 @@ namespace PlutoGE::ui
                                      bottomUp, extents.width, extents.height, presentHost);
     }
 
+    bool PanelManager::Present(render::RhiRenderService &hostPresenter)
+    {
+        return m_compositor && m_compositor->Present(hostPresenter);
+    }
+
     void PanelManager::EndPanelUpdate()
     {
         const auto endPanelUpdateStart = std::chrono::high_resolution_clock::now();

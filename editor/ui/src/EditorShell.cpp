@@ -2971,8 +2971,6 @@ namespace PlutoGE::ui
         window.PollEvents();
         const auto extents = window.GetExtents();
         if (extents.width <= 0 || extents.height <= 0) return;
-        const bool vulkan = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
-        m_engine.GetRenderer().BeginFrame();
         m_panelManager.BeginPanelUpdate(true);
         const auto *viewport = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Always, ImVec2(.5f, .5f));
@@ -2987,8 +2985,7 @@ namespace PlutoGE::ui
         ImGui::TextWrapped("Please wait while the build finishes.");
         ImGui::End();
         m_panelManager.EndPanelUpdate();
-        if (vulkan) static_cast<void>(m_engine.GetRhiRenderService().Present());
-        else m_engine.GetRenderer().EndFrame();
+        static_cast<void>(m_panelManager.Present(m_engine.GetRhiRenderService()));
     }
 
     bool EditorShell::BuildProjectToPath(const std::filesystem::path &destinationExecutablePath, bool headless)
@@ -3523,13 +3520,10 @@ namespace PlutoGE::ui
             for (const auto &entry : m_authoring.List(AuthoringRegistry::Kind::ProjectTemplate))
                 templates.push_back({entry.id, entry.label, entry.description, !entry.available || entry.available(*this)});
 
-            const bool vulkan = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
-            m_engine.GetRenderer().BeginFrame();
             m_panelManager.BeginPanelUpdate(false);
             const auto actions = launcher.Draw(m_recentProjects, templates, launcherError);
             m_panelManager.EndPanelUpdate();
-            if (vulkan) static_cast<void>(m_engine.GetRhiRenderService().Present());
-            else m_engine.GetRenderer().EndFrame();
+            static_cast<void>(m_panelManager.Present(m_engine.GetRhiRenderService()));
             if (window.ShouldClose()) return false;
 
             if (actions.quit)
@@ -3631,10 +3625,7 @@ namespace PlutoGE::ui
                                                 : m_engine.GetConfig().graphicsApi;
         viewportConfig2.sharedRenderDevice = m_engine.GetRenderDevice();
         if (m_project && m_project->GetManifest().runtimeUpscaler == assets::RuntimeUpscalerMode::Spatial)
-        {
             viewportConfig2.initialRenderScale = m_project->GetManifest().runtimeRenderScale;
-            viewportConfig2.initialUpscaleSharpness = m_project->GetManifest().runtimeUpscaleSharpness;
-        }
         auto viewportPanel2 = new ViewportPanel(viewportConfig2, m_gameSceneRenderService.get());
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);
@@ -3856,10 +3847,7 @@ namespace PlutoGE::ui
 #endif
             core::CpuScope profilingScope("Profiler.BeginFrame", core::CpuCategory::Other);
             const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
-            if (vulkanEditorHost)
-                renderer.BeginCpuProfilingFrame();
-            else
-                renderer.BeginProfilingFrame();
+            renderer.BeginCpuProfilingFrame();
             profilingScope.End();
             const auto profilingBeginEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
@@ -4114,14 +4102,6 @@ namespace PlutoGE::ui
                             renderer.GetSceneRenderCommandView(), *m_scene);
                         storedCapturePixels = iblCaptureComponent->SetCapturePixels(pixels);
                     }
-                    else
-                    {
-                        auto *texture = iblCaptureComponent->EnsureCaptureTexture();
-                        if (texture && renderer.CaptureSceneCubemap(entity->GetWorldPosition(),
-                                iblCaptureComponent->GetResolution(), iblCaptureComponent->GetFarPlane(),
-                                texture, m_scene->GetLights(), m_scene.get()))
-                            storedCapturePixels = iblCaptureComponent->StoreCapturePixelsFromTexture();
-                    }
                     if (!storedCapturePixels)
                     {
                         m_statusMessage = "IBL capture failed; previous capture retained.";
@@ -4192,7 +4172,6 @@ namespace PlutoGE::ui
             }
             if (shouldRenderViewport1)
             {
-                auto *sceneRenderTarget = viewportPanel->GetSceneRenderTarget();
                 ++frameTimingStats.renderedViewportCount;
                 frameTimingStats.editorViewportWidth = renderTargetWidth;
                 frameTimingStats.editorViewportHeight = renderTargetHeight;
@@ -4206,30 +4185,10 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                // A project selects its configured preview backend. Without a
-                // project, inherit the editor host backend; a Vulkan host has no
-                // initialized legacy OpenGL renderer to fall back to.
-                const bool useRhiViewport = m_project != nullptr ||
-                                            viewportGraphicsApi == render::rhi::GraphicsApi::Vulkan;
-                if (useRhiViewport)
-                    renderer.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
-                else
-                    renderer.RenderFrame(editorCameraData,
-                                         sceneRenderTarget,
-                                         m_scene ? m_scene->GetLights() : std::vector<scene::Light *>{},
-                                         &editorPostProcessEffects,
-                                         m_scene.get(),
-                                         viewportPanel->IsGridVisible(),
-                                         true);
+                renderer.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
                 viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommandView(),
                                               renderer.GetSceneRenderCommandView(),
                                               editorPostProcessEffects);
-                render::CameraData renderedEditorCameraData{};
-                if (renderer.GetLastUnjitteredCameraData(sceneRenderTarget, renderedEditorCameraData))
-                {
-                    viewportPanel->SetEditorCameraData(renderedEditorCameraData);
-                }
-                viewportPanel->PresentSceneRenderTarget();
             }
             else
             {
@@ -4272,14 +4231,8 @@ namespace PlutoGE::ui
             loadingScreenEditorPanel->PreparePreview();
             m_rmlDocumentEditor->PreparePreview();
             canvasEditorPanel->PreparePreview();
-            core::CpuScope rendererScope("Renderer.BeginFrame", core::CpuCategory::Rendering);
-            const auto beginFrameStart = std::chrono::high_resolution_clock::now();
-            renderer.BeginFrame();
-            rendererScope.End();
-            const auto beginFrameEnd = std::chrono::high_resolution_clock::now();
-            frameTimingStats.rendererBeginFrameMs = std::chrono::duration<float, std::milli>(beginFrameEnd - beginFrameStart).count();
             core::CpuScope uiScope("Editor.UI", core::CpuCategory::UI);
-            const auto editorUiStart = beginFrameEnd;
+            const auto editorUiStart = std::chrono::high_resolution_clock::now();
 
             // Reserve controller input for the game throughout play mode, even
             // when an editor window has focus or the cursor is unlocked.
@@ -5105,15 +5058,16 @@ namespace PlutoGE::ui
                                 projectRuntimeUpscaler = static_cast<assets::RuntimeUpscalerMode>(modeIndex);
                             if (temporal && projectGraphicsApi != render::rhi::GraphicsApi::Vulkan)
                                 warningText("Temporal upscaling requires the Vulkan graphics API.");
+                            if (projectRuntimeUpscaler == assets::RuntimeUpscalerMode::Spatial)
+                                warningText("Spatial upscaling applies to the Game Viewport only; the standalone runtime renders at native resolution.");
 
-                            widgets::SettingsRow("Render scale", "Internal resolution for the spatial upscaler.");
+                            widgets::SettingsRow("Render scale", "Internal resolution for the spatial upscaler, stretched bilinearly.");
                             ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial);
                             ImGui::SliderFloat("##RenderScale", &projectRuntimeRenderScale, 0.5f, 1.0f, "%.2fx");
                             ImGui::EndDisabled();
 
-                            widgets::SettingsRow("Sharpness", "Used by the spatial and FSR 2 upscalers.");
-                            ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Spatial &&
-                                                 projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Fsr2);
+                            widgets::SettingsRow("Sharpness", "Used by the FSR 2 upscaler.");
+                            ImGui::BeginDisabled(projectRuntimeUpscaler != assets::RuntimeUpscalerMode::Fsr2);
                             ImGui::SliderFloat("##Sharpness", &projectRuntimeUpscaleSharpness, 0.0f, 1.0f, "%.2f");
                             ImGui::EndDisabled();
 
@@ -5563,14 +5517,7 @@ namespace PlutoGE::ui
             core::CpuScope presentScope("Present / swap", core::CpuCategory::Wait);
             const auto presentStart = std::chrono::high_resolution_clock::now();
             frameTimingStats.vSyncEnabled = m_engine.IsVSyncEnabled();
-            if (vulkanEditorHost)
-            {
-                static_cast<void>(m_engine.GetRhiRenderService().Present());
-            }
-            else
-            {
-                renderer.EndFrame();
-            }
+            static_cast<void>(m_panelManager.Present(m_engine.GetRhiRenderService()));
             presentScope.End();
             const auto presentEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.presentMs = std::chrono::duration<float, std::milli>(presentEnd - presentStart).count();

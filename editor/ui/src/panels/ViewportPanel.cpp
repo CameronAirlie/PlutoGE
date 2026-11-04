@@ -15,7 +15,6 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/DebugDraw.h"
-#include "PlutoGE/render/SpatialUpscaler.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
@@ -49,7 +48,6 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/Renderer.h"
-#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
 #include <iostream>
@@ -1964,7 +1962,6 @@ namespace PlutoGE::ui
 
         ShutdownRhiPreview();
         m_config.graphicsApi = graphicsApi;
-        m_useRhiPreview = true;
         // Renderer creation is intentionally deferred until this viewport is
         // actually rendered. Docked/hidden viewports otherwise compile a full
         // duplicate Vulkan pipeline set during editor startup.
@@ -1973,16 +1970,13 @@ namespace PlutoGE::ui
     void ViewportPanel::InitializeRhiPreview()
     {
         if (!m_rhiRenderService)
-        {
-            m_useRhiPreview = false;
             return;
-        }
-        m_useRhiPreview = m_rhiRenderService->Initialize(m_config.graphicsApi, m_config.sharedRenderDevice);
+        const bool initialized = m_rhiRenderService->Initialize(m_config.graphicsApi, m_config.sharedRenderDevice);
         m_rhiRenderService->SetTemporalUpscalerOptions(m_temporalUpscalerOptions);
         m_vulkanAvailable = m_rhiRenderService->IsVulkanAvailable();
         m_vulkanStatus = m_rhiRenderService->GetVulkanStatus();
         m_activeRhiVulkan = m_rhiRenderService->IsVulkan();
-        if (!m_useRhiPreview)
+        if (!initialized)
             m_rhiViewportTexture = {};
     }
 
@@ -2012,13 +2006,11 @@ namespace PlutoGE::ui
             EditorShell::GetInstance().GetPanelManager().UnregisterTexture(m_registeredTexture);
         m_registeredTexture = {};
         m_registeredRhiTexture = {};
-        m_registeredNativeTexture = 0;
     }
 
     void ViewportPanel::Initialize()
     {
         m_renderScale = glm::clamp(m_config.initialRenderScale, kMinRenderScale, kMaxRenderScale);
-        m_upscaleSharpness = glm::clamp(m_config.initialUpscaleSharpness, 0.0f, 1.0f);
 
         auto renderConfig = render::RenderTargetConfig{
             .width = kDefaultViewportWidth,
@@ -2034,7 +2026,6 @@ namespace PlutoGE::ui
         renderConfig.width = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportWidth) * m_renderScale)));
         renderConfig.height = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportHeight) * m_renderScale)));
         m_scaledRenderTarget = new render::RenderTarget(renderConfig);
-        m_upscaler = std::make_unique<render::SpatialUpscaler>();
 
         // The project can be loaded after the editor shell is initialized. The
         // first SetGraphicsApi call initializes the service once the manifest's
@@ -2048,8 +2039,7 @@ namespace PlutoGE::ui
         m_isViewportFocused = false;
         m_viewportSize = glm::vec2(0.0f);
 
-        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
-        if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !requiresRhiViewport))
+        if (!m_renderTarget)
             return;
 
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
@@ -2067,55 +2057,30 @@ namespace PlutoGE::ui
             m_pendingHeight = newHeight;
             m_resizeStableFrames = 0;
         }
+        // The targets only carry the viewport's output and render extents; the RHI owns the images.
         if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
-        {
-            if (!m_renderTarget->Resize(newWidth, newHeight) && !requiresRhiViewport)
-            {
-                std::cerr << "Failed to resize RenderTarget in ViewportPanel" << std::endl;
-                return;
-            }
-        }
+            static_cast<void>(m_renderTarget->Resize(newWidth, newHeight));
 
         const int scaledWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(newWidth) * m_renderScale)));
         const int scaledHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(newHeight) * m_renderScale)));
         if (m_scaledRenderTarget && (scaledWidth != m_scaledRenderTarget->GetWidth() || scaledHeight != m_scaledRenderTarget->GetHeight()) &&
-            m_resizeStableFrames >= kResizeDebounceFrames && !m_scaledRenderTarget->Resize(scaledWidth, scaledHeight) && !requiresRhiViewport)
-        {
-            std::cerr << "Failed to resize scaled RenderTarget in ViewportPanel" << std::endl;
-            return;
-        }
+            m_resizeStableFrames >= kResizeDebounceFrames)
+            static_cast<void>(m_scaledRenderTarget->Resize(scaledWidth, scaledHeight));
 
-        const bool displayRhiTexture = m_useRhiPreview || requiresRhiViewport;
-        const auto *rhiRenderTarget = displayRhiTexture ? GetSceneRenderTarget() : nullptr;
-        const std::uint32_t rhiTextureWidth = rhiRenderTarget
-                                                  ? static_cast<std::uint32_t>(std::max(rhiRenderTarget->GetWidth(), 0))
-                                                  : 0;
-        const std::uint32_t rhiTextureHeight = rhiRenderTarget
-                                                   ? static_cast<std::uint32_t>(std::max(rhiRenderTarget->GetHeight(), 0))
-                                                   : 0;
-        const std::uint64_t displayedNativeTexture = displayRhiTexture ? 0 : m_renderTarget->GetColorTextureID();
-        const bool registeredTextureChanged = displayedNativeTexture != m_registeredNativeTexture ||
-                                              (displayRhiTexture && m_rhiViewportTexture != m_registeredRhiTexture);
-        if (registeredTextureChanged || !m_registeredTexture.IsValid())
+        const auto *sceneRenderTarget = GetSceneRenderTarget();
+        const EditorTextureDescriptor viewportTexture{
+            .device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
+            .texture = m_rhiViewportTexture,
+            .width = static_cast<std::uint32_t>(std::max(sceneRenderTarget->GetWidth(), 0)),
+            .height = static_cast<std::uint32_t>(std::max(sceneRenderTarget->GetHeight(), 0))};
+        if (m_rhiViewportTexture != m_registeredRhiTexture || !m_registeredTexture.IsValid())
         {
             ReleaseRegisteredTexture();
-            const EditorTextureDescriptor descriptor = displayRhiTexture
-                                                           ? EditorTextureDescriptor{.device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
-                                                                                     .texture = m_rhiViewportTexture,
-                                                                                     .width = rhiTextureWidth,
-                                                                                     .height = rhiTextureHeight}
-                                                           : EditorTextureDescriptor{.nativeOpenGlTexture = displayedNativeTexture};
-            m_registeredTexture = EditorShell::GetInstance().GetPanelManager().RegisterTexture(descriptor);
-            m_registeredRhiTexture = displayRhiTexture ? m_rhiViewportTexture : render::rhi::TextureHandle{};
-            m_registeredNativeTexture = displayedNativeTexture;
+            m_registeredTexture = EditorShell::GetInstance().GetPanelManager().RegisterTexture(viewportTexture);
+            m_registeredRhiTexture = m_rhiViewportTexture;
         }
-        if (displayRhiTexture && m_registeredTexture.IsValid())
-            EditorShell::GetInstance().GetPanelManager().UpdateTexture(
-                m_registeredTexture,
-                {.device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
-                 .texture = m_rhiViewportTexture,
-                 .width = rhiTextureWidth,
-                 .height = rhiTextureHeight});
+        if (m_registeredTexture.IsValid())
+            EditorShell::GetInstance().GetPanelManager().UpdateTexture(m_registeredTexture, viewportTexture);
         const auto imguiTexture = EditorShell::GetInstance().GetPanelManager().GetImGuiTextureId(m_registeredTexture);
         ImTextureID texId = static_cast<ImTextureID>(imguiTexture);
         ImVec2 imageSize = ImVec2(panelSize.x, panelSize.y);
@@ -2130,7 +2095,7 @@ namespace PlutoGE::ui
             DrawGameplayDebug(m_editorCameraData, viewportMin, imageSize);
         else if (!m_config.editorViewport && m_hasGameDebugCamera)
             DrawGameplayDebug(m_gameDebugCamera, viewportMin, imageSize);
-        if (m_useRhiPreview)
+        if (m_rhiRenderService && m_rhiRenderService->IsInitialized())
         {
             // Keep operational diagnostics in View; reserve the canvas for authoring.
             const char *backend = m_activeRhiVulkan ? "Vulkan" : "OpenGL";
@@ -2472,10 +2437,6 @@ namespace PlutoGE::ui
             overlayPopupOpen = true;
             if (m_config.editorViewport)
             {
-                // The project backend is authoritative. The old preview toggle
-                // allowed the viewport to silently diverge from project output
-                // and made OpenGL look like a fallback rather than a peer RHI.
-                m_useRhiPreview = m_rhiRenderService && m_rhiRenderService->IsInitialized();
                 ImGui::TextDisabled("Active: %s RHI%s", m_activeRhiVulkan ? "Vulkan" : "OpenGL",
                                     m_activeRhiVulkan ? " (editor compositor import)" : "");
                 ImGui::TextDisabled("Visible commands: %zu, draws: %zu", m_rhiSceneCommandCount, m_rhiDrawCount);
@@ -2537,8 +2498,7 @@ namespace PlutoGE::ui
                     for (int index = 0; index < 4; ++index)
                         if (quality == core::Engine::GetInstance().GetRhiRenderService().GetGraphicsPreset(static_cast<render::GraphicsPreset>(index)))
                             preset = index + 1;
-                ImGui::BeginDisabled(!m_rhiRenderService->IsInitialized() ||
-                    (!m_useRhiPreview && m_config.graphicsApi != render::rhi::GraphicsApi::Vulkan));
+                ImGui::BeginDisabled(!m_rhiRenderService->IsInitialized());
                 ImGui::SetNextItemWidth(180.0f);
                 if (ImGui::BeginCombo("Graphics preset", preset == 5 ? "Custom" :
                     std::array<const char *, 5>{"Scene settings", "Low", "Medium", "High", "Ultra"}[preset]))
@@ -2615,12 +2575,7 @@ namespace PlutoGE::ui
                 const int targetWidth = std::max(1, static_cast<int>(std::lround(viewportSize.x * m_renderScale)));
                 const int targetHeight = std::max(1, static_cast<int>(std::lround(viewportSize.y * m_renderScale)));
                 ImGui::TextDisabled("Target: %d x %d", targetWidth, targetHeight);
-                const bool upscalingActive = m_renderScale < 0.999f;
-                ImGui::TextDisabled("Upscaler: Spatial (%s)", upscalingActive ? "Active" : "Bypassed");
-                ImGui::BeginDisabled(!upscalingActive);
-                ImGui::SetNextItemWidth(180.0f);
-                ImGui::SliderFloat("Sharpness", &m_upscaleSharpness, 0.0f, 1.0f, "%.2f");
-                ImGui::EndDisabled();
+                ImGui::TextDisabled("Upscaler: Bilinear (%s)", m_renderScale < 0.999f ? "Active" : "Bypassed");
             }
             ImGui::EndPopup();
         }
@@ -3053,9 +3008,7 @@ namespace PlutoGE::ui
             m_foliageStroke->sampler.Reset();
         m_isTransformGizmoUsing = false;
         m_entityIconHits.clear();
-        const bool rhiTargetReady = m_rhiRenderService && m_rhiRenderService->IsInitialized() &&
-                                    (m_useRhiPreview || m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan);
-        if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !rhiTargetReady) ||
+        if (!m_renderTarget || !m_rhiRenderService || !m_rhiRenderService->IsInitialized() ||
             viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
         {
             return;
@@ -4462,8 +4415,7 @@ namespace PlutoGE::ui
                                     std::span<scene::CameraComponent *const> overlayCameras)
     {
         core::CpuScope scope("Game viewport frame", core::CpuCategory::Rendering);
-        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
-        if (!m_renderTarget || (!m_renderTarget->IsInitialized() && !requiresRhiViewport))
+        if (!m_renderTarget || !m_rhiRenderService)
             return;
 
         auto &editorShell = EditorShell::GetInstance();
@@ -4480,38 +4432,26 @@ namespace PlutoGE::ui
         const auto cameraData = cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
         m_gameDebugCamera = cameraData;
         m_hasGameDebugCamera = true;
-        if ((m_useRhiPreview || requiresRhiViewport) && m_rhiRenderService)
+        renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
+        auto commands = renderer.GetVisibleRenderCommandView();
+        auto shadowCommands = renderer.GetSceneRenderCommandView();
+        std::span<const render::CameraView> overlays;
+        if (activeScene)
         {
-            renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
-            auto commands = renderer.GetVisibleRenderCommandView();
-            auto shadowCommands = renderer.GetSceneRenderCommandView();
-            std::span<const render::CameraView> overlays;
-            if (activeScene)
-            {
-                if (!m_cameraStack)
-                    m_cameraStack = std::make_unique<CameraStackState>();
-                const auto &tagFilter = cameraComponent.GetTagFilter();
-                // Overlays select from the unculled scene; base visibility culling
-                // uses the base camera's frustum, not the overlay's.
-                overlays = m_cameraStack->overlayLayers.Build(*activeScene, overlayCameras, shadowCommands,
-                                                              sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
-                commands = m_cameraStack->commandFilter.Apply(*activeScene, tagFilter, commands);
-                shadowCommands = m_cameraStack->shadowCommandFilter.Apply(*activeScene, tagFilter, shadowCommands);
-            }
-            const auto lights = activeScene ? scene::CollectCameraLights(*activeScene, cameraComponent)
-                                            : std::vector<scene::Light *>{};
-            RenderRhiFrame(cameraData, commands, shadowCommands, postProcessEffects, overlays,
-                           std::span<scene::Light *const>(lights));
+            if (!m_cameraStack)
+                m_cameraStack = std::make_unique<CameraStackState>();
+            const auto &tagFilter = cameraComponent.GetTagFilter();
+            // Overlays select from the unculled scene; base visibility culling
+            // uses the base camera's frustum, not the overlay's.
+            overlays = m_cameraStack->overlayLayers.Build(*activeScene, overlayCameras, shadowCommands,
+                                                          sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
+            commands = m_cameraStack->commandFilter.Apply(*activeScene, tagFilter, commands);
+            shadowCommands = m_cameraStack->shadowCommandFilter.Apply(*activeScene, tagFilter, shadowCommands);
         }
-        else
-        {
-            renderer.BeginFrame(sceneRenderTarget);
-            renderer.RenderFrame(cameraData, sceneRenderTarget,
-                                 activeScene ? scene::CollectCameraLights(*activeScene, cameraComponent) : std::vector<scene::Light *>{},
-                                 &postProcessEffects, activeScene);
-            renderer.EndFrame(sceneRenderTarget);
-        }
-        PresentSceneRenderTarget();
+        const auto lights = activeScene ? scene::CollectCameraLights(*activeScene, cameraComponent)
+                                        : std::vector<scene::Light *>{};
+        RenderRhiFrame(cameraData, commands, shadowCommands, postProcessEffects, overlays,
+                       std::span<scene::Light *const>(lights));
     }
 
     void ViewportPanel::RenderRhiFrame(const render::CameraData &cameraData,
@@ -4521,8 +4461,7 @@ namespace PlutoGE::ui
                                        std::span<const render::CameraView> overlays,
                                        std::optional<std::span<scene::Light *const>> lights)
     {
-        const bool requiresRhiViewport = m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan;
-        if ((!m_useRhiPreview && !requiresRhiViewport) || !m_rhiRenderService || !m_renderTarget)
+        if (!m_rhiRenderService || !m_renderTarget)
             return;
         if (!m_rhiRenderService->IsInitialized())
         {
@@ -4579,10 +4518,7 @@ namespace PlutoGE::ui
                                         EditorShell::GetInstance().GetEngine().GetRenderer().GetPostProcessDebugView(),
                                         overlays, lights))
         {
-            // A Vulkan project must never silently display the legacy OpenGL
-            // scene as if it came from the selected backend. Keep the RHI path
-            // active so a transient failure can recover on the next frame.
-            m_useRhiPreview = requiresRhiViewport;
+            // Keep the RHI path active so a transient failure can recover on the next frame.
             m_rhiViewportTexture = {};
             return;
         }
@@ -4602,38 +4538,15 @@ namespace PlutoGE::ui
                    : m_scaledRenderTarget;
     }
 
-    void ViewportPanel::PresentSceneRenderTarget()
-    {
-        core::CpuScope scope("Viewport target presentation", core::CpuCategory::Rendering);
-        if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan)
-            return;
-        auto *source = GetSceneRenderTarget();
-        if (!source || source == m_renderTarget || !m_renderTarget || !m_upscaler)
-            return;
-
-        const float sharpness = m_renderScale < 1.0f ? m_upscaleSharpness : 0.0f;
-        m_upscaler->Upscale(*source, *m_renderTarget, render::UpscalerConfig{.sharpness = sharpness});
-    }
-
     bool ViewportPanel::ShouldRenderFrame() const
     {
-        const bool targetReady = m_renderTarget &&
-                                 (m_renderTarget->IsInitialized() || m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan);
-        return IsOpen() && WasVisibleLastFrame() && targetReady &&
+        return IsOpen() && WasVisibleLastFrame() && m_renderTarget &&
                m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
     }
 
     void ViewportPanel::ClearFrame()
     {
-        core::CpuScope scope("Viewport clear", core::CpuCategory::Rendering);
         m_hasGameDebugCamera = false;
-        if (m_config.graphicsApi == render::rhi::GraphicsApi::Vulkan ||
-            !m_renderTarget || !m_renderTarget->IsInitialized())
-            return;
-
-        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
-        renderer.BeginFrame(m_renderTarget);
-        renderer.EndFrame(m_renderTarget);
     }
 
     void ViewportPanel::Shutdown()
@@ -4650,11 +4563,6 @@ namespace PlutoGE::ui
             m_scaledRenderTarget->Cleanup();
             delete m_scaledRenderTarget;
             m_scaledRenderTarget = nullptr;
-        }
-        if (m_upscaler)
-        {
-            m_upscaler->Shutdown();
-            m_upscaler.reset();
         }
     }
     ViewportPanel::~ViewportPanel() = default;

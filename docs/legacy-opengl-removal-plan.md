@@ -1,0 +1,205 @@
+# Legacy OpenGL renderer removal plan
+
+Investigated 2026-11-04. This plan removes the legacy OpenGL render-pass
+pipeline. The Vulkan and OpenGL render hardware interface (RHI) backends stay.
+OpenGL projects keep working, but they render through `OpenGLDevice`,
+`RhiRenderService` and `RhiSceneRenderer`.
+
+## Decisions
+
+- **LPV and RSM:** removed. They have no RHI version. DDGI, SSGI and VCTGI cover
+  the same ground.
+- **World-space RmlUi texture surfaces and the advanced RmlUi effects** (filters,
+  `backdrop-filter`, shader decorators): removed. Only the GL3 RmlUi backend
+  rendered them.
+- **`TexturePainter`:** removed. It painted into GL textures, so the RHI path
+  never showed the paint.
+- **Legacy per-pass CPU/GPU timings** in the editor and runtime profilers:
+  removed along with the passes.
+- **Open: baked lightmaps.** Found during Phase 0, so it needs a decision before
+  Phase 3. `TextureManager::LoadLightmapFromMemory` creates GL-only textures
+  with no CPU pixels, and only the legacy `Material::Bind` samples
+  `lightmapTexture`. No RHI path renders baked lightmaps, so a lightmap bake
+  only applies its result on an OpenGL host, and even there nothing draws it
+  any more. Baked probe volumes are unaffected. Choose between porting lightmap
+  sampling to the RHI (keeping CPU pixels) and removing lightmap baking. Until
+  then, OpenGL hosts keep `TextureManager::SetWindow`, so the bake and its
+  `PlutoGEOpenGLIblCaptureTests` check behave as before.
+
+## Findings
+
+`render::Renderer` does two jobs:
+
+- It runs the legacy pass graph.
+- It is the scene-submission layer that every frame uses, Vulkan included. This
+  covers the retained scene, the command and decal store, submission culling and
+  `PrepareVisibleRenderCommands`.
+
+Scene components, the editor, the runtime and `RhiSceneRenderer`
+(`GetDecalCommands`) reach it through `Engine::GetRenderer()`. The submission
+half has to be extracted before `Renderer.cpp` can be deleted.
+
+The legacy pipeline still runs in these places:
+
+- **Standalone runtime with an OpenGL project.** The whole frame is legacy
+  (`runtime/src/main.cpp`, the `else` branch of `useVulkanRenderer`), including
+  `RenderTarget` spatial upscaling.
+- **Editor on an OpenGL host:**
+  - Frame clear and swap go through `Renderer::BeginFrame/EndFrame`.
+  - The scene viewport falls back to legacy when no project is open.
+  - The game viewport falls back to legacy when `!m_useRhiPreview`.
+  - IBL capture falls back to `CaptureSceneCubemap`.
+- **`Renderer::Initialize` on every OpenGL host.** It installs the window resize
+  callback and enables `GL_TEXTURE_CUBE_MAP_SEAMLESS`. The OpenGL RHI does
+  neither yet.
+
+Post-process effect classes are also the parameter and serialization model.
+`RhiPostProcessAdapter` reads their settings through `dynamic_cast`. Only their
+GL `Initialize`/`Apply` code is legacy.
+
+Size of the removal:
+
+- About 17.8k lines are legacy-only.
+- About 9.4k lines of GL code come out of shared files.
+- `glad.h` is included from 17 public render headers and reaches scene
+  components and every RHI file through `Mesh.h` and `RenderCommand.h`.
+
+Only two ctest entries are legacy-only (`PlutoGEPostProcessInitializationTests`
+and `PlutoGEVctEmissionCoverageTests`). The 47 OpenGL RHI registrations stay, so
+the test-suite saving is small. The build-time saving comes from the deleted
+sources and from keeping `glad` out of public headers.
+
+## Phase 0: make the legacy path unreachable
+
+1. Give the runtime an OpenGL RHI branch. The Vulkan branch through
+   `RhiRenderService` is mostly API-neutral.
+   - The runtime's Spatial upscaler only existed in the legacy path; the Vulkan
+     runtime already rendered at native resolution. Both backends now do, with
+     a warning in the log and in Project Settings. The Game Viewport keeps its
+     render scale as a bilinear stretch.
+   - Follow-up (not part of this removal): a real RHI spatial upscaler pass
+     with sharpening, driven by the existing render scale and sharpness
+     settings.
+2. Present and clear OpenGL hosts through `RhiRenderService::Present`. This
+   covers the editor shell, the launcher, build progress, `EditorLoadingPresenter`
+   and `ViewportPanel::ClearFrame`.
+3. Wire `RhiRenderService::Resize` for OpenGL in `Engine::Initialize`.
+4. Enable seamless cubemaps in `OpenGLDevice`.
+5. Remove the editor fallbacks:
+   - the no-project scene viewport (`EditorShell`)
+   - the `!m_useRhiPreview` branches and native GL texture display (`ViewportPanel`)
+   - the `CaptureSceneCubemap` fallback
+6. Give RmlUi shutdown and `TextureManager::SetWindow` a new owner outside
+   `Renderer`.
+
+Exit criterion: `Renderer::Initialize`, `RenderFrame`, `BeginFrame` and
+`EndFrame` have no callers. The OpenGL RHI and Vulkan suites have no new
+failures beyond the known baseline.
+
+Status (2026-11-04): done, uncommitted.
+- The editor presents through `IEditorCompositor::Present`. The OpenGL
+  compositor clears and swaps the default framebuffer.
+- The runtime renders through `RhiRenderService` on both APIs.
+- `Engine` no longer initializes `Renderer`, and resizes the swapchain on both
+  APIs.
+- The full suite (`ctest -j4`, OpenGL DDGI excluded) took 1432 s. Its failures
+  were all failures that also occur at HEAD.
+
+## Phase 1: extract the submission layer
+
+1. Move the submission state and API from `Renderer` into a new
+   `RenderSceneFrontend`:
+   - `Submit*`, `Publish/RemoveRenderProducer`, `Begin/EndRenderSceneScope`
+   - `PrepareVisibleRenderCommands` and the command views
+   - decal commands, culling cameras, the post-process debug view and the stats
+   - the `InstanceCullJob` pools
+2. Point `Engine::GetRenderer()` (or a renamed accessor) at the new class.
+3. Move `DecalCommand` and the profiler stats structs to neutral headers.
+4. Point `MeshComponent.h`, `FoliageComponent.h` and `TerrainComponent.h` at
+   `RenderCommand.h`.
+5. Port the tests that use the submission layer:
+   - MeshReplacement, PreparationCache, EditorFoliage
+   - RetainedRenderScene, EngineGraphicsApi
+   - EditorProfilerPanel, RuntimeProfiler
+
+## Phase 2: delete legacy-only code
+
+1. Delete the legacy rendering sources:
+   - `src/passes/*` and the pass headers
+   - `GBuffer`, `RenderTarget`, `Shader`, `BuiltinShaders`, `Graphics`
+   - `SpatialUpscaler`, `IUpscaler`, `UniformNames.h`, `IndirectDraw.h`
+2. Delete the legacy post-process code:
+   - `ShaderPostProcessEffect`, `RSMEffect`, `LPVEffect`
+   - `VctVoxelizationShaders`, `VctProbeSampling.h`
+   - `TexturePainter`
+3. Remove LPV and RSM from `PostProcessEffectFactory`, the default effects in
+   `CameraComponent` and the default preset.
+4. Delete the `ShaderGraphEvaluation.h.in`, `VctCoverage.h.in` and
+   `FogIntegration.h.in` configure steps from `engine/render/CMakeLists.txt`.
+5. Remove the RmlUi GL3 backend (`RenderInterface_GL3`), the world-surface FBOs,
+   `RenderWorldSurfaces`, the legacy `RmlUiRuntime::Render`, and the WorldSpace
+   RmlUi mode.
+
+## Phase 3: strip GL from shared code
+
+1. **Effects:** drop `Initialize`/`Apply`, `RenderContext` and `RenderTarget` from
+   `IPostProcessEffect`. Strip the GL members and code from the 17 mixed effects.
+   Keep the parameters, settings structs and summaries.
+2. **SSGI:** remove the legacy-only parameters (Step Size, Depth Weight, Normal
+   Weight).
+3. **SceneComposite:** remove the LPV Only and RSM Only debug views.
+4. **Mesh:** remove the VAO/VBO/EBO, `Initialize`, `Bind`/`Draw*` and the GL
+   re-uploads.
+5. **Material and shaders:**
+   - Remove `Material::Bind`, the shader override and
+     `MaterialConfig::compiledShaderGraph`.
+   - Remove `RenderCommand::shader` and the sort keys based on it.
+   - Remove the legacy compile in `AssetManager`.
+6. **Texture:** remove the GL texture handle, the GL factories and `Upload3D`.
+   Add a neutral 2D/cube discriminator.
+7. **`TextureManager`:** remove the GL uploads. They also run, redundantly, under
+   the OpenGL RHI today.
+8. **`ShaderGraph`:** remove the GLSL emission.
+9. **Scene:**
+   - GPU particle buffers in `ParticleSystemComponent`
+   - GL shadow textures in `LightComponent`
+   - GL cubemap code in `IblCaptureComponent`
+   - the `ColorVolume` upload in `Scene.cpp`
+10. **Editor:** remove `EditorTextureDescriptor::nativeOpenGlTexture`, the
+    `ReadTexturePixels` GL fallback and the `Graphics::ResetStateCache`
+    workarounds.
+11. **Build:** remove `glad` from all public headers. It stays a private
+    dependency of `OpenGLDevice`, the ImGui OpenGL compositor and `SceneBaker`.
+
+`SceneBaker.cpp` keeps its raw GL bake compute. It is separate from the legacy
+pipeline and is out of scope here.
+
+## Phase 4: data, tests and docs
+
+1. **Data:** remove the LPV and RSM entries and the LPV Only/RSM Only debug-view
+   values from the RocketLeg scenes and presets. Loading skips unknown effects,
+   but inline camera stacks drop them silently when the scene is re-saved.
+2. **Tests, delete:** `PostProcessInitializationTests`. Port its Slang VCT
+   energy-conservation and probe-cache checks to RHI compute.
+3. **Tests, trim:** remove the legacy parts of these tests:
+   - the GL block in `ShaderGraphRenderingChecks.h`. This should fix the known
+     `PlutoGEOpenGLShaderGraphTests` baseline failure.
+   - the outline check in `OpenGLRhiTests.cpp`
+   - the OpenGL branch of `EditorLoadingScreenTests`
+   - the `opengl` variant of `TextureRefreshTests`
+   - `FakeEffect` in `CameraStackTests`
+   - the stray `Renderer.h` includes
+4. **Docs:** update the docs that mention the legacy renderer, the RmlUi
+   authoring guide and its pinned inventory. They currently list GL3-only
+   filters and world surfaces.
+
+## Measuring
+
+- **When:** record a clean build of `PlutoGERender`, a clean full build, and
+  `ctest -j` wall time before Phase 0 and again after Phase 3.
+- **Baseline (HEAD `cdac46df`, msvc18 Release, `--clean-first --parallel`):**
+  `PlutoGERender` and the engine libraries it depends on rebuilt in 581 s. The
+  most recent `CTestCostData.txt` sums to about 452 s of serial test time.
+- **Baseline failures:** compare against the known failing suites at HEAD.
+- **Skip:** don't run the OpenGL DDGI suite on the Vega 8 iGPU, because it
+  crashes the driver.

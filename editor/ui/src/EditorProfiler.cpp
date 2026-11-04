@@ -559,7 +559,6 @@ namespace PlutoGE::ui
         for (const auto &scope : rhi.gpuScopes)
             report << scope.name << ": " << scope.milliseconds << " ms GPU, "
                    << scope.cpuMilliseconds << " ms CPU recording\n";
-        report << "Renderer begin frame: " << frameTimingStats.rendererBeginFrameMs << " ms\n";
         report << "Editor UI total: " << frameTimingStats.editorUiMs << " ms\n";
         report << "ImGui frame begin: " << timingStats.beginPanelUpdateMs << " ms\n";
         report << "Editor chrome: " << frameTimingStats.editorChromeMs << " ms\n";
@@ -585,7 +584,7 @@ namespace PlutoGE::ui
         report << "Presentation submit: " << presentation.presentSubmitMs << " ms\n";
         report << "Presentation queue present: " << presentation.presentQueueMs << " ms\n";
         report << "Event polling: " << frameTimingStats.eventPollingMs << " ms\n";
-        report << "Frame remainder: " << std::max(0.0f, (capturedDurationMs >= 0.0f ? capturedDurationMs : GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.rendererBeginFrameMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
+        report << "Frame remainder: " << std::max(0.0f, (capturedDurationMs >= 0.0f ? capturedDurationMs : GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
         report << "ImGui render: " << timingStats.imguiRenderMs << " ms\n";
         report << "ImGui submission total: " << timingStats.endPanelUpdateTotalMs << " ms\n";
         report << "Platform windows update: " << timingStats.platformWindowsUpdateMs << " ms\n";

@@ -1,11 +1,9 @@
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/core/LoadingScreenSession.h"
-#include "PlutoGE/render/Graphics.h"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -58,22 +56,9 @@ namespace PlutoGE::ui
             }
             else m_panels.UpdateTexture(m_texture, descriptor);
         }
-        const bool vulkan = m_engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::Vulkan;
-        if (!vulkan)
-        {
-            // The RHI records raw GL state. Invalidate the legacy host cache
-            // before rebinding the default framebuffer for editor composition.
-            render::Graphics::ResetStateCache();
-            render::Graphics::Disable(GL_SCISSOR_TEST);
-            m_engine.GetRenderer().BeginFrame();
-        }
         m_panels.PresentViewportOverlay(m_region, m_texture, true, [&]
         {
-            if (vulkan)
-            {
-                if (!service.Present()) throw std::runtime_error("Could not present editor loading frame");
-            }
-            else m_engine.GetRenderer().EndFrame();
+            if (!m_panels.Present(service)) throw std::runtime_error("Could not present editor loading frame");
         });
     }
 }

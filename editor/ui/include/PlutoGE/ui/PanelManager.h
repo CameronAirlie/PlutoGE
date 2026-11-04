@@ -74,6 +74,8 @@ namespace PlutoGE::ui
         void BeginPanelUpdate(bool workspace = true);
 
         void EndPanelUpdate();
+        // Shows the frame EndPanelUpdate (or PresentViewportOverlay) composed.
+        [[nodiscard]] bool Present(render::RhiRenderService &hostPresenter);
         // Replays the completed editor frame with one viewport overlay. No panel
         // updates, ImGui NewFrame, scene access or input handling occur here.
         void PresentViewportOverlay(const EditorViewportRegion &region, EditorTextureHandle texture,

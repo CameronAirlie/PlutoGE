@@ -8,6 +8,7 @@
 struct ImDrawData;
 
 namespace PlutoGE::platform { class Window; }
+namespace PlutoGE::render { class RhiRenderService; }
 
 namespace PlutoGE::ui
 {
@@ -25,9 +26,6 @@ namespace PlutoGE::ui
         render::rhi::TextureHandle texture;
         std::uint32_t width = 0;
         std::uint32_t height = 0;
-        // Transitional input for editor-owned legacy OpenGL render targets.
-        // RHI viewport images always use device + texture above.
-        std::uint64_t nativeOpenGlTexture = 0;
     };
 
     class IEditorCompositor
@@ -41,6 +39,9 @@ namespace PlutoGE::ui
         virtual void BeginFrame() = 0;
         virtual void RenderDrawData(ImDrawData *drawData) = 0;
         virtual void RenderPlatformWindows(bool updateWindows = true) = 0;
+        // Shows the main window's frame: the UI drawn by RenderDrawData over the
+        // host's persistent target, which hostPresenter owns.
+        [[nodiscard]] virtual bool Present(render::RhiRenderService &hostPresenter) = 0;
         [[nodiscard]] virtual EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor) = 0;
         virtual void UpdateTexture(EditorTextureHandle texture, const EditorTextureDescriptor &descriptor) = 0;
         virtual void UnregisterTexture(EditorTextureHandle texture) = 0;

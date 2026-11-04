@@ -22,7 +22,6 @@
 namespace PlutoGE::render
 {
     class RenderTarget;
-    class SpatialUpscaler;
     class Mesh;
     class Texture;
     struct RenderCommand;
@@ -50,7 +49,6 @@ namespace PlutoGE::ui
     {
         glm::vec4 clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
         float initialRenderScale = 1.0f;
-        float initialUpscaleSharpness = 0.25f;
         bool editorViewport = false;
         render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
         render::rhi::IRenderDevice *sharedRenderDevice = nullptr;
@@ -79,7 +77,6 @@ namespace PlutoGE::ui
 
         render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
         render::RenderTarget *GetSceneRenderTarget() const;
-        void PresentSceneRenderTarget();
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
         bool IsTransformGizmoUsing() const { return m_isTransformGizmoUsing; }
@@ -117,10 +114,8 @@ namespace PlutoGE::ui
         render::CameraData m_gameDebugCamera{};
         bool m_hasGameDebugCamera = false;
         float m_renderScale = 1.0f;
-        float m_upscaleSharpness = 0.25f;
         render::rhi::TemporalUpscalerOptions m_temporalUpscalerOptions;
         bool m_showGrid = true;
-        bool m_useRhiPreview = true;
         bool m_vulkanAvailable = false;
         std::string m_vulkanStatus = "Vulkan not probed";
         bool m_showDebugShapes = true;
@@ -150,11 +145,9 @@ namespace PlutoGE::ui
         std::unique_ptr<CameraStackState> m_cameraStack;
         render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
         render::RenderTarget *m_scaledRenderTarget = nullptr;
-        std::unique_ptr<render::SpatialUpscaler> m_upscaler;
         EditorSceneRenderService *m_rhiRenderService = nullptr;
         render::rhi::TextureHandle m_rhiViewportTexture;
         render::rhi::TextureHandle m_registeredRhiTexture;
-        std::uint64_t m_registeredNativeTexture = 0;
         EditorTextureHandle m_registeredTexture;
         bool m_activeRhiVulkan = false;
         std::size_t m_rhiSceneCommandCount = 0;

@@ -2,6 +2,7 @@
 #include "PlutoGE/ui/EditorCompositor.h"
 
 #include "PlutoGE/platform/Window.h"
+#include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 
@@ -146,7 +147,22 @@ namespace PlutoGE::ui
 
             void RenderDrawData(ImDrawData *drawData) override
             {
-                if (drawData) ImGui_ImplOpenGL3_RenderDrawData(drawData);
+                if (!drawData)
+                    return;
+                // ImGui draws straight into the default framebuffer, which is the
+                // OpenGL host's target. RHI passes leave their own framebuffer,
+                // scissor and mask state bound, so reset what the clear depends on.
+                if (glfwGetCurrentContext() != m_window)
+                    glfwMakeContextCurrent(m_window);
+                int width = 0, height = 0;
+                glfwGetFramebufferSize(m_window, &width, &height);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+                glViewport(0, 0, width, height);
+                glDisable(GL_SCISSOR_TEST);
+                glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+                ImGui_ImplOpenGL3_RenderDrawData(drawData);
             }
 
             void RenderPlatformWindows(bool updateWindows) override
@@ -157,22 +173,25 @@ namespace PlutoGE::ui
                 glfwMakeContextCurrent(previousContext);
             }
 
+            bool Present(render::RhiRenderService &) override
+            {
+                glfwSwapBuffers(m_window);
+                return true;
+            }
+
             EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor) override
             {
-                std::uint64_t nativeHandle = descriptor.nativeOpenGlTexture;
-                if (descriptor.device || descriptor.texture)
+                if (!descriptor.device || !descriptor.texture)
+                    return {};
+                std::uint64_t nativeHandle = 0;
+                if (descriptor.device->GetApi() == render::rhi::GraphicsApi::OpenGL)
+                    nativeHandle = static_cast<render::rhi::opengl::OpenGLDevice &>(*descriptor.device)
+                                       .GetTextureNativeHandle(descriptor.texture);
+                else
                 {
-                    if (!descriptor.device || !descriptor.texture)
-                        return {};
-                    if (descriptor.device->GetApi() == render::rhi::GraphicsApi::OpenGL)
-                        nativeHandle = static_cast<render::rhi::opengl::OpenGLDevice &>(*descriptor.device)
-                                           .GetTextureNativeHandle(descriptor.texture);
-                    else
-                    {
-                        GLuint importedTexture = 0;
-                        glGenTextures(1, &importedTexture);
-                        nativeHandle = importedTexture;
-                    }
+                    GLuint importedTexture = 0;
+                    glGenTextures(1, &importedTexture);
+                    nativeHandle = importedTexture;
                 }
                 if (nativeHandle == 0)
                     return {};
@@ -182,12 +201,12 @@ namespace PlutoGE::ui
                     if (entry.inUse)
                         continue;
                     entry.inUse = true;
-                    entry = {nativeHandle, entry.generation, true, descriptor.device && descriptor.device->GetApi() == render::rhi::GraphicsApi::Vulkan};
+                    entry = {nativeHandle, entry.generation, true, descriptor.device->GetApi() == render::rhi::GraphicsApi::Vulkan};
                     const EditorTextureHandle handle{index, entry.generation};
                     UpdateTexture(handle, descriptor);
                     return handle;
                 }
-                m_textures.push_back({nativeHandle, 1, true, descriptor.device && descriptor.device->GetApi() == render::rhi::GraphicsApi::Vulkan});
+                m_textures.push_back({nativeHandle, 1, true, descriptor.device->GetApi() == render::rhi::GraphicsApi::Vulkan});
                 const EditorTextureHandle handle{static_cast<std::uint32_t>(m_textures.size() - 1), 1};
                 UpdateTexture(handle, descriptor);
                 return handle;
@@ -418,6 +437,8 @@ namespace PlutoGE::ui
                 m_joinedViewports.clear();
                 ImGui::RenderPlatformWindowsDefault();
             }
+
+            bool Present(render::RhiRenderService &hostPresenter) override { return hostPresenter.Present(); }
 
             EditorTextureHandle RegisterTexture(const EditorTextureDescriptor &descriptor) override
             {

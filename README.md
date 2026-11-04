@@ -52,7 +52,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 
 ### Rendering
 
-- Vulkan and OpenGL render hardware interface (RHI), Slang shaders compiled to SPIR-V/GLSL, and a legacy OpenGL deferred G-buffer pipeline
+- Vulkan and OpenGL render hardware interface (RHI) and Slang shaders compiled to SPIR-V/GLSL
 - Geometry, shadow, lighting, transparent, particle, ocean, physical-sky, volumetric-cloud, grid, runtime-UI, and post-process passes
 - Directional, point, and spot lighting with shadow support
 - Directional virtual shadow maps by default in the RHI, with explicit legacy cascaded shadows as an alternative
@@ -62,7 +62,7 @@ The editor and runtime support Windows and Linux (including Arch Linux). It is u
 - Post-processing including bloom, tone mapping, color grading, chromatic aberration, auto exposure, SSAO, SSGI, SSR, TAA, FXAA, motion blur, depth of field, lens flare, volumetric fog, gamma correction, and voxel cone tracing
 - Voxel GI world caching and secondary bounce, rough reflections, glass, decals, toon shading, and outlines
 - Procedural ocean waves, crest/shoreline foam, ripples, and shallow-water caustics
-- Spatial upscaling, NVIDIA DLSS Super Resolution (Windows, used when the GPU supports it) and optional Vulkan FSR 2
+- Game Viewport render scaling, NVIDIA DLSS Super Resolution (Windows, used when the GPU supports it) and optional Vulkan FSR 2
 - CPU/GPU render-pass timings and draw/submission statistics in the editor profiler
 
 Standalone games disable OpenGL renderer profiling and Vulkan GPU timestamp/scope

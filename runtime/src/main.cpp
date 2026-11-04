@@ -26,10 +26,7 @@
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
-#include "PlutoGE/render/Graphics.h"
-#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/SpatialUpscaler.h"
 
 #include <algorithm>
 #include <chrono>
@@ -449,8 +446,6 @@ int RunRuntime(int argc, char **argv)
         return 1;
     }
 
-    if (config.graphicsApi == PlutoGE::render::rhi::GraphicsApi::OpenGL)
-        engine.GetRenderer().SetVSyncEnabled(config.vSync);
     if (projectBenchmark && engine.GetRenderDevice())
         engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
     if (projectBenchmark && projectBenchmark->quality)
@@ -546,17 +541,14 @@ int RunRuntime(int argc, char **argv)
     auto &renderer = engine.GetRenderer();
     auto &window = engine.GetWindow();
     const auto &runtimeManifest = project->GetManifest();
-    const bool useVulkanRenderer = config.graphicsApi == PlutoGE::render::rhi::GraphicsApi::Vulkan;
-    const float runtimeRenderScale = std::clamp(runtimeManifest.runtimeRenderScale, 0.5f, 1.0f);
-    const bool runtimeUpscalingEnabled =
-        !useVulkanRenderer && runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
-        runtimeRenderScale < 0.999f;
-    std::unique_ptr<PlutoGE::render::RenderTarget> runtimeRenderTarget;
+    if (runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
+        runtimeManifest.runtimeRenderScale < 0.999f)
+        std::cerr << "Spatial runtime upscaling is not supported by the RHI renderer; rendering at native resolution."
+                  << std::endl;
     // Persist filtered command storage across frames to avoid reallocations.
     PlutoGE::scene::CameraCommandFilter baseCameraCommandFilter, baseCameraVisibleFilter;
     PlutoGE::scene::CameraOverlayLayerBuilder overlayCameraLayers;
     PlutoGE::scene::RenderTextureViewBuilder renderTextureViews;
-    PlutoGE::render::SpatialUpscaler runtimeUpscaler;
     bool hasLoggedFirstFrame = false;
     bool hasLoggedFirstFrameDiagnostics = false;
     std::size_t benchmarkFrameIndex = 0;
@@ -589,14 +581,11 @@ int RunRuntime(int argc, char **argv)
     // Record, submit and present each frame on the render thread while the next frame simulates. The profiler window
     // draws its overlay into presentation from this thread, so it keeps rendering serial; PLUTO_RENDER_THREAD=0 (or
     // --serial-render for a project benchmark) does too, for comparisons.
-    if (useVulkanRenderer)
-    {
-        const char *renderThreadSetting = std::getenv("PLUTO_RENDER_THREAD");
-        const bool renderThreadDisabled = renderThreadSetting && std::string_view(renderThreadSetting) == "0";
-        engine.GetRhiRenderService().SetRenderThreadEnabled(
-            !runtimeProfiler && !renderThreadDisabled && !(projectBenchmark && projectBenchmark->serialRender));
-        engine.GetRhiRenderService().SetGpuInstanceCulling(projectBenchmark && projectBenchmark->gpuInstanceCulling);
-    }
+    const char *renderThreadSetting = std::getenv("PLUTO_RENDER_THREAD");
+    const bool renderThreadDisabled = renderThreadSetting && std::string_view(renderThreadSetting) == "0";
+    engine.GetRhiRenderService().SetRenderThreadEnabled(
+        !runtimeProfiler && !renderThreadDisabled && !(projectBenchmark && projectBenchmark->serialRender));
+    engine.GetRhiRenderService().SetGpuInstanceCulling(projectBenchmark && projectBenchmark->gpuInstanceCulling);
 
     while (!window.ShouldClose())
     {
@@ -662,137 +651,79 @@ int RunRuntime(int argc, char **argv)
         }
 #endif
 
-#ifdef _WIN32
-        PlutoGE::g_runtimeDiagnostics.currentPhase = "begin frame";
-#endif
-        PlutoGE::render::RenderTarget *frameRenderTarget = nullptr;
         const auto windowExtents = window.GetExtents();
-        if (runtimeUpscalingEnabled && windowExtents.width > 0 && windowExtents.height > 0)
+        const auto cameraStack = scene ? PlutoGE::scene::ResolveCameraStack(*scene) : PlutoGE::scene::CameraStack{};
+        if (auto *cameraComponent = cameraStack.base;
+            cameraComponent && windowExtents.width > 0 && windowExtents.height > 0)
         {
-            const int internalWidth = (std::max)(1, static_cast<int>(std::lround(windowExtents.width * runtimeRenderScale)));
-            const int internalHeight = (std::max)(1, static_cast<int>(std::lround(windowExtents.height * runtimeRenderScale)));
-            if (!runtimeRenderTarget)
-            {
-                runtimeRenderTarget = std::make_unique<PlutoGE::render::RenderTarget>(
-                    PlutoGE::render::RenderTargetConfig{.width = internalWidth, .height = internalHeight});
-            }
-            else if (runtimeRenderTarget->GetWidth() != internalWidth || runtimeRenderTarget->GetHeight() != internalHeight)
-            {
-                runtimeRenderTarget->Resize(internalWidth, internalHeight);
-            }
-
-            if (runtimeRenderTarget->IsInitialized())
-                frameRenderTarget = runtimeRenderTarget.get();
-        }
-
-        if (useVulkanRenderer)
-        {
-            const auto cameraStack = scene ? PlutoGE::scene::ResolveCameraStack(*scene) : PlutoGE::scene::CameraStack{};
-            if (auto *cameraComponent = cameraStack.base;
-                cameraComponent && windowExtents.width > 0 && windowExtents.height > 0)
-            {
 #ifdef _WIN32
-                PlutoGE::g_runtimeDiagnostics.currentPhase = "render Vulkan frame";
+            PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";
 #endif
-                if (projectBenchmark && projectBenchmark->cameraPanDegrees > 0.0f)
-                    if (auto *cameraEntity = cameraComponent->GetOwner())
-                    {
-                        if (!benchmarkCameraBaseRotation) benchmarkCameraBaseRotation = cameraEntity->GetRotation();
-                        cameraEntity->SetRotation(*benchmarkCameraBaseRotation +
-                                                  glm::vec3(0.0f, projectBenchmark->CameraPanOffset(benchmarkFrameIndex), 0.0f));
-                    }
-                if (projectBenchmark && projectBenchmark->cameraTravelMetres > 0.0f)
-                    if (auto *cameraEntity = cameraComponent->GetOwner())
-                    {
-                        if (!benchmarkCameraBasePosition) benchmarkCameraBasePosition = cameraEntity->GetPosition();
-                        const glm::vec3 forward = glm::vec3(cameraEntity->GetWorldTransform() * glm::vec4(0, 0, -1, 0));
-                        const glm::vec2 horizontal(forward.x, forward.z);
-                        const glm::vec2 direction = glm::dot(horizontal, horizontal) > 1.e-8f ? glm::normalize(horizontal) : glm::vec2(0, -1);
-                        cameraEntity->SetPosition(*benchmarkCameraBasePosition + glm::vec3(direction.x, 0.0f, direction.y) *
-                                                  projectBenchmark->CameraTravelOffset(benchmarkFrameIndex));
-                    }
-                const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
-                const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
-                auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
-                if (projectBenchmark)
-                    lighting.geometryDiagnosticMode = projectBenchmark->geometryDiagnostic;
-                if (projectBenchmark && benchmarkFrameIndex == 0)
-                    std::cerr << "Benchmark base camera: " << lighting.cameraPosition.x << ',' << lighting.cameraPosition.y << ','
-                              << lighting.cameraPosition.z << "; lights " << cameraLights.size()
-                              << "; directional intensity " << lighting.directionalIntensity
-                              << "; shadows " << lighting.shadowsEnabled
-                              << "; shadow method " << static_cast<unsigned>(lighting.shadowMethod)
-                              << "; diagnostic mode " << static_cast<unsigned>(lighting.geometryDiagnosticMode) << '\n';
-                std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
-                postProcessEffects.reserve(cameraComponent->GetPostProcessEffects().size());
-                for (const auto &effect : cameraComponent->GetPostProcessEffects())
+            if (projectBenchmark && projectBenchmark->cameraPanDegrees > 0.0f)
+                if (auto *cameraEntity = cameraComponent->GetOwner())
                 {
-                    // Every frame, so scripts re-enabling an effect cannot reinstate it.
-                    if (projectBenchmark && effect && projectBenchmark->DisablesEffect(effect->GetTypeName()))
-                        effect->SetEnabled(false);
-                    postProcessEffects.push_back(effect.get());
+                    if (!benchmarkCameraBaseRotation) benchmarkCameraBaseRotation = cameraEntity->GetRotation();
+                    cameraEntity->SetRotation(*benchmarkCameraBaseRotation +
+                                              glm::vec3(0.0f, projectBenchmark->CameraPanOffset(benchmarkFrameIndex), 0.0f));
                 }
-                const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)
+            if (projectBenchmark && projectBenchmark->cameraTravelMetres > 0.0f)
+                if (auto *cameraEntity = cameraComponent->GetOwner())
                 {
-                    const auto source = texture.GetRgba8Pixels();
-                    return std::vector<std::byte>(reinterpret_cast<const std::byte *>(source.data()),
-                                                  reinterpret_cast<const std::byte *>(source.data() + source.size()));
-                };
-                // The base camera draws its frustum- and distance-culled commands at their view LODs; shadows and GI
-                // read the camera's whole scene, as the editor's game view does.
-                renderer.PrepareVisibleRenderCommands(cameraData, static_cast<int>(windowExtents.height));
-                const auto sceneCommands = renderer.GetSceneRenderCommandView();
-                const auto cameraCommands = baseCameraCommandFilter.Apply(*scene, cameraComponent->GetTagFilter(), sceneCommands);
-                const auto visibleCommands = baseCameraVisibleFilter.Apply(*scene, cameraComponent->GetTagFilter(),
-                                                                           renderer.GetVisibleRenderCommandView());
-                const auto overlays = overlayCameraLayers.Build(*scene, cameraStack.overlays, sceneCommands,
-                                                                windowExtents.width, windowExtents.height);
-                const auto textureViews = renderTextureViews.Build(*scene, cameraStack.textureCameras, sceneCommands);
-                if (!engine.GetRhiRenderService().RenderTextures(textureViews, readTexturePixels, scene.get()))
-                    std::cerr << "Failed to render the frame's render textures." << std::endl;
-                if (!engine.GetRhiRenderService().RenderSceneAndPresent(
-                        cameraData, lighting, visibleCommands, readTexturePixels, scene.get(), postProcessEffects, overlays,
-                        std::span<PlutoGE::scene::Light *const>(cameraLights), cameraCommands))
-                {
-                    std::cerr << "Failed to render the Vulkan runtime frame." << std::endl;
-                    window.RequestClose();
+                    if (!benchmarkCameraBasePosition) benchmarkCameraBasePosition = cameraEntity->GetPosition();
+                    const glm::vec3 forward = glm::vec3(cameraEntity->GetWorldTransform() * glm::vec4(0, 0, -1, 0));
+                    const glm::vec2 horizontal(forward.x, forward.z);
+                    const glm::vec2 direction = glm::dot(horizontal, horizontal) > 1.e-8f ? glm::normalize(horizontal) : glm::vec2(0, -1);
+                    cameraEntity->SetPosition(*benchmarkCameraBasePosition + glm::vec3(direction.x, 0.0f, direction.y) *
+                                              projectBenchmark->CameraTravelOffset(benchmarkFrameIndex));
                 }
-            }
-            renderer.ClearRenderCommands();
-        }
-        else
-        {
-            renderer.BeginFrame(frameRenderTarget);
-            if (auto *cameraComponent = PlutoGE::FindBaseCamera(scene.get()))
+            const auto cameraData = cameraComponent->GetCameraData(windowExtents.width, windowExtents.height);
+            const auto cameraLights = PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent);
+            auto lighting = PlutoGE::render::BuildSceneLighting(cameraData, scene.get(), cameraLights);
+            if (projectBenchmark)
+                lighting.geometryDiagnosticMode = projectBenchmark->geometryDiagnostic;
+            if (projectBenchmark && benchmarkFrameIndex == 0)
+                std::cerr << "Benchmark base camera: " << lighting.cameraPosition.x << ',' << lighting.cameraPosition.y << ','
+                          << lighting.cameraPosition.z << "; lights " << cameraLights.size()
+                          << "; directional intensity " << lighting.directionalIntensity
+                          << "; shadows " << lighting.shadowsEnabled
+                          << "; shadow method " << static_cast<unsigned>(lighting.shadowMethod)
+                          << "; diagnostic mode " << static_cast<unsigned>(lighting.geometryDiagnosticMode) << '\n';
+            std::vector<PlutoGE::render::IPostProcessEffect *> postProcessEffects;
+            postProcessEffects.reserve(cameraComponent->GetPostProcessEffects().size());
+            for (const auto &effect : cameraComponent->GetPostProcessEffects())
             {
-#ifdef _WIN32
-                PlutoGE::g_runtimeDiagnostics.currentPhase = "render frame";
-#endif
-                renderer.RenderFrame(*cameraComponent, frameRenderTarget, PlutoGE::scene::CollectCameraLights(*scene, *cameraComponent));
+                // Every frame, so scripts re-enabling an effect cannot reinstate it.
+                if (projectBenchmark && effect && projectBenchmark->DisablesEffect(effect->GetTypeName()))
+                    effect->SetEnabled(false);
+                postProcessEffects.push_back(effect.get());
             }
-            renderer.ClearRenderCommands();
-
-            if (frameRenderTarget)
+            const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)
             {
-                renderer.EndFrame(frameRenderTarget);
-                if (!runtimeUpscaler.UpscaleToFramebuffer(
-                        *frameRenderTarget, windowExtents.width, windowExtents.height,
-                        {.sharpness = runtimeManifest.runtimeUpscaleSharpness}))
-                {
-                    PlutoGE::render::Graphics::BindFramebuffer(GL_READ_FRAMEBUFFER, frameRenderTarget->GetFramebufferID());
-                    PlutoGE::render::Graphics::BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-                    glBlitFramebuffer(0, 0, frameRenderTarget->GetWidth(), frameRenderTarget->GetHeight(),
-                                      0, 0, windowExtents.width, windowExtents.height,
-                                      GL_COLOR_BUFFER_BIT, GL_LINEAR);
-                    PlutoGE::render::Graphics::BindFramebuffer(GL_FRAMEBUFFER, 0);
-                }
+                const auto source = texture.GetRgba8Pixels();
+                return std::vector<std::byte>(reinterpret_cast<const std::byte *>(source.data()),
+                                              reinterpret_cast<const std::byte *>(source.data() + source.size()));
+            };
+            // The base camera draws its frustum- and distance-culled commands at their view LODs; shadows and GI
+            // read the camera's whole scene, as the editor's game view does.
+            renderer.PrepareVisibleRenderCommands(cameraData, static_cast<int>(windowExtents.height));
+            const auto sceneCommands = renderer.GetSceneRenderCommandView();
+            const auto cameraCommands = baseCameraCommandFilter.Apply(*scene, cameraComponent->GetTagFilter(), sceneCommands);
+            const auto visibleCommands = baseCameraVisibleFilter.Apply(*scene, cameraComponent->GetTagFilter(),
+                                                                       renderer.GetVisibleRenderCommandView());
+            const auto overlays = overlayCameraLayers.Build(*scene, cameraStack.overlays, sceneCommands,
+                                                            windowExtents.width, windowExtents.height);
+            const auto textureViews = renderTextureViews.Build(*scene, cameraStack.textureCameras, sceneCommands);
+            if (!engine.GetRhiRenderService().RenderTextures(textureViews, readTexturePixels, scene.get()))
+                std::cerr << "Failed to render the frame's render textures." << std::endl;
+            if (!engine.GetRhiRenderService().RenderSceneAndPresent(
+                    cameraData, lighting, visibleCommands, readTexturePixels, scene.get(), postProcessEffects, overlays,
+                    std::span<PlutoGE::scene::Light *const>(cameraLights), cameraCommands))
+            {
+                std::cerr << "Failed to render the runtime frame." << std::endl;
+                window.RequestClose();
             }
-
-#ifdef _WIN32
-            PlutoGE::g_runtimeDiagnostics.currentPhase = "end frame";
-#endif
-            renderer.EndFrame();
         }
+        renderer.ClearRenderCommands();
 
         renderScope.End();
         if (runtimeProfiler)
@@ -805,11 +736,8 @@ int RunRuntime(int argc, char **argv)
             frameTiming.renderedViewportCount = 1;
             frameTiming.renderedViewportPixels = std::uint64_t((std::max)(0, windowExtents.width)) * (std::max)(0, windowExtents.height);
             frameTiming.vSyncEnabled = config.vSync;
-            if (useVulkanRenderer)
-            {
-                frameTiming.rhiTimingStats = engine.GetRenderDevice()->GetTimingStats("Scene");
-                frameTiming.rhiSceneTimingStats = engine.GetRhiRenderService().GetTimingStats();
-            }
+            frameTiming.rhiTimingStats = engine.GetRenderDevice()->GetTimingStats("Scene");
+            frameTiming.rhiSceneTimingStats = engine.GetRhiRenderService().GetTimingStats();
             if (scene)
             {
                 const auto &update = scene->GetUpdateTimingStats();
@@ -850,7 +778,7 @@ int RunRuntime(int argc, char **argv)
                     const auto &update = scene->GetUpdateTimingStats();
                     const auto &render = engine.GetRhiRenderService().GetTimingStats();
                     const auto &ui = PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming();
-                    const auto rhiDevice = useVulkanRenderer ? engine.GetRenderDevice()->GetTimingStats("Scene") : PlutoGE::render::rhi::RenderDeviceTimingStats{};
+                    const auto rhiDevice = engine.GetRenderDevice()->GetTimingStats("Scene");
                     double scriptsMs = 0, animationMs = 0;
                     for (const auto &timing : update.scriptUpdateTimings) scriptsMs += timing.totalMs;
                     for (const auto &timing : update.componentTimings)
@@ -890,26 +818,23 @@ int RunRuntime(int argc, char **argv)
                     addCpuScopes("Animation", update.animationTimings);
                     addCpuScopes("Script", update.scriptUpdateTimings);
                     addCpuScopes("Late script", update.scriptLateUpdateTimings);
-                    if (useVulkanRenderer)
+                    const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
+                    sample.gpuAvailable = gpu.hasGpuResult && gpu.gpuObservationId != 0 &&
+                        gpu.gpuObservationId != lastBenchmarkGpuObservation;
+                    sample.details.back() = static_cast<double>(gpu.gpuObservationId);
+                    lastBenchmarkGpuObservation = gpu.gpuObservationId;
+                    sample.gpuMs = gpu.frameGpuMs;
+                    sample.skinningMs = engine.GetRhiRenderService().GetTimingStats().skinningDeformationMs;
+                    std::map<std::string, float> gpuScopeTotals;
+                    std::map<std::string, unsigned> scopeOccurrences;
+                    for (const auto &scope : gpu.gpuScopes)
                     {
-                        const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
-                        sample.gpuAvailable = gpu.hasGpuResult && gpu.gpuObservationId != 0 &&
-                            gpu.gpuObservationId != lastBenchmarkGpuObservation;
-                        sample.details.back() = static_cast<double>(gpu.gpuObservationId);
-                        lastBenchmarkGpuObservation = gpu.gpuObservationId;
-                        sample.gpuMs = gpu.frameGpuMs;
-                        sample.skinningMs = engine.GetRhiRenderService().GetTimingStats().skinningDeformationMs;
-                        std::map<std::string, float> gpuScopeTotals;
-                        std::map<std::string, unsigned> scopeOccurrences;
-                        for (const auto &scope : gpu.gpuScopes)
-                        {
-                            if (scope.name == "RHI VSM Planning / Receiver requests") sample.shadowRequestMs = scope.milliseconds;
-                            if (sample.gpuAvailable)
-                                gpuScopeTotals[scope.name + " #" + std::to_string(++scopeOccurrences[scope.name])] = scope.milliseconds;
-                        }
-                        for (const auto &[name, milliseconds] : gpuScopeTotals)
-                            projectBenchmarkGpuScopes[name].push_back(milliseconds);
+                        if (scope.name == "RHI VSM Planning / Receiver requests") sample.shadowRequestMs = scope.milliseconds;
+                        if (sample.gpuAvailable)
+                            gpuScopeTotals[scope.name + " #" + std::to_string(++scopeOccurrences[scope.name])] = scope.milliseconds;
                     }
+                    for (const auto &[name, milliseconds] : gpuScopeTotals)
+                        projectBenchmarkGpuScopes[name].push_back(milliseconds);
                     projectBenchmarkSamples.push_back(sample);
                 }
                 benchmarkFrameTimes.push_back(
@@ -938,15 +863,9 @@ int RunRuntime(int argc, char **argv)
     }
 
     // Finish the frame in flight before reading its output or releasing what it renders.
-    if (useVulkanRenderer && !engine.GetRhiRenderService().WaitForFrame())
+    if (!engine.GetRhiRenderService().WaitForFrame())
         std::cerr << "The last runtime frame failed to render." << std::endl;
     runtimeProfiler.reset();
-    runtimeUpscaler.Shutdown();
-    if (runtimeRenderTarget)
-    {
-        runtimeRenderTarget->Cleanup();
-        runtimeRenderTarget.reset();
-    }
 
     if (benchmarkEnabled && !projectBenchmark && !benchmarkFrameTimes.empty())
     {
@@ -986,8 +905,7 @@ int RunRuntime(int argc, char **argv)
     if (projectBenchmark)
     {
         benchmarkSucceeded = projectBenchmarkSamples.size() == projectBenchmark->frames;
-        if (useVulkanRenderer)
-            std::cerr << "Benchmark directional shadows: " << engine.GetRhiRenderService().GetTimingStats().directionalShadowStatus << '\n';
+        std::cerr << "Benchmark directional shadows: " << engine.GetRhiRenderService().GetTimingStats().directionalShadowStatus << '\n';
         try
         {
             if (benchmarkSucceeded)

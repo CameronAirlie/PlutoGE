@@ -1,11 +1,10 @@
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
-#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorViewportOverlay.h"
+#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <fstream>
@@ -25,6 +24,7 @@ public:
     void BeginFrame() override { throw std::runtime_error("Loading started a new UI frame"); }
     void RenderDrawData(ImDrawData *data) override { current = data; }
     void RenderPlatformWindows(bool update) override { Check(!update, "Loading mutated platform window layout"); }
+    bool Present(render::RhiRenderService &) override { return true; }
     ui::EditorTextureHandle RegisterTexture(const ui::EditorTextureDescriptor &) override { return {}; }
     void UpdateTexture(ui::EditorTextureHandle, const ui::EditorTextureDescriptor &) override {}
     void UnregisterTexture(ui::EditorTextureHandle) override {}
@@ -118,10 +118,8 @@ static void TestGraphics(bool vulkan, bool detached, const char *capture)
         ImGui::Dummy(region.size);
         ImGui::End();
         ImGui::Render();
-        if (!vulkan) { render::Graphics::ResetStateCache(); render::Graphics::Disable(GL_SCISSOR_TEST); engine.GetRenderer().BeginFrame(); }
         compositor->RenderDrawData(ImGui::GetDrawData());
-        if (vulkan) Check(service.Present(), "Initial editor frame failed");
-        else engine.GetRenderer().EndFrame();
+        Check(compositor->Present(service), "Initial editor frame failed");
         if (detached)
         {
             compositor->RenderPlatformWindows(true);
@@ -149,20 +147,16 @@ static void TestGraphics(bool vulkan, bool detached, const char *capture)
     std::vector<unsigned char> baseline, loaded;
     const auto replay = [&](bool overlay, std::vector<unsigned char> *pixels)
     {
-        if (!vulkan) { render::Graphics::ResetStateCache(); render::Graphics::Disable(GL_SCISSOR_TEST); engine.GetRenderer().BeginFrame(); }
         ui::PresentEditorViewportOverlay(*compositor, overlay ? region : ui::EditorViewportRegion{},
             overlay ? texture : 0, service.GetLoadingRenderer().IsTextureBottomUp(), 900, 600, [&]
         {
-            if (vulkan) Check(service.Present(), "Loading editor composition failed");
-            else
+            // The OpenGL compositor draws into the default framebuffer; read it before the swap.
+            if (!vulkan && pixels)
             {
-                if (pixels)
-                {
-                    pixels->resize(900*600*4);
-                    glReadPixels(0, 0, 900, 600, GL_RGBA, GL_UNSIGNED_BYTE, pixels->data());
-                }
-                engine.GetRenderer().EndFrame();
+                pixels->resize(900*600*4);
+                glReadPixels(0, 0, 900, 600, GL_RGBA, GL_UNSIGNED_BYTE, pixels->data());
             }
+            Check(compositor->Present(service), "Loading editor composition failed");
         });
     };
     replay(false, &baseline);

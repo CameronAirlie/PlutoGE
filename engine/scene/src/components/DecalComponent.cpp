@@ -1,7 +1,7 @@
 #include "PlutoGE/scene/components/DecalComponent.h"
 
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -61,7 +61,7 @@ namespace PlutoGE::scene
         if (m_lifetime > 0.0f && m_fadeDuration > 0.0f && remaining < m_fadeDuration)
             tint.a *= std::clamp(remaining / m_fadeDuration, 0.0f, 1.0f);
 
-        core::Engine::GetInstance().GetRenderer().SubmitDecalCommand(render::DecalCommand{
+        core::Engine::GetInstance().GetRenderScene().SubmitDecalCommand(render::DecalCommand{
             .model = GetOwner()->GetWorldTransform(),
             .material = m_material,
             .tint = tint,

@@ -1,18 +1,14 @@
 #pragma once
 
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 namespace PlutoGE::render
 {
-    class Shader;
-
-    class ChromaticAberrationEffect : public ShaderPostProcessEffect
+    class ChromaticAberrationEffect : public IPostProcessEffect
     {
     public:
         explicit ChromaticAberrationEffect(float intensity = 0.003f) : m_intensity(intensity) {}
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "ChromaticAberration"; }
         std::string GetDisplayName() const override { return "Chromatic Aberration"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -21,7 +17,6 @@ namespace PlutoGE::render
         [[nodiscard]] float GetIntensity() const noexcept { return m_intensity; }
 
     private:
-        Shader *m_shader = nullptr;
         float m_intensity = 0.003f;
     };
 }

@@ -7,10 +7,10 @@ int main()
 {
     if (!glfwInit()) return 77;
     bool valid = true;
-    PlutoGE::render::Renderer renderer;
+    PlutoGE::render::RenderSceneFrontend renderScene;
     // Vulkan runtimes have no current OpenGL or ImGui context.
     {
-        PlutoGE::RuntimeProfiler window(renderer);
+        PlutoGE::RuntimeProfiler window(renderScene);
         if (!window.Initialize(false)) { glfwTerminate(); return 77; }
         window.profiler.AddFrameSample(16.0f);
         window.Draw();
@@ -26,7 +26,7 @@ int main()
     glfwMakeContextCurrent(game);
     auto *context = ImGui::CreateContext();
     {
-        PlutoGE::RuntimeProfiler window(renderer);
+        PlutoGE::RuntimeProfiler window(renderScene);
         valid = window.Initialize(false) && valid;
         valid = valid && glfwGetCurrentContext() == game && ImGui::GetCurrentContext() == context;
         window.profiler.StartCapture(1);

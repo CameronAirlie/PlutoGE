@@ -29,7 +29,6 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"

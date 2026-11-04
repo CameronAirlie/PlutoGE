@@ -1,6 +1,6 @@
 #pragma once
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -10,7 +10,7 @@
 #include <vector>
 
 // Retained instanced foliage (a FoliageComponent-like cluster: identity, revision, a LOD chain) draws the same through
-// the editor's visibility pass (Renderer::PrepareVisibleRenderCommands) as handed straight to the RHI renderer like
+// the editor's visibility pass (RenderSceneFrontend::PrepareVisibleRenderCommands) as handed straight to the RHI renderer like
 // the runtime, and draws at all.
 template <class Device>
 void CheckEditorFoliage(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders)
@@ -64,7 +64,7 @@ void CheckEditorFoliage(Device &device, const PlutoGE::render::BasicRendererShad
         return device.ReadTextureRgba8(renderer.GetColorTexture());
     };
     const auto runtime = render(commands, commands);
-    Renderer editor;
+    RenderSceneFrontend editor;
     for (const auto &command : commands) editor.SubmitRenderCommand(command);
     editor.PrepareVisibleRenderCommands(camera, 64);
     const auto viaEditor = render(editor.GetVisibleRenderCommandView(), editor.GetSceneRenderCommandView());

@@ -1,5 +1,4 @@
 #pragma once
-#include "../engine/render/src/postprocess/VctVoxelizationShaders.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/Material.h"
 #include <array>
@@ -15,348 +14,303 @@ inline bool CheckVctEmissionCoverage()
 {
     using namespace PlutoGE::render;
     bool passed = true;
-    for (const bool legacy : {false, true})
+    ShaderSource voxelSource, resolveSource, mipSource, bounceSource;
+    bounceSource.computeSource = ShaderArtifactLibrary().Load("VCTBounceUpdate", "compute").glsl;
+    mipSource.computeSource = ShaderArtifactLibrary().Load("VCTDirectionalMip", "compute").glsl;
+    ShaderArtifactLibrary artifacts;
+    voxelSource.vertexSource = artifacts.Load("VCTVoxelize", "vertex").glsl;
+    voxelSource.geometrySource = artifacts.Load("VCTVoxelize", "geometry").glsl;
+    voxelSource.fragmentSource = artifacts.Load("VCTVoxelize", "fragment").glsl;
+    resolveSource.computeSource = artifacts.Load("VCTResolve", "compute").glsl;
+    std::unique_ptr<Shader> voxel(Shader::Create(voxelSource)), resolve(Shader::Create(resolveSource)), mip(Shader::Create(mipSource));
+    std::unique_ptr<Shader> bounceShader(Shader::Create(bounceSource));
+    if (!voxel || !resolve || !mip || !bounceShader) return false;
+    for (auto* shader : {voxel.get(), resolve.get(), mip.get()})
     {
-        ShaderSource voxelSource, resolveSource, mipSource, bounceSource;
-        bounceSource.computeSource = ShaderArtifactLibrary().Load("VCTBounceUpdate", "compute").glsl;
-        mipSource.computeSource = ShaderArtifactLibrary().Load("VCTDirectionalMip", "compute").glsl;
-        if (legacy)
+        shader->Bind(); GLint program = 0, linked = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+        glGetProgramiv(GLuint(program), GL_LINK_STATUS, &linked);
+        if (!linked) return false;
+    }
+    GLuint vao = 0, vbo = 0, framebuffer = 0;
+    std::array<GLuint, 3> buffers{};
+    std::array<GLuint, 10> textures{};
+    glGenVertexArrays(1, &vao); glBindVertexArray(vao);
+    glGenBuffers(1, &vbo); glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    struct Vertex { glm::vec3 position, normal; glm::vec2 uv; };
+    for (GLuint attribute = 0; attribute < 3; ++attribute)
+    {
+        glEnableVertexAttribArray(attribute);
+        glVertexAttribPointer(attribute, attribute == 2 ? 2 : 3, GL_FLOAT, GL_FALSE,
+            sizeof(Vertex), reinterpret_cast<void*>(attribute * sizeof(glm::vec3)));
+    }
+    glGenBuffers(GLsizei(buffers.size()), buffers.data());
+    glGenTextures(GLsizei(textures.size()), textures.data());
+    glGenFramebuffers(1, &framebuffer); glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, 32);
+    glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, 32);
+    glDrawBuffer(GL_NONE); glReadBuffer(GL_NONE);
+    glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST);
+    const auto upload = [&](unsigned slot, const void* data, std::size_t size)
+    {
+        glBindBuffer(GL_UNIFORM_BUFFER, buffers[slot]);
+        glBufferData(GL_UNIFORM_BUFFER, GLsizeiptr(size), data, GL_DYNAMIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffers[slot]);
+    };
+    GLuint emissionTexture = 0;
+    glGenTextures(1, &emissionTexture);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, emissionTexture);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    const glm::vec4 emissionTexel(.25f,.5f,.75f,1);
+    glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,1,1,0,GL_RGBA,GL_FLOAT,&emissionTexel);
+    const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false, bool textured = false, bool emissiveMap = false, bool channelMask = false)
+    {
+        constexpr float volumeSize = 16.0f;
+        const float voxelSize = volumeSize / float(resolution);
+        std::vector<Vertex> vertices;
+        const auto vertex = [&](float x, float y)
         {
-            voxelSource = detail::VctVoxelizationShaderSource();
-            resolveSource = detail::VctResolveShaderSource();
-
-        }
-        else
-        {
-            ShaderArtifactLibrary artifacts;
-            voxelSource.vertexSource = artifacts.Load("VCTVoxelize", "vertex").glsl;
-            voxelSource.geometrySource = artifacts.Load("VCTVoxelize", "geometry").glsl;
-            voxelSource.fragmentSource = artifacts.Load("VCTVoxelize", "fragment").glsl;
-            resolveSource.computeSource = artifacts.Load("VCTResolve", "compute").glsl;
-        }
-        std::unique_ptr<Shader> voxel(Shader::Create(voxelSource)), resolve(Shader::Create(resolveSource)), mip(Shader::Create(mipSource));
-        std::unique_ptr<Shader> bounceShader(Shader::Create(bounceSource));
-        if (!voxel || !resolve || !mip || !bounceShader) return false;
-        for (auto* shader : {voxel.get(), resolve.get(), mip.get()})
-        {
-            shader->Bind(); GLint program = 0, linked = 0;
-            glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-            glGetProgramiv(GLuint(program), GL_LINK_STATUS, &linked);
-            if (!linked) return false;
-        }
-        GLuint vao = 0, vbo = 0, framebuffer = 0;
-        std::array<GLuint, 3> buffers{};
-        std::array<GLuint, 10> textures{};
-        glGenVertexArrays(1, &vao); glBindVertexArray(vao);
-        glGenBuffers(1, &vbo); glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        struct Vertex { glm::vec3 position, normal; glm::vec2 uv; };
-        for (GLuint attribute = 0; attribute < 3; ++attribute)
-        {
-            glEnableVertexAttribArray(attribute);
-            glVertexAttribPointer(attribute, attribute == 2 ? 2 : 3, GL_FLOAT, GL_FALSE,
-                sizeof(Vertex), reinterpret_cast<void*>(attribute * sizeof(glm::vec3)));
-        }
-        glGenBuffers(GLsizei(buffers.size()), buffers.data());
-        glGenTextures(GLsizei(textures.size()), textures.data());
-        glGenFramebuffers(1, &framebuffer); glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-        glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_WIDTH, 32);
-        glFramebufferParameteri(GL_FRAMEBUFFER, GL_FRAMEBUFFER_DEFAULT_HEIGHT, 32);
-        glDrawBuffer(GL_NONE); glReadBuffer(GL_NONE);
-        glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND); glDisable(GL_SCISSOR_TEST);
-        const auto upload = [&](unsigned slot, const void* data, std::size_t size)
-        {
-            glBindBuffer(GL_UNIFORM_BUFFER, buffers[slot]);
-            glBufferData(GL_UNIFORM_BUFFER, GLsizeiptr(size), data, GL_DYNAMIC_DRAW);
-            glBindBufferBase(GL_UNIFORM_BUFFER, slot, buffers[slot]);
+            glm::vec3 p(4.0f + phase + x * side, 4.0f + phase + y * side, 5.125f);
+            glm::vec3 n(0, 0, 1);
+            if (axis == 0) { std::swap(p.x, p.z); std::swap(n.x, n.z); }
+            if (axis == 1) { std::swap(p.y, p.z); std::swap(n.y, n.z); }
+            return Vertex{p, n, {x,y}};
         };
-        GLuint emissionTexture = 0;
-        glGenTextures(1, &emissionTexture);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, emissionTexture);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        const glm::vec4 emissionTexel(.25f,.5f,.75f,1);
-        glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA32F,1,1,0,GL_RGBA,GL_FLOAT,&emissionTexel);
-        const auto measure = [&](float side, float phase, int subdivisions, int resolution, int axis, bool reversed, float emission = 8.0f, float bounce = 0.0f, float metallic = 0.0f, float sourceRadiance = 2.0f, int repetitions = 1, bool useGraph = false, bool textured = false, bool emissiveMap = false, bool channelMask = false)
-        {
-            constexpr float volumeSize = 16.0f;
-            const float voxelSize = volumeSize / float(resolution);
-            std::vector<Vertex> vertices;
-            const auto vertex = [&](float x, float y)
+        for (int y = 0; y < subdivisions; ++y)
+            for (int x = 0; x < subdivisions; ++x)
             {
-                glm::vec3 p(4.0f + phase + x * side, 4.0f + phase + y * side, 5.125f);
-                glm::vec3 n(0, 0, 1);
-                if (axis == 0) { std::swap(p.x, p.z); std::swap(n.x, n.z); }
-                if (axis == 1) { std::swap(p.y, p.z); std::swap(n.y, n.z); }
-                return Vertex{p, n, {x,y}};
-            };
-            for (int y = 0; y < subdivisions; ++y)
-                for (int x = 0; x < subdivisions; ++x)
-                {
-                    float x0 = float(x)/subdivisions, x1 = float(x+1)/subdivisions;
-                    float y0 = float(y)/subdivisions, y1 = float(y+1)/subdivisions;
-                    std::array<Vertex,6> cell{vertex(x0,y0),vertex(x1,y0),vertex(x0,y1),
-                                              vertex(x0,y1),vertex(x1,y0),vertex(x1,y1)};
-                    if (reversed) { std::swap(cell[0],cell[2]); std::swap(cell[3],cell[5]); }
-                    vertices.insert(vertices.end(),cell.begin(),cell.end());
-                }
-            glBindBuffer(GL_ARRAY_BUFFER,vbo);
-            glBufferData(GL_ARRAY_BUFFER,GLsizeiptr(vertices.size()*sizeof(Vertex)),vertices.data(),GL_DYNAMIC_DRAW);
-            glDeleteTextures(GLsizei(textures.size()), textures.data());
-            glGenTextures(GLsizei(textures.size()), textures.data());
-            const int count = resolution*resolution*resolution;
-            std::vector<unsigned> zeros(count,0);
-            for (unsigned i=0;i<5;++i)
-            {
-                glBindTexture(GL_TEXTURE_3D,textures[i]);
-                glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-                glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
-                glTexImage3D(GL_TEXTURE_3D,0,GL_R32UI,resolution,resolution,resolution,0,GL_RED_INTEGER,GL_UNSIGNED_INT,zeros.data());
-                if (legacy || i<4) glBindImageTexture(legacy?i:i+4,textures[i],0,GL_TRUE,0,GL_READ_WRITE,GL_R32UI);
+                float x0 = float(x)/subdivisions, x1 = float(x+1)/subdivisions;
+                float y0 = float(y)/subdivisions, y1 = float(y+1)/subdivisions;
+                std::array<Vertex,6> cell{vertex(x0,y0),vertex(x1,y0),vertex(x0,y1),
+                                          vertex(x0,y1),vertex(x1,y0),vertex(x1,y1)};
+                if (reversed) { std::swap(cell[0],cell[2]); std::swap(cell[3],cell[5]); }
+                vertices.insert(vertices.end(),cell.begin(),cell.end());
             }
-            glBindTexture(GL_TEXTURE_3D,textures[8]);
+        glBindBuffer(GL_ARRAY_BUFFER,vbo);
+        glBufferData(GL_ARRAY_BUFFER,GLsizeiptr(vertices.size()*sizeof(Vertex)),vertices.data(),GL_DYNAMIC_DRAW);
+        glDeleteTextures(GLsizei(textures.size()), textures.data());
+        glGenTextures(GLsizei(textures.size()), textures.data());
+        const int count = resolution*resolution*resolution;
+        std::vector<unsigned> zeros(count,0);
+        for (unsigned i=0;i<5;++i)
+        {
+            glBindTexture(GL_TEXTURE_3D,textures[i]);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
             glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
             glTexImage3D(GL_TEXTURE_3D,0,GL_R32UI,resolution,resolution,resolution,0,GL_RED_INTEGER,GL_UNSIGNED_INT,zeros.data());
-            glBindImageTexture(legacy?5:0,textures[8],0,GL_TRUE,0,GL_READ_WRITE,GL_R32UI);
-            glBindTexture(GL_TEXTURE_3D,textures[9]);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
-            glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,nullptr);
-            glBindTexture(GL_TEXTURE_3D,textures[5]);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
-            glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,nullptr);
-            // Immutable synthetic field: opaque incident radiance is returned
-            // at the first sample. This isolates the shared bounce integral and
-            // material response from mip/filter and scene coverage errors.
-            std::vector<glm::vec4> incident(count,glm::vec4(sourceRadiance,sourceRadiance,sourceRadiance,1));
-            for (unsigned direction=0;direction<6;++direction)
-            {
-                glActiveTexture(GL_TEXTURE7+direction);
-                glBindTexture(GL_TEXTURE_3D,textures[7]);
-            }
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
-            glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,incident.data());
-            glActiveTexture(GL_TEXTURE0);
-            voxel->Bind();
-            std::shared_ptr<const ShaderGraphProgram> graphProgram;
-            if (useGraph)
-            {
-                ShaderGraph graph;
-                graph.nodes={{.id=1,.kind=ShaderGraphNodeKind::Vec3,.value={emission,emission*.5f,emission*.25f,1}},
-                    {.id=2,.kind=ShaderGraphNodeKind::Output}};
-                graph.links={{1,1,"Vec3",2,"Emission"}};
-                graphProgram=BuildShaderGraphProgram(graph);
-            }
-            if (legacy)
-            {
-                MaterialConfig config;config.shaderGraphProgram=graphProgram;
-                Material(config).Bind(voxel.get());
-                voxel->SetUniform("uModel",glm::mat4(1)); voxel->SetUniform("uUVScale",glm::vec2(1));
-                voxel->SetUniform("uVolumeOrigin",glm::vec3(0)); voxel->SetUniform("uVolumeSize",volumeSize);
-                voxel->SetUniform("uVoxelResolution",resolution); voxel->SetUniform("uColor",glm::vec4(1));
-                voxel->SetUniform("uEmission",useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f));
-                voxel->SetUniform("uCaptureSurface",1);
-                voxel->SetUniform("uMetallicFactor",metallic);
-                voxel->SetUniform("uHasAlbedoTexture",textured?1.0f:0.0f);
-                voxel->SetUniform("uAlbedoTexture",0);
-                voxel->SetUniform("uHasEmissionTexture",emissiveMap?1.0f:0.0f);
-                voxel->SetUniform("uEmissionTexture",30);
-                voxel->SetUniform("uEmissionChannelMask",channelMask?1:0);
-                if(channelMask) {
-                    voxel->SetUniform("uEmissionChannels[0]",glm::vec4(0));
-                    voxel->SetUniform("uEmissionChannels[1]",glm::vec4(1,0,0,.25f));
-                    voxel->SetUniform("uEmissionChannels[2]",glm::vec4(0));
-                }
-            }
-            else
-            {
-                struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
-                struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; ShaderGraphProgramData graph{}; glm::vec4 cameraTime{0}; glm::vec4 factors{1}; glm::uvec4 emissionParameters{0}; std::array<glm::vec4,3> emissionChannels{}; } material;
-                static_assert(sizeof(MaterialPass)==160+sizeof(ShaderGraphProgramData));
-                material.emission = useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f);
-                if(graphProgram)material.graph=graphProgram->data;
-                material.metallic = metallic; material.flags.w = 1;
-                material.flags.x = textured ? 1u : 0u;
-                material.emissionParameters.x = emissiveMap ? 1u : 0u;
-                material.emissionParameters.z = channelMask ? 1u : 0u;
-                material.emissionChannels[1] = {1,0,0,.25f};
-                glm::mat4 model(1);
-                upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
-            }
-            glActiveTexture(legacy?GL_TEXTURE30:GL_TEXTURE20);
-            glBindTexture(GL_TEXTURE_2D,emissionTexture);
-            glActiveTexture(legacy?GL_TEXTURE0:GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D,emissionTexture);
-            glActiveTexture(GL_TEXTURE0);
-            glViewport(0,0,resolution,resolution);
-            glDrawArraysInstanced(GL_TRIANGLES,0,GLsizei(vertices.size()),repetitions);
-            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-            if (bounce > 0)
-            {
-                bounceShader->Bind();
-                const glm::uvec4 pass(resolution,0,1,0); upload(0,&pass,sizeof(pass));
-                glBindImageTexture(1,textures[8],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
-                glBindImageTexture(2,textures[legacy?4:3],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
-                glBindImageTexture(3,textures[9],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
-                glDispatchCompute((resolution+3)/4,(resolution+3)/4,(resolution+3)/4);
-                glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-            }
-            glBindImageTexture(6,textures[9],0,GL_TRUE,0,GL_READ_ONLY,GL_RGBA16F);
-            resolve->Bind();
-            if (legacy)
-            {
-                for (unsigned i=0;i<5;++i) glBindImageTexture(i,textures[i],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
-                resolve->SetUniform("uSecondaryGain",bounce);
-                resolve->SetUniform("uResolution",resolution); resolve->SetUniform("uDestinationZOffset",0);
-            }
-            else
-            {
-                for (unsigned i=0;i<4;++i) glBindImageTexture(i+1,textures[i],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
-                const std::array<glm::uvec4,3> pass{glm::uvec4(resolution,0,std::bit_cast<unsigned>(bounce),0),
-                    glm::uvec4(0), glm::uvec4(resolution,resolution,resolution,0)};
-                upload(0,pass.data(),sizeof(pass));
-            }
-            glBindImageTexture(5,textures[5],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
+            if (i<4) glBindImageTexture(i+4,textures[i],0,GL_TRUE,0,GL_READ_WRITE,GL_R32UI);
+        }
+        glBindTexture(GL_TEXTURE_3D,textures[8]);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+        glTexImage3D(GL_TEXTURE_3D,0,GL_R32UI,resolution,resolution,resolution,0,GL_RED_INTEGER,GL_UNSIGNED_INT,zeros.data());
+        glBindImageTexture(0,textures[8],0,GL_TRUE,0,GL_READ_WRITE,GL_R32UI);
+        glBindTexture(GL_TEXTURE_3D,textures[9]);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+        glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,nullptr);
+        glBindTexture(GL_TEXTURE_3D,textures[5]);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+        glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,nullptr);
+        // Immutable synthetic field: opaque incident radiance is returned
+        // at the first sample. This isolates the shared bounce integral and
+        // material response from mip/filter and scene coverage errors.
+        std::vector<glm::vec4> incident(count,glm::vec4(sourceRadiance,sourceRadiance,sourceRadiance,1));
+        for (unsigned direction=0;direction<6;++direction)
+        {
+            glActiveTexture(GL_TEXTURE7+direction);
+            glBindTexture(GL_TEXTURE_3D,textures[7]);
+        }
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+        glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,resolution,resolution,resolution,0,GL_RGBA,GL_FLOAT,incident.data());
+        glActiveTexture(GL_TEXTURE0);
+        voxel->Bind();
+        std::shared_ptr<const ShaderGraphProgram> graphProgram;
+        if (useGraph)
+        {
+            ShaderGraph graph;
+            graph.nodes={{.id=1,.kind=ShaderGraphNodeKind::Vec3,.value={emission,emission*.5f,emission*.25f,1}},
+                {.id=2,.kind=ShaderGraphNodeKind::Output}};
+            graph.links={{1,1,"Vec3",2,"Emission"}};
+            graphProgram=BuildShaderGraphProgram(graph);
+        }
+        struct VoxelPass { glm::vec4 originSize; glm::uvec4 counts; std::array<glm::vec4,78> unused{}; } pass{{0,0,0,volumeSize},{resolution,0,0,0}};
+        struct MaterialPass { glm::vec4 color{1}; glm::vec2 uv{1}; float metallic=0,cutoff=0; glm::vec3 emission{8,4,2}; unsigned alpha=0; glm::uvec4 flags{0}; ShaderGraphProgramData graph{}; glm::vec4 cameraTime{0}; glm::vec4 factors{1}; glm::uvec4 emissionParameters{0}; std::array<glm::vec4,3> emissionChannels{}; } material;
+        static_assert(sizeof(MaterialPass)==160+sizeof(ShaderGraphProgramData));
+        material.emission = useGraph?glm::vec3(0):glm::vec3(emission,emission*.5f,emission*.25f);
+        if(graphProgram)material.graph=graphProgram->data;
+        material.metallic = metallic; material.flags.w = 1;
+        material.flags.x = textured ? 1u : 0u;
+        material.emissionParameters.x = emissiveMap ? 1u : 0u;
+        material.emissionParameters.z = channelMask ? 1u : 0u;
+        material.emissionChannels[1] = {1,0,0,.25f};
+        glm::mat4 model(1);
+        upload(0,&pass,sizeof(pass)); upload(1,&model,sizeof(model)); upload(2,&material,sizeof(material));
+        glActiveTexture(GL_TEXTURE20);
+        glBindTexture(GL_TEXTURE_2D,emissionTexture);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D,emissionTexture);
+        glActiveTexture(GL_TEXTURE0);
+        glViewport(0,0,resolution,resolution);
+        glDrawArraysInstanced(GL_TRIANGLES,0,GLsizei(vertices.size()),repetitions);
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        if (bounce > 0)
+        {
+            bounceShader->Bind();
+            const glm::uvec4 pass(resolution,0,1,0); upload(0,&pass,sizeof(pass));
+            glBindImageTexture(1,textures[8],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
+            glBindImageTexture(2,textures[3],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
+            glBindImageTexture(3,textures[9],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
             glDispatchCompute((resolution+3)/4,(resolution+3)/4,(resolution+3)/4);
-            glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-            std::vector<glm::vec4> field(count);
-            glBindTexture(GL_TEXTURE_3D,textures[5]);
-            glGetTexImage(GL_TEXTURE_3D,0,GL_RGBA,GL_FLOAT,field.data());
-            double energy=0;
-            for (const auto& value:field) energy+=value.r*voxelSize*voxelSize;
-            // A single planar source must conserve its projected energy through
-            // directional mips. Opacity without matching surface radiance used
-            // to absorb the emitter before the cone could gather its light.
-            const int mipSize = resolution/2;
-            glBindTexture(GL_TEXTURE_3D,textures[6]);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
-            glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
-            glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,mipSize,mipSize,mipSize,0,GL_RGBA,GL_FLOAT,nullptr);
-            glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_3D,textures[5]);
-            glActiveTexture(GL_TEXTURE0);
-            glBindImageTexture(2,textures[6],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
-            const std::array<glm::uvec4,4> mipPass{glm::uvec4(axis,1,0,mipSize),glm::uvec4(0),
-                glm::uvec4(0),glm::uvec4(mipSize,mipSize,mipSize,0)};
-            upload(0,mipPass.data(),sizeof(mipPass));
-            mip->Bind();
-            glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
-            glDispatchCompute((mipSize+3)/4,(mipSize+3)/4,(mipSize+3)/4);
-            glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
-            std::vector<glm::vec4> mipField(mipSize*mipSize*mipSize);
-            glBindTexture(GL_TEXTURE_3D,textures[6]);
-            glGetTexImage(GL_TEXTURE_3D,0,GL_RGBA,GL_FLOAT,mipField.data());
-            double mipEnergy = 0;
-            for (const auto& value:mipField) mipEnergy+=value.r*voxelSize*voxelSize*4;
-            double referenceEnergy = 0;
-            const auto at = [&](glm::ivec3 coordinate) -> const glm::vec4&
-            {
-                return field[(coordinate.z*resolution+coordinate.y)*resolution+coordinate.x];
-            };
-            for (int z=0;z<resolution;++z)
-                for (int y=0;y<resolution;++y)
-                    for (int x=0;x<resolution;++x)
-                    {
-                        glm::ivec3 near(x,y,z);
-                        if (near[axis]%2 != 0) continue;
-                        glm::ivec3 far = near; ++far[axis];
-                        referenceEnergy += (at(near).r+(1-at(near).a)*at(far).r)*voxelSize*voxelSize;
-                    }
-            if (std::abs(mipEnergy-referenceEnergy)>std::max(.002,referenceEnergy*.002) ||
-                std::abs(mipEnergy-energy)>std::max(.002,energy*.002))
-            {
-                std::cerr << "VCT directional mip energy: expected=" << referenceEnergy << " actual=" << mipEnergy << '\n';
-                passed = false;
-            }
-            return energy;
+            glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        }
+        glBindImageTexture(6,textures[9],0,GL_TRUE,0,GL_READ_ONLY,GL_RGBA16F);
+        resolve->Bind();
+        for (unsigned i=0;i<4;++i) glBindImageTexture(i+1,textures[i],0,GL_TRUE,0,GL_READ_ONLY,GL_R32UI);
+        const std::array<glm::uvec4,3> resolvePass{glm::uvec4(resolution,0,std::bit_cast<unsigned>(bounce),0),
+            glm::uvec4(0), glm::uvec4(resolution,resolution,resolution,0)};
+        upload(0,resolvePass.data(),sizeof(resolvePass));
+        glBindImageTexture(5,textures[5],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
+        glDispatchCompute((resolution+3)/4,(resolution+3)/4,(resolution+3)/4);
+        glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+        std::vector<glm::vec4> field(count);
+        glBindTexture(GL_TEXTURE_3D,textures[5]);
+        glGetTexImage(GL_TEXTURE_3D,0,GL_RGBA,GL_FLOAT,field.data());
+        double energy=0;
+        for (const auto& value:field) energy+=value.r*voxelSize*voxelSize;
+        // A single planar source must conserve its projected energy through
+        // directional mips. Opacity without matching surface radiance used
+        // to absorb the emitter before the cone could gather its light.
+        const int mipSize = resolution/2;
+        glBindTexture(GL_TEXTURE_3D,textures[6]);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_3D,GL_TEXTURE_MAX_LEVEL,0);
+        glTexImage3D(GL_TEXTURE_3D,0,GL_RGBA16F,mipSize,mipSize,mipSize,0,GL_RGBA,GL_FLOAT,nullptr);
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_3D,textures[5]);
+        glActiveTexture(GL_TEXTURE0);
+        glBindImageTexture(2,textures[6],0,GL_TRUE,0,GL_WRITE_ONLY,GL_RGBA16F);
+        const std::array<glm::uvec4,4> mipPass{glm::uvec4(axis,1,0,mipSize),glm::uvec4(0),
+            glm::uvec4(0),glm::uvec4(mipSize,mipSize,mipSize,0)};
+        upload(0,mipPass.data(),sizeof(mipPass));
+        mip->Bind();
+        glMemoryBarrier(GL_TEXTURE_FETCH_BARRIER_BIT);
+        glDispatchCompute((mipSize+3)/4,(mipSize+3)/4,(mipSize+3)/4);
+        glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT);
+        std::vector<glm::vec4> mipField(mipSize*mipSize*mipSize);
+        glBindTexture(GL_TEXTURE_3D,textures[6]);
+        glGetTexImage(GL_TEXTURE_3D,0,GL_RGBA,GL_FLOAT,mipField.data());
+        double mipEnergy = 0;
+        for (const auto& value:mipField) mipEnergy+=value.r*voxelSize*voxelSize*4;
+        double referenceEnergy = 0;
+        const auto at = [&](glm::ivec3 coordinate) -> const glm::vec4&
+        {
+            return field[(coordinate.z*resolution+coordinate.y)*resolution+coordinate.x];
         };
-        // The integrated projected energy is Le * area, independent of cell
-        // alignment, dominant axis, winding, tessellation and voxel resolution.
-        for (int resolution : {16,32})
-            for (float side : {.25f,.5f,2.0f})
-                for (float phase : {.0f,.13f,.49f,.91f})
-                    for (int subdivisions : {1,4})
-                        for (int axis : {0,1,2})
-                        {
-                            const double actual=measure(side,phase,subdivisions,resolution,axis,axis==1);
-                            const double expected=8.0*side*side;
-                            // Integer atomic and half-float storage quantize each contribution.
-                            if (std::abs(actual-expected)>std::max(.025,expected*.04))
-                            {
-                                std::cerr << "VCT " << (legacy?"legacy":"Slang") << " area conservation failed: side=" << side
-                                    << " phase=" << phase << " subdivisions=" << subdivisions << " resolution=" << resolution
-                                    << " axis=" << axis << " expected=" << expected << " actual=" << actual << '\n';
-                                passed=false;
-                            }
-                        }
-        const double graphEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true);
-        const double texturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true);
-        const double mappedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true,true);
-        if (std::abs(mappedEnergy-8.0)>.32) {
-            std::cerr << "VCT emission map multiplied albedo or was ignored: " << mappedEnergy << '\n';
-            passed=false;
-        }
-        const double maskEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true,true,true);
-        if(std::abs(maskEnergy-4.0)>.16) {
-            std::cerr << "VCT emission masks have incorrect energy: " << maskEnergy << '\n'; passed=false;
-        }
-        const double graphTexturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true,true);
-        if (std::abs(texturedEnergy-8.0)>.32 || std::abs(graphTexturedEnergy-32.0)>1.28)
+        for (int z=0;z<resolution;++z)
+            for (int y=0;y<resolution;++y)
+                for (int x=0;x<resolution;++x)
+                {
+                    glm::ivec3 near(x,y,z);
+                    if (near[axis]%2 != 0) continue;
+                    glm::ivec3 far = near; ++far[axis];
+                    referenceEnergy += (at(near).r+(1-at(near).a)*at(far).r)*voxelSize*voxelSize;
+                }
+        if (std::abs(mipEnergy-referenceEnergy)>std::max(.002,referenceEnergy*.002) ||
+            std::abs(mipEnergy-energy)>std::max(.002,energy*.002))
         {
-            std::cerr << "Textured VCT emission mismatch: material=" << texturedEnergy << " graph=" << graphTexturedEnergy << '\n';
-            passed=false;
-        }
-        if (std::abs(graphEnergy-32.0) > 1.28)
-        {
-            std::cerr << "VCT graph emission energy: expected=32 actual=" << graphEnergy << '\n';
-            passed=false;
-        }
-        // Unit radiance, matching ordinary emissive materials, must also scale
-        // with area. Keep these footprints above fixed-point quantization noise.
-        for (int resolution : {16,32})
-            for (float side : {.5f,1.0f})
-            {
-                const double actual = measure(side,.13f,1,resolution,2,false,1.0f);
-                if (std::abs(actual-side*side) > .025) passed = false;
-            }
-        for (const float gain : {0.0f,0.5f,1.0f})
-        {
-            const double actual=measure(2,.13f,1,32,2,false,0,gain);
-            const double expected=4.0*2.0*(29.0/31.0)*gain;
-            if (std::abs(actual-expected)>.15)
-            {
-                std::cerr << "VCT " << (legacy?"legacy":"Slang") << " secondary material integral: expected=" << expected << " actual=" << actual << '\n';
-                passed=false;
-            }
-        }
-        const double faint = measure(2,.13f,1,32,2,false,0,1,0,.001f);
-        if (std::abs(faint - .0038) > .0008)
-        {
-            std::cerr << "Faint secondary radiance was lost: " << faint << '\n';
+            std::cerr << "VCT directional mip energy: expected=" << referenceEnergy << " actual=" << mipEnergy << '\n';
             passed = false;
         }
-        passed &= measure(2,.13f,1,32,2,false,0,1,1)<.01;
-        passed &= measure(2,.13f,1,32,2,false,0,1,0,0)<.01;
-        const double saturated = measure(2,0,1,32,2,false,16,0,0,2,70000);
-        if (std::abs(saturated-64.0)>1.0)
+        return energy;
+    };
+    // The integrated projected energy is Le * area, independent of cell
+    // alignment, dominant axis, winding, tessellation and voxel resolution.
+    for (int resolution : {16,32})
+        for (float side : {.25f,.5f,2.0f})
+            for (float phase : {.0f,.13f,.49f,.91f})
+                for (int subdivisions : {1,4})
+                    for (int axis : {0,1,2})
+                    {
+                        const double actual=measure(side,phase,subdivisions,resolution,axis,axis==1);
+                        const double expected=8.0*side*side;
+                        // Integer atomic and half-float storage quantize each contribution.
+                        if (std::abs(actual-expected)>std::max(.025,expected*.04))
+                        {
+                            std::cerr << "VCT area conservation failed: side=" << side
+                                << " phase=" << phase << " subdivisions=" << subdivisions << " resolution=" << resolution
+                                << " axis=" << axis << " expected=" << expected << " actual=" << actual << '\n';
+                            passed=false;
+                        }
+                    }
+    const double graphEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true);
+    const double texturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true);
+    const double mappedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true,true);
+    if (std::abs(mappedEnergy-8.0)>.32) {
+        std::cerr << "VCT emission map multiplied albedo or was ignored: " << mappedEnergy << '\n';
+        passed=false;
+    }
+    const double maskEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,false,true,true,true);
+    if(std::abs(maskEnergy-4.0)>.16) {
+        std::cerr << "VCT emission masks have incorrect energy: " << maskEnergy << '\n'; passed=false;
+    }
+    const double graphTexturedEnergy = measure(2,.13f,1,32,2,false,8,0,0,2,1,true,true);
+    if (std::abs(texturedEnergy-8.0)>.32 || std::abs(graphTexturedEnergy-32.0)>1.28)
+    {
+        std::cerr << "Textured VCT emission mismatch: material=" << texturedEnergy << " graph=" << graphTexturedEnergy << '\n';
+        passed=false;
+    }
+    if (std::abs(graphEnergy-32.0) > 1.28)
+    {
+        std::cerr << "VCT graph emission energy: expected=32 actual=" << graphEnergy << '\n';
+        passed=false;
+    }
+    // Unit radiance, matching ordinary emissive materials, must also scale
+    // with area. Keep these footprints above fixed-point quantization noise.
+    for (int resolution : {16,32})
+        for (float side : {.5f,1.0f})
         {
-            std::cerr << "Dense voxel accumulation wrapped or changed source energy: " << saturated << '\n';
+            const double actual = measure(side,.13f,1,resolution,2,false,1.0f);
+            if (std::abs(actual-side*side) > .025) passed = false;
+        }
+    for (const float gain : {0.0f,0.5f,1.0f})
+    {
+        const double actual=measure(2,.13f,1,32,2,false,0,gain);
+        const double expected=4.0*2.0*(29.0/31.0)*gain;
+        if (std::abs(actual-expected)>.15)
+        {
+            std::cerr << "VCT secondary material integral: expected=" << expected << " actual=" << actual << '\n';
             passed=false;
         }
-        passed &= glGetError()==GL_NO_ERROR;
-        glBindFramebuffer(GL_FRAMEBUFFER,0); glDeleteFramebuffers(1,&framebuffer);
-        glBindVertexArray(0); glDeleteVertexArrays(1,&vao); glDeleteBuffers(1,&vbo);
-        glDeleteBuffers(GLsizei(buffers.size()),buffers.data());
-        glDeleteTextures(GLsizei(textures.size()),textures.data());
-        glDeleteTextures(1,&emissionTexture);
     }
+    const double faint = measure(2,.13f,1,32,2,false,0,1,0,.001f);
+    if (std::abs(faint - .0038) > .0008)
+    {
+        std::cerr << "Faint secondary radiance was lost: " << faint << '\n';
+        passed = false;
+    }
+    passed &= measure(2,.13f,1,32,2,false,0,1,1)<.01;
+    passed &= measure(2,.13f,1,32,2,false,0,1,0,0)<.01;
+    const double saturated = measure(2,0,1,32,2,false,16,0,0,2,70000);
+    if (std::abs(saturated-64.0)>1.0)
+    {
+        std::cerr << "Dense voxel accumulation wrapped or changed source energy: " << saturated << '\n';
+        passed=false;
+    }
+    passed &= glGetError()==GL_NO_ERROR;
+    glBindFramebuffer(GL_FRAMEBUFFER,0); glDeleteFramebuffers(1,&framebuffer);
+    glBindVertexArray(0); glDeleteVertexArrays(1,&vao); glDeleteBuffers(1,&vbo);
+    glDeleteBuffers(GLsizei(buffers.size()),buffers.data());
+    glDeleteTextures(GLsizei(textures.size()),textures.data());
+    glDeleteTextures(1,&emissionTexture);
     return passed;
 }

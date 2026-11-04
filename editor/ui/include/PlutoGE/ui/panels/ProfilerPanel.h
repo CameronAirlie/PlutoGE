@@ -5,7 +5,7 @@
 
 namespace PlutoGE::render
 {
-    class Renderer;
+    class RenderSceneFrontend;
 }
 
 namespace PlutoGE::ui
@@ -15,8 +15,8 @@ namespace PlutoGE::ui
     class ProfilerPanel : public Panel
     {
     public:
-        ProfilerPanel(const PanelConfig &config, EditorProfiler *profiler, PanelManager *panelManager, render::Renderer *renderer)
-            : Panel(config), m_profiler(profiler), m_panelManager(panelManager), m_renderer(renderer) {}
+        ProfilerPanel(const PanelConfig &config, EditorProfiler *profiler, PanelManager *panelManager, render::RenderSceneFrontend *renderScene)
+            : Panel(config), m_profiler(profiler), m_panelManager(panelManager), m_renderScene(renderScene) {}
         ~ProfilerPanel() override = default;
 
         void Initialize() override;
@@ -48,7 +48,7 @@ namespace PlutoGE::ui
         float m_hitchThresholdMs = 33.3f;
         EditorProfiler *m_profiler = nullptr;
         PanelManager *m_panelManager = nullptr;
-        render::Renderer *m_renderer = nullptr;
+        render::RenderSceneFrontend *m_renderScene = nullptr;
         std::string m_lastCopiedMetrics;
     };
 }

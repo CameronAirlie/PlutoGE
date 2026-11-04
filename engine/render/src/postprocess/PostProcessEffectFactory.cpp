@@ -9,10 +9,8 @@
 #include "PlutoGE/render/postprocess/FXAAEffect.h"
 #include "PlutoGE/render/postprocess/GammaCorrectionEffect.h"
 #include "PlutoGE/render/postprocess/LensFlareEffect.h"
-#include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/LSAOEffect.h"
 #include "PlutoGE/render/postprocess/MotionBlurEffect.h"
-#include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/postprocess/SSREffect.h"
@@ -43,8 +41,6 @@ namespace PlutoGE::render
             PostProcessEffectDescriptor{"DDGI", Stage::ProbeLighting, "Probe-based diffuse light that bounces around the whole scene and updates as lights and objects move.", &Create<DDGIEffect>},
             PostProcessEffectDescriptor{"SSGI", Stage::LightingComposite, "Adds bounced light traced against what is on screen; cheap, but misses anything off screen.", &Create<SSGIEffect>},
             PostProcessEffectDescriptor{"VCTGI", Stage::LightingComposite, "Indirect light cone-traced through a voxelized copy of the static scene.", &Create<VoxelConeTracingEffect>},
-            PostProcessEffectDescriptor{"LPV", Stage::LightingComposite, "Light propagation volume indirect light (OpenGL renderer only).", &Create<LPVEffect>},
-            PostProcessEffectDescriptor{"RSM", Stage::LightingComposite, "Reflective shadow map indirect light (OpenGL renderer only).", &Create<RSMEffect>},
             PostProcessEffectDescriptor{"SceneComposite", Stage::LightingComposite, "Combines the lighting buffers into the final scene colour, and shows debug views of them.", &Create<SceneCompositeEffect>},
             PostProcessEffectDescriptor{"SSAO", Stage::AmbientOcclusion, "Darkens creases and contact points where ambient light is blocked.", &Create<SSAOEffect>},
             PostProcessEffectDescriptor{"LSAO", Stage::AmbientOcclusion, "Ambient occlusion tuned for large-scale shapes; an alternative to SSAO.", &Create<LSAOEffect>},

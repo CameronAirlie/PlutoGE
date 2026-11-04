@@ -5,7 +5,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 
@@ -581,7 +581,7 @@ namespace PlutoGE::scene
             return;
         }
 
-        core::Engine::GetInstance().GetRenderer().SubmitSortedRenderCommands(commands, true);
+        core::Engine::GetInstance().GetRenderScene().SubmitSortedRenderCommands(commands, true);
     }
 
     std::vector<std::size_t> FoliageComponent::GetBakeSubmeshes(std::size_t typeIndex) const

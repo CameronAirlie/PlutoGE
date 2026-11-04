@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <numeric>
 #include <sstream>
+#include <string_view>
 #include <utility>
 #include <map>
 
@@ -27,9 +28,7 @@ namespace PlutoGE::ui
     std::string EditorProfiler::BuildFrameMetricsReport(const EditorProfileFrame &frame, bool allTraceSamples) const
     {
         const auto &rmlTiming = frame.runtimeUi;
-        auto result = BuildMetricsReport(frame.panels, frame.timing, frame.cpuPasses, frame.renderer,
-            frame.gpuPasses, frame.postProcessGpuPasses, frame.gpuDetails, frame.totalCpuMs,
-            frame.totalGpuMs, frame.lighting, frame.durationMs);
+        auto result = BuildMetricsReport(frame.panels, frame.timing, frame.scene, frame.durationMs);
         {
             result = "Frame sequence: " + std::to_string(frame.sequence) + "\n" + result;
             const auto selfTimes = core::CpuSelfTimes(frame.samples);
@@ -165,7 +164,7 @@ namespace PlutoGE::ui
     }
 
     void EditorProfiler::CompleteFrame(float durationMs, const EditorFrameTimingStats &timing,
-                                      const PanelManagerTimingStats &panels, const render::Renderer &renderer,
+                                      const PanelManagerTimingStats &panels, const render::RenderSceneStats &scene,
                                       const render::RmlUiCpuTiming &runtimeUi,
                                       std::vector<core::CpuSample> samples, std::uint32_t droppedSamples)
     {
@@ -181,16 +180,8 @@ namespace PlutoGE::ui
         frame.durationMs = durationMs;
         frame.timing = timing;
         frame.panels = panels;
-        frame.renderer = renderer.GetCpuFrameStats();
+        frame.scene = scene;
         frame.runtimeUi = runtimeUi;
-        frame.cpuPasses = renderer.GetCpuPassTimings();
-        frame.gpuPasses = renderer.GetGpuPassTimings();
-        frame.postProcessGpuPasses = renderer.GetPostProcessGpuTimings();
-        frame.gpuDetails = renderer.GetGpuDetailTimings();
-        frame.lighting = renderer.GetLightingGpuTiming();
-        frame.totalCpuMs = renderer.GetTotalCpuPassTimeMs();
-        frame.totalGpuMs = renderer.GetTotalGpuPassTimeMs();
-        frame.renderCount = renderer.GetProfiledRenderCount();
         RecordFrame(std::move(frame));
     }
 
@@ -293,14 +284,7 @@ namespace PlutoGE::ui
 
     std::string EditorProfiler::BuildMetricsReport(const PanelManagerTimingStats &timingStats,
                                                    const EditorFrameTimingStats &frameTimingStats,
-                                                   const std::vector<render::CpuPassTiming> &cpuPassTimings,
-                                                   const render::RendererCpuFrameStats &cpuFrameStats,
-                                                   const std::vector<render::GpuPassTiming> &gpuPassTimings,
-                                                   const std::vector<render::GpuPassTiming> &postProcessGpuTimings,
-                                                   const std::vector<render::GpuPassTiming> &gpuDetailTimings,
-                                                   float totalCpuPassTimeMs,
-                                                   float totalGpuPassTimeMs,
-                                                   const render::LightingGpuTiming &lightingGpuTiming,
+                                                   const render::RenderSceneStats &sceneStats,
                                                    float capturedDurationMs) const
     {
         std::ostringstream report;
@@ -591,145 +575,19 @@ namespace PlutoGE::ui
         report << "Platform windows render: " << timingStats.platformWindowsRenderMs << " ms\n";
         report << "Context restore: " << timingStats.contextRestoreMs << " ms\n";
         report << "Platform viewports: " << timingStats.platformViewportCount << "\n";
-        report << "CPU passes total: " << totalCpuPassTimeMs << " ms\n";
-        report << "Renderer frame total: " << cpuFrameStats.renderFrameTotalMs << " ms\n";
-        report << "Renderer / Context + effects: " << cpuFrameStats.renderFrameContextSetupMs << " ms\n";
-        report << "Renderer / Resources + camera: " << cpuFrameStats.renderFrameResourceSetupMs << " ms\n";
-        report << "Renderer / LOD + command visibility: " << cpuFrameStats.renderFrameLodUpdateMs << " ms\n";
-        report << "Renderer / Command sort: " << cpuFrameStats.renderFrameCommandSortMs << " ms\n";
-        report << "Renderer / Instance culling: " << cpuFrameStats.renderFrameVisibilityMs << " ms\n";
-        report << "Renderer / Shadow command preparation: " << cpuFrameStats.renderFrameShadowPreparationMs << " ms\n";
-        report << "Renderer / Shadow submission: " << cpuFrameStats.renderFrameShadowSubmissionMs << " ms\n";
-        report << "Renderer / Main pass submission: " << cpuFrameStats.renderFramePassSubmissionMs << " ms\n";
-        report << "Renderer / Finalization: " << cpuFrameStats.renderFrameFinalizationMs << " ms\n";
-        report << "Render commands submitted: " << cpuFrameStats.submittedRenderCommandCount << "\n";
-        report << "Retained render scene: " << cpuFrameStats.retainedProducers << " producers / " << cpuFrameStats.retainedCommands
-               << " commands; " << cpuFrameStats.retainedUpdates << " publications / " << cpuFrameStats.retainedReuses
-               << " unchanged leases / " << cpuFrameStats.retainedRemovals << " removals / "
-               << cpuFrameStats.retainedCommandRebuilds << " command rebuilds\n";
-        report << "Render commands submission culled: " << cpuFrameStats.submissionCulledRenderCommandCount << "\n";
-        report << "Render commands visible: " << cpuFrameStats.visibleRenderCommandCount << "\n";
-        report << "Render commands frustum culled: " << cpuFrameStats.frustumCulledRenderCommandCount << "\n";
-        report << "Visible commands with one LOD: " << cpuFrameStats.visibleSingleLodCommandCount << "\n";
-        report << "Visible commands with multiple LODs: " << cpuFrameStats.visibleMultiLodCommandCount << "\n";
-        report << "Render command sorts: " << cpuFrameStats.renderCommandSortCount << "\n";
-        report << "Geometry logical batches: " << cpuFrameStats.geometrySubmittedBatchCount << "\n";
-        report << "Geometry material groups: " << cpuFrameStats.geometryMaterialGroupCount << "\n";
-        report << "Geometry API draw calls: " << cpuFrameStats.geometryApiDrawCallCount << "\n";
-        report << "Geometry submitted instances: " << cpuFrameStats.geometrySubmittedInstanceCount << "\n";
-        report << "Geometry submitted triangles: " << cpuFrameStats.geometrySubmittedTriangleCount << "\n";
-        report << "Geometry LOD0 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[0] << "\n";
-        report << "Geometry LOD1 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[1] << "\n";
-        report << "Geometry LOD2 triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[2] << "\n";
-        report << "Geometry LOD3+ triangles: " << cpuFrameStats.geometrySubmittedTrianglesByLod[3] << "\n";
-        for (const auto &cpuPassTiming : cpuPassTimings)
-        {
-            report << cpuPassTiming.name << " CPU: " << cpuPassTiming.cpuTimeMs << " ms\n";
-        }
-        report << "Intermediate target resize: " << cpuFrameStats.intermediateTargetResizeMs << " ms\n";
-        report << "Intermediate target resizes: " << cpuFrameStats.intermediateTargetResizeCount << "\n";
-        report << "GBuffer resize: " << cpuFrameStats.gBufferResizeMs << " ms\n";
-        report << "GBuffer resizes: " << cpuFrameStats.gBufferResizeCount << "\n";
-        report << "Shadow updated surfaces: " << cpuFrameStats.shadowUpdatedSurfaceCount << "\n";
-        report << "Shadow updated directional cascades: " << cpuFrameStats.shadowUpdatedDirectionalCascadeCount << "\n";
-        report << "Shadow scroll candidates: " << cpuFrameStats.shadowCascadeScrollCandidateCount << "\n";
-        report << "Shadow scroll successes: " << cpuFrameStats.shadowCascadeScrollSuccessCount << "\n";
-        report << "Shadow scroll topology rejections: " << cpuFrameStats.shadowCascadeScrollTopologyRejectedCount << "\n";
-        report << std::scientific << std::setprecision(6);
-        report << "Shadow scroll max matrix delta: " << cpuFrameStats.shadowCascadeScrollMaxMatrixDelta << "\n";
-        report << "Shadow scroll max fractional texel error: " << cpuFrameStats.shadowCascadeScrollMaxFractionalTexelError << "\n";
-        report << std::fixed << std::setprecision(2);
-        report << "Shadow updated pixels: " << cpuFrameStats.shadowUpdatedPixelCount << "\n";
-        report << "Shadow submitted instances: " << cpuFrameStats.shadowSubmittedInstanceCount << "\n";
-        report << "Shadow logical batches: " << cpuFrameStats.shadowSubmittedBatchCount << "\n";
-        report << "Shadow material groups: " << cpuFrameStats.shadowMaterialGroupCount << "\n";
-        report << "Shadow API draw calls: " << cpuFrameStats.shadowApiDrawCallCount << "\n";
-        report << "Shadow submitted triangles: " << cpuFrameStats.shadowSubmittedTriangleCount << "\n";
-        report << "Shadow CPU / Target bind: " << cpuFrameStats.shadowCpuTargetBindMs << " ms\n";
-        report << "Shadow CPU / Caster + batch build: " << cpuFrameStats.shadowCpuCasterBatchBuildMs << " ms ("
-               << cpuFrameStats.shadowCpuBatchBuildCount << " builds)\n";
-        report << "Shadow CPU / Buffer upload: " << cpuFrameStats.shadowCpuBufferUploadMs << " ms\n";
-        report << "Shadow CPU / Draw submission: " << cpuFrameStats.shadowCpuDrawSubmissionMs << " ms\n";
-        report << "Shadow CPU / Image copy: " << cpuFrameStats.shadowCpuImageCopyMs << " ms ("
-               << cpuFrameStats.shadowCpuImageCopyCount << " copies)\n";
-        report << "Shadow CPU / Other preparation: " << cpuFrameStats.shadowCpuUnclassifiedMs << " ms\n";
-        report << "GPU passes total: " << totalGpuPassTimeMs << " ms\n";
-        for (const auto &gpuPassTiming : gpuPassTimings)
-        {
-            report << gpuPassTiming.name << ": ";
-            if (gpuPassTiming.hasResult)
-            {
-                report << gpuPassTiming.gpuTimeMs << " ms\n";
-            }
-            else
-            {
-                report << "pending\n";
-            }
-        }
-        if (!postProcessGpuTimings.empty())
-        {
-            report << "Post process breakdown\n";
-            for (const auto &postProcessGpuTiming : postProcessGpuTimings)
-            {
-                report << postProcessGpuTiming.name << ": ";
-                if (postProcessGpuTiming.hasResult)
-                {
-                    report << postProcessGpuTiming.gpuTimeMs << " ms\n";
-                }
-                else
-                {
-                    report << "pending\n";
-                }
-            }
-        }
-        if (!gpuDetailTimings.empty())
-        {
-            report << "GPU detail breakdown\n";
-            for (const auto &timing : gpuDetailTimings)
-            {
-                report << timing.name << ": ";
-                if (timing.hasResult)
-                    report << timing.gpuTimeMs << " ms\n";
-                else
-                    report << "pending\n";
-            }
-        }
-        float lightingTotalMs = 0.0f;
-        if (lightingGpuTiming.hasSetupResult)
-        {
-            lightingTotalMs += lightingGpuTiming.setupMs;
-        }
-        if (lightingGpuTiming.hasAmbientResult)
-        {
-            lightingTotalMs += lightingGpuTiming.ambientMs;
-        }
-        if (lightingGpuTiming.hasLightAccumulationResult)
-        {
-            lightingTotalMs += lightingGpuTiming.lightAccumulationMs;
-        }
-        if (lightingTotalMs > 0.0f)
-        {
-            const float lightingShare = totalGpuPassTimeMs > 0.0f ? (lightingTotalMs / totalGpuPassTimeMs) * 100.0f : 0.0f;
-            report << "Lighting total: " << lightingTotalMs << " ms\n";
-            report << "Lighting share of GPU passes: " << lightingShare << "%\n";
-            report << "Non-lighting GPU: " << std::max(0.0f, totalGpuPassTimeMs - lightingTotalMs) << " ms\n";
-        }
-        report << "Lighting setup: ";
-        report << (lightingGpuTiming.hasSetupResult ? std::to_string(lightingGpuTiming.setupMs) + " ms" : std::string("pending")) << "\n";
-        report << "Lighting ambient: ";
-        report << (lightingGpuTiming.hasAmbientResult ? std::to_string(lightingGpuTiming.ambientMs) + " ms" : std::string("pending")) << "\n";
-        report << "Lighting light accumulation: ";
-        report << (lightingGpuTiming.hasLightAccumulationResult ? std::to_string(lightingGpuTiming.lightAccumulationMs) + " ms" : std::string("pending")) << "\n";
-        if (lightingGpuTiming.hasLightAccumulationResult && lightingGpuTiming.lightCount > 0)
-        {
-            report << "Lighting accumulation / light: " << (lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.lightCount)) << " ms\n";
-        }
-        if (lightingGpuTiming.hasLightAccumulationResult && lightingGpuTiming.shadowedLightCount > 0)
-        {
-            report << "Lighting accumulation / shadowed light: " << (lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.shadowedLightCount)) << " ms\n";
-        }
-        report << "Lighting lights: " << lightingGpuTiming.lightCount << "\n";
-        report << "Lighting shadowed lights: " << lightingGpuTiming.shadowedLightCount << "\n";
+        report << "Scene / Command sort: " << sceneStats.commandSortMs << " ms\n";
+        report << "Scene / Visibility: " << sceneStats.visibilityMs << " ms\n";
+        report << "Render commands submitted: " << sceneStats.submittedRenderCommandCount << "\n";
+        report << "Retained render scene: " << sceneStats.retainedProducers << " producers / " << sceneStats.retainedCommands
+               << " commands; " << sceneStats.retainedUpdates << " publications / " << sceneStats.retainedReuses
+               << " unchanged leases / " << sceneStats.retainedRemovals << " removals / "
+               << sceneStats.retainedCommandRebuilds << " command rebuilds\n";
+        report << "Render commands submission culled: " << sceneStats.submissionCulledRenderCommandCount << "\n";
+        report << "Render commands visible: " << sceneStats.visibleRenderCommandCount << "\n";
+        report << "Render commands frustum culled: " << sceneStats.frustumCulledRenderCommandCount << "\n";
+        report << "Visible commands with one LOD: " << sceneStats.visibleSingleLodCommandCount << "\n";
+        report << "Visible commands with multiple LODs: " << sceneStats.visibleMultiLodCommandCount << "\n";
+        report << "Render command sorts: " << sceneStats.renderCommandSortCount << "\n";
         return report.str();
     }
 }

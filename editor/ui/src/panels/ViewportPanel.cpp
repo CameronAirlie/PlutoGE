@@ -47,7 +47,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include <ImGuizmo.h>
 #include <iostream>
@@ -2245,8 +2245,8 @@ namespace PlutoGE::ui
             EditorShell::GetInstance().FrameSelectedEntity();
         }
 
-        auto &renderer = EditorShell::GetInstance().GetEngine().GetRenderer();
-        int debugView = static_cast<int>(renderer.GetPostProcessDebugView());
+        auto &renderScene = EditorShell::GetInstance().GetEngine().GetRenderScene();
+        int debugView = static_cast<int>(renderScene.GetPostProcessDebugView());
 
         // Normalized anchors and a matching pivot allow independent control islands
         // anywhere in the image, including detached editor platform windows.
@@ -2474,7 +2474,7 @@ namespace PlutoGE::ui
             {
                 if (ImGui::MenuItem(kDebugViewLabels[viewIndex], nullptr, debugView == viewIndex))
                 {
-                    renderer.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(viewIndex));
+                    renderScene.SetPostProcessDebugView(static_cast<render::PostProcessDebugView>(viewIndex));
                     debugView = viewIndex;
                 }
             }
@@ -4420,7 +4420,7 @@ namespace PlutoGE::ui
 
         auto &editorShell = EditorShell::GetInstance();
         auto *activeScene = editorShell.GetEngine().GetScene();
-        auto &renderer = editorShell.GetEngine().GetRenderer();
+        auto &renderScene = editorShell.GetEngine().GetRenderScene();
         auto *sceneRenderTarget = GetSceneRenderTarget();
         std::vector<render::IPostProcessEffect *> postProcessEffects;
         postProcessEffects.reserve(cameraComponent.GetPostProcessEffects().size());
@@ -4432,9 +4432,9 @@ namespace PlutoGE::ui
         const auto cameraData = cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
         m_gameDebugCamera = cameraData;
         m_hasGameDebugCamera = true;
-        renderer.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
-        auto commands = renderer.GetVisibleRenderCommandView();
-        auto shadowCommands = renderer.GetSceneRenderCommandView();
+        renderScene.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
+        auto commands = renderScene.GetVisibleRenderCommandView();
+        auto shadowCommands = renderScene.GetSceneRenderCommandView();
         std::span<const render::CameraView> overlays;
         if (activeScene)
         {
@@ -4515,7 +4515,7 @@ namespace PlutoGE::ui
                                         static_cast<std::uint32_t>(target->GetHeight()),
                                         cameraData, commands, shadowCommands, postProcessEffects,
                                         EditorShell::GetInstance().GetEngine().GetScene(),
-                                        EditorShell::GetInstance().GetEngine().GetRenderer().GetPostProcessDebugView(),
+                                        EditorShell::GetInstance().GetEngine().GetRenderScene().GetPostProcessDebugView(),
                                         overlays, lights))
         {
             // Keep the RHI path active so a transient failure can recover on the next frame.

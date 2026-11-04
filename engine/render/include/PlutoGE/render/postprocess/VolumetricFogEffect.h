@@ -1,26 +1,16 @@
 #pragma once
 
-#include "PlutoGE/render/RenderTarget.h"
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
-
-#include <memory>
-#include <array>
-#include <cstdint>
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 #include <glm/glm.hpp>
 
 namespace PlutoGE::render
 {
-    class Shader;
-
-    class VolumetricFogEffect : public ShaderPostProcessEffect
+    class VolumetricFogEffect : public IPostProcessEffect
     {
     public:
         VolumetricFogEffect() = default;
-        ~VolumetricFogEffect() override;
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "VolumetricFog"; }
         std::string GetDisplayName() const override { return "Volumetric Fog"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -46,20 +36,6 @@ namespace PlutoGE::render
         }
 
     private:
-        void EnsureInternalTarget(int width, int height);
-
-        Shader *m_shader = nullptr;
-        Shader *m_ambientShader = nullptr;
-        Shader *m_temporalShader = nullptr;
-        Shader *m_compositeShader = nullptr;
-        unsigned int m_shadowCompareSampler = 0;
-        std::unique_ptr<RenderTarget> m_fogRenderTarget;
-        std::unique_ptr<RenderTarget> m_ambientRenderTarget;
-        std::array<std::unique_ptr<RenderTarget>, 2> m_historyTargets;
-        glm::mat4 m_previousViewProjection{1.0f};
-        int m_historyIndex = 0;
-        bool m_hasHistory = false;
-        std::uint64_t m_lastHistoryFrame = 0;
         glm::vec3 m_fogColor{1.0f, 1.0f, 1.0f};
         float m_density = 0.035f;
         float m_heightFalloff = 0.12f;
@@ -82,8 +58,6 @@ namespace PlutoGE::render
         glm::vec2 m_noiseWind{1.5f, 0.5f};
         int m_stepCount = 16;
         int m_shadowStepStride = 2;
-        int m_internalWidth = 0;
-        int m_internalHeight = 0;
         bool m_halfResolution = true;
     };
 }

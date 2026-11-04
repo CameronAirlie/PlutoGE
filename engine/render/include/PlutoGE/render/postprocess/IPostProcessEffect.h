@@ -6,9 +6,6 @@
 
 namespace PlutoGE::render
 {
-    struct RenderContext;
-    class RenderTarget;
-
     enum class PostProcessParameterType
     {
         Float,
@@ -29,37 +26,10 @@ namespace PlutoGE::render
         bool operator==(const PostProcessParameter &) const = default;
     };
 
-    struct PostProcessContext
-    {
-        const RenderContext &renderContext;
-        RenderTarget *sourceRenderTarget = nullptr;
-        RenderTarget *destinationRenderTarget = nullptr;
-        // Standalone effects propagate depth to their output. The post-process
-        // chain prepares its reused targets once and disables the per-effect
-        // copy to avoid repeatedly moving the same full-resolution buffer.
-        bool copyDepthToDestination = true;
-    };
-
     class IPostProcessEffect
     {
     public:
         virtual ~IPostProcessEffect() = default;
-
-        virtual void Initialize() = 0;
-        virtual void Apply(const PostProcessContext &context) = 0;
-
-        void EnsureInitialized()
-        {
-            if (m_isInitialized)
-            {
-                return;
-            }
-
-            Initialize();
-            m_isInitialized = true;
-        }
-
-        bool IsInitialized() const { return m_isInitialized; }
 
         virtual std::string GetTypeName() const = 0;
         virtual std::string GetDisplayName() const { return GetTypeName(); }
@@ -91,7 +61,6 @@ namespace PlutoGE::render
 
     private:
         bool m_isEnabled = true;
-        bool m_isInitialized = false;
         std::uint64_t m_configurationRevision = 0;
     };
 }

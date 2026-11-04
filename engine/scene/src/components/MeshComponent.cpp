@@ -6,7 +6,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/Texture.h"
 
@@ -1711,10 +1711,10 @@ namespace PlutoGE::scene
             if (!canCacheRenderCommands)
             {
                 m_renderCommandCacheDirty = true;
-                core::Engine::GetInstance().GetRenderer().RemoveRenderProducer(m_renderObjectIdentity.Value());
+                core::Engine::GetInstance().GetRenderScene().RemoveRenderProducer(m_renderObjectIdentity.Value());
             }
 
-            auto &renderer = PlutoGE::core::Engine::GetInstance().GetRenderer();
+            auto &renderScene = PlutoGE::core::Engine::GetInstance().GetRenderScene();
             if (!m_cachedRenderCommands.empty() && m_cachedRenderCommands.front().sourceObject != m_renderObjectIdentity.Value())
                 m_renderCommandCacheDirty = true;
             const auto *offsetSource = FindMeshOffsetSource();
@@ -1726,7 +1726,7 @@ namespace PlutoGE::scene
                 m_cachedMeshPositionOffset == offsetSource->m_meshPositionOffset &&
                 m_cachedMeshRotationOffset == offsetSource->m_meshRotationOffset)
             {
-                renderer.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
+                renderScene.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
                 return;
             }
             const glm::mat4 modelMatrix = entity->GetWorldTransform() * GetMeshOffsetTransform();
@@ -1738,7 +1738,7 @@ namespace PlutoGE::scene
                 m_hasCachedRenderCommandModel &&
                 AreMatricesApproximatelyEqual(m_cachedRenderCommandModel, modelMatrix))
             {
-                renderer.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
+                renderScene.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
 
                 return;
             }
@@ -1800,7 +1800,7 @@ namespace PlutoGE::scene
                 command.isStatic = m_isStatic;
                 command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
-                if (!canCacheRenderCommands) renderer.SubmitRenderCommand(command);
+                if (!canCacheRenderCommands) renderScene.SubmitRenderCommand(command);
                 if (canCacheRenderCommands)
                 {
                     rebuiltCommands.push_back(command);
@@ -1814,7 +1814,7 @@ namespace PlutoGE::scene
                 m_cachedRenderCommandModel = modelMatrix;
                 m_hasCachedRenderCommandModel = true;
                 m_renderCommandCacheDirty = false;
-                renderer.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
+                renderScene.PublishRenderProducer(m_renderObjectIdentity.Value(), m_renderSourceRevision, m_cachedRenderCommands);
                 UpdateCachedPreviousModels();
             }
 

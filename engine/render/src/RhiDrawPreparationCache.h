@@ -3,7 +3,7 @@
 #include "BasicDrawBatching.h"
 #include "ImpostorDraws.h"
 #include "RetainedOpaqueBatches.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderCommandView.h"
 
 namespace PlutoGE::render
 {

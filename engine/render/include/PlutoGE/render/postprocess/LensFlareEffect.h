@@ -1,25 +1,16 @@
 #pragma once
 
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
-#include <memory>
 #include <string>
 
 namespace PlutoGE::render
 {
     struct LensFlareSettings { float intensity; float threshold; float scale; float ghostDispersal; };
-    class Shader;
-    class Texture;
-    class RenderTarget;
 
-    class LensFlareEffect : public ShaderPostProcessEffect
+    class LensFlareEffect : public IPostProcessEffect
     {
     public:
-        LensFlareEffect();
-        ~LensFlareEffect() override;
-
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "LensFlare"; }
         std::string GetDisplayName() const override { return "Lens Flare"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -28,17 +19,7 @@ namespace PlutoGE::render
         { return {m_intensity, m_threshold, m_scale, m_ghostDispersal}; }
 
     private:
-        Texture *ResolveFlareTexture();
-        void EnsureEffectTargets(int width, int height);
-
-        Shader *m_shader = nullptr;
-        Shader *m_brightPassShader = nullptr;
-        Shader *m_compositeShader = nullptr;
-        std::unique_ptr<RenderTarget> m_brightTarget;
-        std::unique_ptr<RenderTarget> m_flareTarget;
-        Texture *m_flareTexture = nullptr;
         std::string m_texturePath;
-        std::string m_loadedTexturePath;
         float m_intensity = 0.35f;
         float m_threshold = 1.0f;
         float m_scale = 1.0f;

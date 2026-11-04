@@ -23,7 +23,7 @@ namespace PlutoGE::assets
     {
         PostProcessPresetAsset asset;
         const struct DefaultEffect { const char *type; bool enabled; } defaults[] = {
-            {"RSM", true}, {"VolumetricFog", true}, {"SSAO", true}, {"LSAO", true}, {"SSR", true}, {"TAA", true},
+            {"VolumetricFog", true}, {"SSAO", true}, {"LSAO", true}, {"SSR", true}, {"TAA", true},
             {"MotionBlur", false}, {"DepthOfField", false}, {"LensFlare", false},
             {"ToneMapping", true}, {"ColorGrading", true}, {"SceneComposite", true},
         };

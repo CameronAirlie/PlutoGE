@@ -1,46 +1,31 @@
 #pragma once
 
-#include "PlutoGE/render/RenderTarget.h"
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
-
-#include <array>
-#include <cstdint>
-#include <memory>
-
-#include <glm/glm.hpp>
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 namespace PlutoGE::render
 {
-    class Shader;
-
-    class SSGIEffect : public ShaderPostProcessEffect
+    class SSGIEffect : public IPostProcessEffect
     {
     public:
         SSGIEffect() = default;
-        ~SSGIEffect() override;
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "SSGI"; }
         std::string GetDisplayName() const override { return "Screen Space Global Illumination"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
         std::vector<std::string> GetSummary() const override;
-        RenderTarget *GenerateResolvedIndirectLighting(const PostProcessContext &context, int width, int height);
-        bool OutputsIndirectOnly() const { return m_outputMode != 0; }
-        // The RHI renderers trace min(sampleCount, 4) rays per pixel, use min(blurRadius, 3) edge-aware denoise
-        // passes and ignore stepSize, depthPhi and normalPhi, which only the legacy OpenGL path reads.
+        // The renderers trace min(sampleCount, 4) rays per pixel and use min(blurRadius, 3) edge-aware denoise passes.
         struct Settings
         {
-            float intensity, rayDistance, stepSize, thickness, depthPhi, normalPhi;
+            float intensity, rayDistance, thickness;
             int sampleCount, stepCount, blurRadius;
             bool halfResolution, indirectOnly;
             float temporalBlend, historyDepthThreshold, historyNormalThreshold;
         };
         [[nodiscard]] Settings GetSettings() const noexcept
         {
-            return {m_intensity, m_rayDistance, m_stepSize, m_thickness, m_depthPhi,
-                    m_normalPhi, m_sampleCount, m_stepCount, m_blurRadius,
+            return {m_intensity, m_rayDistance, m_thickness,
+                    m_sampleCount, m_stepCount, m_blurRadius,
                     m_halfResolution, m_outputMode != 0, m_temporalBlend,
                     m_historyDepthThreshold, m_historyNormalThreshold};
         }
@@ -48,25 +33,9 @@ namespace PlutoGE::render
     private:
         static constexpr int kMaxBlurRadius = 4;
 
-        void RenderComposite(const PostProcessContext &context, RenderTarget *resolvedIndirectTarget);
-        void EnsureInternalTargets(int width, int height);
-        void ResetHistory();
-
-        Shader *m_traceShader = nullptr;
-        Shader *m_resolveShader = nullptr;
-        Shader *m_historyMetadataShader = nullptr;
-        Shader *m_compositeShader = nullptr;
-        std::unique_ptr<RenderTarget> m_rawIndirectRenderTarget;
-        std::array<std::unique_ptr<RenderTarget>, 2> m_historyColorRenderTargets;
-        std::array<std::unique_ptr<RenderTarget>, 2> m_historyMetadataRenderTargets;
-        glm::mat4 m_previousView = glm::mat4(1.0f);
-        glm::mat4 m_previousViewProjection = glm::mat4(1.0f);
         float m_intensity = 1.0f;
         float m_rayDistance = 4.0f;
-        float m_stepSize = 0.08f;
         float m_thickness = 0.45f;
-        float m_depthPhi = 20.0f;
-        float m_normalPhi = 12.0f;
         float m_temporalBlend = 0.88f;
         float m_historyDepthThreshold = 0.03f;
         float m_historyNormalThreshold = 0.9f;
@@ -74,10 +43,6 @@ namespace PlutoGE::render
         int m_stepCount = 16;
         int m_blurRadius = 2;
         int m_outputMode = 0;
-        int m_internalWidth = 0;
-        int m_internalHeight = 0;
-        std::uint8_t m_historyIndex = 0;
-        bool m_hasHistory = false;
         bool m_halfResolution = true;
     };
 }

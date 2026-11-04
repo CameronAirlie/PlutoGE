@@ -1,11 +1,9 @@
 #pragma once
 
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 namespace PlutoGE::render
 {
-    class Shader;
-
     enum class MotionBlurQuality
     {
         Balanced = 0,
@@ -19,14 +17,12 @@ namespace PlutoGE::render
         float strength, shutterFraction, maxBlurRadius, velocityThreshold, depthSeparationScale, centerWeight;
     };
 
-    class MotionBlurEffect : public ShaderPostProcessEffect
+    class MotionBlurEffect : public IPostProcessEffect
     {
     public:
         MotionBlurEffect() = default;
         ~MotionBlurEffect() override = default;
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "MotionBlur"; }
         std::string GetDisplayName() const override { return "Motion Blur"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -36,7 +32,6 @@ namespace PlutoGE::render
                   m_velocityThreshold, m_depthSeparationScale, m_centerWeight}; }
 
     private:
-        Shader *m_shader = nullptr;
         MotionBlurQuality m_quality = MotionBlurQuality::Balanced;
         float m_strength = 1.0f;
         float m_shutterFraction = 0.5f;

@@ -1,18 +1,11 @@
 #pragma once
 
-#include "PlutoGE/render/RenderTarget.h"
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
-#include <array>
-#include <cstdint>
-#include <memory>
-
-#include <glm/glm.hpp>
+#include <string>
 
 namespace PlutoGE::render
 {
-    class Shader;
-
     struct SSAOEffectConfig
     {
         std::string typeName = "SSAO";
@@ -32,15 +25,12 @@ namespace PlutoGE::render
         float specularOcclusion = 1.0f;
     };
 
-    class SSAOEffect : public ShaderPostProcessEffect
+    class SSAOEffect : public IPostProcessEffect
     {
     public:
         SSAOEffect();
         explicit SSAOEffect(SSAOEffectConfig config);
-        ~SSAOEffect() override;
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return m_typeName; }
         std::string GetDisplayName() const override { return m_displayName; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -56,22 +46,8 @@ namespace PlutoGE::render
     private:
         static constexpr int kKernelSize = 32;
 
-        void EnsureInternalTargets(int width, int height);
-        RenderTarget *GenerateResolvedAmbientOcclusion(const RenderContext &renderContext, int width, int height);
-        void RenderResolvedAoTexture(const PostProcessContext &context, RenderTarget *resolvedAoTarget, int outputMode);
-        void GenerateKernel();
-        void ResetHistory();
-
-        Shader *m_ssaoShader = nullptr;
-        Shader *m_resolveShader = nullptr;
-        Shader *m_compositeShader = nullptr;
-        std::unique_ptr<RenderTarget> m_rawAoRenderTarget;
-        std::array<std::unique_ptr<RenderTarget>, 2> m_historyRenderTargets;
-        std::array<glm::vec3, kKernelSize> m_kernel{};
         std::string m_typeName;
         std::string m_displayName;
-        glm::mat4 m_previousView = glm::mat4(1.0f);
-        glm::mat4 m_previousViewProjection = glm::mat4(1.0f);
         float m_radius = 0.0f;
         float m_bias = 0.0f;
         float m_intensity = 0.0f;
@@ -83,11 +59,6 @@ namespace PlutoGE::render
         int m_sampleCount = 0;
         int m_blurRadius = 0;
         int m_outputMode = 0;
-        int m_internalWidth = 0;
-        int m_internalHeight = 0;
-        std::uint32_t m_sampleFrame = 0;
-        std::uint8_t m_historyIndex = 0;
-        bool m_hasHistory = false;
         bool m_halfResolution = false;
     };
 }

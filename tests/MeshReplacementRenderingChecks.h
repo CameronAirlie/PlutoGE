@@ -2,7 +2,7 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Scene.h"
@@ -62,7 +62,7 @@ inline void CheckMeshReplacementRendering(PlutoGE::render::rhi::IRenderDevice &d
     config.data.indices = {0,0,0};
     Mesh mesh(config);
     Material material;
-    auto &frontend = PlutoGE::core::Engine::GetInstance().GetRenderer();
+    auto &frontend = PlutoGE::core::Engine::GetInstance().GetRenderScene();
     const auto require = [](bool value, const char *message) { if (!value) throw std::runtime_error(message); };
     {
         PlutoGE::scene::Scene scene;

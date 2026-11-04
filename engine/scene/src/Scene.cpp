@@ -7,7 +7,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/render/Material.h"
@@ -3630,13 +3630,13 @@ namespace PlutoGE::scene
     {
         using Clock = std::chrono::high_resolution_clock;
         const auto meshStart = Clock::now();
-        auto &renderer = core::Engine::GetInstance().GetRenderer();
-        const bool republish = renderer.BeginRenderSceneScope(m_renderSceneLifetime);
+        auto &renderScene = core::Engine::GetInstance().GetRenderScene();
+        const bool republish = renderScene.BeginRenderSceneScope(m_renderSceneLifetime);
         struct ScopeExit
         {
-            render::Renderer &renderer;
-            ~ScopeExit() { renderer.EndRenderSceneScope(); }
-        } scopeExit{renderer};
+            render::RenderSceneFrontend &renderScene;
+            ~ScopeExit() { renderScene.EndRenderSceneScope(); }
+        } scopeExit{renderScene};
         // Geometry mutation is rare. Until all asset writers send per-resource
         // notifications, an epoch gates this compatibility invalidation walk.
         const auto meshEpoch = render::Mesh::ContentEpoch();
@@ -3658,7 +3658,7 @@ namespace PlutoGE::scene
             }
         m_meshContentEpoch = meshEpoch;
         for (auto id : m_removedRenderProducers)
-            renderer.RemoveRenderProducer(id);
+            renderScene.RemoveRenderProducer(id);
         m_removedRenderProducers.clear();
         auto pending = std::move(m_dirtyRenderMeshes);
         m_dirtyRenderMeshes.clear();
@@ -3674,7 +3674,7 @@ namespace PlutoGE::scene
             auto *owner = meshComponent->GetOwner();
             if (!meshComponent->IsEnabled() || !meshComponent->IsVisible() || !meshComponent->GetMesh() || !owner || !owner->IsActive())
             {
-                renderer.RemoveRenderProducer(meshComponent->GetRenderProducerId());
+                renderScene.RemoveRenderProducer(meshComponent->GetRenderProducerId());
                 meshComponent->ResetRenderHistory();
                 continue;
             }

@@ -8,8 +8,8 @@
 
 namespace PlutoGE
 {
-    RuntimeProfiler::RuntimeProfiler(render::Renderer &renderer)
-        : m_panel(ui::PanelConfig{"Runtime Profiler"}, &profiler, nullptr, &renderer) {}
+    RuntimeProfiler::RuntimeProfiler(render::RenderSceneFrontend &renderScene)
+        : m_panel(ui::PanelConfig{"Runtime Profiler"}, &profiler, nullptr, &renderScene) {}
 
     RuntimeProfiler::~RuntimeProfiler() { Shutdown(); }
 

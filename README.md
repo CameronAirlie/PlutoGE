@@ -70,8 +70,7 @@ profiling automatically. Editor hosts retain these diagnostics for the profiler.
 
 Some advanced rendering paths are experimental and may depend on scene setup, compatible hardware, or generated bake data.
 See [Rendering support](docs/RENDERING.md) for backend selection and limitations.
-LPV/RSM effects remain in the legacy OpenGL pipeline; they are not supported RHI
-post-process effects. VSM no longer maintains or automatically falls back to cascades.
+VSM no longer maintains or automatically falls back to cascades.
 
 ### Gameplay systems
 

@@ -1,6 +1,6 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/scene/components/Component.h"
 

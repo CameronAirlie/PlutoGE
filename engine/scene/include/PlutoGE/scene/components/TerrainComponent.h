@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/scene/TerrainLayerStack.h"
 #include "PlutoGE/scene/components/Component.h"
 

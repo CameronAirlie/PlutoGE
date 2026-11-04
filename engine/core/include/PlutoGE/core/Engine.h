@@ -36,7 +36,7 @@ namespace PlutoGE::render
 {
     class Material;
     class Mesh;
-    class Renderer;
+    class RenderSceneFrontend;
     class RhiRenderService;
     class TextureManager;
     struct AnimationClip;
@@ -98,7 +98,7 @@ namespace PlutoGE::core
         [[nodiscard]] const EngineConfig &GetConfig() const { return m_config; }
 
         [[nodiscard]] platform::Window &GetWindow() { return m_window; }
-        [[nodiscard]] render::Renderer &GetRenderer() { return *m_renderer; }
+        [[nodiscard]] render::RenderSceneFrontend &GetRenderScene() { return *m_renderScene; }
         [[nodiscard]] render::rhi::IRenderDevice *GetRenderDevice() { return m_renderDevice.get(); }
         [[nodiscard]] render::rhi::ISwapchain *GetSwapchain() { return m_swapchain.get(); }
         [[nodiscard]] bool IsVSyncEnabled() const noexcept;
@@ -131,7 +131,7 @@ namespace PlutoGE::core
         EngineConfig m_config;
         platform::Window m_window;
         // Declaration order is construction order; destruction runs in reverse.
-        std::unique_ptr<render::Renderer> m_renderer;
+        std::unique_ptr<render::RenderSceneFrontend> m_renderScene;
         std::unique_ptr<render::rhi::IRenderDevice> m_renderDevice;
         std::unique_ptr<render::rhi::ISwapchain> m_swapchain;
         std::unique_ptr<render::RhiRenderService> m_rhiRenderService;

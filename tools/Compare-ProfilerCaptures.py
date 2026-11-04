@@ -14,7 +14,7 @@ import statistics
 
 METRICS = (
     "Captured CPU frame", "RHI scene GPU frame", "Scene / Mesh submission",
-    "Renderer / Command sort", "Renderer / Instance culling",
+    "Scene / Command sort", "Scene / Visibility",
     "RHI command translation", "RHI shadow recording CPU",
     "RHI geometry recording CPU", "RHI post-process recording CPU",
     "RHI camera stack composition CPU",

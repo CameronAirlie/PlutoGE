@@ -8,15 +8,13 @@
 namespace PlutoGE::render
 {
     // Dynamic diffuse global illumination: a camera-centred probe volume ray-marched through the voxel scene and
-    // applied to the G-buffer (docs/DDGI.md). Vulkan and OpenGL RHI only; the legacy OpenGL chain skips it.
+    // applied to the G-buffer (docs/DDGI.md).
     //
     // "Quality" picks probe density, rays, update rate and voxel detail together; editing any of those afterwards
     // shows "Custom".
     class DDGIEffect : public IPostProcessEffect
     {
     public:
-        void Initialize() override {}
-        void Apply(const PostProcessContext &) override {}
         std::string GetTypeName() const override { return "DDGI"; }
         std::string GetDisplayName() const override { return "Dynamic Diffuse GI (Probes)"; }
         std::vector<PostProcessParameter> GetParameters() const override;

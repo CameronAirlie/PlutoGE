@@ -1,7 +1,6 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/scene/SceneSerializer.h"

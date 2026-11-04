@@ -42,9 +42,7 @@ int main()
         Require(frames[0].timing.componentTimings[0].callCount == 17, "Capture must retain work counts");
         const auto &saved = frames[0];
         profiler.AddFrameSample(2.0f);
-        const auto report = profiler.BuildMetricsReport(saved.panels, saved.timing, saved.cpuPasses,
-            saved.renderer, saved.gpuPasses, saved.postProcessGpuPasses, saved.gpuDetails,
-            saved.totalCpuMs, saved.totalGpuMs, saved.lighting, saved.durationMs);
+        const auto report = profiler.BuildMetricsReport(saved.panels, saved.timing, saved.scene, saved.durationMs);
         Require(report.find("Captured CPU frame: 80.00 ms") != std::string::npos, "Report must use captured duration");
         Require(report.find("Scene update: 60.00 ms") != std::string::npos, "Report must use captured metrics");
         Require(report.find("Session peak") == std::string::npos, "Capture report must not mix live session metrics");

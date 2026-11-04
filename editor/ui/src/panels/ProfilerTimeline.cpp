@@ -265,13 +265,6 @@ namespace PlutoGE::ui
             if (ImGui::BeginTabItem("GPU observations"))
             {
                 ImGui::TextWrapped("GPU queries are asynchronous. These durations may come from earlier CPU frames; execution intervals and a render-thread track are not available.");
-                const auto show = [](const auto &values)
-                {
-                    for (const auto &value : values)
-                        if (value.hasResult) ImGui::Text("%s: %.3f ms", value.name.c_str(), value.gpuTimeMs);
-                        else ImGui::Text("%s: pending", value.name.c_str());
-                };
-                show(frame->gpuPasses); show(frame->postProcessGpuPasses); show(frame->gpuDetails);
                 for (const auto &scope : frame->timing.rhiTimingStats.gpuScopes)
                     ImGui::Text("%s: %.3f ms GPU / %.3f ms CPU recording", scope.name.c_str(), scope.milliseconds, scope.cpuMilliseconds);
                 ImGui::EndTabItem();

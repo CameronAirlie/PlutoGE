@@ -1,4 +1,4 @@
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/Material.h"
 #include "RetainedOpaqueBatches.h"
 #include <array>
@@ -126,7 +126,7 @@ int main() try
 
     // The renderer's modern views borrow persistent rigid records. Compatibility
     // snapshots and transient submissions still describe the same scene.
-    Renderer renderer;
+    RenderSceneFrontend renderer;
     source[0].instanceModels.reset();
     renderer.ClearRenderCommands(); renderer.PublishRenderProducer(5, 1, source);
     const auto view = renderer.GetSceneRenderCommandView();
@@ -203,7 +203,7 @@ int main() try
     for (std::size_t i = 0; i < many.size(); ++i) many[i].model[3].x = float(i);
     for (const bool retained : {false, true})
     {
-        Renderer benchmark;
+        RenderSceneFrontend benchmark;
         std::size_t submitted = 0;
         constexpr int frames = 240;
         benchmark.ClearRenderCommands();
@@ -226,7 +226,7 @@ int main() try
     // One producer per object measures elimination of the per-object heartbeat.
     for (const bool useScope : {false, true})
     {
-        Renderer benchmark;
+        RenderSceneFrontend benchmark;
         auto lifetime = std::make_shared<const int>(0);
         benchmark.ClearRenderCommands();
         if (useScope) benchmark.BeginRenderSceneScope(lifetime);
@@ -259,7 +259,7 @@ int main() try
                           .projection = glm::perspective(glm::radians(50.0f), 1.0f, 0.1f, 200.0f)};
         const auto prepare = [&](bool parallel)
         {
-            Renderer visibility;
+            RenderSceneFrontend visibility;
             visibility.SetParallelVisibilityEnabled(parallel);
             visibility.ClearRenderCommands();
             for (int i = 0; i < 3000; ++i)
@@ -294,7 +294,7 @@ int main() try
 
         // A producer-retained cluster (foliage: identity and revision set) straddling the frustum reaches the renderer
         // whole and as the same array: the RHI renderer culls its instances, and keeps its records resident.
-        Renderer retained;
+        RenderSceneFrontend retained;
         RenderCommand cluster{.mesh = &cube};
         auto instances = std::make_shared<std::vector<glm::mat4>>();
         for (int instance = 0; instance < 40; ++instance)

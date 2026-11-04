@@ -2,7 +2,6 @@
 #include "PlutoGE/render/VctProbeCache.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
-#include "../engine/render/src/postprocess/VctProbeSampling.h"
 #include <array>
 #include <cmath>
 #include <iostream>
@@ -217,47 +216,12 @@ inline bool CheckVctStationaryLighting()
     pass.cacheSettings.y = 0;
     passed &= glm::length(glm::vec3(render())) < 0.001f;
 
-    // Test the legacy lookup itself independently of where a cone hands off.
-    glUseProgram(0); glDeleteProgram(GLuint(program)); delete shader;
-    source.vertexSource = "#version 430 core\nvoid main(){vec2 p[3]=vec2[3](vec2(-1),vec2(3,-1),vec2(-1,3));gl_Position=vec4(p[gl_VertexID],0,1);}";
-    source.fragmentSource = std::string("#version 430 core\nuniform sampler3D uProbeRadiance,uProbeVisibility;uniform vec4 uCacheOriginSize;out vec4 color;\n") +
-        kVctProbeSampling + "\nvoid main(){vec4 c=cachedIrradiance(vec3(0,0,.5),vec3(0,1,0),uCacheOriginSize);color=vec4(c.rgb*c.a,1);}";
-    shader = Shader::Create(source); Shader::ResetStateCache(); shader->Bind();
-    glGetIntegerv(GL_CURRENT_PROGRAM,&program);
-    glGetProgramiv(GLuint(program),GL_LINK_STATUS,&linked); passed &= linked != 0;
-    shader->SetUniform("uProbeRadiance",13); shader->SetUniform("uProbeVisibility",14);
-    // Isolate one probe with different X/Y visibility, then cross its face
-    // diagonal by a tiny amount. Lighting must vary continuously across it.
-    std::vector<glm::vec4> probeValues(16*16*96, glm::vec4(0));
-    for (int face = 0; face < 6; ++face)
-        probeValues[8 + 16 * (8 + 16 * (8 + face * 16))] = glm::vec4(0, 1, 0, 1);
-    glActiveTexture(GL_TEXTURE13); glBindTexture(GL_TEXTURE_3D, probeRadiance);
-    glTexSubImage3D(GL_TEXTURE_3D,0,0,0,0,16,16,96,GL_RGBA,GL_FLOAT,probeValues.data());
-    for (int face = 0; face < 6; ++face)
-        std::fill(probeValues.begin() + face * 4096, probeValues.begin() + (face + 1) * 4096,
-                  face < 2 ? glm::vec4(0,0,0,0) : glm::vec4(2,4,0,0));
-    glActiveTexture(GL_TEXTURE14); glBindTexture(GL_TEXTURE_3D, probeVisibility);
-    glTexSubImage3D(GL_TEXTURE_3D,0,0,0,0,16,16,96,GL_RGBA,GL_FLOAT,probeValues.data());
-    pass.cacheSettings.y = 1.0f;
-    // Receiver is at (0,0,0.5), facing +Y. Shift the probe grid across its
-    // X/Y diagonal without depending on backend matrix layout conventions.
-    pass.inverseViewProjection = glm::mat4(1);
-    pass.cacheOrigin = glm::vec4(-16.0001f,-16,-16.5f,32);
-    shader->SetUniform("uCacheOriginSize",pass.cacheOrigin);
-    const auto diagonalBefore = render();
-    pass.cacheOrigin.x = -15.9999f;
-    shader->SetUniform("uCacheOriginSize",pass.cacheOrigin);
-    const auto diagonalAfter = render();
-    const bool continuous = diagonalBefore.g > 0.01f && std::abs(diagonalBefore.g - diagonalAfter.g) < 0.001f;
-    if (!continuous) std::cerr << "VCT probe direction boundary changed GI from "
-                               << diagonalBefore.g << " to " << diagonalAfter.g << ".\n";
-    passed &= continuous;
     passed &= glGetError()==GL_NO_ERROR;
     glBindFramebuffer(GL_FRAMEBUFFER,0); glDeleteFramebuffers(1,&framebuffer);
     glBindVertexArray(0); glDeleteVertexArrays(1,&vao);
     glBindBufferBase(GL_UNIFORM_BUFFER,0,0); glDeleteBuffers(1,&buffer);
     glDeleteTextures(GLsizei(textures.size()),textures.data());
     glUseProgram(0); glDeleteProgram(GLuint(program)); delete shader;
-    if (!passed) std::cerr << "VCT stationary lighting or probe continuity check failed.\n";
+    if (!passed) std::cerr << "VCT stationary lighting check failed.\n";
     return passed;
 }

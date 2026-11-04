@@ -14,7 +14,7 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RhiPostProcessAdapter.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
@@ -2063,7 +2063,7 @@ namespace PlutoGE::render
         std::vector<BasicDecalDraw> decals;
         if (scene && m_sceneEffectsEnabled && scene == core::Engine::GetInstance().GetScene())
         {
-            for (const auto &command : core::Engine::GetInstance().GetRenderer().GetDecalCommands())
+            for (const auto &command : core::Engine::GetInstance().GetRenderScene().GetDecalCommands())
             {
                 if (!command.material || command.tint.a <= 0 || std::abs(glm::determinant(command.model)) < 0.000001f)
                     continue;

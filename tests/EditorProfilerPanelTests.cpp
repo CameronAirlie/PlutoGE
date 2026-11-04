@@ -27,8 +27,8 @@ int main(int argc, char **argv)
     ImGui_ImplOpenGL3_Init("#version 330");
     PlutoGE::ui::EditorProfiler profiler;
     PlutoGE::ui::PanelManager manager;
-    PlutoGE::render::Renderer renderer;
-    PlutoGE::ui::ProfilerPanel panel({"Profiler"}, &profiler, &manager, &renderer);
+    PlutoGE::render::RenderSceneFrontend renderScene;
+    PlutoGE::ui::ProfilerPanel panel({"Profiler"}, &profiler, &manager, &renderScene);
     profiler.StartCapture(160);
     for (int i = 0; i < 160; ++i)
     {

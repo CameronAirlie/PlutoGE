@@ -1,7 +1,6 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/Renderer.h"
 
 #include <iostream>
 

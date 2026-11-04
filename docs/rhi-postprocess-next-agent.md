@@ -2,7 +2,7 @@
 
 > Historical handoff, not current effect availability. The RHI now includes
 > bloom, temporal effects, SSAO, SSGI, SSR, volumetric fog and VCTGI among its
-> implemented adapters. LPV/RSM remain legacy-only. See [Rendering support](RENDERING.md)
+> implemented adapters. LPV and RSM have since been removed. See [Rendering support](RENDERING.md)
 > for the current list; the implementation order below records the earlier plan.
 
 ## Current state

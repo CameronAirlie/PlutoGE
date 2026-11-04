@@ -1,6 +1,6 @@
 #pragma once
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/SceneEnvironment.h"
@@ -198,7 +198,7 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     render();
     require(renderer.GetTimingStats().rebuiltDrawPackets == 2, "Producer IDs hid mutable instance changes");
     commands[0].instanceModels.reset();
-    Renderer frontend;
+    RenderSceneFrontend frontend;
     const auto renderFrontend = [&] {
         frontend.PrepareVisibleRenderCommands(camera, 64);
         require(renderer.Render(64, 64, camera, lighting, frontend.GetVisibleRenderCommandView(), frontend.GetSceneRenderCommandView()),

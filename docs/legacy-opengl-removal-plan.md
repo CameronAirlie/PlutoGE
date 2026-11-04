@@ -122,25 +122,46 @@ Status (2026-11-04): done, uncommitted.
    - RetainedRenderScene, EngineGraphicsApi
    - EditorProfilerPanel, RuntimeProfiler
 
+Status (2026-11-04): done. The phase also absorbed work planned for Phases 2
+and 3. The legacy passes and the effects' GL code reached the pipeline through
+`RenderContext` and `ctx.renderer`, so keeping them compiling would have needed
+glue that the next phase deleted. Done here:
+- `Engine::GetRenderScene()` returns `RenderSceneFrontend`, which holds
+  `DecalCommand` and `RenderSceneStats`.
+- Deleted `Renderer` and `src/passes/*`. The profilers show only the scene
+  submission and visibility stats.
+- Stripped `Initialize`/`Apply` and all GL state from the post-process effects
+  and `IPostProcessEffect`. Deleted `ShaderPostProcessEffect`, LPV, RSM, the
+  VCT voxelization GLSL and probe-sampling mirror, and the `VctCoverage`/
+  `FogIntegration` configure steps.
+- Removed the SSGI legacy parameters and the SceneComposite LPV/RSM debug
+  views. Saved indices resolve through the option list stored with them, so
+  older files keep their view.
+- `PostProcessInitializationTests` keeps its texture-upload and Slang VCT
+  checks. Those still drive the `Shader` class, so they are ported when
+  `Shader` goes.
+
 ## Phase 2: delete legacy-only code
 
+Items 2 and 3 of the original list (the legacy effect code and LPV/RSM) were
+done in Phase 1, as was the passes deletion in item 1.
+
 1. Delete the legacy rendering sources:
-   - `src/passes/*` and the pass headers
    - `GBuffer`, `RenderTarget`, `Shader`, `BuiltinShaders`, `Graphics`
    - `SpatialUpscaler`, `IUpscaler`, `UniformNames.h`, `IndirectDraw.h`
-2. Delete the legacy post-process code:
-   - `ShaderPostProcessEffect`, `RSMEffect`, `LPVEffect`
-   - `VctVoxelizationShaders`, `VctProbeSampling.h`
    - `TexturePainter`
-3. Remove LPV and RSM from `PostProcessEffectFactory`, the default effects in
-   `CameraComponent` and the default preset.
-4. Delete the `ShaderGraphEvaluation.h.in`, `VctCoverage.h.in` and
-   `FogIntegration.h.in` configure steps from `engine/render/CMakeLists.txt`.
+   - Port the Slang VCT checks in `tests/VctProbeCacheChecks.h` and
+     `tests/VctEmissionCoverageChecks.h` off `Shader` onto RHI compute, and
+     move the editor viewports' `RenderTarget` size holders to plain extents.
+4. Delete the `ShaderGraphEvaluation.h.in` configure step from
+   `engine/render/CMakeLists.txt`.
 5. Remove the RmlUi GL3 backend (`RenderInterface_GL3`), the world-surface FBOs,
    `RenderWorldSurfaces`, the legacy `RmlUiRuntime::Render`, and the WorldSpace
    RmlUi mode.
 
 ## Phase 3: strip GL from shared code
+
+Items 1 to 3 were done in Phase 1.
 
 1. **Effects:** drop `Initialize`/`Apply`, `RenderContext` and `RenderTarget` from
    `IPostProcessEffect`. Strip the GL members and code from the 17 mixed effects.

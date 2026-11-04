@@ -5,7 +5,6 @@
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RenderTexture.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"

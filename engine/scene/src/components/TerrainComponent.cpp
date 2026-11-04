@@ -5,7 +5,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Entity.h"
@@ -224,7 +224,7 @@ namespace PlutoGE::scene
             return;
         }
 
-        auto &renderer = core::Engine::GetInstance().GetRenderer();
+        auto &renderScene = core::Engine::GetInstance().GetRenderScene();
         const glm::mat4 modelMatrix = entity->GetWorldTransform();
         for (std::size_t submeshIndex = 0; submeshIndex < m_mesh->GetSubmeshCount(); ++submeshIndex)
         {
@@ -241,7 +241,7 @@ namespace PlutoGE::scene
             command.isStatic = m_isStatic;
             command.usePrimaryUvForLightmap = true;
             command.terrainGeomorph = true;
-            renderer.SubmitRenderCommand(command);
+            renderScene.SubmitRenderCommand(command);
         }
 
         m_previousModelMatrix = modelMatrix;

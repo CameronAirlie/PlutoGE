@@ -1,13 +1,9 @@
 #pragma once
 
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
-
-#include <chrono>
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 namespace PlutoGE::render
 {
-    class Shader;
-
     enum class DepthOfFieldQuality
     {
         Balanced = 0,
@@ -15,7 +11,7 @@ namespace PlutoGE::render
         Cinematic,
     };
 
-    class DepthOfFieldEffect : public ShaderPostProcessEffect
+    class DepthOfFieldEffect : public IPostProcessEffect
     {
     public:
         struct Settings
@@ -37,8 +33,6 @@ namespace PlutoGE::render
         DepthOfFieldEffect() = default;
         ~DepthOfFieldEffect() override = default;
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "DepthOfField"; }
         std::string GetDisplayName() const override { return "Depth of Field"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -46,14 +40,8 @@ namespace PlutoGE::render
         [[nodiscard]] Settings GetSettings() const noexcept;
 
     private:
-        float ReadAutoFocusDistance(const PostProcessContext &context);
-        float LinearizeDepth(float depth, float nearPlane, float farPlane) const;
-        void ResetFocus();
-
-        Shader *m_shader = nullptr;
         DepthOfFieldQuality m_quality = DepthOfFieldQuality::High;
         float m_focusDistance = 8.0f;
-        float m_currentFocusDistance = 8.0f;
         float m_focalLength = 50.0f;
         float m_fStop = 2.8f;
         float m_sensorWidth = 36.0f;
@@ -65,7 +53,5 @@ namespace PlutoGE::render
         float m_focusY = 0.5f;
         float m_focusWindow = 0.08f;
         bool m_autoFocus = true;
-        bool m_hasFocusDistance = false;
-        std::chrono::steady_clock::time_point m_lastFocusUpdate;
     };
 }

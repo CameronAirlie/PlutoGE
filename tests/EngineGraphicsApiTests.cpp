@@ -19,7 +19,7 @@
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -162,10 +162,10 @@ int main(int argc, char **argv)
             // Submit consecutive frames: stationary FBX nodes must have zero
             // object motion, including nodes with inherited animation components.
             scene->SubmitRenderCommands();
-            engine.GetRenderer().ClearRenderCommands();
+            engine.GetRenderScene().ClearRenderCommands();
         }
         scene->SubmitRenderCommands();
-        const auto &commands = engine.GetRenderer().GetSceneRenderCommands();
+        const auto &commands = engine.GetRenderScene().GetSceneRenderCommands();
         std::size_t triangles = 0, emitters = 0, textured = 0;
         for (const auto &draw : commands)
         {
@@ -482,7 +482,7 @@ int main(int argc, char **argv)
             int samples = 0;
             for (int frame = 0; frame < frames; ++frame)
             {
-                engine.GetRenderer().ClearRenderCommands();
+                engine.GetRenderScene().ClearRenderCommands();
                 const auto begin = Clock::now();
                 scene->Update(1.0f / 60.0f);
                 const auto updated = Clock::now();
@@ -514,7 +514,7 @@ int main(int argc, char **argv)
                 // Diagnostic within a process only: render order includes
                 // pointer keys, so this checksum is not stable across launches.
                 std::uint64_t checksum = 1469598103934665603ull;
-                auto &renderer = engine.GetRenderer();
+                auto &renderer = engine.GetRenderScene();
                 for (int frame = 0; frame < 280; ++frame)
                 {
                     renderer.ClearRenderCommands();
@@ -670,15 +670,15 @@ int main(int argc, char **argv)
         for (int frame=0;frame<4;++frame)
         {
             if (frame==2) entity.SetPosition(glm::vec3(1,0,0));
-            engine.GetRenderer().ClearRenderCommands(); component->SubmitRenderCommands();
-            const auto &draws=engine.GetRenderer().GetSceneRenderCommands();
+            engine.GetRenderScene().ClearRenderCommands(); component->SubmitRenderCommands();
+            const auto &draws=engine.GetRenderScene().GetSceneRenderCommands();
             if (draws.size()!=1) return 40;
             const auto expected=frame==0?draws[0].model:last;
             for (int c=0;c<4;++c) for (int r=0;r<4;++r)
                 if (std::abs(draws[0].previousModel[c][r]-expected[c][r])>0.00001f) return 41;
             last=draws[0].model;
         }
-        engine.GetRenderer().ClearRenderCommands();
+        engine.GetRenderScene().ClearRenderCommands();
     }
     render::RenderCommand command{.material = &material, .mesh = &mesh};
     {
@@ -701,9 +701,9 @@ int main(int argc, char **argv)
         channel.values = {{0,0,0,0}, {2,0,0,0}};
         render::AnimationClip clip{.name="Move", .duration=1, .channels={channel}};
         const auto submit = [&]() {
-            engine.GetRenderer().ClearRenderCommands();
+            engine.GetRenderScene().ClearRenderCommands();
             component->SubmitRenderCommands();
-            return engine.GetRenderer().GetSceneRenderCommands().front();
+            return engine.GetRenderScene().GetSceneRenderCommands().front();
         };
         animation->SetClipsFromImportedAnimations({clip});
         if (animation->CanAnimateNode(nodeMesh.GetAnimationNodes(), 2)) return 42;
@@ -720,7 +720,7 @@ int main(int argc, char **argv)
         const auto restored = submit();
         if (restored.model[3].x != 0 || std::abs(restored.previousModel[3].x - 1) > .0001f) return 46;
         if (submit().previousModel != glm::mat4(1)) return 47;
-        engine.GetRenderer().ClearRenderCommands();
+        engine.GetRenderScene().ClearRenderCommands();
     }
     const std::array commands{command};
     render::CameraData cameraData{.view = glm::mat4(1.0f), .projection = glm::mat4(1.0f)};
@@ -775,7 +775,7 @@ int main(int argc, char **argv)
             meshes.push_back(component);
         }
         double submission = 0.0, visibility = 0.0;
-        auto &renderer = engine.GetRenderer();
+        auto &renderer = engine.GetRenderScene();
         for (int frame = 0; frame < 120; ++frame)
         {
             renderer.ClearRenderCommands();
@@ -802,7 +802,7 @@ int main(int argc, char **argv)
         auto *childMesh = child.CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{.mesh = &mesh, .material = &material});
         childMesh->SetSubmeshIndex(0);
         child.SetParent(&parent);
-        auto &renderer = engine.GetRenderer();
+        auto &renderer = engine.GetRenderScene();
         const auto checkPosition = [&](float expectedX)
         {
             renderer.ClearRenderCommands();

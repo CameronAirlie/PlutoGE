@@ -7,9 +7,7 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/postprocess/AutoExposureEffect.h"
-#include "PlutoGE/render/postprocess/LPVEffect.h"
 #include "PlutoGE/render/postprocess/PostProcessEffectFactory.h"
-#include "PlutoGE/render/postprocess/RSMEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
 #include "PlutoGE/render/postprocess/SSGIEffect.h"
 #include "PlutoGE/render/postprocess/DDGIEffect.h"
@@ -109,12 +107,6 @@ namespace PlutoGE::scene
 
         auto &ddgiEffect = EmplacePostProcessEffect<render::DDGIEffect>();
         ddgiEffect.SetEnabled(false);
-
-        auto &lpvEffect = EmplacePostProcessEffect<render::LPVEffect>();
-        lpvEffect.SetEnabled(false);
-
-        auto &rsmEffect = EmplacePostProcessEffect<render::RSMEffect>();
-        rsmEffect.SetEnabled(false);
 
         EmplacePostProcessEffect<render::AutoExposureEffect>();
         AddPostProcessEffectByType("TAA");

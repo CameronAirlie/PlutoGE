@@ -1,7 +1,6 @@
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/RhiOcean.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
-#include "PlutoGE/render/Renderer.h"
 #include "PlutoGE/render/rhi/opengl/OpenGLDevice.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/platform/Window.h"

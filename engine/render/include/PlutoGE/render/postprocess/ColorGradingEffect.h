@@ -1,6 +1,6 @@
 #pragma once
 
-#include "PlutoGE/render/postprocess/ShaderPostProcessEffect.h"
+#include "PlutoGE/render/postprocess/IPostProcessEffect.h"
 
 #include <glm/vec3.hpp>
 
@@ -27,9 +27,7 @@ namespace PlutoGE::render
         float splitBalance;
     };
 
-    class Shader;
-
-    class ColorGradingEffect : public ShaderPostProcessEffect
+    class ColorGradingEffect : public IPostProcessEffect
     {
     public:
         enum class Preset
@@ -51,8 +49,6 @@ namespace PlutoGE::render
         }
         ~ColorGradingEffect() override = default;
 
-        void Initialize() override;
-        void Apply(const PostProcessContext &context) override;
         std::string GetTypeName() const override { return "ColorGrading"; }
         std::string GetDisplayName() const override { return "Color Grading"; }
         std::vector<PostProcessParameter> GetParameters() const override;
@@ -79,7 +75,6 @@ namespace PlutoGE::render
     private:
         void ApplyPreset(Preset preset);
 
-        Shader *m_shader = nullptr;
         Preset m_preset = Preset::Custom;
         float m_brightness = 0.0f;
         float m_contrast = 1.0f;

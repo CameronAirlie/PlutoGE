@@ -12,7 +12,7 @@ namespace PlutoGE
     class RuntimeProfiler
     {
     public:
-        explicit RuntimeProfiler(render::Renderer &renderer);
+        explicit RuntimeProfiler(render::RenderSceneFrontend &renderScene);
         ~RuntimeProfiler();
         bool Initialize(bool visible = true);
         void Draw();

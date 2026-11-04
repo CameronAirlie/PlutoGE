@@ -1,7 +1,7 @@
 #pragma once
 
 #include "PlutoGE/core/CpuTrace.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
@@ -71,16 +71,8 @@ namespace PlutoGE::ui
         float durationMs = 0.0f;
         EditorFrameTimingStats timing;
         PanelManagerTimingStats panels;
-        render::RendererCpuFrameStats renderer;
+        render::RenderSceneStats scene;
         render::RmlUiCpuTiming runtimeUi;
-        std::vector<render::CpuPassTiming> cpuPasses;
-        std::vector<render::GpuPassTiming> gpuPasses;
-        std::vector<render::GpuPassTiming> postProcessGpuPasses;
-        std::vector<render::GpuPassTiming> gpuDetails;
-        render::LightingGpuTiming lighting;
-        float totalCpuMs = 0.0f;
-        float totalGpuMs = 0.0f;
-        int renderCount = 0;
     };
 
     class EditorProfiler
@@ -99,7 +91,7 @@ namespace PlutoGE::ui
         [[nodiscard]] const std::deque<EditorProfileFrame> &GetCapturedFrames() const noexcept { return m_capture; }
         // Called by the editor after panel submission and presentation, never by a panel.
         void CompleteFrame(float durationMs, const EditorFrameTimingStats &timing,
-                           const PanelManagerTimingStats &panels, const render::Renderer &renderer,
+                           const PanelManagerTimingStats &panels, const render::RenderSceneStats &scene,
                            const render::RmlUiCpuTiming &runtimeUi,
                            std::vector<core::CpuSample> samples = {}, std::uint32_t droppedSamples = 0);
         void RecordFrame(EditorProfileFrame frame);
@@ -123,14 +115,7 @@ namespace PlutoGE::ui
         [[nodiscard]] const EditorFrameTimingStats &GetLatestFrameTimingStats() const;
         [[nodiscard]] std::string BuildMetricsReport(const PanelManagerTimingStats &timingStats,
                                                      const EditorFrameTimingStats &frameTimingStats,
-                                                     const std::vector<render::CpuPassTiming> &cpuPassTimings,
-                                                     const render::RendererCpuFrameStats &cpuFrameStats,
-                                                     const std::vector<render::GpuPassTiming> &gpuPassTimings,
-                                                     const std::vector<render::GpuPassTiming> &postProcessGpuTimings,
-                                                     const std::vector<render::GpuPassTiming> &gpuDetailTimings,
-                                                     float totalCpuPassTimeMs,
-                                                     float totalGpuPassTimeMs,
-                                                     const render::LightingGpuTiming &lightingGpuTiming,
+                                                     const render::RenderSceneStats &sceneStats,
                                                      float capturedDurationMs = -1.0f) const;
 
     private:

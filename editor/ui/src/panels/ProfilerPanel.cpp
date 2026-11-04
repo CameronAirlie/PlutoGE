@@ -1,6 +1,6 @@
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/ui/PanelManager.h"
@@ -44,7 +44,7 @@ namespace PlutoGE::ui
 
     void ProfilerPanel::CopyMetricsToClipboard()
     {
-        if (!m_profiler || !m_renderer)
+        if (!m_profiler || !m_renderScene)
         {
             return;
         }
@@ -61,14 +61,7 @@ namespace PlutoGE::ui
         m_lastCopiedMetrics = m_profiler->BuildMetricsReport(
             (m_panelManager ? m_panelManager->GetTimingStats() : PanelManagerTimingStats{}),
             m_profiler->GetLatestFrameTimingStats(),
-            m_renderer->GetCpuPassTimings(),
-            m_renderer->GetCpuFrameStats(),
-            m_renderer->GetGpuPassTimings(),
-            m_renderer->GetPostProcessGpuTimings(),
-            m_renderer->GetGpuDetailTimings(),
-            m_renderer->GetTotalCpuPassTimeMs(),
-            m_renderer->GetTotalGpuPassTimeMs(),
-            m_renderer->GetLightingGpuTiming(),
+            m_renderScene->GetStats(),
             -1.0f);
         std::ostringstream rmlReport;
         rmlReport << std::fixed << std::setprecision(3)
@@ -101,7 +94,7 @@ namespace PlutoGE::ui
 
     void ProfilerPanel::Render()
     {
-        if (!m_profiler || !m_renderer)
+        if (!m_profiler || !m_renderScene)
         {
             ImGui::TextUnformatted("Profiler is unavailable.");
             return;
@@ -112,29 +105,9 @@ namespace PlutoGE::ui
         if (!ImGui::CollapsingHeader("Detailed frame metrics")) return;
         const auto *selected = GetSelectedFrame();
         const auto &timingStats = (selected ? selected->panels : (m_panelManager ? m_panelManager->GetTimingStats() : PanelManagerTimingStats{}));
-        const auto &cpuPassTimings = (selected ? selected->cpuPasses : m_renderer->GetCpuPassTimings());
-        const auto &cpuFrameStats = (selected ? selected->renderer : m_renderer->GetCpuFrameStats());
-        const auto &gpuPassTimings = (selected ? selected->gpuPasses : m_renderer->GetGpuPassTimings());
-        const auto &postProcessGpuTimings = (selected ? selected->postProcessGpuPasses : m_renderer->GetPostProcessGpuTimings());
-        const auto &gpuDetailTimings = (selected ? selected->gpuDetails : m_renderer->GetGpuDetailTimings());
-        const auto &lightingGpuTiming = (selected ? selected->lighting : m_renderer->GetLightingGpuTiming());
+        const auto &sceneStats = (selected ? selected->scene : m_renderScene->GetStats());
         const auto &frameTimingStats = (selected ? selected->timing : m_profiler->GetLatestFrameTimingStats());
         const auto &rmlTiming = (selected ? selected->runtimeUi : render::RmlUiRuntime::Get().GetCpuTiming());
-        float lightingTotalMs = 0.0f;
-        if (lightingGpuTiming.hasSetupResult)
-        {
-            lightingTotalMs += lightingGpuTiming.setupMs;
-        }
-        if (lightingGpuTiming.hasAmbientResult)
-        {
-            lightingTotalMs += lightingGpuTiming.ambientMs;
-        }
-        if (lightingGpuTiming.hasLightAccumulationResult)
-        {
-            lightingTotalMs += lightingGpuTiming.lightAccumulationMs;
-        }
-        const float totalGpuPassTimeMs = (selected ? selected->totalGpuMs : m_renderer->GetTotalGpuPassTimeMs());
-        const float lightingShare = totalGpuPassTimeMs > 0.0f ? (lightingTotalMs / totalGpuPassTimeMs) * 100.0f : 0.0f;
         ImGui::Text("Frame: %.2f ms", (selected ? selected->durationMs : m_profiler->GetCurrentFrameTimeMs()));
         ImGui::Text("Live average: %.2f ms (%.1f FPS)", m_profiler->GetAverageFrameTimeMs(), m_profiler->GetAverageFPS());
         ImGui::Text("Live min / max: %.2f ms / %.2f ms", m_profiler->GetMinFrameTimeMs(), m_profiler->GetMaxFrameTimeMs());
@@ -395,40 +368,14 @@ namespace PlutoGE::ui
         ImGui::Text("Platform viewports: %d", timingStats.platformViewportCount);
 
         ImGui::Separator();
-        ImGui::Text("Profiled renders: %d", (selected ? selected->renderCount : m_renderer->GetProfiledRenderCount()));
-        ImGui::Text("CPU passes total: %.2f ms", (selected ? selected->totalCpuMs : m_renderer->GetTotalCpuPassTimeMs()));
-        if (ImGui::TreeNode("Renderer frame breakdown"))
-        {
-            ImGui::Text("Total: %.2f ms", cpuFrameStats.renderFrameTotalMs);
-            ImGui::Text("Context + effects: %.2f ms", cpuFrameStats.renderFrameContextSetupMs);
-            ImGui::Text("Resources + camera: %.2f ms", cpuFrameStats.renderFrameResourceSetupMs);
-            ImGui::Text("LOD update: %.2f ms", cpuFrameStats.renderFrameLodUpdateMs);
-            ImGui::Text("Command sort: %.2f ms", cpuFrameStats.renderFrameCommandSortMs);
-            ImGui::Text("Visibility + instance culling: %.2f ms", cpuFrameStats.renderFrameVisibilityMs);
-            ImGui::Text("Shadow command preparation: %.2f ms", cpuFrameStats.renderFrameShadowPreparationMs);
-            ImGui::Text("Shadow submission: %.2f ms", cpuFrameStats.renderFrameShadowSubmissionMs);
-            ImGui::Text("Main pass submission: %.2f ms", cpuFrameStats.renderFramePassSubmissionMs);
-            ImGui::Text("Finalization: %.2f ms", cpuFrameStats.renderFrameFinalizationMs);
-            ImGui::TreePop();
-        }
-        ImGui::Text("Render commands: %d submitted, %d submission culled", cpuFrameStats.submittedRenderCommandCount, cpuFrameStats.submissionCulledRenderCommandCount);
+        ImGui::Text("Scene command sort: %.2f ms, visibility: %.2f ms", sceneStats.commandSortMs, sceneStats.visibilityMs);
+        ImGui::Text("Render commands: %d submitted, %d submission culled", sceneStats.submittedRenderCommandCount, sceneStats.submissionCulledRenderCommandCount);
         ImGui::Text("Retained scene: %zu producers, %zu commands; %zu updates, %zu reused, %zu removed, %zu rebuilt commands",
-                    cpuFrameStats.retainedProducers, cpuFrameStats.retainedCommands, cpuFrameStats.retainedUpdates,
-                    cpuFrameStats.retainedReuses, cpuFrameStats.retainedRemovals, cpuFrameStats.retainedCommandRebuilds);
-        ImGui::Text("Visible commands: %d visible, %d frustum culled", cpuFrameStats.visibleRenderCommandCount, cpuFrameStats.frustumCulledRenderCommandCount);
-        ImGui::Text("Visible LOD availability: %d single-level, %d multi-level", cpuFrameStats.visibleSingleLodCommandCount, cpuFrameStats.visibleMultiLodCommandCount);
-        ImGui::Text("Render command sorts: %d", cpuFrameStats.renderCommandSortCount);
-        ImGui::Text("Geometry workload: %d logical batches, %d instances, %d triangles", cpuFrameStats.geometrySubmittedBatchCount, cpuFrameStats.geometrySubmittedInstanceCount, cpuFrameStats.geometrySubmittedTriangleCount);
-        ImGui::Text("Geometry driver submission: %d material groups, %d API draw calls", cpuFrameStats.geometryMaterialGroupCount, cpuFrameStats.geometryApiDrawCallCount);
-        ImGui::Text("Geometry LOD triangles: L0 %d, L1 %d, L2 %d, L3+ %d",
-                    cpuFrameStats.geometrySubmittedTrianglesByLod[0],
-                    cpuFrameStats.geometrySubmittedTrianglesByLod[1],
-                    cpuFrameStats.geometrySubmittedTrianglesByLod[2],
-                    cpuFrameStats.geometrySubmittedTrianglesByLod[3]);
-        for (const auto &cpuPassTiming : cpuPassTimings)
-        {
-            ImGui::Text("%s CPU: %.2f ms", cpuPassTiming.name.c_str(), cpuPassTiming.cpuTimeMs);
-        }
+                    sceneStats.retainedProducers, sceneStats.retainedCommands, sceneStats.retainedUpdates,
+                    sceneStats.retainedReuses, sceneStats.retainedRemovals, sceneStats.retainedCommandRebuilds);
+        ImGui::Text("Visible commands: %d visible, %d frustum culled", sceneStats.visibleRenderCommandCount, sceneStats.frustumCulledRenderCommandCount);
+        ImGui::Text("Visible LOD availability: %d single-level, %d multi-level", sceneStats.visibleSingleLodCommandCount, sceneStats.visibleMultiLodCommandCount);
+        ImGui::Text("Render command sorts: %d", sceneStats.renderCommandSortCount);
         ImGui::Text("RmlUi measured total: %.2f ms (%d/%d documents visible)",
                     rmlTiming.TotalMs(), rmlTiming.visibleDocumentCount, rmlTiming.documentCount);
         if (ImGui::TreeNode("RmlUi CPU breakdown"))
@@ -444,124 +391,6 @@ namespace PlutoGE::ui
             ImGui::Text("Rml render submission: %.3f ms", rmlTiming.renderMs);
             ImGui::Text("Backend end frame: %.3f ms", rmlTiming.endFrameMs);
             ImGui::TreePop();
-        }
-        ImGui::Text("Intermediate target resize: %.2f ms (%d)", cpuFrameStats.intermediateTargetResizeMs, cpuFrameStats.intermediateTargetResizeCount);
-        ImGui::Text("GBuffer resize: %.2f ms (%d)", cpuFrameStats.gBufferResizeMs, cpuFrameStats.gBufferResizeCount);
-        ImGui::Text("Shadow updates: %d surfaces (%d directional cascades)", cpuFrameStats.shadowUpdatedSurfaceCount, cpuFrameStats.shadowUpdatedDirectionalCascadeCount);
-        ImGui::Text("Shadow workload: %d px, %d logical batches, %d instances, %d triangles", cpuFrameStats.shadowUpdatedPixelCount, cpuFrameStats.shadowSubmittedBatchCount, cpuFrameStats.shadowSubmittedInstanceCount, cpuFrameStats.shadowSubmittedTriangleCount);
-        ImGui::Text("Shadow driver submission: %d material groups, %d API draw calls", cpuFrameStats.shadowMaterialGroupCount, cpuFrameStats.shadowApiDrawCallCount);
-        if (ImGui::TreeNode("Shadow CPU breakdown"))
-        {
-            ImGui::Text("Target bind: %.3f ms", cpuFrameStats.shadowCpuTargetBindMs);
-            ImGui::Text("Caster + batch build: %.3f ms (%d builds)", cpuFrameStats.shadowCpuCasterBatchBuildMs, cpuFrameStats.shadowCpuBatchBuildCount);
-            ImGui::Text("Buffer upload: %.3f ms", cpuFrameStats.shadowCpuBufferUploadMs);
-            ImGui::Text("Draw submission: %.3f ms", cpuFrameStats.shadowCpuDrawSubmissionMs);
-            ImGui::Text("Image copy: %.3f ms (%d copies)", cpuFrameStats.shadowCpuImageCopyMs, cpuFrameStats.shadowCpuImageCopyCount);
-            ImGui::Text("Other preparation: %.3f ms", cpuFrameStats.shadowCpuUnclassifiedMs);
-            ImGui::TreePop();
-        }
-
-        ImGui::Separator();
-        ImGui::Text("GPU passes total: %.2f ms", totalGpuPassTimeMs);
-        if (gpuPassTimings.empty())
-        {
-            ImGui::TextUnformatted("GPU timer queries are unavailable.");
-        }
-        else
-        {
-            for (const auto &gpuPassTiming : gpuPassTimings)
-            {
-                if (gpuPassTiming.hasResult)
-                {
-                    ImGui::Text("%s: %.2f ms", gpuPassTiming.name.c_str(), gpuPassTiming.gpuTimeMs);
-                }
-                else
-                {
-                    ImGui::Text("%s: pending", gpuPassTiming.name.c_str());
-                }
-            }
-        }
-
-        if (!gpuPassTimings.empty())
-        {
-            if (!postProcessGpuTimings.empty())
-            {
-                ImGui::Separator();
-                ImGui::TextUnformatted("Post process breakdown");
-                for (const auto &postProcessGpuTiming : postProcessGpuTimings)
-                {
-                    if (postProcessGpuTiming.hasResult)
-                    {
-                        ImGui::Text("%s: %.2f ms", postProcessGpuTiming.name.c_str(), postProcessGpuTiming.gpuTimeMs);
-                    }
-                    else
-                    {
-                        ImGui::Text("%s: pending", postProcessGpuTiming.name.c_str());
-                    }
-                }
-            }
-
-            if (!gpuDetailTimings.empty() && ImGui::TreeNode("GPU detail breakdown"))
-            {
-                for (const auto &timing : gpuDetailTimings)
-                {
-                    if (timing.hasResult)
-                        ImGui::Text("%s: %.3f ms", timing.name.c_str(), timing.gpuTimeMs);
-                    else
-                        ImGui::Text("%s: pending", timing.name.c_str());
-                }
-                ImGui::TreePop();
-            }
-
-            ImGui::Separator();
-            ImGui::TextUnformatted("Lighting breakdown");
-            if (lightingTotalMs > 0.0f)
-            {
-                ImGui::Text("Lighting total: %.2f ms (%.1f%% of GPU passes)", lightingTotalMs, lightingShare);
-                ImGui::Text("Non-lighting GPU: %.2f ms", std::max(0.0f, totalGpuPassTimeMs - lightingTotalMs));
-            }
-            else
-            {
-                ImGui::TextUnformatted("Lighting total: pending");
-            }
-
-            if (lightingGpuTiming.hasSetupResult)
-            {
-                ImGui::Text("Setup + depth copy: %.2f ms", lightingGpuTiming.setupMs);
-            }
-            else
-            {
-                ImGui::TextUnformatted("Setup + depth copy: pending");
-            }
-
-            if (lightingGpuTiming.hasAmbientResult)
-            {
-                ImGui::Text("Ambient fullscreen: %.2f ms", lightingGpuTiming.ambientMs);
-            }
-            else
-            {
-                ImGui::TextUnformatted("Ambient fullscreen: pending");
-            }
-
-            if (lightingGpuTiming.hasLightAccumulationResult)
-            {
-                ImGui::Text("Per-light accumulation: %.2f ms", lightingGpuTiming.lightAccumulationMs);
-                if (lightingGpuTiming.lightCount > 0)
-                {
-                    ImGui::Text("Accumulation / light: %.3f ms", lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.lightCount));
-                }
-                if (lightingGpuTiming.shadowedLightCount > 0)
-                {
-                    ImGui::Text("Accumulation / shadowed light: %.3f ms", lightingGpuTiming.lightAccumulationMs / static_cast<float>(lightingGpuTiming.shadowedLightCount));
-                }
-            }
-            else
-            {
-                ImGui::TextUnformatted("Per-light accumulation: pending");
-            }
-
-            ImGui::Text("Lights: %d", lightingGpuTiming.lightCount);
-            ImGui::Text("Shadowed lights: %d", lightingGpuTiming.shadowedLightCount);
         }
 
         if (ImGui::Button("Copy Metrics"))

@@ -44,7 +44,6 @@ graphics driver is still required at runtime.
 | Directional shadows | VSM by default in RHI lighting; explicit Cascaded mode remains available |
 | Local lights | Point/spot lighting and shadow paths; see [physical local lights](physical-local-lights.md) and [point filtering](point-shadow-filtering.md) |
 | RHI post-processing | Tone mapping, gamma, FXAA, color grading, chromatic aberration, bloom, lens flare, motion blur, depth of field, TAA, auto exposure, SSAO (including the LSAO alias), [SSGI](SSGI.md), SSR, volumetric fog, scene composite, VCTGI and [DDGI](DDGI.md) |
-| Legacy effects | LPV and RSM still have OpenGL implementations, but no registered RHI post-process adapters |
 | Dynamic GI | [DDGI probes](DDGI.md) traced through the voxel scene, and [screen-space GI](SSGI.md); both replace the occluded share of the ambient diffuse light |
 | Voxel GI | [World cache](vct-world-cache.md) and [secondary bounce](vct-secondary-bounce.md); requires suitable scene/settings and resource support |
 | Water | [Procedural wave model and water effects](OCEAN_WATER_EFFECTS.md), including foam, ripples and caustics; not a fluid simulation |

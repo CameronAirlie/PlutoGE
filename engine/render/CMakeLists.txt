@@ -7,18 +7,10 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" PLUT
 string(REPLACE "#include \"ShaderGraphCommon.slang\"" "${PLUTO_SHADER_GRAPH_COMMON}"
     PLUTO_SHADER_GRAPH_EVALUATION "${PLUTO_SHADER_GRAPH_EVALUATION}")
 configure_file(src/ShaderGraphEvaluation.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/ShaderGraphEvaluation.h" @ONLY)
-# Use one coverage implementation in Slang and the legacy runtime GLSL shader.
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTCoverage.slang" PLUTO_VCT_COVERAGE_SOURCE)
-configure_file(src/postprocess/VctCoverage.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/VctCoverage.h" @ONLY)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogIntegration.slang" PLUTO_FOG_INTEGRATION_SOURCE)
-configure_file(src/postprocess/FogIntegration.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/FogIntegration.h" @ONLY)
 
 add_library(PlutoGERender
-    src/postprocess/VctVoxelizationShaders.cpp
-    src/Renderer.cpp
     src/RetainedRenderScene.cpp
+    src/RenderSceneFrontend.cpp
     src/DebugDraw.cpp
     src/BasicRenderer.cpp
     src/GeometryRendering.cpp
@@ -98,7 +90,6 @@ add_library(PlutoGERender
     src/GBuffer.cpp
     src/Mesh.cpp
     src/Material.cpp
-    src/postprocess/ShaderPostProcessEffect.cpp
     src/postprocess/AutoExposureEffect.cpp
     src/postprocess/BloomEffect.cpp
     src/postprocess/ColorGradingEffect.cpp
@@ -109,7 +100,6 @@ add_library(PlutoGERender
     src/postprocess/SSGIEffect.cpp
     src/postprocess/DDGIEffect.cpp
     src/postprocess/SSREffect.cpp
-    src/postprocess/RSMEffect.cpp
     src/postprocess/VoxelConeTracingEffect.cpp
     src/postprocess/VolumetricFogEffect.cpp
     src/postprocess/TAAEffect.cpp
@@ -119,24 +109,11 @@ add_library(PlutoGERender
     src/postprocess/FXAAEffect.cpp
     src/postprocess/GammaCorrectionEffect.cpp
     src/postprocess/PostProcessEffectFactory.cpp
-    src/passes/GeometryPass.cpp
-    src/passes/DecalPass.cpp
-    src/passes/GridPass.cpp
-    src/passes/LightPropagationVolumePass.cpp
-    src/passes/LightingPass.cpp
-    src/passes/OceanPass.cpp
-    src/passes/ParticlePass.cpp
-    src/passes/ShadowPass.cpp
-    src/passes/TransparentPass.cpp
-    src/passes/VolumetricCloudPass.cpp
-    src/passes/PostProcessPass.cpp
-    src/passes/PhysicalSkyPass.cpp
     src/RmlUiRuntime.cpp
     src/RmlUiRhiRenderer.cpp
     src/UIRhiRenderer.cpp
     src/NativeUIRenderer.cpp
     src/NativeUIPreview.cpp
-    src/passes/RmlUiPass.cpp
 )
 
 add_library(PlutoGE::Render ALIAS PlutoGERender)

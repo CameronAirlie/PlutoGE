@@ -6,7 +6,7 @@
 #include "PlutoGE/asset_import/ImportFileTransaction.h"
 #include "PlutoGE/ui/FileDialogs.h"
 #include "PlutoGE/ui/EditorLoadingPresenter.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/audio/AudioSystem.h"
@@ -3582,7 +3582,7 @@ namespace PlutoGE::ui
         // Do not create workspace panels or viewport targets before project selection.
         if (!m_project && !RunProjectLauncher()) return;
         auto &window = m_engine.GetWindow();
-        auto &renderer = m_engine.GetRenderer();
+        auto &renderScene = m_engine.GetRenderScene();
         auto deltaTime = std::chrono::duration<float>::zero();
         auto lastTime = std::chrono::high_resolution_clock::now();
 #ifdef _WIN32
@@ -3697,7 +3697,7 @@ namespace PlutoGE::ui
         m_postProcessEditor->Initialize();
         m_panelManager.AddPanel(m_postProcessEditor);
 
-        auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderer);
+        auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderScene);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
 
@@ -3847,7 +3847,7 @@ namespace PlutoGE::ui
 #endif
             core::CpuScope profilingScope("Profiler.BeginFrame", core::CpuCategory::Other);
             const auto profilingBeginStart = std::chrono::high_resolution_clock::now();
-            renderer.BeginCpuProfilingFrame();
+            renderScene.BeginStatsFrame();
             profilingScope.End();
             const auto profilingBeginEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.profilingBeginMs = std::chrono::duration<float, std::milli>(profilingBeginEnd - profilingBeginStart).count();
@@ -4000,11 +4000,11 @@ namespace PlutoGE::ui
                         {
                             submissionCullingCameras.push_back(gameCameraData);
                         }
-                        renderer.SetSubmissionCullingCameras(submissionCullingCameras);
+                        renderScene.SetSubmissionCullingCameras(submissionCullingCameras);
                     }
                     else
                     {
-                        renderer.ClearSubmissionCullingCameras();
+                        renderScene.ClearSubmissionCullingCameras();
 
                         const glm::vec2 viewportMin = viewportPanel2->GetViewportMin();
                         const glm::vec2 viewportSize = viewportPanel2->GetViewportSize();
@@ -4099,7 +4099,7 @@ namespace PlutoGE::ui
                     {
                         auto pixels = m_editorSceneRenderService->CaptureIbl(entity->GetWorldPosition(),
                             iblCaptureComponent->GetResolution(), iblCaptureComponent->GetFarPlane(),
-                            renderer.GetSceneRenderCommandView(), *m_scene);
+                            renderScene.GetSceneRenderCommandView(), *m_scene);
                         storedCapturePixels = iblCaptureComponent->SetCapturePixels(pixels);
                     }
                     if (!storedCapturePixels)
@@ -4138,7 +4138,7 @@ namespace PlutoGE::ui
                 timelinePose = m_timelinePreview.RenderPose(*m_scene, deltaSeconds);
                 if (timelinePose)
                 {
-                    renderer.ClearRenderCommands();
+                    renderScene.ClearRenderCommands();
                     m_scene->SubmitRenderCommands();
                 }
             }
@@ -4166,7 +4166,7 @@ namespace PlutoGE::ui
                     if (!m_renderTextureViews)
                         m_renderTextureViews = std::make_unique<scene::RenderTextureViewBuilder>();
                     const auto views = m_renderTextureViews->Build(*m_scene, gameCameraStack.textureCameras,
-                                                                   renderer.GetSceneRenderCommandView());
+                                                                   renderScene.GetSceneRenderCommandView());
                     textureService->RenderTextures(views, m_scene.get());
                 }
             }
@@ -4185,9 +4185,9 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderer.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
-                viewportPanel->RenderRhiFrame(editorCameraData, renderer.GetVisibleRenderCommandView(),
-                                              renderer.GetSceneRenderCommandView(),
+                renderScene.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
+                viewportPanel->RenderRhiFrame(editorCameraData, renderScene.GetVisibleRenderCommandView(),
+                                              renderScene.GetSceneRenderCommandView(),
                                               editorPostProcessEffects);
             }
             else
@@ -4224,7 +4224,7 @@ namespace PlutoGE::ui
             }
 
             timelinePose.reset(); // Authoring state is restored before any UI, save or history work.
-            renderer.ClearRenderCommands();
+            renderScene.ClearRenderCommands();
 
             // UI
 
@@ -5553,7 +5553,7 @@ namespace PlutoGE::ui
             }
 #endif
             m_profiler.CompleteFrame(std::chrono::duration<float, std::milli>(frameEndTime - currentTime).count(),
-                                     frameTimingStats, m_panelManager.GetTimingStats(), renderer,
+                                     frameTimingStats, m_panelManager.GetTimingStats(), renderScene.GetStats(),
                                      render::RmlUiRuntime::Get().GetCpuTiming(), cpuTrace.TakeSamples(), cpuTrace.GetDroppedCount());
 
             // Scene transitions may pump loading frames. Defer them until all UI

@@ -3,7 +3,7 @@
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
@@ -201,7 +201,7 @@ namespace PlutoGE::core
     }
 
     Engine::Engine()
-        : m_renderer(std::make_unique<render::Renderer>()),
+        : m_renderScene(std::make_unique<render::RenderSceneFrontend>()),
           m_rhiRenderService(std::make_unique<render::RhiRenderService>()),
           m_assetManager(std::make_unique<assets::AssetManager>()),
           m_meshImporter(std::make_unique<assetimport::MeshImporter>()),
@@ -474,7 +474,7 @@ namespace PlutoGE::core
 
         // Scene updates may already have submitted commands containing pointers
         // into the outgoing scene. Never carry those across a scene transition.
-        m_renderer->ClearRenderCommands();
+        m_renderScene->ClearRenderCommands();
         render::DebugDraw::Get().Clear();
         m_scene = scene;
 

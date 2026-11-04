@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/assets/PostProcessStack.h"
+#include "PlutoGE/render/Camera.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/render/postprocess/IPostProcessEffect.h"
@@ -13,8 +14,6 @@
 
 namespace PlutoGE::render
 {
-    class Camera;
-    struct CameraData;
     class RenderTexture;
 }
 

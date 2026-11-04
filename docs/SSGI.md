@@ -25,8 +25,6 @@ post-processing stack.
 | Half Resolution | Trace at half resolution in each axis (default) |
 | Indirect Only | Shows the diffuse indirect light instead of the scene |
 
-**Step Size**, **Depth Weight** and **Normal Weight** apply only to the legacy OpenGL renderer.
-
 ## How it works
 
 `ScreenSpaceGlobalIllumination` runs at the surface guide's resolution (`SSGI.slang`):

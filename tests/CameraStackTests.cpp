@@ -36,8 +36,6 @@ namespace
     {
     public:
         explicit FakeEffect(std::string type) : m_type(std::move(type)) {}
-        void Initialize() override {}
-        void Apply(const render::PostProcessContext &) override {}
         std::string GetTypeName() const override { return m_type; }
 
     private:

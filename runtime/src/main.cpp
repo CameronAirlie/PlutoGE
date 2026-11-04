@@ -11,7 +11,7 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/Renderer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/AssetDatabase.h"
@@ -130,7 +130,7 @@ namespace PlutoGE
             return std::to_string(value.x) + "," + std::to_string(value.y) + "," + std::to_string(value.z);
         }
 
-        void LogSceneDiagnostics(scene::Scene *scene, scene::CameraComponent *cameraComponent, render::Renderer &renderer)
+        void LogSceneDiagnostics(scene::Scene *scene, scene::CameraComponent *cameraComponent, render::RenderSceneFrontend &renderScene)
         {
             if (!scene)
             {
@@ -197,7 +197,7 @@ namespace PlutoGE
             g_runtimeDiagnostics.Log("Scene mesh components: " + std::to_string(meshComponentCount));
             g_runtimeDiagnostics.Log("Scene active mesh components: " + std::to_string(activeMeshComponentCount));
             g_runtimeDiagnostics.Log("Scene loaded meshes: " + std::to_string(loadedMeshCount));
-            g_runtimeDiagnostics.Log("Queued render commands: " + std::to_string(renderer.GetQueuedRenderCommandCount()));
+            g_runtimeDiagnostics.Log("Queued render commands: " + std::to_string(renderScene.GetQueuedRenderCommandCount()));
         }
 #endif
     }
@@ -538,7 +538,7 @@ int RunRuntime(int argc, char **argv)
 #endif
 
     auto lastFrameTime = std::chrono::high_resolution_clock::now();
-    auto &renderer = engine.GetRenderer();
+    auto &renderScene = engine.GetRenderScene();
     auto &window = engine.GetWindow();
     const auto &runtimeManifest = project->GetManifest();
     if (runtimeManifest.runtimeUpscaler == PlutoGE::assets::RuntimeUpscalerMode::Spatial &&
@@ -567,7 +567,7 @@ int RunRuntime(int argc, char **argv)
     std::unique_ptr<PlutoGE::RuntimeProfiler> runtimeProfiler;
     if (profilerEnabled)
     {
-        runtimeProfiler = std::make_unique<PlutoGE::RuntimeProfiler>(renderer);
+        runtimeProfiler = std::make_unique<PlutoGE::RuntimeProfiler>(renderScene);
         if (!runtimeProfiler->Initialize())
         {
             std::cerr << "Failed to initialize runtime profiler window." << std::endl;
@@ -600,7 +600,7 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
         PlutoGE::g_runtimeDiagnostics.currentPhase = "scene update";
 #endif
-        if (runtimeProfiler) renderer.BeginProfilingFrame();
+        if (runtimeProfiler) renderScene.BeginStatsFrame();
         if (scene)
         {
             PlutoGE::core::CpuScope scope("Runtime.SceneUpdate", PlutoGE::core::CpuCategory::Other);
@@ -637,7 +637,7 @@ int RunRuntime(int argc, char **argv)
                 std::cerr << "Scene transition failed: " << engine.GetSceneLoading().Status().error << std::endl;
             // Loading uses wall time; do not feed that time into the next physics step.
             lastFrameTime = std::chrono::high_resolution_clock::now();
-            renderer.ClearRenderCommands();
+            renderScene.ClearRenderCommands();
             // Keep the loading frame visible until the new scene has submitted
             // its first frame's commands; never present an empty transition frame.
             continue;
@@ -646,7 +646,7 @@ int RunRuntime(int argc, char **argv)
 #ifdef _WIN32
         if (!hasLoggedFirstFrameDiagnostics)
         {
-            PlutoGE::LogSceneDiagnostics(scene.get(), PlutoGE::FindBaseCamera(scene.get()), renderer);
+            PlutoGE::LogSceneDiagnostics(scene.get(), PlutoGE::FindBaseCamera(scene.get()), renderScene);
             hasLoggedFirstFrameDiagnostics = true;
         }
 #endif
@@ -705,11 +705,11 @@ int RunRuntime(int argc, char **argv)
             };
             // The base camera draws its frustum- and distance-culled commands at their view LODs; shadows and GI
             // read the camera's whole scene, as the editor's game view does.
-            renderer.PrepareVisibleRenderCommands(cameraData, static_cast<int>(windowExtents.height));
-            const auto sceneCommands = renderer.GetSceneRenderCommandView();
+            renderScene.PrepareVisibleRenderCommands(cameraData, static_cast<int>(windowExtents.height));
+            const auto sceneCommands = renderScene.GetSceneRenderCommandView();
             const auto cameraCommands = baseCameraCommandFilter.Apply(*scene, cameraComponent->GetTagFilter(), sceneCommands);
             const auto visibleCommands = baseCameraVisibleFilter.Apply(*scene, cameraComponent->GetTagFilter(),
-                                                                       renderer.GetVisibleRenderCommandView());
+                                                                       renderScene.GetVisibleRenderCommandView());
             const auto overlays = overlayCameraLayers.Build(*scene, cameraStack.overlays, sceneCommands,
                                                             windowExtents.width, windowExtents.height);
             const auto textureViews = renderTextureViews.Build(*scene, cameraStack.textureCameras, sceneCommands);
@@ -723,7 +723,7 @@ int RunRuntime(int argc, char **argv)
                 window.RequestClose();
             }
         }
-        renderer.ClearRenderCommands();
+        renderScene.ClearRenderCommands();
 
         renderScope.End();
         if (runtimeProfiler)
@@ -758,7 +758,7 @@ int RunRuntime(int argc, char **argv)
             }
             runtimeProfiler->profiler.CompleteFrame(
                 std::chrono::duration<float, std::milli>(frameEnd - frameStart).count(),
-                frameTiming, {}, renderer, PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming(),
+                frameTiming, {}, renderScene.GetStats(), PlutoGE::render::RmlUiRuntime::Get().GetCpuTiming(),
                 cpuTrace.TakeSamples(), cpuTrace.GetDroppedCount());
             runtimeProfiler->Draw();
         }

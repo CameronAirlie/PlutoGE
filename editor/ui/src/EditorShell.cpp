@@ -44,7 +44,6 @@
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/assets/Project.h"
-#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/NavigationSystem.h"
 #include "PlutoGE/scene/Entity.h"
@@ -3615,8 +3614,6 @@ namespace PlutoGE::ui
         m_panelManager.AddPanel(viewportPanel);
         m_panelManager.AddPanel(sceneHierarchyPanel);
 
-        auto *renderTarget = viewportPanel->GetRenderTarget();
-
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Game Viewport";
         viewportConfig2.openByDefault = true;
@@ -3701,7 +3698,6 @@ namespace PlutoGE::ui
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
 
-        auto *renderTarget2 = viewportPanel2->GetRenderTarget();
         auto *windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
         bool isEditorCameraLookActive = false;
         bool forceEditorCursorVisible = false;
@@ -3879,10 +3875,12 @@ namespace PlutoGE::ui
             viewportPanel2->SetPlayState(GetPlayState());
             viewportPanel2->SetPanelControlsEnabled(!isRuntimeRunning);
 
-            const auto renderTargetWidth = (std::max)(renderTarget->GetWidth(), 1);
-            const auto renderTargetHeight = (std::max)(renderTarget->GetHeight(), 1);
-            const auto renderTarget2Width = (std::max)(renderTarget2->GetWidth(), 1);
-            const auto renderTarget2Height = (std::max)(renderTarget2->GetHeight(), 1);
+            const auto viewportExtent = viewportPanel->GetOutputExtent();
+            const auto viewport2Extent = viewportPanel2->GetOutputExtent();
+            const auto editorViewportWidth = (std::max)(viewportExtent.width, 1);
+            const auto editorViewportHeight = (std::max)(viewportExtent.height, 1);
+            const auto gameViewportWidth = (std::max)(viewport2Extent.width, 1);
+            const auto gameViewportHeight = (std::max)(viewport2Extent.height, 1);
             UpdateEditorCamera(m_editorCamera,
                                window,
                                windowHandle,
@@ -3920,13 +3918,13 @@ namespace PlutoGE::ui
             {
                 const glm::mat4 editorCameraTransform = GetEditorCameraTransform(m_editorCamera);
                 editorCameraData = m_editorCamera.camera.GetCameraDataForTransform(editorCameraTransform,
-                                                                                   renderTargetWidth,
-                                                                                   renderTargetHeight);
+                                                                                   editorViewportWidth,
+                                                                                   editorViewportHeight);
                 editorCameraData.renderRuntimeUI = m_editorCamera.renderRuntimeUI;
                 if (m_editorCamera.orthographic)
                 {
-                    const int safeRenderTargetHeight = renderTargetHeight > 1 ? renderTargetHeight : 1;
-                    const float aspect = static_cast<float>(renderTargetWidth) / static_cast<float>(safeRenderTargetHeight);
+                    const int safeEditorViewportHeight = editorViewportHeight > 1 ? editorViewportHeight : 1;
+                    const float aspect = static_cast<float>(editorViewportWidth) / static_cast<float>(safeEditorViewportHeight);
                     const float halfHeight = m_editorCamera.orthographicSize > 0.01f ? m_editorCamera.orthographicSize : 0.01f;
                     editorCameraData.projection = glm::ortho(-halfHeight * aspect,
                                                              halfHeight * aspect,
@@ -3945,7 +3943,7 @@ namespace PlutoGE::ui
 
             if (shouldRenderViewport2 && cameraComponent2)
             {
-                gameCameraData = cameraComponent2->GetCameraData(renderTarget2Width, renderTarget2Height);
+                gameCameraData = cameraComponent2->GetCameraData(gameViewportWidth, gameViewportHeight);
                 hasGameCameraData = true;
             }
 
@@ -4008,8 +4006,8 @@ namespace PlutoGE::ui
 
                         const glm::vec2 viewportMin = viewportPanel2->GetViewportMin();
                         const glm::vec2 viewportSize = viewportPanel2->GetViewportSize();
-                        auto *gameRenderTarget = viewportPanel2->GetRenderTarget();
-                        const bool hasViewport = gameRenderTarget && viewportSize.x > 0.0f && viewportSize.y > 0.0f;
+                        const auto gameExtent = viewportPanel2->GetOutputExtent();
+                        const bool hasViewport = !gameExtent.IsEmpty() && viewportSize.x > 0.0f && viewportSize.y > 0.0f;
                         // Scene updates precede ImGui::NewFrame. IO.MousePos still
                         // belongs to the previous UI frame here; sample GLFW now.
                         double cursorX = 0, cursorY = 0;
@@ -4031,8 +4029,8 @@ namespace PlutoGE::ui
                                                    normalizedMouse.x >= 0.0f && normalizedMouse.x <= 1.0f &&
                                                    normalizedMouse.y >= 0.0f && normalizedMouse.y <= 1.0f;
                         const glm::vec2 canvasSize = hasViewport
-                                                         ? glm::vec2(static_cast<float>(gameRenderTarget->GetWidth()),
-                                                                     static_cast<float>(gameRenderTarget->GetHeight()))
+                                                         ? glm::vec2(static_cast<float>(gameExtent.width),
+                                                                     static_cast<float>(gameExtent.height))
                                                          : glm::vec2(0.0f);
                         const glm::vec2 canvasMouse(normalizedMouse.x * canvasSize.x,
                                                     (1.0f - normalizedMouse.y) * canvasSize.y);
@@ -4173,11 +4171,11 @@ namespace PlutoGE::ui
             if (shouldRenderViewport1)
             {
                 ++frameTimingStats.renderedViewportCount;
-                frameTimingStats.editorViewportWidth = renderTargetWidth;
-                frameTimingStats.editorViewportHeight = renderTargetHeight;
+                frameTimingStats.editorViewportWidth = editorViewportWidth;
+                frameTimingStats.editorViewportHeight = editorViewportHeight;
                 frameTimingStats.renderedViewportPixels +=
-                    static_cast<std::uint64_t>((std::max)(renderTargetWidth, 0)) *
-                    static_cast<std::uint64_t>((std::max)(renderTargetHeight, 0));
+                    static_cast<std::uint64_t>((std::max)(editorViewportWidth, 0)) *
+                    static_cast<std::uint64_t>((std::max)(editorViewportHeight, 0));
                 std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
                 editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
                 for (const auto &effect : m_editorCamera.GetPostProcessEffects())
@@ -4185,7 +4183,7 @@ namespace PlutoGE::ui
                     editorPostProcessEffects.push_back(effect.get());
                 }
 
-                renderScene.PrepareVisibleRenderCommands(editorCameraData, renderTargetHeight);
+                renderScene.PrepareVisibleRenderCommands(editorCameraData, editorViewportHeight);
                 viewportPanel->RenderRhiFrame(editorCameraData, renderScene.GetVisibleRenderCommandView(),
                                               renderScene.GetSceneRenderCommandView(),
                                               editorPostProcessEffects);
@@ -4199,11 +4197,11 @@ namespace PlutoGE::ui
             if (shouldRenderViewport2 && cameraComponent2)
             {
                 ++frameTimingStats.renderedViewportCount;
-                frameTimingStats.gameViewportWidth = renderTarget2Width;
-                frameTimingStats.gameViewportHeight = renderTarget2Height;
+                frameTimingStats.gameViewportWidth = gameViewportWidth;
+                frameTimingStats.gameViewportHeight = gameViewportHeight;
                 frameTimingStats.renderedViewportPixels +=
-                    static_cast<std::uint64_t>((std::max)(renderTarget2Width, 0)) *
-                    static_cast<std::uint64_t>((std::max)(renderTarget2Height, 0));
+                    static_cast<std::uint64_t>((std::max)(gameViewportWidth, 0)) *
+                    static_cast<std::uint64_t>((std::max)(gameViewportHeight, 0));
                 viewportPanel2->RenderFrame(*cameraComponent2, gameCameraStack.overlays);
             }
             else
@@ -5657,8 +5655,6 @@ namespace PlutoGE::ui
                     viewportPanel2->SetGraphicsApi(previousConfig.graphicsApi);
                     viewportPanel->Initialize();
                     viewportPanel2->Initialize();
-                    renderTarget = viewportPanel->GetRenderTarget();
-                    renderTarget2 = viewportPanel2->GetRenderTarget();
                     ApplyProjectEditorPostProcessEffects(savedEditorEffects, m_editorCamera);
                     m_statusMessage = "Graphics API switch failed; restored the previous renderer. See PlutoGEEditor.log.";
                     continue;
@@ -5672,12 +5668,6 @@ namespace PlutoGE::ui
                 viewportPanel2->SetGraphicsApi(requestedApi);
                 viewportPanel->Initialize();
                 viewportPanel2->Initialize();
-                // Shutdown/Initialize replaces the legacy targets. Refresh the
-                // frame-loop aliases used for camera aspect and presentation;
-                // retaining the deleted targets yielded arbitrary dimensions
-                // and a severely flattened perspective projection.
-                renderTarget = viewportPanel->GetRenderTarget();
-                renderTarget2 = viewportPanel2->GetRenderTarget();
                 static_cast<void>(m_engine.SetVSyncEnabled(editorVSyncEnabled));
                 UpdateWindowTitle();
                 m_statusMessage = requestedApi == render::rhi::GraphicsApi::Vulkan

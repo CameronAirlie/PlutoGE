@@ -159,6 +159,33 @@ done in Phase 1, as was the passes deletion in item 1.
    `RenderWorldSurfaces`, the legacy `RmlUiRuntime::Render`, and the WorldSpace
    RmlUi mode.
 
+Status (2026-11-04): done, with these differences from the list above.
+- `Shader` went with `BuiltinShaders`, which pulled forward Phase 3 item 5 and
+  the ShaderGraph GLSL from item 8:
+  - `Material::Bind`, the material's shader override and
+    `MaterialConfig::compiledShaderGraph`
+  - `RenderCommand::shader`
+  - `CompileShaderGraphToGeometryShader`
+  - the asset manager's per-material GLSL compile
+  The draw-state sort key now groups by shader-graph program instead.
+- `Graphics` is deleted too. Its global GL bind cache went stale whenever the
+  RHI touched GL, which is what the editor's `ResetStateCache` workarounds
+  papered over. The remaining GL texture uploads call GL directly.
+- The VCT shader checks drive the Slang-generated GLSL through a test-only
+  program helper (`tests/GlTestProgram.h`), not RHI compute. They test shader
+  maths, and the RHI already runs the same shaders in its VCT suites.
+- The editor viewports hold plain extents, and the texture paint tool is gone.
+- `stb_image`/`stb_image_write` compile in one unit owned by the
+  `PlutoGE::stb_image` target. The write implementation used to live in
+  `TexturePainter.cpp`.
+- RmlUi: the GL3 backend and its third-party sources are gone.
+  - The `WorldSpace` canvas mode stays: native canvases render it on the RHI.
+    RmlUi documents in that mode were already hidden on the RHI and still
+    are; the Inspector now says so.
+  - The RmlUi docs list what parses but does not render: filters,
+    `backdrop-filter`, shader and CSS-gradient decorators, `box-shadow` and
+    `mask-image`.
+
 ## Phase 3: strip GL from shared code
 
 Items 1 to 3 were done in Phase 1.

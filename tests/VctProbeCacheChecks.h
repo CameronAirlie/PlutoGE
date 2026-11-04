@@ -1,6 +1,6 @@
 #pragma once
 #include "PlutoGE/render/VctProbeCache.h"
-#include "PlutoGE/render/Shader.h"
+#include "GlTestProgram.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include <array>
 #include <cmath>
@@ -23,13 +23,11 @@ inline bool CheckVctProbeCache()
     schedule.Reset();
     if (!schedule.clear || schedule.blend != 0.0f || schedule.initialized != 0) return false;
 
-    ShaderSource source;
+    GlTestProgramSource source;
     source.computeSource = ShaderArtifactLibrary().Load("VCTProbeUpdate", "compute").glsl;
     if (source.computeSource.empty()) return false;
-    auto *shader = Shader::Create(source);
-    shader->Bind(); GLint program = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-    GLint linked = 0; glGetProgramiv(GLuint(program), GL_LINK_STATUS, &linked);
-    if (!linked) return false;
+    const auto shader = GlTestProgram::Create(source);
+    if (!shader) return false;
     shader->Bind();
     GLuint field = 0, radiance = 0, visibility = 0, parameters = 0;
     glGenTextures(1, &field); glBindTexture(GL_TEXTURE_3D, field);
@@ -112,7 +110,7 @@ inline bool CheckVctProbeCache()
     passed &= glGetError() == GL_NO_ERROR;
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, 0); glDeleteBuffers(1, &parameters);
     const GLuint textures[] = {field, radiance, visibility}; glDeleteTextures(3, textures);
-    glUseProgram(0); glDeleteProgram(GLuint(program)); delete shader;
+    glUseProgram(0);
     if (!passed) std::cerr << "VCT probe budget, persistence, or invalidation check failed.\n";
     return passed;
 }
@@ -123,14 +121,12 @@ inline bool CheckVctStationaryLighting()
 {
     using namespace PlutoGE::render;
     ShaderArtifactLibrary artifacts;
-    ShaderSource source;
+    GlTestProgramSource source;
     source.vertexSource = artifacts.Load("VCTConeTrace", "vertex").glsl;
     source.fragmentSource = artifacts.Load("VCTConeTrace", "fragment").glsl;
-    auto *shader = Shader::Create(source);
+    const auto shader = GlTestProgram::Create(source);
     if (!shader) return false;
-    shader->Bind(); GLint program = 0, linked = 0;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &program); glGetProgramiv(GLuint(program), GL_LINK_STATUS, &linked);
-    if (!linked) return false;
+    shader->Bind();
     struct alignas(16) Parameters
     {
         glm::mat4 inverseViewProjection{1}, view{1};
@@ -221,7 +217,7 @@ inline bool CheckVctStationaryLighting()
     glBindVertexArray(0); glDeleteVertexArrays(1,&vao);
     glBindBufferBase(GL_UNIFORM_BUFFER,0,0); glDeleteBuffers(1,&buffer);
     glDeleteTextures(GLsizei(textures.size()),textures.data());
-    glUseProgram(0); glDeleteProgram(GLuint(program)); delete shader;
+    glUseProgram(0);
     if (!passed) std::cerr << "VCT stationary lighting check failed.\n";
     return passed;
 }

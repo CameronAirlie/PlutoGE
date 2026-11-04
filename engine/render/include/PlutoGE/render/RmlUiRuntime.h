@@ -9,7 +9,6 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <filesystem>
-#include <functional>
 #include <vector>
 #include <glm/mat4x4.hpp>
 #include "PlutoGE/render/rhi/Types.h"
@@ -22,7 +21,6 @@ namespace Rml
     class EventListener;
 }
 
-class RenderInterface_GL3;
 class SystemInterface_GLFW;
 
 namespace PlutoGE::platform
@@ -51,26 +49,17 @@ namespace PlutoGE::render
         float resizeMs = 0.0f;
         float synchronizeMs = 0.0f;
         float inputUpdateMs = 0.0f;
-        float worldSurfaceMs = 0.0f;
         float beginFrameMs = 0.0f;
-        float backdropMs = 0.0f;
         float renderMs = 0.0f;
         float endFrameMs = 0.0f;
         int documentCount = 0;
         int visibleDocumentCount = 0;
-        bool copiedBackdrop = false;
 
         [[nodiscard]] float TotalMs() const
         {
-            return initializeMs + resizeMs + synchronizeMs + inputUpdateMs + worldSurfaceMs +
-                   beginFrameMs + backdropMs + renderMs + endFrameMs;
+            return initializeMs + resizeMs + synchronizeMs + inputUpdateMs +
+                   beginFrameMs + renderMs + endFrameMs;
         }
-    };
-
-    struct RmlUiWorldSurface
-    {
-        unsigned int texture = 0;
-        glm::mat4 model{1.0f};
     };
 
     // Owns separate screen and world RmlUi contexts used by runtime canvases.
@@ -80,7 +69,8 @@ namespace PlutoGE::render
     public:
         static RmlUiRuntime &Get();
 
-        bool Initialize(platform::Window &window, rhi::IRenderDevice *rhiDevice = nullptr);
+        // Fails without an RHI device; RmlUi renders only through RmlUiRhiRenderer.
+        bool Initialize(platform::Window &window, rhi::IRenderDevice *rhiDevice);
         void ResetRuntimeState();
         std::shared_ptr<RmlLoadingDocument> CreateLoadingDocument(const std::string &reference,
             platform::Window &window, rhi::IRenderDevice &device);
@@ -94,9 +84,6 @@ namespace PlutoGE::render
         // Run before the host begins scene recording; cached previews submit only when dirty.
         void PrepareScenePortraits(const scene::Scene &scene, rhi::IRenderDevice &device);
         void Shutdown();
-        void Render(const scene::Scene &scene, int width, int height, std::uint64_t frameSequence,
-                    const glm::mat4 &view, const glm::mat4 &projection,
-                    const std::function<void()> &drawWorldSurfaces = {});
         // `commands`, when given, receives the UI's commands (for example a deferred list a render thread replays)
         // in place of the device's immediate context; nothing is then submitted.
         void RenderRhi(const scene::Scene &scene, rhi::IRenderDevice &device, rhi::TextureHandle target,
@@ -106,7 +93,6 @@ namespace PlutoGE::render
         [[nodiscard]] bool IsInitialized() const { return m_context != nullptr; }
         [[nodiscard]] Rml::Context *GetContext() const { return m_context; }
         [[nodiscard]] const RmlUiCpuTiming &GetCpuTiming() const { return m_cpuTiming; }
-        [[nodiscard]] const std::vector<RmlUiWorldSurface> &GetWorldSurfaces() const { return m_worldSurfaceDraws; }
         // Screen-space dp lengths only; physical pixels and world documents are unaffected.
         bool SetInterfaceScale(float scale);
         [[nodiscard]] float GetInterfaceScale() const noexcept { return m_interfaceScale; }
@@ -151,23 +137,9 @@ namespace PlutoGE::render
         void AttachEventSubscriptions();
         void DetachEventSubscriptions();
         void LoadDocumentFonts(const std::filesystem::path &documentPath);
-        void MarkWorldSurfaceDirty(Rml::ElementDocument *document);
         bool ConsumeAssetFileChange();
         void CloseAssetFileWatcher();
-        void RenderWorldSurfaces();
-        void DestroyWorldSurfaceTargets();
 
-        struct WorldSurfaceTarget
-        {
-            unsigned int framebuffer = 0;
-            unsigned int texture = 0;
-            int width = 0;
-            int height = 0;
-            glm::mat4 model{1.0f};
-            bool dirty = true;
-        };
-
-        std::unique_ptr<RenderInterface_GL3> m_renderer;
         std::unique_ptr<RmlUiRhiRenderer> m_rhiRenderer;
         std::unique_ptr<SystemInterface_GLFW> m_system;
         Rml::Context *m_context = nullptr;
@@ -185,7 +157,6 @@ namespace PlutoGE::render
         std::unordered_map<std::string, std::string> m_documentReferences;
         std::unordered_map<std::string, std::filesystem::file_time_type> m_documentWriteTimes;
         std::unordered_map<std::string, float> m_documentScales;
-        std::unordered_map<std::string, bool> m_documentUsesBackdrop;
         std::unordered_map<std::string, std::string> m_generatedDocumentSources;
         std::unordered_map<std::string, std::string> m_resolvedGeneratedFonts;
         // Mirrors the process-wide RmlUi atlas density, so runtime resets keep it.
@@ -193,8 +164,6 @@ namespace PlutoGE::render
         std::chrono::steady_clock::time_point m_lastFontRasterUpdate{};
         std::unordered_map<std::string, glm::vec4> m_documentProjectionState;
         std::unordered_map<std::string, glm::vec2> m_documentSizes;
-        std::unordered_map<std::string, WorldSurfaceTarget> m_worldSurfaceTargets;
-        std::vector<RmlUiWorldSurface> m_worldSurfaceDraws;
         std::unordered_map<std::string, int> m_pendingEvents;
         mutable RmlElementLookup m_elementLookup;
         mutable std::unordered_set<std::string> m_missingDocuments;

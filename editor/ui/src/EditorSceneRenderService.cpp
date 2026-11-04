@@ -7,7 +7,6 @@
 #include "PlutoGE/render/RenderCommand.h"
 #include <numeric>
 
-#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/Texture.h"
@@ -439,11 +438,6 @@ namespace PlutoGE::ui
         }
 
         m_lastRenderError.clear();
-        if (!m_isVulkan)
-        {
-            render::Graphics::ResetStateCache();
-            render::Graphics::BindFramebuffer(0);
-        }
         return true;
     }
 }

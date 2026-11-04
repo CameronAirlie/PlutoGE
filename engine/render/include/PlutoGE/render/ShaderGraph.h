@@ -13,8 +13,6 @@
 
 namespace PlutoGE::render
 {
-    class Shader;
-
     enum class ShaderGraphValueType
     {
         Float = 0,
@@ -182,7 +180,6 @@ namespace PlutoGE::render
     private:
         std::optional<Values> m_outer;
     };
-    std::string ShaderGraphRuntimeGlsl(bool vertexStage = false);
     struct ShaderGraphSample
     {
         glm::vec3 worldPosition{0}, worldNormal{0,0,1}, viewDirection{0,0,1};
@@ -208,7 +205,6 @@ namespace PlutoGE::render
     ShaderGraph CreateDefaultShaderGraph();
     ShaderGraph CreateDefaultUnlitShaderGraph();
     std::uint64_t HashShaderGraph(const ShaderGraph &graph);
-    Shader *CompileShaderGraphToGeometryShader(const ShaderGraph &graph, bool unlit = false, std::string *errorMessage = nullptr);
 
     const char *ToString(ShaderGraphNodeKind kind);
     const char *ToString(ShaderGraphMaterialInput input);

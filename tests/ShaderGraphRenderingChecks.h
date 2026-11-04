@@ -3,7 +3,6 @@
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/render/Shader.h"
 #include "PlutoGE/render/Mesh.h"
 #include <chrono>
 #include <cstring>
@@ -399,12 +398,6 @@ void CheckShaderGraphRendering(PlutoGE::render::BasicRenderer &renderer,Device &
     graph.links.push_back({2,2,"Vec3",100,"Vertex Offset"});
     draw.shaderGraphProgram=BuildShaderGraphProgram(graph);
     require(draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z>0,"Vertex graph did not compile");
-    if(device.GetApi()==rhi::GraphicsApi::OpenGL) {
-        std::unique_ptr<Shader> legacy(CompileShaderGraphToGeometryShader(graph));
-        std::unique_ptr<Shader> shadow(Shader::CreateShadowPassShader());
-        std::unique_ptr<Shader> transparency(Shader::CreateTransparentPassShader());
-        require(legacy && shadow && transparency,"Legacy graph pass shader compilation failed");
-    }
     expect(sample(std::span(&draw,1)),clear);
     expect(sample(std::span(&draw,1),.95f),{64,128,192});
     draw.instanceModels=std::make_shared<const std::vector<glm::mat4>>(std::vector{glm::mat4(1),glm::mat4(1)});

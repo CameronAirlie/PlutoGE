@@ -13,7 +13,6 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/core/Engine.h"
 #include <PlutoGE/render/Material.h>
-#include <PlutoGE/render/Shader.h>
 #include <PlutoGE/render/ShaderGraph.h>
 
 #include <algorithm>
@@ -36,7 +35,6 @@ namespace PlutoGE::assets
     {
         AssetManager *sharedAssets = nullptr;
         std::string sourceAssetId;
-        std::vector<std::unique_ptr<render::Shader>> shaders;
         render::TextureManager textureReader{true};
         std::vector<std::unique_ptr<render::Mesh>> meshes;
         std::vector<std::unique_ptr<render::Material>> materials;
@@ -1258,8 +1256,6 @@ namespace PlutoGE::assets
         defaultConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);
         ResolveMaterialShaderGraph(defaultConfig);
         render::Material *material = new render::Material(defaultConfig);
-        // render::Shader *defaultShader = render::Shader::CreateDefault();
-        // material->SetShader(defaultShader);
         return material;
     }
 
@@ -2217,7 +2213,6 @@ namespace PlutoGE::assets
         }
         if (resolved.shaderGraphReference.empty() || resolved.shaderGraphReference == Project::kBuiltinDefaultShaderGraphReference)
             resolved.shaderGraphProgram.reset(); // Ordinary materials keep the direct surface path.
-        resolved.compiledShaderGraph = CompileShaderGraphAsset(resolved.shaderGraphReference, errorMessage);
         resolved.additionalPasses.clear();
         for(const auto &reference:graph.passes){
             render::MaterialConfig pass=resolved;pass.additionalPasses.clear();pass.shaderGraphReference=reference;
@@ -2228,40 +2223,6 @@ namespace PlutoGE::assets
         config=std::move(resolved);
         if(errorMessage)errorMessage->clear();
         return true;
-    }
-
-    render::Shader *AssetManager::CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage)
-    {
-        if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->CompileShaderGraphAsset(assetReference, errorMessage);
-        bool loaded = false;
-        render::ShaderGraph graph = LoadShaderGraphAsset(assetReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : assetReference, &loaded);
-        if (!loaded)
-        {
-            graph = render::CreateDefaultShaderGraph();
-        }
-
-        const std::uint64_t hash = render::HashShaderGraph(graph);
-        const std::string cacheKey = assetReference.empty() ? std::string(Project::kBuiltinDefaultShaderGraphReference) : assetReference;
-        if (auto cached = m_shaderGraphShaderCache.find(cacheKey); cached != m_shaderGraphShaderCache.end() && cached->second.first == hash)
-        {
-            return cached->second.second;
-        }
-
-        const bool isUnlitBuiltin = cacheKey == Project::kBuiltinDefaultUnlitShaderGraphReference;
-        render::Shader *shader = render::CompileShaderGraphToGeometryShader(graph, isUnlitBuiltin, errorMessage);
-        if (!shader)
-        {
-            // Keep a previously compiled shader alive when an external edit is invalid.
-            if (auto previous = m_shaderGraphShaderCache.find(cacheKey); previous != m_shaderGraphShaderCache.end())
-                return previous->second.second;
-        }
-
-        if (shader)
-        {
-            if (m_ownedResources) m_ownedResources->shaders.emplace_back(shader);
-            m_shaderGraphShaderCache[cacheKey] = {hash, shader};
-        }
-        return shader;
     }
 
     render::Material *AssetManager::FindLoadedMaterialAsset(const std::string &assetReference) const

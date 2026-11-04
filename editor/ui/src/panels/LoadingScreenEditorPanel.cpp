@@ -8,7 +8,6 @@
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/core/LoadingScreenSession.h"
 #include "PlutoGE/assets/LoadingScreenAsset.h"
-#include "PlutoGE/render/Graphics.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -186,8 +185,6 @@ h1 { font-size: 36px; margin: 18px 0; }
             if (!m_preview->GetError().empty()) m_error = m_preview->GetError();
         }
         catch (const std::exception &e) { m_error = e.what(); ClearPreview(); m_previewEnabled = false; }
-        if (engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL)
-        { render::Graphics::ResetStateCache(); render::Graphics::Disable(GL_SCISSOR_TEST); }
     }
 
     void LoadingScreenEditorPanel::Render()

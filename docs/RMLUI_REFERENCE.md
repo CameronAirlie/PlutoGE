@@ -11,8 +11,9 @@ Inventory verified against PlutoGE's RmlUi **6.1** `Factory.cpp` and `StyleSheet
 | Cascade, selectors, box layout, flex, tables, media queries | Core; browser CSS Grid is absent in 6.1 |
 | dp, px, font-relative, percent, viewport lengths | Core; screen dp uses UISettings, world dp remains 1 |
 | Transforms, transition, @keyframes animations | Core; UISettings uses layout rather than a transform |
-| Sprites/decorators/font effects | Core parser; renderer capabilities vary |
-| Filters, backdrop filters, custom shader decorators | Legacy GL3 advanced renderer; not general RHI support |
+| Sprites/decorators/font effects | Core; sprites, font effects and the image, tiled, ninepatch, text and vertex-color gradient decorators render |
+| Filters, backdrop filters, shader and shader-based gradient decorators, box-shadow, mask-image | Parsed only; the RHI renderer implements no shader, filter or layer callbacks, so these are not rendered |
+| World-space canvases | WorldSpaceOverlay renders as a projected overlay; WorldSpace RmlUi documents load hidden and are never drawn |
 | SVG, Lottie, Lua, browser JavaScript | Optional upstream integrations; not a guaranteed engine authoring API |
 | Native data models and data-* views | Core C++; no automatic managed-property model registration |
 | Asset-driven prompt text | InputPrompts.Binding/Format and RmlInputPrompts; data-input-prompt templates use named actions from the configured InputActionMap and Input.ActiveDevice |
@@ -36,9 +37,13 @@ Generic `*` elements also support custom names. RML structure/head/template elem
 
 `text`, `tiled-horizontal`, `tiled-vertical`, `tiled-box`, `image`, `ninepatch`, `shader`, `gradient`, `horizontal-gradient`, `vertical-gradient`, `linear-gradient`, `repeating-linear-gradient`, `radial-gradient`, `repeating-radial-gradient`, `conic-gradient`, `repeating-conic-gradient`
 
+`shader` and the `linear-`, `radial-` and `conic-gradient` families (including `repeating-*`) compile RmlUi shaders, which the RHI renderer does not implement; they are not rendered.
+
 ### Filters
 
 `hue-rotate`, `brightness`, `contrast`, `grayscale`, `invert`, `opacity`, `saturate`, `sepia`, `blur`, `drop-shadow`
+
+Registered for `filter` and `backdrop-filter`. The RHI renderer implements no filter callbacks, so none of them are rendered.
 
 ### Font effects
 

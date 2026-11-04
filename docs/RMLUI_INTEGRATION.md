@@ -11,7 +11,8 @@ For a minimal setup walkthrough and copyable example, see the
 ## Current integration
 
 - RmlUi 6.1 and FreeType 2.13.3 are pinned and built from source.
-- Runtime documents use either the legacy GL3 renderer or the shared Vulkan/OpenGL RHI renderer; advanced effect support differs.
+- Runtime documents render through the shared Vulkan/OpenGL RHI renderer
+  (`RmlUiRhiRenderer`). `RmlUiRuntime::Initialize` fails without an RHI device.
 - `.rml`, `.rcss`, image, and font references are resolved relative to the
   loaded document.
 - Mouse buttons, pointer movement, two-axis wheel input, keyboard transitions,
@@ -92,9 +93,8 @@ cannot reuse preview-only source. No overlay survives a frame boundary.
 Sources remain authoritative and saving does not serialize the rendered DOM.
 Linked files stay open when links are removed, preserving unsaved work. Saves
 check disk conflicts and replace individual files atomically; saving multiple
-files is not a single filesystem transaction. The offscreen preview uses the RHI
-renderer on both OpenGL and Vulkan, so legacy GL3-only advanced effects may differ
-from the game viewport.
+files is not a single filesystem transaction. The offscreen preview uses the same
+RHI renderer as the game viewport on both OpenGL and Vulkan.
 
 ### Phase 4 â€” native UI compatibility
 
@@ -104,21 +104,24 @@ the RHI; both are supported.
 
 ## Intentional limitations of this slice
 
-- RmlUi canvases support `WorldSpaceOverlay` and `WorldSpace`. Both use the
-  entity's RectTransform size and pivot. `WorldSpaceOverlay` is a constant-size,
-  camera-facing overlay suited to enemy names and health bars. `WorldSpace`
-  renders each document to a transparent texture and draws it on a plane using
-  the entity's full transform (100 UI units equal one world unit). The plane is
-  depth tested and can be placed on walls or used as an in-world display.
-  Canvases are instanced per entity, so a shared RML asset can be used by many
-  actors.
+- RmlUi canvases draw in `WorldSpaceOverlay`, a constant-size, camera-facing
+  overlay that uses the entity's RectTransform size and pivot. It suits enemy
+  names and health bars. Canvases are instanced per entity, so a shared RML
+  asset can be used by many actors.
+- RmlUi does not draw `WorldSpace` canvases; there is no render-to-texture
+  plane. Such a document is still loaded per entity and kept hidden, so
+  scripts can address it, but it never shows or receives input. Native
+  canvases still render `WorldSpace` as a projected billboard.
 - RmlUi data models are exposed through lightweight observable DOM bindings;
   direct reflection-based RmlUi C++ data-model registration is not required.
 - Canvas Content Source can be `RML Document` or `Text`. Text mode generates an
-  in-memory document from the UI Text component on the Canvas entity and uses
-  the same screen-space or render-to-texture WorldSpace pipeline.
-- The official GL3 backend supports RmlUi's advanced rendering features, but
-  visual regression coverage still needs to be added.
+  in-memory document from the UI Text component on the Canvas entity, but only
+  for a `WorldSpace` canvas, so a Text canvas currently draws nothing.
+- The RHI renderer implements geometry, images, fonts, scissoring and clip
+  masks, but none of RmlUi's shader, filter or layer callbacks. `filter`,
+  `backdrop-filter`, the `shader` decorator, the shader-based
+  `linear-`/`radial-`/`conic-gradient` decorators, `box-shadow` and
+  `mask-image` parse but are not rendered.
 - RmlUi keyboard and pointer capture is fed into the managed input bridge.
   Captured keyboard/mouse queries are suppressed for gameplay; see
   `HostFxrScriptRuntime.cpp` for key exceptions and the individual query rules.
@@ -136,8 +139,8 @@ This is four-sample SSAA, not hardware MSAA. It uses four times the UI pixel
 work plus one fullscreen composite, and one extra RGBA8 target (about 32 MiB at
 1920x1080). Dimensions above 4096 on either output axis use the original native
 resolution path to bound allocations. `RmlUiRhiRenderer::SetAntialiasingEnabled`
-can disable supersampling for profiling or low-memory integrations. This does
-not change the separate legacy GL3 backend or add RHI multisample/resolve APIs.
+can disable supersampling for profiling or low-memory integrations. It does not
+add RHI multisample/resolve APIs.
 
 `PlutoGERmlUiAntialiasingTests` exercises a native RCSS rounded border on Vulkan
 and, with `--opengl`, OpenGL. Pixel readbacks check increased fractional edge
@@ -194,7 +197,7 @@ Validation: the project-backed `PlutoGERmlUiAntialiasingTests --capture <documen
 
 ## Screen interface scale
 
-`RmlUiRuntime::SetInterfaceScale` and managed `UISettings.TrySetInterfaceScale` set a validated 0.5–3 density-independent ratio on the screen context. `dp` sizes reflow through RmlUi layout. Percent/px/vh units retain their meanings; Canvas transforms remain an independent authoring policy. The separate world context keeps ratio 1; projected/world documents retain their context across hot reload. Screen documents composite above projected world labels. Pointer presses select the upper interacting context, drags retain that context, and keyboard input follows the selected context. Runtime reset restores interface scale 1; backend recreation preserves a preference requested before reinitialization. Loading/preview contexts remain independent.
+`RmlUiRuntime::SetInterfaceScale` and managed `UISettings.TrySetInterfaceScale` set a validated 0.5–3 density-independent ratio on the screen context. `dp` sizes reflow through RmlUi layout. Percent/px/vh units retain their meanings; Canvas transforms remain an independent authoring policy. The separate world context keeps ratio 1; projected/world documents retain their context across hot reload. Screen documents composite above projected world labels. Pointer presses select the upper interacting context, drags retain that context, and keyboard input follows the selected context. Runtime reset restores interface scale 1; a preference requested before initialization applies when the context is created. Loading/preview contexts remain independent.
 
 Managed bridge registration is a separate `RegisterUISettingsApi` export, preserving existing RmlUi callback signatures. Rebuild native host and ScriptCore together. CoD applies the stored preference on scene creation and uses dp screen styles without manual widget transforms.
 

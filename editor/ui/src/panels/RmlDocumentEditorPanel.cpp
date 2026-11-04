@@ -2,7 +2,6 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/ui/SourceTextEditor.h"
-#include "PlutoGE/render/Graphics.h"
 #include "PlutoGE/ui/RmlSourceTools.h"
 #include <algorithm>
 #include <imgui_internal.h>
@@ -89,8 +88,6 @@ namespace PlutoGE::ui
             if (m_texture.IsValid()) shell.GetPanelManager().UpdateTexture(m_texture, descriptor);
             else m_texture = shell.GetPanelManager().RegisterTexture(descriptor);
         }
-        if (engine.GetConfig().graphicsApi == render::rhi::GraphicsApi::OpenGL)
-        { render::Graphics::ResetStateCache(); render::Graphics::Disable(GL_SCISSOR_TEST); }
     }
 
     void RmlDocumentEditorPanel::Render()

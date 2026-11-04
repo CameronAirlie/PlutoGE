@@ -503,7 +503,6 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             const auto widthHash = render::HashShaderGraph(graph);
             graph.outline.color.r = 1.0f;
             if (render::HashShaderGraph(graph) == widthHash) throw std::runtime_error("Outline colour not hashed");
-            if (!render::CompileShaderGraphToGeometryShader(graph)) throw std::runtime_error("Legacy outline shader compilation failed");
             CheckOutlineRendering(basicRenderer, [&](render::rhi::TextureHandle texture)
             {
                 std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);

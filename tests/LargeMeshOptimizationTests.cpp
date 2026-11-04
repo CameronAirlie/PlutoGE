@@ -3,7 +3,6 @@
 #include "PlutoGE/import/MeshTriangleBudget.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/ModelAsset.h"
-#include "PlutoGE/render/IndirectDraw.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 
@@ -184,30 +183,6 @@ int main(int argc, char **argv)
             oneShotParticles.Update(0.2f);
         }
         assert(oneShotParticles.GetParticleCount() == 0);
-
-        const auto command = render::BuildDrawElementsIndirectCommand(300, 4, 27, 12);
-        assert(command.count == 300);
-        assert(command.instanceCount == 4);
-        assert(command.firstIndex == 27);
-        assert(command.baseVertex == 0);
-        assert(command.baseInstance == 12);
-
-        int shader = 0;
-        int materialA = 0;
-        int materialB = 0;
-        int meshA = 0;
-        int meshB = 0;
-        const render::IndirectDrawGroupingKey base{&shader, &materialA, &meshA, false, false};
-        assert(render::CanGroupGeometryIndirectDraws(base, base));
-        assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialB, &meshA, false, false}));
-        assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialA, &meshB, false, false}));
-        assert(!render::CanGroupGeometryIndirectDraws(base, {&shader, &materialA, &meshA, true, false}));
-
-        assert(render::CanGroupShadowIndirectDraws(base, {nullptr, &materialB, &meshA, false, false}));
-        const render::IndirectDrawGroupingKey masked{nullptr, &materialA, &meshA, false, true};
-        assert(render::CanGroupShadowIndirectDraws(masked, masked));
-        assert(!render::CanGroupShadowIndirectDraws(masked, {nullptr, &materialB, &meshA, false, true}));
-        assert(!render::CanGroupShadowIndirectDraws(masked, {nullptr, &materialA, &meshA, true, true}));
 
         assetimport::MeshImportOptions options;
         assert(options.ToFlags() == 0);

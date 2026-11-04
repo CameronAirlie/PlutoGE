@@ -2903,7 +2903,7 @@ namespace PlutoGE::ui
                             properties = canvas->Serialize();
                             std::erase_if(properties, [canvas](const scene::Property &property)
                                           {
-                                if (property.name == "DocumentPath") return true;
+                                if (property.name == "DocumentPath" || property.name == "FaceCamera") return true;
                                 if (canvas->GetBackend() != scene::UIRenderBackend::RmlUi && property.name == "ContentSource")
                                     return true;
                                 const bool simpleText = canvas->GetBackend() == scene::UIRenderBackend::RmlUi &&
@@ -2912,12 +2912,11 @@ namespace PlutoGE::ui
                                     (property.name == "RenderMode" || property.name == "ScaleMode" ||
                                      property.name == "ScaleFactor" || property.name == "ReferenceResolution" ||
                                      property.name == "MatchWidthOrHeight" || property.name == "ScreenMatchMode" ||
-                                     property.name == "WorldSizeMode" || property.name == "FaceCamera" ||
-                                     property.name == "SortingOrder"))
+                                     property.name == "WorldSizeMode" || property.name == "SortingOrder"))
                                     return true;
                                 const bool worldMode = canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
                                                        canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace;
-                                if (!worldMode && (property.name == "WorldSizeMode" || property.name == "FaceCamera"))
+                                if (!worldMode && property.name == "WorldSizeMode")
                                     return true;
                                 return false; });
                             propertiesProvided = true;
@@ -2925,7 +2924,7 @@ namespace PlutoGE::ui
                             if (canvas->GetBackend() == scene::UIRenderBackend::RmlUi)
                             {
                                 ImGui::TextWrapped(canvas->GetContentSource() == scene::RmlUiContentSource::Text
-                                                       ? "RmlUi text canvas. Text styling comes from UI Text; World Space size comes from entity X/Y scale."
+                                                       ? "RmlUi text canvas. Text styling comes from UI Text."
                                                        : "RmlUi document canvas. Layout and controls are authored in the RML/RCSS asset.");
                                 if (canvas->GetContentSource() == scene::RmlUiContentSource::Text)
                                 {
@@ -2986,14 +2985,12 @@ namespace PlutoGE::ui
                                         editorShell.MarkSceneDirty();
                                     }
                                 }
-                                if (canvas->GetContentSource() == scene::RmlUiContentSource::Document &&
-                                    (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay ||
-                                     canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace))
-                                {
+                                if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace)
+                                    ImGui::TextColored(ImVec4(1.0f, 0.72f, 0.25f, 1.0f),
+                                                       "RmlUi does not draw World Space canvases. Use World Screen Space for a projected document.");
+                                else if (canvas->GetContentSource() == scene::RmlUiContentSource::Document &&
+                                         canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpaceOverlay)
                                     ImGui::TextDisabled("World canvases use this entity's Rect Transform size and pivot.");
-                                    if (canvas->GetRenderMode() == scene::CanvasRenderMode::WorldSpace)
-                                        ImGui::TextDisabled("World Units: 100 UI units = 1 world unit. Face Camera off uses entity rotation.");
-                                }
                             }
                             else
                             {

@@ -10,12 +10,10 @@
 namespace PlutoGE::render
 {
     class Material;
-    class Shader;
     struct RenderCommand
     {
         Material *material = nullptr; // Material to use for rendering
         Mesh *mesh = nullptr;         // Mesh to render
-        Shader *shader = nullptr;
         glm::mat4 model = glm::mat4(1.0f); // Model matrix for the object (position, rotation, scale)
         glm::mat4 previousModel = glm::mat4(1.0f);
         MeshBounds worldBounds{};

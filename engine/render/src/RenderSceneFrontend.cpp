@@ -227,8 +227,9 @@ namespace PlutoGE::render
         {
             const auto range = command.mesh
                 ? command.mesh->GetSubmeshLodRange(command.submeshIndex, command.lodIndex) : Submesh::LodRange{};
-            const auto *shader = command.material ? command.material->GetShader() : command.shader;
-            return std::tuple{reinterpret_cast<std::uintptr_t>(shader),
+            // Materials sharing a shader graph share pipelines, so group them first.
+            const auto *graph = command.material ? command.material->ReadConfig().shaderGraphProgram.get() : nullptr;
+            return std::tuple{reinterpret_cast<std::uintptr_t>(graph),
                 reinterpret_cast<std::uintptr_t>(command.material), reinterpret_cast<std::uintptr_t>(command.mesh),
                 range.indexOffset, range.indexCount, command.submeshIndex};
         }

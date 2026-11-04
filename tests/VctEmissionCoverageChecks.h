@@ -1,4 +1,5 @@
 #pragma once
+#include "GlTestProgram.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/Material.h"
 #include <array>
@@ -14,7 +15,7 @@ inline bool CheckVctEmissionCoverage()
 {
     using namespace PlutoGE::render;
     bool passed = true;
-    ShaderSource voxelSource, resolveSource, mipSource, bounceSource;
+    GlTestProgramSource voxelSource, resolveSource, mipSource, bounceSource;
     bounceSource.computeSource = ShaderArtifactLibrary().Load("VCTBounceUpdate", "compute").glsl;
     mipSource.computeSource = ShaderArtifactLibrary().Load("VCTDirectionalMip", "compute").glsl;
     ShaderArtifactLibrary artifacts;
@@ -22,16 +23,9 @@ inline bool CheckVctEmissionCoverage()
     voxelSource.geometrySource = artifacts.Load("VCTVoxelize", "geometry").glsl;
     voxelSource.fragmentSource = artifacts.Load("VCTVoxelize", "fragment").glsl;
     resolveSource.computeSource = artifacts.Load("VCTResolve", "compute").glsl;
-    std::unique_ptr<Shader> voxel(Shader::Create(voxelSource)), resolve(Shader::Create(resolveSource)), mip(Shader::Create(mipSource));
-    std::unique_ptr<Shader> bounceShader(Shader::Create(bounceSource));
+    const auto voxel = GlTestProgram::Create(voxelSource), resolve = GlTestProgram::Create(resolveSource),
+               mip = GlTestProgram::Create(mipSource), bounceShader = GlTestProgram::Create(bounceSource);
     if (!voxel || !resolve || !mip || !bounceShader) return false;
-    for (auto* shader : {voxel.get(), resolve.get(), mip.get()})
-    {
-        shader->Bind(); GLint program = 0, linked = 0;
-        glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-        glGetProgramiv(GLuint(program), GL_LINK_STATUS, &linked);
-        if (!linked) return false;
-    }
     GLuint vao = 0, vbo = 0, framebuffer = 0;
     std::array<GLuint, 3> buffers{};
     std::array<GLuint, 10> textures{};

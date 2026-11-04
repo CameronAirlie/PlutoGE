@@ -11,7 +11,6 @@ namespace PlutoGE::render
         struct MaterialTopology
         {
             Material *material = nullptr;
-            Shader *shader = nullptr;
             const void *graph = nullptr;
             float tessellation = 0;
             std::vector<Material *> overlays;
@@ -59,7 +58,6 @@ namespace PlutoGE::render
                 entry.identity = material->GetIdentity(); entry.revision = revision;
                 auto &snapshot = entry.topology;
                 snapshot.material = material;
-                snapshot.shader = material->GetShader();
                 const auto &config = material->ReadConfig();
                 snapshot.graph = config.shaderGraphProgram.get();
                 snapshot.tessellation = config.shaderGraphProgram ? config.shaderGraphProgram->data.header.w : 0;
@@ -182,7 +180,7 @@ namespace PlutoGE::render
                 a.maxDrawDistance != b.maxDrawDistance || a.maxShadowDistance != b.maxShadowDistance ||
                 a.usePrimaryUvForLightmap != b.usePrimaryUvForLightmap || a.terrainGeomorph != b.terrainGeomorph ||
                 a.impostor != b.impostor || a.impostorOwner != b.impostorOwner;
-            materialChanged |= a.material != b.material || a.shader != b.shader;
+            materialChanged |= a.material != b.material;
             transformChanged |= a.model != b.model || a.previousModel != b.previousModel ||
                 a.worldBounds.center != b.worldBounds.center || a.worldBounds.radius != b.worldBounds.radius ||
                 a.previousWorldBounds.center != b.previousWorldBounds.center || a.previousWorldBounds.radius != b.previousWorldBounds.radius;

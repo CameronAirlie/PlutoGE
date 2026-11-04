@@ -21,7 +21,6 @@
 
 namespace PlutoGE::render
 {
-    class RenderTarget;
     class Mesh;
     class Texture;
     struct RenderCommand;
@@ -45,6 +44,14 @@ namespace PlutoGE::ui
     class EditorShell;
     class EditorSceneRenderService;
     class PanelManager;
+    struct ViewportExtent
+    {
+        int width = 0;
+        int height = 0;
+        [[nodiscard]] bool IsEmpty() const noexcept { return width <= 0 || height <= 0; }
+        friend bool operator==(ViewportExtent, ViewportExtent) = default;
+    };
+
     struct ViewportPanelConfig : public PanelConfig
     {
         glm::vec4 clearColor = glm::vec4(0.1f, 0.1f, 0.1f, 1.0f);
@@ -75,8 +82,11 @@ namespace PlutoGE::ui
         void Shutdown() override;
         bool ShouldRenderFrame() const;
 
-        render::RenderTarget *GetRenderTarget() const { return m_renderTarget; }
-        render::RenderTarget *GetSceneRenderTarget() const;
+        // The panel's image size, in framebuffer pixels.
+        [[nodiscard]] ViewportExtent GetOutputExtent() const noexcept { return m_outputExtent; }
+        // The size the scene renders at: the output scaled by the render scale,
+        // unless a temporal upscaler reconstructs the output itself.
+        [[nodiscard]] ViewportExtent GetRenderExtent() const noexcept;
         bool IsViewportHovered() const { return m_isViewportHovered; }
         bool IsViewportFocused() const { return m_isViewportFocused; }
         bool IsTransformGizmoUsing() const { return m_isTransformGizmoUsing; }
@@ -143,8 +153,9 @@ namespace PlutoGE::ui
         struct CameraStackState;
         // Per-frame filtered command storage for the game camera stack.
         std::unique_ptr<CameraStackState> m_cameraStack;
-        render::RenderTarget *m_renderTarget = nullptr; // The render target used for rendering the viewport content
-        render::RenderTarget *m_scaledRenderTarget = nullptr;
+        // Empty until Initialize and after Shutdown.
+        ViewportExtent m_outputExtent;
+        ViewportExtent m_scaledExtent;
         EditorSceneRenderService *m_rhiRenderService = nullptr;
         render::rhi::TextureHandle m_rhiViewportTexture;
         render::rhi::TextureHandle m_registeredRhiTexture;

@@ -177,9 +177,9 @@ FetchContent_Declare(
     GIT_TAG        31c1ad37456438565541f4919958214b6e762fb4
 )
 FetchContent_MakeAvailable(stb_image)
-add_library(PlutoGE_stb_image INTERFACE)
+add_library(PlutoGE_stb_image STATIC "${CMAKE_CURRENT_SOURCE_DIR}/stb/PlutoGE_stb_image.cpp")
 add_library(PlutoGE::stb_image ALIAS PlutoGE_stb_image)
-target_include_directories(PlutoGE_stb_image INTERFACE
+target_include_directories(PlutoGE_stb_image PUBLIC
     ${stb_image_SOURCE_DIR}
 )
 
@@ -249,21 +249,15 @@ if (MSVC)
     target_compile_options(rmlui_core PRIVATE /FS)
 endif()
 add_library(PlutoGE_rmlui STATIC
-    "${rmlui_SOURCE_DIR}/Backends/RmlUi_Renderer_GL3.cpp"
     "${rmlui_SOURCE_DIR}/Backends/RmlUi_Platform_GLFW.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/rmlui/PlutoGE_RmlUi_Target.cpp"
 )
 add_library(PlutoGE::rmlui ALIAS PlutoGE_rmlui)
-target_compile_definitions(PlutoGE_rmlui PRIVATE
-    RMLUI_GL3_CUSTOM_LOADER="PlutoGE_RmlUi_GL3.h"
-    RMLUI_NUM_MSAA_SAMPLES=0
-)
 if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     # RmlUi 6.1's bundled robin_hood header relies on fixed-width integer
     # types being transitively included, which GCC 16 no longer guarantees.
     target_compile_options(PlutoGE_rmlui PRIVATE -include cstdint)
 endif()
-target_link_libraries(PlutoGE_rmlui PUBLIC RmlUi::Core PlutoGE::glfw PlutoGE::glad)
+target_link_libraries(PlutoGE_rmlui PUBLIC RmlUi::Core PlutoGE::glfw)
 target_include_directories(PlutoGE_rmlui PUBLIC
     "${rmlui_SOURCE_DIR}/Backends"
     "${CMAKE_CURRENT_SOURCE_DIR}/rmlui"

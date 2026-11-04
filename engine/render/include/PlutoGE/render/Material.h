@@ -33,7 +33,6 @@ namespace PlutoGE::render
     };
 
     class Texture;
-    class Shader;
     struct CameraData;
     class Material;
     struct MaterialConfig
@@ -110,7 +109,6 @@ namespace PlutoGE::render
         std::array<std::uint32_t,4> graphSamplers{};
         std::vector<std::shared_ptr<Material>> additionalPasses;
         unsigned graphPassOrder = 0;
-        Shader *compiledShaderGraph = nullptr;
         // Set on a terrain's own material: the RHI renderer then draws it with the terrain layer shader, and
         // albedoTexture serves as the low-detail colour for GI, baking and renderers without that shader.
         std::shared_ptr<const TerrainLayerSet> terrainLayers;
@@ -126,17 +124,12 @@ namespace PlutoGE::render
         {
             if (this != &other)
             {
-                m_config = other.m_config; m_overrideShader = other.m_overrideShader;
+                m_config = other.m_config;
                 Touch(); // Existing escaped references still require validation.
             }
             return *this;
         }
         ~Material() { s_changeEpoch.fetch_add(1, std::memory_order_relaxed); }
-
-        void SetShader(Shader *shader) { if (m_overrideShader != shader) { m_overrideShader = shader; Touch(); } }
-        Shader *GetShader() const { return m_overrideShader ? m_overrideShader : m_config.compiledShaderGraph; }
-
-        void Bind(Shader *shader = nullptr);
 
         void SetColor(const glm::vec4 &color) { if (m_config.color != (color)) { m_config.color = color; Touch(); } }
         void SetSurfaceType(MaterialSurfaceType surfaceType) { if (m_config.surfaceType != (surfaceType)) { m_config.surfaceType = surfaceType; Touch(); } }
@@ -185,17 +178,12 @@ namespace PlutoGE::render
         std::uint64_t GetIdentity() const { return m_identity.Value(); }
         const MaterialConfig &GetConfig() const { return m_config; }
 
-    protected:
-        friend class Graphics;
-        friend class Renderer;
-
     private:
         void Touch() { ++m_revision; s_changeEpoch.fetch_add(1, std::memory_order_relaxed); }
         inline static std::atomic<std::uint64_t> s_changeEpoch{1};
         RenderObjectIdentity m_identity;
         std::uint64_t m_revision = 1;
         bool m_untrackedEdits = false;
-        MaterialConfig m_config;            // Material configuration data
-        Shader *m_overrideShader = nullptr; // Pointer to the shader used for this material (can be set during rendering)
+        MaterialConfig m_config; // Material configuration data
     };
 }

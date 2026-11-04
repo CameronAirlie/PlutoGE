@@ -60,10 +60,7 @@ namespace PlutoGE::ui
                   << "RmlUi viewport resize: " << rmlTiming.resizeMs << " ms\n"
                   << "RmlUi document synchronization: " << rmlTiming.synchronizeMs << " ms\n"
                   << "RmlUi input + layout update: " << rmlTiming.inputUpdateMs << " ms\n"
-                  << "RmlUi world-surface update: " << rmlTiming.worldSurfaceMs << " ms\n"
                   << "RmlUi backend begin frame: " << rmlTiming.beginFrameMs << " ms\n"
-                  << "RmlUi backdrop copy: " << rmlTiming.backdropMs << " ms ("
-                  << (rmlTiming.copiedBackdrop ? "performed" : "skipped") << ")\n"
                   << "RmlUi render submission: " << rmlTiming.renderMs << " ms\n"
                   << "RmlUi backend end frame: " << rmlTiming.endFrameMs << " ms\n";
         result += rmlReport.str();

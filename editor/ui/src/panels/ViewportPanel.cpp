@@ -13,12 +13,10 @@
 
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
-#include "PlutoGE/render/RenderTarget.h"
 #include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/TexturePainter.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorSceneRenderService.h"
 #include "PlutoGE/scene/CameraStack.h"
@@ -117,6 +115,12 @@ namespace PlutoGE::ui
     {
         constexpr int kDefaultViewportWidth = 1280;
         constexpr int kDefaultViewportHeight = 720;
+
+        ViewportExtent ScaleExtent(ViewportExtent extent, float scale)
+        {
+            return {std::max(1, static_cast<int>(std::lround(static_cast<float>(extent.width) * scale))),
+                    std::max(1, static_cast<int>(std::lround(static_cast<float>(extent.height) * scale)))};
+        }
         constexpr int kResizeDebounceFrames = 2;
         constexpr float kMinRenderScale = 0.5f;
         constexpr float kMaxRenderScale = 2.0f;
@@ -178,22 +182,6 @@ namespace PlutoGE::ui
             std::string selectedSource;
             std::string rayFailureReason;
         };
-
-        struct TexturePaintState
-        {
-            bool enabled = false;
-            float radiusPixels = 32.0f;
-            float opacity = 0.65f;
-            glm::vec4 color{1.0f};
-            render::Texture *texture = nullptr;
-            render::Texture *brushTexture = nullptr;
-            std::string brushTextureReference;
-            float brushTextureScale = 8.0f;
-            std::unique_ptr<render::TexturePainter> painter;
-            bool strokeActive = false;
-        };
-
-        TexturePaintState g_texturePaint;
 
         const char *GetTerrainPaintModeLabel(scene::TerrainPaintMode mode)
         {
@@ -342,53 +330,6 @@ namespace PlutoGE::ui
             {
                 foliageComponent.SetScaleRange(minScale, maxScale);
             }
-        }
-
-        void RenderTexturePaintToolbar(render::Texture *texture)
-        {
-            ImGui::Separator();
-            ImGui::TextUnformatted("Texture Paint");
-            ImGui::SameLine();
-            ImGui::Checkbox("Enable##TexturePaint", &g_texturePaint.enabled);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(95.0f);
-            ImGui::DragFloat("Radius px##TexturePaint", &g_texturePaint.radiusPixels, 1.0f, 1.0f, 2048.0f, "%.0f");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::SliderFloat("Opacity##TexturePaint", &g_texturePaint.opacity, 0.0f, 1.0f, "%.2f");
-            ImGui::SameLine();
-            ImGui::ColorEdit4("Color##TexturePaint", &g_texturePaint.color.x,
-                              ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar);
-            ImGui::SameLine();
-            const std::string brushLabel = g_texturePaint.brushTextureReference.empty() ? "Drop paint texture" : g_texturePaint.brushTextureReference;
-            ImGui::Button(brushLabel.c_str(), ImVec2(150.0f, 0.0f));
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 1)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Texture)
-                        {
-                            if (auto *project = EditorShell::GetInstance().GetProject())
-                            {
-                                const auto path = project->ResolveAssetReference(reference);
-                                g_texturePaint.brushTexture = render::Texture::LoadFromFile(path.string().c_str());
-                                g_texturePaint.brushTextureReference = reference;
-                            }
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(80.0f);
-            ImGui::DragFloat("Tiling##TexturePaint", &g_texturePaint.brushTextureScale, 0.1f, 0.1f, 256.0f, "%.1f");
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Save##TexturePaint") && g_texturePaint.painter && g_texturePaint.texture == texture)
-                g_texturePaint.painter->Save();
         }
 
         void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
@@ -1243,145 +1184,6 @@ namespace PlutoGE::ui
             return transform;
         }
 
-        struct MeshUvHit
-        {
-            glm::vec2 uv{0.0f};
-            glm::vec3 worldPosition{0.0f};
-            render::Texture *texture = nullptr;
-            float worldDistance = std::numeric_limits<float>::max();
-            std::size_t submeshIndex = 0;
-        };
-
-        std::optional<MeshUvHit> RaycastMeshUv(scene::Entity &entity,
-                                               scene::MeshComponent &meshComponent,
-                                               const PickRay &ray)
-        {
-            auto *mesh = meshComponent.GetMesh();
-            if (!mesh)
-                return std::nullopt;
-            const auto &data = mesh->GetMeshData();
-            if (data.indices.size() < 3 || data.vertices.empty())
-                return std::nullopt;
-
-            std::optional<MeshUvHit> closest;
-            auto *animation = FindAnimationComponent(&entity);
-            const std::size_t submeshCount = mesh->GetSubmeshCount();
-            const std::size_t begin = meshComponent.GetSubmeshIndex() >= 0 ? static_cast<std::size_t>(meshComponent.GetSubmeshIndex()) : 0;
-            const std::size_t end = meshComponent.GetSubmeshIndex() >= 0
-                                        ? std::min(begin + static_cast<std::size_t>(std::max(1, meshComponent.GetSubmeshRangeCount())), submeshCount)
-                                        : submeshCount;
-            for (std::size_t submeshIndex = begin; submeshIndex < end; ++submeshIndex)
-            {
-                const auto &submesh = mesh->GetSubmesh(submeshIndex);
-                auto *material = meshComponent.GetMaterialForSubmesh(submeshIndex);
-                auto *texture = material ? material->GetConfig().albedoTexture : nullptr;
-                if (submesh.indexCount < 3 || submesh.indexOffset + submesh.indexCount > data.indices.size())
-                    continue;
-
-                const glm::mat4 world = ComputePickSubmeshTransform(entity, meshComponent, submeshIndex, submesh, animation);
-                const auto localRay = TransformViewportPickRay(ray, world);
-                if (!localRay)
-                    continue;
-                const auto &localOrigin = localRay->origin;
-                const auto &localDirection = localRay->direction;
-                if (!IntersectBoundsDistance(submesh.bounds, localOrigin, localDirection))
-                    continue;
-
-                const std::size_t indexEnd = submesh.indexOffset + submesh.indexCount;
-                for (std::size_t index = submesh.indexOffset; index + 2 < indexEnd; index += 3)
-                {
-                    const unsigned int indices[] = {data.indices[index], data.indices[index + 1], data.indices[index + 2]};
-                    if (indices[0] >= data.vertices.size() || indices[1] >= data.vertices.size() || indices[2] >= data.vertices.size())
-                        continue;
-                    const auto &a = data.vertices[indices[0]];
-                    const auto &b = data.vertices[indices[1]];
-                    const auto &c = data.vertices[indices[2]];
-                    const glm::vec3 p0(a.position[0], a.position[1], a.position[2]);
-                    const glm::vec3 p1(b.position[0], b.position[1], b.position[2]);
-                    const glm::vec3 p2(c.position[0], c.position[1], c.position[2]);
-                    float distance = 0.0f;
-                    if (!IntersectTriangle(localOrigin, localDirection, p0, p1, p2, distance))
-                        continue;
-                    const glm::vec3 localHit = localOrigin + localDirection * distance;
-                    const glm::vec3 worldHit(world * glm::vec4(localHit, 1.0f));
-                    const float worldDistance = glm::length(worldHit - ray.origin);
-                    if (closest && worldDistance >= closest->worldDistance)
-                        continue;
-
-                    const glm::vec3 v0 = p1 - p0;
-                    const glm::vec3 v1 = p2 - p0;
-                    const glm::vec3 v2 = localHit - p0;
-                    const float d00 = glm::dot(v0, v0);
-                    const float d01 = glm::dot(v0, v1);
-                    const float d11 = glm::dot(v1, v1);
-                    const float d20 = glm::dot(v2, v0);
-                    const float d21 = glm::dot(v2, v1);
-                    const float denominator = d00 * d11 - d01 * d01;
-                    if (std::abs(denominator) <= kTriangleDeterminantEpsilon)
-                        continue;
-                    const float baryB = (d11 * d20 - d01 * d21) / denominator;
-                    const float baryC = (d00 * d21 - d01 * d20) / denominator;
-                    const float baryA = 1.0f - baryB - baryC;
-                    const glm::vec2 uv0(a.uv[0], a.uv[1]);
-                    const glm::vec2 uv1(b.uv[0], b.uv[1]);
-                    const glm::vec2 uv2(c.uv[0], c.uv[1]);
-                    closest = MeshUvHit{uv0 * baryA + uv1 * baryB + uv2 * baryC, worldHit, texture, worldDistance, submeshIndex};
-                }
-            }
-            return closest;
-        }
-
-        render::Texture *CreatePrivatePaintTexture(scene::Entity &entity,
-                                                   scene::MeshComponent *meshComponent,
-                                                   scene::TerrainComponent *terrainComponent,
-                                                   std::size_t submeshIndex,
-                                                   render::Texture *source)
-        {
-            auto *project = EditorShell::GetInstance().GetProject();
-            if (!project)
-                return nullptr;
-            const auto directory = project->GetAssetDirectoryPath() / "PaintedTextures";
-            std::error_code error;
-            std::filesystem::create_directories(directory, error);
-            if (error)
-                return nullptr;
-            const std::string suffix = meshComponent ? "_mesh_" + std::to_string(submeshIndex) : "_terrain";
-            const auto output = directory / ("entity_" + std::to_string(entity.GetID()) + suffix + ".png");
-            if (!source)
-            {
-                constexpr int defaultResolution = 2048;
-                static const std::vector<unsigned char> whitePixels(
-                    static_cast<std::size_t>(defaultResolution) * defaultResolution * 4, 255);
-                const std::string cacheKey = "texture-paint-base://" + std::to_string(entity.GetID()) + suffix;
-                source = core::Engine::GetInstance().GetTextureManager().LoadTextureFromMemory(
-                    cacheKey, whitePixels.data(), defaultResolution, defaultResolution, 4);
-            }
-            if (!source)
-                return nullptr;
-            render::TexturePainter sourceCopy(*source);
-            if (!sourceCopy.IsValid() || !sourceCopy.Save(output.string()))
-                return nullptr;
-            auto *privateTexture = render::Texture::LoadFromFile(output.string().c_str());
-            if (!privateTexture)
-                return nullptr;
-
-            if (meshComponent)
-            {
-                auto *uniqueMaterial = meshComponent->CreateUniqueMaterialForSubmesh(submeshIndex);
-                if (!uniqueMaterial)
-                    return nullptr;
-                uniqueMaterial->SetAlbedoTexture(privateTexture);
-                meshComponent->SetMaterialAssetForSubmesh(submeshIndex, {});
-            }
-            else if (terrainComponent)
-            {
-                terrainComponent->SetPaintedAlbedoPath(output.string());
-                privateTexture = terrainComponent->GetMaterial()->GetConfig().albedoTexture;
-            }
-            project->RefreshAssetRegistry();
-            return privateTexture;
-        }
-
         std::optional<PickRay> BuildPickRay(const render::CameraData &cameraData,
                                             const ImVec2 &viewportMin,
                                             const ImVec2 &viewportSize,
@@ -2011,21 +1813,8 @@ namespace PlutoGE::ui
     void ViewportPanel::Initialize()
     {
         m_renderScale = glm::clamp(m_config.initialRenderScale, kMinRenderScale, kMaxRenderScale);
-
-        auto renderConfig = render::RenderTargetConfig{
-            .width = kDefaultViewportWidth,
-            .height = kDefaultViewportHeight,
-            .clearColor = m_config.clearColor,
-        };
-        m_renderTarget = new render::RenderTarget(renderConfig);
-        if (!m_renderTarget->IsInitialized() && m_config.graphicsApi != render::rhi::GraphicsApi::Vulkan)
-        {
-            std::cerr << "Failed to initialize RenderTarget in ViewportPanel" << std::endl;
-        }
-
-        renderConfig.width = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportWidth) * m_renderScale)));
-        renderConfig.height = std::max(1, static_cast<int>(std::lround(static_cast<float>(kDefaultViewportHeight) * m_renderScale)));
-        m_scaledRenderTarget = new render::RenderTarget(renderConfig);
+        m_outputExtent = {kDefaultViewportWidth, kDefaultViewportHeight};
+        m_scaledExtent = ScaleExtent(m_outputExtent, m_renderScale);
 
         // The project can be loaded after the editor shell is initialized. The
         // first SetGraphicsApi call initializes the service once the manifest's
@@ -2039,7 +1828,7 @@ namespace PlutoGE::ui
         m_isViewportFocused = false;
         m_viewportSize = glm::vec2(0.0f);
 
-        if (!m_renderTarget)
+        if (m_outputExtent.IsEmpty())
             return;
 
         const ImVec2 panelSize = ImGui::GetContentRegionAvail();
@@ -2057,22 +1846,19 @@ namespace PlutoGE::ui
             m_pendingHeight = newHeight;
             m_resizeStableFrames = 0;
         }
-        // The targets only carry the viewport's output and render extents; the RHI owns the images.
-        if ((newWidth != m_renderTarget->GetWidth() || newHeight != m_renderTarget->GetHeight()) && ++m_resizeStableFrames >= kResizeDebounceFrames)
-            static_cast<void>(m_renderTarget->Resize(newWidth, newHeight));
+        const ViewportExtent panelExtent{newWidth, newHeight};
+        if (panelExtent != m_outputExtent && ++m_resizeStableFrames >= kResizeDebounceFrames)
+            m_outputExtent = panelExtent;
+        if (const auto scaled = ScaleExtent(panelExtent, m_renderScale);
+            scaled != m_scaledExtent && m_resizeStableFrames >= kResizeDebounceFrames)
+            m_scaledExtent = scaled;
 
-        const int scaledWidth = std::max(1, static_cast<int>(std::lround(static_cast<float>(newWidth) * m_renderScale)));
-        const int scaledHeight = std::max(1, static_cast<int>(std::lround(static_cast<float>(newHeight) * m_renderScale)));
-        if (m_scaledRenderTarget && (scaledWidth != m_scaledRenderTarget->GetWidth() || scaledHeight != m_scaledRenderTarget->GetHeight()) &&
-            m_resizeStableFrames >= kResizeDebounceFrames)
-            static_cast<void>(m_scaledRenderTarget->Resize(scaledWidth, scaledHeight));
-
-        const auto *sceneRenderTarget = GetSceneRenderTarget();
+        const auto renderExtent = GetRenderExtent();
         const EditorTextureDescriptor viewportTexture{
             .device = m_rhiRenderService ? m_rhiRenderService->GetRenderDevice() : nullptr,
             .texture = m_rhiViewportTexture,
-            .width = static_cast<std::uint32_t>(std::max(sceneRenderTarget->GetWidth(), 0)),
-            .height = static_cast<std::uint32_t>(std::max(sceneRenderTarget->GetHeight(), 0))};
+            .width = static_cast<std::uint32_t>(renderExtent.width),
+            .height = static_cast<std::uint32_t>(renderExtent.height)};
         if (m_rhiViewportTexture != m_registeredRhiTexture || !m_registeredTexture.IsValid())
         {
             ReleaseRegisteredTexture();
@@ -2152,7 +1938,7 @@ namespace PlutoGE::ui
                         glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
                         glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
                     const render::CameraData cameraData = editorCamera.camera.GetCameraDataForTransform(
-                        cameraTransform, m_renderTarget->GetWidth(), m_renderTarget->GetHeight());
+                        cameraTransform, m_outputExtent.width, m_outputExtent.height);
 
                     std::size_t submeshIndex = std::numeric_limits<std::size_t>::max();
                     auto *entity = PickEntity(engine.GetScene(), cameraData, viewportMin, imageSize, nullptr, &submeshIndex);
@@ -2632,7 +2418,7 @@ namespace PlutoGE::ui
             }
 
             ImGui::SameLine();
-            if (toolButton("##Paint", icons::Paint, "Paint tools for the selected object", g_texturePaint.enabled, nullptr, true)) ImGui::OpenPopup("PaintPopup");
+            if (toolButton("##Paint", icons::Paint, "Paint tools for the selected object", false, nullptr, true)) ImGui::OpenPopup("PaintPopup");
             if (ImGui::BeginPopup("PaintPopup"))
             {
                 overlayPopupOpen = true;
@@ -2652,17 +2438,6 @@ namespace PlutoGE::ui
                         {
                             RenderFoliagePaintToolbar(*foliageComponent);
                         }
-                    }
-                    if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
-                    {
-                        auto *material = meshComponent->GetMaterial();
-                        RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
-                    }
-                    if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>();
-                        terrainComponent && terrainComponent->GetLayers().Empty())
-                    {
-                        auto *material = terrainComponent->GetMaterial();
-                        RenderTexturePaintToolbar(material ? material->GetConfig().albedoTexture : nullptr);
                     }
                 }
                 ImGui::EndPopup();
@@ -2950,7 +2725,7 @@ namespace PlutoGE::ui
             strokeTarget->GetID() != m_foliageStroke->entityId ||
             strokeFoliage->GetSelectedTypeIndex() != m_foliageStroke->type ||
             strokeFoliage->GetBrushMode() != m_foliageStroke->mode ||
-            !strokeFoliage->IsEnabled() || !strokeFoliage->IsPaintEnabled() || g_texturePaint.enabled;
+            !strokeFoliage->IsEnabled() || !strokeFoliage->IsPaintEnabled();
         if (m_foliageStroke->active && (!mouseDown || targetChanged))
         {
             scene::FoliageInstanceSnapshot after;
@@ -3008,7 +2783,7 @@ namespace PlutoGE::ui
             m_foliageStroke->sampler.Reset();
         m_isTransformGizmoUsing = false;
         m_entityIconHits.clear();
-        if (!m_renderTarget || !m_rhiRenderService || !m_rhiRenderService->IsInitialized() ||
+        if (m_outputExtent.IsEmpty() || !m_rhiRenderService || !m_rhiRenderService->IsInitialized() ||
             viewportSize.x <= 0.0f || viewportSize.y <= 0.0f)
         {
             return;
@@ -3019,8 +2794,8 @@ namespace PlutoGE::ui
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f)) *
                                           glm::rotate(glm::mat4(1.0f), glm::radians(editorCamera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
         const render::CameraData freshCameraData = editorCamera.camera.GetCameraDataForTransform(cameraTransform,
-                                                                                                 m_renderTarget->GetWidth(),
-                                                                                                 m_renderTarget->GetHeight());
+                                                                                                 m_outputExtent.width,
+                                                                                                 m_outputExtent.height);
         const auto isFiniteMatrix = [](const glm::mat4 &matrix)
         {
             for (int column = 0; column < 4; ++column)
@@ -3502,86 +3277,17 @@ namespace PlutoGE::ui
 
             bool terrainPaintActive = false;
             bool foliagePaintActive = false;
-            bool texturePaintActive = false;
             static bool s_terrainStrokeActive = false;
             static TerrainLayerStroke s_terrainLayerStroke;
             bool foliageSampled = false;
-            if (g_texturePaint.enabled)
-            {
-                const bool brushActive = m_isViewportHovered && !controlsHovered &&
-                                         !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() &&
-                                         !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-                // Exact UV raycasts are deliberately skipped while idle; on large
-                // meshes this removes an otherwise needless triangle walk per frame.
-                if (brushActive)
-                {
-                    if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
-                    {
-                        std::optional<MeshUvHit> hit;
-                        if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
-                            hit = RaycastMeshUv(*selectedEntity, *meshComponent, *ray);
-                        if (!hit)
-                        {
-                            if (auto *terrain = selectedEntity->GetComponent<scene::TerrainComponent>())
-                            {
-                                glm::vec3 worldHit{0.0f};
-                                auto *material = terrain->GetMaterial();
-                                auto *texture = material ? material->GetConfig().albedoTexture : nullptr;
-                                if (terrain->Raycast(ray->origin, ray->direction, worldHit))
-                                {
-                                    const glm::vec3 localHit(glm::inverse(selectedEntity->GetWorldTransform()) * glm::vec4(worldHit, 1.0f));
-                                    const float width = std::max(1.0f, static_cast<float>(terrain->GetWidth() - 1) * terrain->GetCellSize());
-                                    const float depth = std::max(1.0f, static_cast<float>(terrain->GetDepth() - 1) * terrain->GetCellSize());
-                                    hit = MeshUvHit{{localHit.x / width, localHit.z / depth}, worldHit, texture, glm::length(worldHit - ray->origin)};
-                                }
-                            }
-                        }
-                        if (hit)
-                        {
-                            texturePaintActive = true;
-                            auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>();
-                            auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>();
-                            const bool alreadyPrivate = hit->texture &&
-                                                        hit->texture->GetFilePath().find("PaintedTextures") != std::string::npos;
-                            if (!alreadyPrivate)
-                            {
-                                auto *privateTexture = CreatePrivatePaintTexture(*selectedEntity,
-                                                                                 meshComponent,
-                                                                                 meshComponent ? nullptr : terrainComponent,
-                                                                                 hit->submeshIndex,
-                                                                                 hit->texture);
-                                if (!privateTexture)
-                                    return;
-                                hit->texture = privateTexture;
-                            }
-                            if (g_texturePaint.texture != hit->texture || !g_texturePaint.painter)
-                            {
-                                g_texturePaint.texture = hit->texture;
-                                g_texturePaint.painter = std::make_unique<render::TexturePainter>(*hit->texture);
-                            }
-                            g_texturePaint.painter->SetBrushTexture(g_texturePaint.brushTexture);
-                            g_texturePaint.painter->SetBrushTextureScale(g_texturePaint.brushTextureScale);
-                            if (!g_texturePaint.strokeActive)
-                            {
-                                editorShell.BeginSceneEdit("Paint Texture");
-                                g_texturePaint.strokeActive = true;
-                            }
-                            if (g_texturePaint.painter->Paint(hit->uv, g_texturePaint.radiusPixels,
-                                                              g_texturePaint.color, g_texturePaint.opacity))
-                                editorShell.MarkSceneDirty();
-                        }
-                    }
-                }
-            }
             if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
             {
                 auto *foliageComponent = selectedEntity->GetComponent<scene::FoliageComponent>();
-                const bool canTerrainPaint = terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled() && !g_texturePaint.enabled;
+                const bool canTerrainPaint = terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled();
                 const bool canFoliagePaint = terrainComponent->IsEnabled() &&
                                              foliageComponent &&
                                              foliageComponent->IsEnabled() &&
                                              foliageComponent->IsPaintEnabled() &&
-                                             !g_texturePaint.enabled &&
                                              !m_foliageStroke->blockedUntilRelease &&
                                              !editorShell.GetEngine().IsRuntimeRunning();
                 if (canTerrainPaint || canFoliagePaint)
@@ -3676,18 +3382,8 @@ namespace PlutoGE::ui
             }
             if (s_terrainLayerStroke.IsActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
                 s_terrainLayerStroke.End(editorShell);
-            if (g_texturePaint.strokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            {
-                if (g_texturePaint.painter)
-                {
-                    g_texturePaint.painter->EndStroke();
-                    g_texturePaint.painter->Save();
-                }
-                editorShell.EndSceneEdit();
-                g_texturePaint.strokeActive = false;
-            }
 
-            if (terrainPaintActive || foliagePaintActive || texturePaintActive)
+            if (terrainPaintActive || foliagePaintActive)
             {
                 if (viewportClicked)
                 {
@@ -4415,13 +4111,13 @@ namespace PlutoGE::ui
                                     std::span<scene::CameraComponent *const> overlayCameras)
     {
         core::CpuScope scope("Game viewport frame", core::CpuCategory::Rendering);
-        if (!m_renderTarget || !m_rhiRenderService)
+        if (m_outputExtent.IsEmpty() || !m_rhiRenderService)
             return;
 
         auto &editorShell = EditorShell::GetInstance();
         auto *activeScene = editorShell.GetEngine().GetScene();
         auto &renderScene = editorShell.GetEngine().GetRenderScene();
-        auto *sceneRenderTarget = GetSceneRenderTarget();
+        const auto renderExtent = GetRenderExtent();
         std::vector<render::IPostProcessEffect *> postProcessEffects;
         postProcessEffects.reserve(cameraComponent.GetPostProcessEffects().size());
         for (const auto &effect : cameraComponent.GetPostProcessEffects())
@@ -4429,10 +4125,10 @@ namespace PlutoGE::ui
             postProcessEffects.push_back(effect.get());
         }
 
-        const auto cameraData = cameraComponent.GetCameraData(sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
+        const auto cameraData = cameraComponent.GetCameraData(renderExtent.width, renderExtent.height);
         m_gameDebugCamera = cameraData;
         m_hasGameDebugCamera = true;
-        renderScene.PrepareVisibleRenderCommands(cameraData, sceneRenderTarget->GetHeight());
+        renderScene.PrepareVisibleRenderCommands(cameraData, renderExtent.height);
         auto commands = renderScene.GetVisibleRenderCommandView();
         auto shadowCommands = renderScene.GetSceneRenderCommandView();
         std::span<const render::CameraView> overlays;
@@ -4444,7 +4140,7 @@ namespace PlutoGE::ui
             // Overlays select from the unculled scene; base visibility culling
             // uses the base camera's frustum, not the overlay's.
             overlays = m_cameraStack->overlayLayers.Build(*activeScene, overlayCameras, shadowCommands,
-                                                          sceneRenderTarget->GetWidth(), sceneRenderTarget->GetHeight());
+                                                          renderExtent.width, renderExtent.height);
             commands = m_cameraStack->commandFilter.Apply(*activeScene, tagFilter, commands);
             shadowCommands = m_cameraStack->shadowCommandFilter.Apply(*activeScene, tagFilter, shadowCommands);
         }
@@ -4461,7 +4157,7 @@ namespace PlutoGE::ui
                                        std::span<const render::CameraView> overlays,
                                        std::optional<std::span<scene::Light *const>> lights)
     {
-        if (!m_rhiRenderService || !m_renderTarget)
+        if (!m_rhiRenderService || m_outputExtent.IsEmpty())
             return;
         if (!m_rhiRenderService->IsInitialized())
         {
@@ -4470,8 +4166,8 @@ namespace PlutoGE::ui
                 return;
         }
 
-        const auto *target = GetSceneRenderTarget();
-        if (!target || target->GetWidth() <= 0 || target->GetHeight() <= 0)
+        const auto renderExtent = GetRenderExtent();
+        if (renderExtent.IsEmpty())
             return;
 
         auto &shell = EditorShell::GetInstance();
@@ -4511,8 +4207,8 @@ namespace PlutoGE::ui
                 m_rhiRenderService->SetSelectionOutline(m_selectionOutlineIds, style);
             }
         }
-        if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(target->GetWidth()),
-                                        static_cast<std::uint32_t>(target->GetHeight()),
+        if (!m_rhiRenderService->Render(static_cast<std::uint32_t>(renderExtent.width),
+                                        static_cast<std::uint32_t>(renderExtent.height),
                                         cameraData, commands, shadowCommands, postProcessEffects,
                                         EditorShell::GetInstance().GetEngine().GetScene(),
                                         EditorShell::GetInstance().GetEngine().GetRenderScene().GetPostProcessDebugView(),
@@ -4529,19 +4225,17 @@ namespace PlutoGE::ui
         return;
     }
 
-    render::RenderTarget *ViewportPanel::GetSceneRenderTarget() const
+    ViewportExtent ViewportPanel::GetRenderExtent() const noexcept
     {
-        if (m_temporalUpscalerOptions.technology != render::rhi::TemporalUpscaler::None)
-            return m_renderTarget;
-        return std::abs(m_renderScale - 1.0f) < 0.001f || !m_scaledRenderTarget
-                   ? m_renderTarget
-                   : m_scaledRenderTarget;
+        if (m_temporalUpscalerOptions.technology != render::rhi::TemporalUpscaler::None ||
+            std::abs(m_renderScale - 1.0f) < 0.001f)
+            return m_outputExtent;
+        return m_scaledExtent;
     }
 
     bool ViewportPanel::ShouldRenderFrame() const
     {
-        return IsOpen() && WasVisibleLastFrame() && m_renderTarget &&
-               m_renderTarget->GetWidth() > 0 && m_renderTarget->GetHeight() > 0;
+        return IsOpen() && WasVisibleLastFrame() && !m_outputExtent.IsEmpty();
     }
 
     void ViewportPanel::ClearFrame()
@@ -4552,18 +4246,8 @@ namespace PlutoGE::ui
     void ViewportPanel::Shutdown()
     {
         ShutdownRhiPreview();
-        if (m_renderTarget)
-        {
-            m_renderTarget->Cleanup();
-            delete m_renderTarget;
-            m_renderTarget = nullptr;
-        }
-        if (m_scaledRenderTarget)
-        {
-            m_scaledRenderTarget->Cleanup();
-            delete m_scaledRenderTarget;
-            m_scaledRenderTarget = nullptr;
-        }
+        m_outputExtent = {};
+        m_scaledExtent = {};
     }
     ViewportPanel::~ViewportPanel() = default;
 }

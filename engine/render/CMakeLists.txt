@@ -1,13 +1,3 @@
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang"
-    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang")
-# The legacy GLSL path has no #include: inline the shared instruction semantics.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphCommon.slang" PLUTO_SHADER_GRAPH_COMMON)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ShaderGraphEvaluation.slang" PLUTO_SHADER_GRAPH_EVALUATION)
-string(REPLACE "#include \"ShaderGraphCommon.slang\"" "${PLUTO_SHADER_GRAPH_COMMON}"
-    PLUTO_SHADER_GRAPH_EVALUATION "${PLUTO_SHADER_GRAPH_EVALUATION}")
-configure_file(src/ShaderGraphEvaluation.h.in "${CMAKE_CURRENT_BINARY_DIR}/generated/ShaderGraphEvaluation.h" @ONLY)
-
 add_library(PlutoGERender
     src/RetainedRenderScene.cpp
     src/RenderSceneFrontend.cpp
@@ -66,9 +56,6 @@ add_library(PlutoGERender
     src/PostProcessResourcePool.cpp
     src/PostProcessGraphExecutor.cpp
     src/TextureManager.cpp
-    src/TexturePainter.cpp
-    src/Shader.cpp
-    src/BuiltinShaders.cpp
     src/ShaderArtifacts.cpp
     src/Texture.cpp
     src/TerrainLayers.cpp
@@ -79,17 +66,12 @@ add_library(PlutoGERender
     src/SlangShaderGraphCompiler.cpp
     src/ShaderGraphCpu.cpp
     src/ShaderGraphTessellation.cpp
-    src/Graphics.cpp
     src/rhi/DeferredCommandList.cpp
     src/rhi/RenderDeviceFactory.cpp
     src/rhi/opengl/OpenGLDevice.cpp
     src/rhi/vulkan/VulkanBootstrap.cpp
     src/rhi/vulkan/VulkanDevice.cpp
-    src/RenderTarget.cpp
-    src/SpatialUpscaler.cpp
-    src/GBuffer.cpp
     src/Mesh.cpp
-    src/Material.cpp
     src/postprocess/AutoExposureEffect.cpp
     src/postprocess/BloomEffect.cpp
     src/postprocess/ColorGradingEffect.cpp
@@ -601,7 +583,6 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::vulkan
 )
 
-target_include_directories(PlutoGERender PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 # Optional Slang runtime for shader-graph specialisation. It is loaded
 # dynamically, so only its headers are needed to build; executables copy the

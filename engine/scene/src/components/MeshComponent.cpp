@@ -78,13 +78,6 @@ namespace PlutoGE::scene
 
         bool CompareRenderCommandKeys(const render::RenderCommand &a, const render::RenderCommand &b)
         {
-            auto *aShader = a.material ? a.material->GetShader() : a.shader;
-            auto *bShader = b.material ? b.material->GetShader() : b.shader;
-            if (aShader != bShader)
-            {
-                return aShader < bShader;
-            }
-
             if (a.material != b.material)
             {
                 return a.material < b.material;
@@ -1781,7 +1774,6 @@ namespace PlutoGE::scene
                 m_previousSubmeshModels[submeshIndex] = submeshModelMatrix;
                 command.material = material;
                 command.mesh = m_mesh;
-                command.shader = material->GetShader();
                 // A skinned primitive's source vertices are stored in bind space,
                 // while the shader can move them well outside that primitive's
                 // original bounds. This is especially visible on assets split

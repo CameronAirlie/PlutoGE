@@ -28,11 +28,9 @@ namespace PlutoGE::render
     enum class TextureColorSpace : std::uint8_t;
     class Mesh;
     class Material;
-    class Shader;
     struct MaterialConfig;
     struct MeshConfig;
     struct AnimationClip;
-    struct ShaderSource;
     struct ShaderGraph;
 }
 
@@ -156,7 +154,6 @@ namespace PlutoGE::assets
         // Scoped scene-owned overrides borrow graph resources from this reader.
         // Weak registration refreshes external graph dependencies without ownership cycles.
         void RegisterInstanceMaterial(const std::shared_ptr<render::Material> &material);
-        render::Shader *CompileShaderGraphAsset(const std::string &assetReference, std::string *errorMessage = nullptr);
         render::Material *CreateDefaultMaterial();
         render::Material *CreateDefaultShadedMaterial();
 
@@ -224,7 +221,6 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, std::uint64_t> m_postProcessPresetRevisions;
         std::uint64_t m_lastPostProcessPresetRevision = 0;
         void BumpPostProcessPresetRevision(const std::string &assetReference);
-        std::unordered_map<std::string, std::pair<std::uint64_t, render::Shader *>> m_shaderGraphShaderCache;
 
         void RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference);
         std::string ResolveMaterialTexturePath(const std::string &texturePath) const;

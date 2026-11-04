@@ -146,22 +146,19 @@ For the separate legacy/reference-resolution workflow, to scale the whole docume
 Canvas, while its screen-match controls determine how aspect-ratio differences
 are handled.
 
-### Blurred backdrops
+### Translucent backdrops
 
-In the legacy GL3 host, RmlUi's `backdrop-filter` operates on the rendered game scene behind an
-element. The shared Vulkan/OpenGL RHI host does not implement general backdrop-filter layers; use a translucent panel there. Combine it with a translucent background so the blur remains visible:
+RmlUi's `backdrop-filter` and `filter` properties parse but are not rendered:
+the shared Vulkan/OpenGL RHI renderer implements no filter callbacks, so there
+is no blur. Use a translucent background to dim the scene behind a menu:
 
 ```css
 #backdrop {
     width: 100%;
     height: 100%;
     background-color: #05080d99;
-    backdrop-filter: blur(8px);
 }
 ```
-
-Large blur radii and full-screen filtered elements cost more GPU time than
-small local panels, so use the lowest radius that suits the design.
 
 ## 3. Add behaviour with C# (optional)
 
@@ -238,9 +235,9 @@ If nothing appears:
 
 - Confirm the RmlUi Canvas has a Document selected.
 - Confirm the Canvas entity and its parent entities are active.
-- For distance scaling, choose **World Space**, not **World Screen Space**, and
-  leave **World Size Mode** set to **World Units**. World Screen Space and
-  Constant Screen Size intentionally remain the same pixel size at any distance.
+- RmlUi does not draw **World Space** canvases. Use **World Screen Space** for
+  world-anchored documents; it intentionally keeps the same pixel size at any
+  distance.
 - Confirm the path is beneath `Assets` and uses the correct capitalization.
 - Confirm the RML has a `<body>` and the RCSS gives visible elements dimensions,
   colors, or backgrounds.
@@ -257,18 +254,10 @@ For a complete interactive example, see `samples/rmlui/pause-menu.rml`,
 ## World-anchored UI
 
 An RmlUi Canvas can use either **RML Document** or **Text** as its Content
-Source. Text mode generates a lightweight RmlUi document at runtime from a
-UI Text component on the same entity. Add UI Text, set its Text and Font Path,
-then choose either a screen-space mode or WorldSpace exactly as for an RML
-document. Changing the content source does not require replacing the Canvas or
-RectTransform.
-
-Text mode intentionally exposes only three display spaces: **Screen Space**,
-**World Space** (a physical entity-oriented plane), and **World Screen Space**
-(a camera-facing overlay). Canvas scaling, world-size, and Face Camera options
-are fixed by that selection and hidden for text canvases. In World Space, the
-entity's X/Y scale sets the plane's physical width and height; RectTransform
-size sets only the generated texture resolution and text-layout area.
+Source. Text mode generates a lightweight RmlUi document from a UI Text
+component on the same entity, but only for a **World Space** canvas, which
+RmlUi does not draw. A Text canvas therefore currently shows nothing; use an
+RML document, or a native Canvas with UI Text, for visible text.
 
 RmlUi canvases can also follow scene entities. Add a RectTransform to the same
 entity as the Canvas; its Size Delta is the document size and its Pivot selects
@@ -276,16 +265,13 @@ the point placed on the entity's world position.
 
 - Use **WorldSpaceOverlay** for enemy health bars, names, and markers that must
   stay the same size on screen.
-- Use **WorldSpace** for a transparent, depth-tested plane that follows the
-  entity's full world transform. This is suitable for signs, screens, and text
-  placed directly on walls. The conversion is 100 UI units per world unit.
-  Disable **Face Camera** to use the entity's rotation, or enable it for a
-  billboard. **Constant Screen Size** retains the RectTransform's pixel size;
-  **Distance Scaled** grows the physical plane with camera distance.
+- **WorldSpace** is not drawn for RmlUi: there is no depth-tested texture
+  plane. The document is still loaded per entity and kept hidden, so scripts
+  can address it, but it never shows or receives input. Native canvases still
+  render World Space as a projected billboard.
 - A projected document is hidden while its anchor is behind the camera or
   outside the camera's near/far clip range.
 
 The same RML document may be assigned to multiple world Canvas entities; each
 entity receives its own document instance. WorldSpaceOverlay RmlUi is composited
-over the scene without depth testing. WorldSpace planes use scene depth and can
-be occluded.
+over the scene without depth testing.

@@ -509,12 +509,6 @@ namespace PlutoGE::scene
 
         bool CompareRenderCommandKeys(const render::RenderCommand &a, const render::RenderCommand &b)
         {
-            auto *aShader = a.material ? a.material->GetShader() : a.shader;
-            auto *bShader = b.material ? b.material->GetShader() : b.shader;
-            if (aShader != bShader)
-            {
-                return aShader < bShader;
-            }
             if (a.material != b.material)
             {
                 return a.material < b.material;
@@ -670,7 +664,6 @@ namespace PlutoGE::scene
                     command.previousModel = command.model;
                     command.material = material;
                     command.mesh = type.mesh;
-                    command.shader = material->GetShader();
                     command.worldBounds = cluster.bounds;
                     command.previousWorldBounds = command.worldBounds;
                     command.instanceModels = cluster.models;

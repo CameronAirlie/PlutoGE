@@ -234,7 +234,6 @@ namespace PlutoGE::scene
             command.previousModel = m_hasPreviousModelMatrix ? m_previousModelMatrix : modelMatrix;
             command.material = material;
             command.mesh = m_mesh.get();
-            command.shader = material->GetShader();
             command.worldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, modelMatrix);
             command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
             command.submeshIndex = static_cast<uint32_t>(submeshIndex);

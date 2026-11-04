@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstdint>
 #include <future>
+#include <iostream>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -916,7 +917,7 @@ namespace PlutoGE::scene
             for (const auto &triangle : triangles)
             {
                 auto *texture = triangle.albedoTexture;
-                if (!texture || texture->GetType() != GL_TEXTURE_2D || textureCache.find(texture) != textureCache.end())
+                if (!texture || texture->GetKind() != render::TextureKind::Texture2D || textureCache.find(texture) != textureCache.end())
                 {
                     continue;
                 }

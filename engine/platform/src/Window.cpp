@@ -1,4 +1,8 @@
 #include "PlutoGE/platform/Window.h"
+#ifdef _WIN32
+// Before glad, so glad keeps the Windows APIENTRY definition.
+#include <windows.h>
+#endif
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -10,7 +14,6 @@ extern "C" int plutoSetJoystickRumble(int, unsigned short, unsigned short);
 #ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
-#include <windows.h>
 #include "../../../packaging/branding/PlutoGEResource.h"
 #endif
 
@@ -747,19 +750,7 @@ namespace PlutoGE::platform
             return false;
         }
 
-        const bool textureDispatchReady =
-            glad_glGenTextures != nullptr &&
-            glad_glDeleteTextures != nullptr &&
-            glad_glBindTexture != nullptr &&
-            glad_glTexImage2D != nullptr &&
-            glad_glTexStorage2D != nullptr &&
-            glad_glTexSubImage2D != nullptr &&
-            glad_glTexParameteri != nullptr &&
-            glad_glBindBuffer != nullptr &&
-            glad_glPixelStorei != nullptr &&
-            glad_glGenerateMipmap != nullptr;
-
-        if (reloadFunctions || !GLAD_GL_VERSION_4_3 || !textureDispatchReady)
+        if (reloadFunctions || !GLAD_GL_VERSION_4_3)
         {
             if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
             {
@@ -767,17 +758,7 @@ namespace PlutoGE::platform
             }
         }
 
-        return GLAD_GL_VERSION_4_3 &&
-               glad_glGenTextures != nullptr &&
-               glad_glDeleteTextures != nullptr &&
-               glad_glBindTexture != nullptr &&
-               glad_glTexImage2D != nullptr &&
-               glad_glTexStorage2D != nullptr &&
-               glad_glTexSubImage2D != nullptr &&
-               glad_glTexParameteri != nullptr &&
-               glad_glBindBuffer != nullptr &&
-               glad_glPixelStorei != nullptr &&
-               glad_glGenerateMipmap != nullptr;
+        return GLAD_GL_VERSION_4_3 != 0;
     }
 
     std::string Window::GetClipboardText() const

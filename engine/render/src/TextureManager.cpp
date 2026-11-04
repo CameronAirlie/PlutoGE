@@ -6,11 +6,8 @@
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/DdsImage.h"
-#include "PlutoGE/platform/Window.h"
-#include <glad/glad.h>
 
 #include <algorithm>
-#include <cmath>
 #include <cctype>
 #include <fstream>
 #include <filesystem>
@@ -62,24 +59,6 @@ namespace PlutoGE::render
             std::string bytes;
             if (!content::ReadFile(path, bytes) || bytes.size() > INT_MAX) return false;
             return stbi_is_hdr_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size())) != 0;
-        }
-        constexpr float kMaxHalfFloatValue = 65504.0f;
-
-        GLenum ResolveTextureFormat(int channels)
-        {
-            switch (channels)
-            {
-            case 1:
-                return GL_RED;
-            case 2:
-                return GL_RG;
-            case 3:
-                return GL_RGB;
-            case 4:
-                return GL_RGBA;
-            default:
-                return GL_RGBA;
-            }
         }
 
         struct PfmImageData
@@ -148,78 +127,6 @@ namespace PlutoGE::render
             return true;
         }
 
-        void ConfigureTexture2D(GLenum wrapMode, bool generateMipmaps)
-        {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generateMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-
-        GLenum ResolveFloatTextureInternalFormat(int channels)
-        {
-            if (channels >= 4)
-            {
-                return GL_RGBA16F;
-            }
-
-            if (channels == 1)
-            {
-                return GL_R16F;
-            }
-
-            return GL_RGB16F;
-        }
-
-        std::vector<float> ExpandFloatPixelsToRgba(const float *pixels, int width, int height, int channels)
-        {
-            const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-            std::vector<float> rgbaPixels(pixelCount * 4, 1.0f);
-            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
-            {
-                const std::size_t srcOffset = pixelIndex * static_cast<std::size_t>(channels);
-                const std::size_t dstOffset = pixelIndex * 4;
-
-                if (channels >= 1)
-                {
-                    rgbaPixels[dstOffset] = pixels[srcOffset];
-                    rgbaPixels[dstOffset + 1] = pixels[srcOffset];
-                    rgbaPixels[dstOffset + 2] = pixels[srcOffset];
-                }
-
-                if (channels >= 2)
-                {
-                    rgbaPixels[dstOffset + 1] = pixels[srcOffset + 1];
-                }
-
-                if (channels >= 3)
-                {
-                    rgbaPixels[dstOffset + 2] = pixels[srcOffset + 2];
-                }
-
-                if (channels >= 4)
-                {
-                    rgbaPixels[dstOffset + 3] = pixels[srcOffset + 3];
-                }
-            }
-
-            return rgbaPixels;
-        }
-
-        void SanitizeFloatPixelsForHalfFloatUpload(std::vector<float> &pixels)
-        {
-            for (float &component : pixels)
-            {
-                if (!std::isfinite(component) || component < 0.0f)
-                {
-                    component = 0.0f;
-                    continue;
-                }
-
-                component = std::min(component, kMaxHalfFloatValue);
-            }
-        }
-
         std::string ToLower(std::string value)
         {
             std::transform(value.begin(), value.end(), value.begin(),
@@ -228,49 +135,6 @@ namespace PlutoGE::render
                                return static_cast<char>(std::tolower(character));
                            });
             return value;
-        }
-
-        void ConfigureEnvironmentTexture2D(bool generateMipmaps)
-        {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, generateMipmaps ? GL_LINEAR_MIPMAP_LINEAR : GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        }
-
-        GLint ResolveByteTextureInternalFormat(int channels)
-        {
-            switch (channels)
-            {
-            case 1:
-                return GL_R8;
-            case 2:
-                return GL_RG8;
-            case 3:
-                return GL_RGB8;
-            case 4:
-                return GL_RGBA8;
-            default:
-                return GL_RGBA8;
-            }
-        }
-
-        GLint ResolveByteTextureInternalFormat(int channels, TextureColorSpace colorSpace)
-        {
-            if (colorSpace == TextureColorSpace::SRGB)
-            {
-                switch (channels)
-                {
-                case 3:
-                    return GL_SRGB8;
-                case 4:
-                    return GL_SRGB8_ALPHA8;
-                default:
-                    break;
-                }
-            }
-
-            return ResolveByteTextureInternalFormat(channels);
         }
 
         const char *TextureColorSpaceSuffix(TextureColorSpace colorSpace)
@@ -301,80 +165,19 @@ namespace PlutoGE::render
             return rgbaPixels;
         }
 
-        bool IsTextureSizeSupported(int width, int height, bool hasOpenGLContext)
+        bool IsTextureSizeSupported(int width, int height)
         {
-            if (width <= 0 || height <= 0)
-            {
-                return false;
-            }
-
-            // Dispatch pointers survive an OpenGL-to-Vulkan host switch. They do
-            // not establish that an OpenGL context is available for this query.
-            if (!hasOpenGLContext)
-                return width <= 16384 && height <= 16384;
-            GLint maximumTextureSize = 0;
-            glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximumTextureSize);
-            return maximumTextureSize > 0 && width <= maximumTextureSize && height <= maximumTextureSize;
-        }
-
-        void UploadTexture2D(GLint internalFormat, int width, int height, GLenum format, GLenum type, const void *pixels)
-        {
-            // A CPU pointer is interpreted as a byte offset whenever a pixel-unpack buffer is bound.
-            // Scene loading can happen between editor render passes, so never inherit that state from
-            // another uploader. Reset every unpack stride/offset that changes how the driver reads the
-            // supplied allocation before entering glTexImage2D.
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-            glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, 0);
-            glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
-            glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
-            glPixelStorei(GL_UNPACK_SKIP_IMAGES, 0);
-
-            GLsizei mipLevels = 1;
-            for (int largestDimension = std::max(width, height); largestDimension > 1; largestDimension /= 2)
-            {
-                ++mipLevels;
-            }
-
-            // Keep allocation separate from the client-memory transfer. Besides requiring an explicit
-            // storage format, this avoids the AMD glTexImage2D path that was crashing during scene load.
-            glTexStorage2D(GL_TEXTURE_2D, mipLevels, static_cast<GLenum>(internalFormat), width, height);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, pixels);
+            // The largest 2D extent both RHI backends accept.
+            constexpr int kMaxTextureExtent = 16384;
+            return width > 0 && height > 0 && width <= kMaxTextureExtent && height <= kMaxTextureExtent;
         }
     }
 
     TextureManager::~TextureManager()
     {
         if (!m_ownResources) return;
-        // Every insertion owns a fresh allocation. Retire GPU storage using
-        // this manager's context, before the generic Texture fallback destructor.
-        const bool gpu = PrepareForGpuAccess();
         for (const auto &[key, texture] : m_textureCache)
-        {
-            for (auto &framebuffer : texture->m_depthFramebuffers)
-            {
-                if (gpu && framebuffer) glDeleteFramebuffers(1, &framebuffer);
-                framebuffer = 0;
-            }
-            if (gpu && texture->m_textureID) glDeleteTextures(1, &texture->m_textureID);
-            texture->m_textureID = 0;
             delete texture;
-        }
-    }
-
-    bool TextureManager::PrepareForGpuAccess() const
-    {
-        if (!m_window || !m_window->IsOpen() ||
-            m_window->GetClientApi() != platform::WindowClientApi::OpenGL)
-        {
-            return false;
-        }
-
-        // File and scene resource uploads can occur between editor render passes,
-        // after a platform viewport used a different context. Refresh dispatch for
-        // the restored engine context before issuing allocation calls.
-        return m_window->EnsureOpenGLContextCurrent(true);
     }
 
     Texture *TextureManager::LoadRenderTexture(const std::string &assetPath)
@@ -426,38 +229,27 @@ namespace PlutoGE::render
             digest = content::HashContent(std::as_bytes(std::span(bytes.data(), bytes.size())));
             return true;
         };
-        const bool expectsGpu = m_window && m_window->IsOpen() &&
-            m_window->GetClientApi() == platform::WindowClientApi::OpenGL;
-        if (expectsGpu && !PrepareForGpuAccess()) return fail("Cannot acquire the image upload context; cached pixels were retained.");
         content::ContentDigest before, after;
         if (!hash(before)) return false;
         TextureManager staging(true);
-        staging.SetWindow(m_window);
         std::vector<std::pair<Texture *, Texture *>> replacements;
         for (const auto &[texture, colorSpace] : cached)
         {
             auto *replacement = staging.LoadTextureFromFile(filePath.c_str(), colorSpace);
-            if (!replacement || (expectsGpu && !replacement->m_textureID))
-                return fail("Changed image could not be decoded or uploaded; cached pixels were retained.");
+            if (!replacement)
+                return fail("Changed image could not be decoded; cached pixels were retained.");
             replacements.emplace_back(texture, replacement);
         }
         if (!hash(after)) return false;
         if (before != after) return fail("Image changed while preparing its refresh; cached pixels were retained.");
+        // Renderers see the stable object's new revision and upload it again.
         for (const auto &[texture, replacement] : replacements)
         {
-            std::swap(texture->m_textureID, replacement->m_textureID);
             std::swap(texture->m_width, replacement->m_width);
             std::swap(texture->m_height, replacement->m_height);
             std::swap(texture->m_channels, replacement->m_channels);
             texture->m_rgba8Pixels.swap(replacement->m_rgba8Pixels);
             ++texture->m_contentRevision;
-            // Retire the previous GL allocation using this manager's current
-            // context. Vulkan uploads observe the stable object's new revision.
-            if (replacement->m_textureID && PrepareForGpuAccess())
-            {
-                glDeleteTextures(1, &replacement->m_textureID);
-                replacement->m_textureID = 0;
-            }
         }
         if (error) error->clear();
         return true;
@@ -483,61 +275,33 @@ namespace PlutoGE::render
             return it->second;
         }
 
-        // Load the texture
-        // Load image data
         int width, height, channels;
         unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
-        if (data)
+        if (!data)
         {
-            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
-            {
-                stbi_image_free(data);
-                return nullptr;
-            }
-
-            TextureConfig config;
-            config.filePath = filePath;
-            Texture *texture = new Texture(config);
-            texture->m_rgba8Pixels = ExpandBytePixelsToRgba(data, width, height, channels);
-            // RGB file textures (normal maps in particular) use a driver-sensitive three-byte row
-            // layout. Upload an explicit RGBA8 allocation instead; alpha is opaque and RGB is exact.
-            std::vector<unsigned char> expandedPixels;
-            const unsigned char *uploadPixels = data;
-            int uploadChannels = channels;
-            if (channels == 3)
-            {
-                expandedPixels = texture->m_rgba8Pixels;
-                uploadPixels = expandedPixels.data();
-                uploadChannels = 4;
-            }
-            if (PrepareForGpuAccess())
-            {
-                glGenTextures(1, &texture->m_textureID);
-                glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-                ConfigureTexture2D(GL_REPEAT, true);
-                const GLenum format = ResolveTextureFormat(uploadChannels);
-                UploadTexture2D(ResolveByteTextureInternalFormat(uploadChannels, colorSpace), width, height, format, GL_UNSIGNED_BYTE, uploadPixels);
-                glGenerateMipmap(GL_TEXTURE_2D);
-            }
-
-            texture->m_width = width;
-            texture->m_height = height;
-            texture->m_channels = uploadChannels;
-
-            stbi_image_free(data);
-            if (!texture)
-            {
-                return nullptr;
-            }
-
-            m_textureCache[cacheKey] = texture;
-            return texture;
+            return nullptr;
         }
 
-        return nullptr; // Failed to load texture
+        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
+        {
+            stbi_image_free(data);
+            return nullptr;
+        }
+
+        TextureConfig config;
+        config.filePath = filePath;
+        Texture *texture = new Texture(config);
+        texture->m_rgba8Pixels = ExpandBytePixelsToRgba(data, width, height, channels);
+        texture->m_width = width;
+        texture->m_height = height;
+        texture->m_channels = channels;
+        stbi_image_free(data);
+
+        m_textureCache[cacheKey] = texture;
+        return texture;
     }
 
-    Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels, TextureColorSpace colorSpace)
+    Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels)
     {
         if (core::Engine::GetInstance().GetConfig().headless) return nullptr;
         auto it = m_textureCache.find(cacheKey);
@@ -546,12 +310,7 @@ namespace PlutoGE::render
             return it->second;
         }
 
-        if (!pixels || channels < 1 || channels > 4)
-        {
-            return nullptr;
-        }
-
-        if (!IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
+        if (!pixels || channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
         {
             return nullptr;
         }
@@ -559,18 +318,7 @@ namespace PlutoGE::render
         TextureConfig config;
         config.filePath = cacheKey;
         Texture *texture = new Texture(config);
-
         texture->m_rgba8Pixels = ExpandBytePixelsToRgba(pixels, width, height, channels);
-        if (PrepareForGpuAccess())
-        {
-            glGenTextures(1, &texture->m_textureID);
-            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-            ConfigureTexture2D(GL_REPEAT, true);
-            const GLenum format = ResolveTextureFormat(channels);
-            UploadTexture2D(ResolveByteTextureInternalFormat(channels, colorSpace), width, height, format, GL_UNSIGNED_BYTE, pixels);
-            glGenerateMipmap(GL_TEXTURE_2D);
-        }
-
         texture->m_width = width;
         texture->m_height = height;
         texture->m_channels = channels;
@@ -598,6 +346,10 @@ namespace PlutoGE::render
         const bool isPfm = lowerPath.size() >= 4 && lowerPath.compare(lowerPath.size() - 4, 4, ".pfm") == 0;
         const bool isHdr = lowerPath.size() >= 4 && lowerPath.compare(lowerPath.size() - 4, 4, ".hdr") == 0;
 
+        int width = 0;
+        int height = 0;
+        int channels = 0;
+        std::vector<unsigned char> rgba8Pixels;
         if (isPfm)
         {
             PfmImageData pfmImage;
@@ -606,224 +358,47 @@ namespace PlutoGE::render
                 return nullptr;
             }
 
-            if (!IsTextureSizeSupported(pfmImage.width, pfmImage.height, PrepareForGpuAccess()))
-            {
-                return nullptr;
-            }
-
-            SanitizeFloatPixelsForHalfFloatUpload(pfmImage.pixels);
-
-            const bool useRgbaUpload = pfmImage.channels > 1 && pfmImage.channels < 4;
-            const GLenum format = useRgbaUpload ? GL_RGBA : ResolveTextureFormat(pfmImage.channels);
-            const GLenum internalFormat = useRgbaUpload ? GL_RGBA16F : ResolveFloatTextureInternalFormat(pfmImage.channels);
-            std::vector<float> expandedPixels;
-            const float *uploadPixels = pfmImage.pixels.data();
-            if (useRgbaUpload)
-            {
-                expandedPixels = ExpandFloatPixelsToRgba(pfmImage.pixels.data(), pfmImage.width, pfmImage.height, pfmImage.channels);
-                uploadPixels = expandedPixels.data();
-            }
-            TextureConfig config;
-            config.filePath = environmentPath;
-            Texture *texture = new Texture(config);
-
-            if (PrepareForGpuAccess())
-            {
-                glGenTextures(1, &texture->m_textureID);
-                glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-                ConfigureEnvironmentTexture2D(true);
-                UploadTexture2D(static_cast<GLint>(internalFormat), pfmImage.width, pfmImage.height, format, GL_FLOAT, uploadPixels);
-                glGenerateMipmap(GL_TEXTURE_2D);
-            }
-
-            texture->m_width = pfmImage.width;
-            texture->m_height = pfmImage.height;
-            texture->m_channels = pfmImage.channels;
-
-            m_textureCache[environmentPath] = texture;
-            return texture;
+            width = pfmImage.width;
+            height = pfmImage.height;
+            channels = pfmImage.channels;
         }
-
-        if (isHdr || IsHdrImage(filePath))
+        else if (isHdr || IsHdrImage(filePath))
         {
-            int width = 0;
-            int height = 0;
-            int channels = 0;
             float *data = LoadFloatImage(filePath, &width, &height, &channels, 0);
             if (!data)
             {
                 return nullptr;
             }
-
-            if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
+            stbi_image_free(data);
+        }
+        else
+        {
+            unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
+            if (!data)
             {
-                stbi_image_free(data);
                 return nullptr;
             }
-
-            const bool useRgbaUpload = channels > 1 && channels < 4;
-            const GLenum format = useRgbaUpload ? GL_RGBA : ResolveTextureFormat(channels);
-            const GLenum internalFormat = useRgbaUpload ? GL_RGBA16F : ResolveFloatTextureInternalFormat(channels);
-            std::vector<float> sanitizedPixels(data, data + static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * static_cast<std::size_t>(channels));
-            SanitizeFloatPixelsForHalfFloatUpload(sanitizedPixels);
-
-            std::vector<float> expandedPixels;
-            const float *uploadPixels = sanitizedPixels.data();
-            if (useRgbaUpload)
-            {
-                expandedPixels = ExpandFloatPixelsToRgba(sanitizedPixels.data(), width, height, channels);
-                uploadPixels = expandedPixels.data();
-            }
-            TextureConfig config;
-            config.filePath = environmentPath;
-            Texture *texture = new Texture(config);
-
-            if (PrepareForGpuAccess())
-            {
-                glGenTextures(1, &texture->m_textureID);
-                glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-                ConfigureEnvironmentTexture2D(true);
-                UploadTexture2D(static_cast<GLint>(internalFormat), width, height, format, GL_FLOAT, uploadPixels);
-                glGenerateMipmap(GL_TEXTURE_2D);
-            }
-
-            texture->m_width = width;
-            texture->m_height = height;
-            texture->m_channels = channels;
-
+            if (channels >= 1 && channels <= 4)
+                rgba8Pixels = ExpandBytePixelsToRgba(data, width, height, channels);
             stbi_image_free(data);
-
-            m_textureCache[environmentPath] = texture;
-            return texture;
         }
 
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
-        if (!data)
+        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
         {
             return nullptr;
         }
 
-        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height, PrepareForGpuAccess()))
-        {
-            stbi_image_free(data);
-            return nullptr;
-        }
-
+        // Floating-point maps are decoded to validate them, but no renderer
+        // samples their texels, so only their size is kept.
         TextureConfig config;
         config.filePath = environmentPath;
         Texture *texture = new Texture(config);
-        texture->m_rgba8Pixels = ExpandBytePixelsToRgba(data, width, height, channels);
-
-        if (PrepareForGpuAccess())
-        {
-            glGenTextures(1, &texture->m_textureID);
-            glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-            ConfigureEnvironmentTexture2D(true);
-            const GLenum format = ResolveTextureFormat(channels);
-            UploadTexture2D(ResolveByteTextureInternalFormat(channels), width, height, format, GL_UNSIGNED_BYTE, data);
-            glGenerateMipmap(GL_TEXTURE_2D);
-        }
-
+        texture->m_rgba8Pixels = std::move(rgba8Pixels);
         texture->m_width = width;
         texture->m_height = height;
         texture->m_channels = channels;
 
-        stbi_image_free(data);
-
         m_textureCache[environmentPath] = texture;
-        return texture;
-    }
-
-    Texture *TextureManager::CreateDepthTexture(int width, int height)
-    {
-        if (width <= 0 || height <= 0 || !PrepareForGpuAccess())
-        {
-            return nullptr;
-        }
-
-        TextureConfig config;
-        Texture *texture = new Texture(config);
-        glGenTextures(1, &texture->m_textureID);
-        glBindTexture(GL_TEXTURE_2D, texture->m_textureID);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
-        float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
-        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-
-        texture->m_width = width;
-        texture->m_height = height;
-        texture->m_channels = 1; // Depth textures have 1 channel
-
-        return texture;
-    }
-
-    Texture *TextureManager::CreateDepthCubemap(int width, int height)
-    {
-        if (width <= 0 || height <= 0 || !PrepareForGpuAccess())
-        {
-            return nullptr;
-        }
-
-        TextureConfig config;
-        Texture *texture = new Texture(config);
-        texture->m_type = GL_TEXTURE_CUBE_MAP;
-
-        glGenTextures(1, &texture->m_textureID);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, texture->m_textureID);
-        for (unsigned int face = 0; face < 6; ++face)
-        {
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-        }
-
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-        texture->m_width = width;
-        texture->m_height = height;
-        texture->m_channels = 1;
-
-        return texture;
-    }
-
-    Texture *TextureManager::CreateColorCubemap(int width, int height)
-    {
-        if (width <= 0 || height <= 0 || !PrepareForGpuAccess())
-        {
-            return nullptr;
-        }
-
-        TextureConfig config;
-        Texture *texture = new Texture(config);
-        texture->m_type = GL_TEXTURE_CUBE_MAP;
-
-        glGenTextures(1, &texture->m_textureID);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, texture->m_textureID);
-        for (unsigned int face = 0; face < 6; ++face)
-        {
-            glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-        }
-
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-
-        texture->m_width = width;
-        texture->m_height = height;
-        texture->m_channels = 4;
         return texture;
     }
 }

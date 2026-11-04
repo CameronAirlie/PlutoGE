@@ -2,14 +2,12 @@
 
 #include "PlutoGE/render/HumanoidRig.h"
 
-#include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <string>
 #include <vector>
 #include <array>
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <limits>
 #include <memory>
 #include <atomic>
@@ -206,7 +204,6 @@ namespace PlutoGE::render
         std::vector<AnimationClip> animations;
     };
 
-    class Graphics;
     class Mesh
     {
     public:
@@ -246,13 +243,6 @@ namespace PlutoGE::render
                     m_meshData, submesh.indexOffset, submesh.indexCount,
                     submesh.boundsMin, submesh.boundsMax);
             }
-        }
-
-        static Mesh *CreateInitialized(const MeshConfig &config)
-        {
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
         }
 
         static Mesh *Cube()
@@ -329,10 +319,7 @@ namespace PlutoGE::render
             config.data = std::move(meshData);
             config.hasLightmapUvs = true;
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *Quad()
@@ -356,9 +343,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *Plane()
@@ -423,9 +408,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *Cylinder(unsigned int segments = 32)
@@ -492,134 +475,13 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
 
         static Mesh *FromConfig(MeshConfig config)
         {
-            Mesh *mesh = new Mesh(config);
-            mesh->Initialize();
-            return mesh;
+            return new Mesh(config);
         }
-
-        void Bind() const
-        {
-            glBindVertexArray(m_VAO);
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
-        }
-
-        void Draw() const
-        {
-            Bind();
-            DrawBound();
-        }
-
-        void DrawBound() const
-        {
-            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(GetIndexCount()), GL_UNSIGNED_INT, nullptr);
-        }
-
-        void DrawInstancedBound(std::size_t instanceCount) const
-        {
-            if (instanceCount == 0 || GetIndexCount() == 0)
-            {
-                return;
-            }
-
-            glDrawElementsInstanced(
-                GL_TRIANGLES,
-                static_cast<GLsizei>(GetIndexCount()),
-                GL_UNSIGNED_INT,
-                nullptr,
-                static_cast<GLsizei>(instanceCount));
-        }
-
-        void DrawSubmesh(size_t submeshIndex, size_t lodIndex = 0) const
-        {
-            Bind();
-            DrawSubmeshBound(submeshIndex, lodIndex);
-        }
-
-        void DrawSubmeshBound(size_t submeshIndex, size_t lodIndex = 0) const
-        {
-            if (submeshIndex >= m_config.submeshes.size())
-            {
-                DrawBound();
-                return;
-            }
-
-            const auto &submesh = m_config.submeshes[submeshIndex];
-            const auto range = ResolveSubmeshLodRange(submesh, lodIndex, m_config.data.indices.size());
-            if (range.indexCount == 0)
-            {
-                return;
-            }
-
-            glDrawElements(
-                GL_TRIANGLES,
-                static_cast<GLsizei>(range.indexCount),
-                GL_UNSIGNED_INT,
-                reinterpret_cast<const void *>(static_cast<uintptr_t>(range.indexOffset) * sizeof(unsigned int)));
-        }
-
-        void DrawSubmeshInstancedBound(size_t submeshIndex, std::size_t instanceCount, size_t lodIndex = 0) const
-        {
-            if (instanceCount == 0)
-            {
-                return;
-            }
-
-            if (submeshIndex >= m_config.submeshes.size())
-            {
-                DrawInstancedBound(instanceCount);
-                return;
-            }
-
-            const auto &submesh = m_config.submeshes[submeshIndex];
-            const auto range = ResolveSubmeshLodRange(submesh, lodIndex, m_config.data.indices.size());
-            if (range.indexCount == 0)
-            {
-                return;
-            }
-
-            glDrawElementsInstanced(
-                GL_TRIANGLES,
-                static_cast<GLsizei>(range.indexCount),
-                GL_UNSIGNED_INT,
-                reinterpret_cast<const void *>(static_cast<uintptr_t>(range.indexOffset) * sizeof(unsigned int)),
-                static_cast<GLsizei>(instanceCount));
-        }
-
-        void DrawSubmeshInstancedBaseInstanceBound(size_t submeshIndex,
-                                                   std::size_t instanceCount,
-                                                   std::size_t baseInstance,
-                                                   size_t lodIndex = 0) const
-        {
-            if (instanceCount == 0)
-            {
-                return;
-            }
-
-            const auto range = submeshIndex < m_config.submeshes.size()
-                                   ? ResolveSubmeshLodRange(m_config.submeshes[submeshIndex], lodIndex, m_config.data.indices.size())
-                                   : Submesh::LodRange{0, static_cast<uint32_t>(m_config.data.indices.size())};
-            if (range.indexCount == 0)
-            {
-                return;
-            }
-
-            glDrawElementsInstancedBaseInstance(
-                GL_TRIANGLES,
-                static_cast<GLsizei>(range.indexCount),
-                GL_UNSIGNED_INT,
-                reinterpret_cast<const void *>(static_cast<uintptr_t>(range.indexOffset) * sizeof(unsigned int)),
-                static_cast<GLsizei>(instanceCount),
-                static_cast<GLuint>(baseInstance));
-        }
-
-        ~Mesh();
 
         size_t GetVertexCount() const { return m_config.data.vertices.size(); }
         size_t GetIndexCount() const { return m_config.data.indices.size(); }
@@ -736,11 +598,6 @@ namespace PlutoGE::render
                 if (index >= data.vertices.size()) return false;
             return true;
         }
-        GLuint GetVAO() const { return m_VAO; }
-
-        // protected:
-        //     friend class Graphics;
-
     private:
         bool m_geometryImmutable = false;
 
@@ -971,58 +828,10 @@ namespace PlutoGE::render
 
         MeshConfig m_config;
         std::array<std::shared_ptr<Mesh>,3> m_tessellated;
-        GLuint m_VAO = 0;    // Vertex Array Object
-        GLuint m_VBO = 0;    // Vertex Buffer Object
-        GLuint m_EBO = 0;    // Element Buffer Object (for indexed drawing)
         MeshData m_meshData; // Mesh data (vertices and indices)
         MeshBounds m_bounds;
         inline static std::atomic<std::uint64_t> s_contentEpoch{1};
         std::uint64_t m_contentRevision = 1;
         std::shared_ptr<const void> m_lifetimeToken = std::make_shared<const int>(0);
-
-        void Initialize()
-        {
-            // Mesh CPU data remains usable by the RHI when no OpenGL dispatch
-            // table exists (for example a GLFW_NO_API Vulkan runtime window).
-            if (!glad_glGenVertexArrays)
-                return;
-            // Generate and bind VAO, VBO, and EBO here
-            glGenVertexArrays(1, &m_VAO);
-            glGenBuffers(1, &m_VBO);
-            glGenBuffers(1, &m_EBO);
-
-            glBindVertexArray(m_VAO);
-
-            glBindBuffer(GL_ARRAY_BUFFER, m_VBO);
-            glBufferData(GL_ARRAY_BUFFER, m_meshData.vertices.size() * sizeof(MeshVertexData), m_meshData.vertices.data(), GL_STATIC_DRAW);
-
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
-            glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_meshData.indices.size() * sizeof(unsigned int), m_meshData.indices.data(), GL_STATIC_DRAW);
-
-            // Set up vertex attribute pointers here based on your MeshVertexData structure
-            glEnableVertexAttribArray(0); // Position
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, position));
-            glEnableVertexAttribArray(1); // Normal
-            glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, normal));
-            glEnableVertexAttribArray(2); // UV
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv));
-            glEnableVertexAttribArray(3); // Tangent
-            glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, tangent));
-            glEnableVertexAttribArray(4); // Secondary UVs
-            glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv2));
-            glEnableVertexAttribArray(14); // Joints
-            glVertexAttribIPointer(14, 4, GL_INT, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, joints));
-            glEnableVertexAttribArray(15); // Weights
-            glVertexAttribPointer(15, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, weights));
-
-            glBindVertexArray(0); // Unbind VAO after setup
-
-            // Check for OpenGL errors after buffer setup
-            GLenum err = glGetError();
-            if (err != GL_NO_ERROR)
-            {
-                std::cerr << "OpenGL error after Mesh buffer setup: " << err << std::endl;
-            }
-        }
     };
 }

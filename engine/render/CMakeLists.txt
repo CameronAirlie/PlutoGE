@@ -575,13 +575,14 @@ target_link_libraries(PlutoGERender PUBLIC
     PlutoGE::Platform
     PlutoGE::Assets
     PlutoGE::Core
-    PlutoGE::glad
     PlutoGE::Scene
     PlutoGE::UI
     PlutoGE::stb_image
     PlutoGE::rmlui
     PlutoGE::vulkan
 )
+# Only the OpenGL RHI device calls OpenGL.
+target_link_libraries(PlutoGERender PRIVATE PlutoGE::glad)
 
 
 # Optional Slang runtime for shader-graph specialisation. It is loaded

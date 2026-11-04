@@ -103,7 +103,6 @@ if (PLUTO_ENABLE_PCH)
         <limits> <map> <memory> <mutex> <optional> <set> <span> <sstream>
         <stdexcept> <string> <string_view> <unordered_map> <unordered_set>
         <utility> <variant> <vector>
-        <glad/glad.h>
         <glm/glm.hpp> <glm/gtc/matrix_transform.hpp> <glm/gtc/quaternion.hpp>
         <glm/gtc/type_ptr.hpp>)
     foreach(target PlutoGERender PlutoGEScene PlutoGEAssets PlutoGEEditorUI PlutoGERuntime)

@@ -390,8 +390,7 @@ namespace PlutoGE::core
                         texture.pixels.data(),
                         texture.width,
                         texture.height,
-                        texture.channels,
-                        ResolveTextureColorSpace(texture.colorSpace));
+                        texture.channels);
                     profile.textureResolveMs += ElapsedMilliseconds(textureResolveStart);
                     profile.memoryTextureUploads += 1;
                     resolvedTextures[textureIndex] = tex;

@@ -1,3 +1,4 @@
+#include <glad/glad.h>
 #include "PlutoGE/render/RmlUiRhiRenderer.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/rhi/DeferredCommandList.h"

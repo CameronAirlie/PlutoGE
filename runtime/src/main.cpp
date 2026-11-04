@@ -1,6 +1,4 @@
 #include "PlutoGE/core/LoadingScreenSession.h"
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
 #include "RuntimeProfiler.h"
 #include "RuntimeContent.h"
 #include "ProjectBenchmark.h"
@@ -46,6 +44,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+#include <GLFW/glfw3.h>
 
 namespace PlutoGE
 {

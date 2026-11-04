@@ -314,7 +314,7 @@ namespace PlutoGE::scene
                                                       float thickness,
                                                       float uvMetersPerTile,
                                                       bool closed,
-                                                      bool includeSideFaces = true, float guardrailHeight = 0, bool initializeGraphics = true, int lodCount = 1,
+                                                      bool includeSideFaces = true, float guardrailHeight = 0, int lodCount = 1,
                                                       const std::vector<glm::vec3> *tangents = nullptr)
         {
             if (centers.size() < 2)
@@ -485,8 +485,7 @@ namespace PlutoGE::scene
                 }
                 submesh.lods.push_back({offset, count, 0.0f, 256.0f / static_cast<float>(stride)});
             }
-            return initializeGraphics ? std::unique_ptr<render::Mesh>(render::Mesh::CreateInitialized(config))
-                                      : std::make_unique<render::Mesh>(config);
+            return std::make_unique<render::Mesh>(config);
         }
 
     }
@@ -756,7 +755,7 @@ namespace PlutoGE::scene
                     BuildAdaptiveSplineCenters(m_points, m_closed, m_samplesPerSegment, m_maxChordError,
                         m_maxTangentAngleDegrees, centers, rotations, static_cast<int>(index), &tangents);
                     segment.visual = BuildSplineMesh(centers, &rotations, m_width, m_thickness, m_uvMetersPerTile,
-                        false, true, m_guardrailHeight, false, m_lodCount, &tangents);
+                        false, true, m_guardrailHeight, m_lodCount, &tangents);
                     segment.visualRows = centers.size();
                     segment.visualLength = pathLength(centers);
                 }
@@ -766,7 +765,7 @@ namespace PlutoGE::scene
                     segment.collisionPath = BuildSplineCenters(m_points, m_closed,
                         std::min(m_samplesPerSegment, m_collisionSamplesPerSegment), &rotations, static_cast<int>(index), &tangents);
                     segment.collision = BuildSplineMesh(segment.collisionPath, &rotations, m_width, m_thickness, m_uvMetersPerTile,
-                        false, false, m_guardrailHeight, false, 1, &tangents);
+                        false, false, m_guardrailHeight, 1, &tangents);
                     segment.collisionLength = pathLength(segment.collisionPath);
                 }
                 segment.controlPoints = points;
@@ -784,7 +783,7 @@ namespace PlutoGE::scene
         // CPU geometry is rebuilt only for changed Catmull-Rom neighbourhoods.
         // GPU publication is a single owning-thread mesh replacement; each cached
         // segment becomes a submesh with independent renderer-selected LODs.
-        m_generatedMesh.reset(visual.data.indices.empty() ? nullptr : render::Mesh::CreateInitialized(visual));
+        m_generatedMesh.reset(visual.data.indices.empty() ? nullptr : render::Mesh::FromConfig(visual));
         m_generatedCollisionMesh = collision.data.indices.empty() ? nullptr : std::make_unique<render::Mesh>(collision);
         m_dirty = false;
         ApplyGeneratedComponents();

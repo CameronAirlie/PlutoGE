@@ -1,7 +1,5 @@
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/core/CpuTrace.h"
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
@@ -69,6 +67,7 @@
 #include <unistd.h>
 #define PLUTO_HOST_CALL
 #endif
+#include <GLFW/glfw3.h>
 
 namespace PlutoGE::scripting
 {
@@ -1725,7 +1724,6 @@ namespace PlutoGE::scripting
                 if (light->type != scene::LightType::Directional) continue;
                 light->directionalShadowSettings.resolution = resolution;
                 light->isDirty = true;
-                light->staticShadowCascadeValid.fill(false);
             }
             return 1;
         }

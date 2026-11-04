@@ -17,8 +17,9 @@ add_library(PlutoGE::Platform ALIAS PlutoGEPlatform)
 target_link_libraries(PlutoGEPlatform PUBLIC
     PlutoGE::Content
     PlutoGE::glfw
-    PlutoGE::glad
 )
+# Window loads the OpenGL dispatch table for OpenGL client windows.
+target_link_libraries(PlutoGEPlatform PRIVATE PlutoGE::glad)
 
 if (WIN32)
     target_link_libraries(PlutoGEPlatform PRIVATE comctl32 dwmapi)

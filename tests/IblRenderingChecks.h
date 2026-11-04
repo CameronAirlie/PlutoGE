@@ -39,8 +39,8 @@ inline void CheckIblRendering(PlutoGE::render::rhi::IRenderDevice &device,
     scene::IblCaptureComponent restored;
     restored.Deserialize(component.Serialize());
     require(restored.IsAutomaticallyPlaced(), "Generated reflection ownership is not persisted");
-    require(restored.GetCaptureTexture() && restored.GetCaptureTexture()->GetTextureID() == 0 &&
-        restored.GetCaptureTexture()->GetCubemapPixels()[0] == 2, "Saved HDR capture requires OpenGL or clips highlights");
+    require(restored.GetCaptureTexture() && restored.GetCaptureTexture()->GetCubemapPixels()[0] == 2,
+        "Saved HDR capture clips highlights");
     require(!restored.SetCapturePixels({}), "Invalid capture replaced the previous result");
     scene::Scene scene;
     auto volume = restored.BuildCaptureVolume();

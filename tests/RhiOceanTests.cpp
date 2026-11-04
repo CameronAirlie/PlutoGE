@@ -1,3 +1,4 @@
+#include <glad/glad.h>
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/RhiOcean.h"
 #include "PlutoGE/render/ShaderArtifacts.h"

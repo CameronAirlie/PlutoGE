@@ -47,7 +47,7 @@ Relevant implementation locations:
 - `engine/render/src/rhi/vulkan/VulkanDevice.cpp`: `EnsureUniformResident`, `UpdateBuffer`.
 - `engine/render/include/PlutoGE/render/Mesh.h`: `UpdateVertexData`.
 
-`UpdateVertexData` changes mesh CPU data and the legacy GL VBO, while RHI rigid
+`UpdateVertexData` changes mesh CPU data, while RHI rigid
 uploads are keyed by mesh identity. Cloth calls this API. This is a potential
 stale-geometry problem in the RHI path, established by code inspection rather
 than a reproduced cloth rendering test. Broader caching must resolve it first.

@@ -141,10 +141,7 @@ namespace PlutoGE::scene
         }
     }
 
-    ParticleSystemComponent::~ParticleSystemComponent()
-    {
-        ReleaseGpuResources();
-    }
+    ParticleSystemComponent::~ParticleSystemComponent() = default;
 
     std::unique_ptr<Component> CreateParticleSystemComponent()
     {
@@ -370,88 +367,6 @@ namespace PlutoGE::scene
         m_nextEmitSequence = (m_nextEmitSequence + count) & 0x3fffffff;
     }
 
-    bool ParticleSystemComponent::ConsumeGpuStateDirty()
-    {
-        const bool dirty = m_gpuStateDirty;
-        m_gpuStateDirty = false;
-        return dirty;
-    }
-
-    void ParticleSystemComponent::EnsureGpuResources()
-    {
-        if (m_gpuInitialized && m_gpuCapacity == m_maxParticles)
-        {
-            return;
-        }
-
-        ReleaseGpuResources();
-
-        std::vector<ParticleGpuData> particles(static_cast<std::size_t>(m_maxParticles));
-        for (int index = 0; index < m_maxParticles; ++index)
-        {
-            particles[static_cast<std::size_t>(index)].positionAge.w = 999999.0f;
-            particles[static_cast<std::size_t>(index)].velocityLifetime.w = m_startLifetime;
-            particles[static_cast<std::size_t>(index)].seed = glm::vec4(
-                static_cast<float>(index) * 12.9898f,
-                static_cast<float>(index) * 78.233f,
-                static_cast<float>(index) * 37.719f,
-                1.0f);
-        }
-
-        glGenBuffers(2, m_buffers.data());
-        glGenVertexArrays(2, m_vaos.data());
-        for (int index = 0; index < 2; ++index)
-        {
-            glBindBuffer(GL_ARRAY_BUFFER, m_buffers[static_cast<std::size_t>(index)]);
-            glBufferData(GL_ARRAY_BUFFER,
-                         static_cast<GLsizeiptr>(particles.size() * sizeof(ParticleGpuData)),
-                         particles.data(),
-                         GL_DYNAMIC_COPY);
-            ConfigureParticleAttributes(m_vaos[static_cast<std::size_t>(index)], m_buffers[static_cast<std::size_t>(index)]);
-        }
-        glBindVertexArray(0);
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-        m_gpuCapacity = m_maxParticles;
-        m_readBufferIndex = 0;
-        m_gpuInitialized = true;
-        m_gpuStateDirty = false;
-        m_clearRequested = true;
-    }
-
-    void ParticleSystemComponent::ReleaseGpuResources()
-    {
-        if (m_vaos[0] != 0 || m_vaos[1] != 0)
-        {
-            glDeleteVertexArrays(2, m_vaos.data());
-        }
-        if (m_buffers[0] != 0 || m_buffers[1] != 0)
-        {
-            glDeleteBuffers(2, m_buffers.data());
-        }
-        m_vaos = {0, 0};
-        m_buffers = {0, 0};
-        m_gpuInitialized = false;
-        m_gpuCapacity = 0;
-        m_readBufferIndex = 0;
-        m_nextEmitIndex = 0;
-        m_nextEmitSequence = 0;
-    }
-
-    void ParticleSystemComponent::ConfigureParticleAttributes(GLuint vao, GLuint buffer) const
-    {
-        glBindVertexArray(vao);
-        glBindBuffer(GL_ARRAY_BUFFER, buffer);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleGpuData), reinterpret_cast<const void *>(offsetof(ParticleGpuData, positionAge)));
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleGpuData), reinterpret_cast<const void *>(offsetof(ParticleGpuData, velocityLifetime)));
-        glEnableVertexAttribArray(2);
-        glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleGpuData), reinterpret_cast<const void *>(offsetof(ParticleGpuData, colorSize)));
-        glEnableVertexAttribArray(3);
-        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(ParticleGpuData), reinterpret_cast<const void *>(offsetof(ParticleGpuData, seed)));
-    }
-
     void ParticleSystemComponent::ResetPlaybackState(bool clearParticles)
     {
         m_time = 0.0f;
@@ -474,7 +389,6 @@ namespace PlutoGE::scene
         m_maxParticles = std::clamp(maxParticles, 1, 200000);
         m_particleCountEstimate = std::min(m_particleCountEstimate, m_maxParticles);
         ResizeCpuStorage();
-        MarkGpuStateDirty();
     }
 
     void ParticleSystemComponent::SetStartLifetime(float lifetime)
@@ -1084,7 +998,6 @@ namespace PlutoGE::scene
         m_deathSubEmitterCount = std::max(asset.deathSubEmitterCount, 0);
         ResizeCpuStorage();
         m_particleCountEstimate = std::min(m_particleCountEstimate, m_maxParticles);
-        MarkGpuStateDirty();
         Clear();
     }
 }

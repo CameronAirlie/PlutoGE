@@ -202,7 +202,6 @@ add_library(PlutoGE_imgui STATIC
 )
 add_library(PlutoGE::imgui ALIAS PlutoGE_imgui)
 target_link_libraries(PlutoGE_imgui PUBLIC
-    PlutoGE::glad
     PlutoGE::glfw
     volk
 )

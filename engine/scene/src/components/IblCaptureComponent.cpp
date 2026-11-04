@@ -167,58 +167,11 @@ namespace PlutoGE::scene
         }
     }
 
-    render::Texture *IblCaptureComponent::EnsureCaptureTexture()
-    {
-        if (m_captureTexture && m_captureTexture->GetWidth() == m_resolution && m_captureTexture->GetHeight() == m_resolution)
-        {
-            m_captureTexture->EnsureCubemapGpuTexture();
-            return m_captureTexture.get();
-        }
-
-        m_captureTexture.reset(render::Texture::ColorCubemap(m_resolution, m_resolution));
-        UploadStoredCapturePixels();
-        return m_captureTexture.get();
-    }
-
     void IblCaptureComponent::DiscardCaptureResult()
     {
         m_captureTexture.reset();
         m_capturePixels.clear();
         MarkDirty();
-    }
-
-    bool IblCaptureComponent::StoreCapturePixelsFromTexture()
-    {
-        if (!m_captureTexture || m_captureTexture->GetType() != GL_TEXTURE_CUBE_MAP || m_resolution <= 0)
-        {
-            m_capturePixels.clear();
-            return false;
-        }
-
-        const std::size_t facePixelCount = static_cast<std::size_t>(m_resolution) *
-                                           static_cast<std::size_t>(m_resolution) * 4;
-        m_capturePixels.assign(facePixelCount * 6, 0.0f);
-
-        if (!m_captureTexture->GetTextureID() && !m_captureTexture->GetCubemapPixels().empty())
-        {
-            const auto pixels = m_captureTexture->GetCubemapPixels();
-            m_capturePixels.assign(pixels.begin(), pixels.end());
-            return true;
-        }
-        if (!m_captureTexture->GetTextureID()) return false;
-        glBindTexture(GL_TEXTURE_CUBE_MAP, m_captureTexture->GetTextureID());
-        for (unsigned int face = 0; face < 6; ++face)
-        {
-            glGetTexImage(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-                          0,
-                          GL_RGBA,
-                          GL_FLOAT,
-                          m_capturePixels.data() + facePixelCount * face);
-        }
-        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
-
-        m_captureTexture->SetCubemapPixels(m_capturePixels);
-        return true;
     }
 
     bool IblCaptureComponent::SetCapturePixels(std::span<const float> pixels)
@@ -230,38 +183,6 @@ namespace PlutoGE::scene
         m_captureTexture = std::move(texture);
         m_dirty = false;
         return true;
-    }
-
-    void IblCaptureComponent::UploadStoredCapturePixels()
-    {
-        if (!m_captureTexture || m_captureTexture->GetType() != GL_TEXTURE_CUBE_MAP || m_resolution <= 0)
-        {
-            return;
-        }
-
-        const std::size_t facePixelCount = static_cast<std::size_t>(m_resolution) *
-                                           static_cast<std::size_t>(m_resolution) * 4;
-        if (m_capturePixels.size() != facePixelCount * 6)
-        {
-            return;
-        }
-
-        glBindTexture(GL_TEXTURE_CUBE_MAP, m_captureTexture->GetTextureID());
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        for (unsigned int face = 0; face < 6; ++face)
-        {
-            glTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-                            0,
-                            0,
-                            0,
-                            m_resolution,
-                            m_resolution,
-                            GL_RGBA,
-                            GL_FLOAT,
-                            m_capturePixels.data() + facePixelCount * face);
-        }
-        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
     }
 
     glm::mat4 IblCaptureComponent::GetVolumeTransform() const

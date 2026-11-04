@@ -4154,29 +4154,6 @@ namespace PlutoGE::ui
                             ImGui::PopID();
                         }
 
-                        if (auto *lightComponent = dynamic_cast<scene::LightComponent *>(componentPtr);
-                            lightComponent && lightComponent->GetLight().type == scene::LightType::Directional)
-                        {
-                            const auto &light = lightComponent->GetLight();
-                            const int activeCascadeCount = std::clamp(
-                                light.activeShadowCascadeCount, 0, scene::kMaxDirectionalShadowCascades);
-                            if (activeCascadeCount > 0 && light.shadowCascadeSplits[0] > 0.0f)
-                            {
-                                ImGui::TextDisabled("Active cascade ranges:");
-                                float rangeStart = 0.0f;
-                                for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
-                                {
-                                    ImGui::BulletText("%d: %.1f - %.1f m", cascadeIndex + 1,
-                                                      rangeStart, light.shadowCascadeSplits[cascadeIndex]);
-                                    rangeStart = light.shadowCascadeSplits[cascadeIndex];
-                                }
-                            }
-                            else
-                            {
-                                ImGui::TextDisabled("Cascade ranges appear after the scene has rendered.");
-                            }
-                        }
-
                         if (propertiesChanged)
                         {
                             if (auto *foliageComponent = dynamic_cast<scene::FoliageComponent *>(componentPtr))

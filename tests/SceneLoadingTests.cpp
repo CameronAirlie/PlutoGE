@@ -1,3 +1,4 @@
+#include <glad/glad.h>
 #include "PlutoGE/core/LoadingScreenSession.h"
 #include "PlutoGE/assets/LoadingScreenAsset.h"
 #include "PlutoGE/render/RmlUiRuntime.h"

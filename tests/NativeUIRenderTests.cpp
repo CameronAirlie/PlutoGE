@@ -1,3 +1,4 @@
+#include <glad/glad.h>
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
 #include "PlutoGE/render/Texture.h"

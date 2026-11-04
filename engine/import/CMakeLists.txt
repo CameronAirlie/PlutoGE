@@ -16,7 +16,6 @@ target_include_directories(PlutoGEImport PUBLIC
 
 target_link_libraries(PlutoGEImport PUBLIC
     PlutoGE::Content
-    PlutoGE::glad
     PlutoGE::glm
     PlutoGE::tinygltf
     PlutoGE::assimp

@@ -1,3 +1,4 @@
+#include <glad/glad.h>
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/Material.h"

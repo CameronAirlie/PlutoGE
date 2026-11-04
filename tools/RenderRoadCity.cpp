@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include <glad/glad.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>

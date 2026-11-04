@@ -647,8 +647,8 @@ int main(int argc, char **argv)
     render::Mesh mesh(meshConfig);
     const std::array<unsigned char, 4> texturePixels{255, 64, 32, 255};
     auto *texture = engine.GetTextureManager().LoadTextureFromMemory(
-        "vulkan-cpu-texture", texturePixels.data(), 1, 1, 4, render::TextureColorSpace::SRGB);
-    if (!texture || texture->GetTextureID() != 0 || texture->GetRgba8Pixels().size() != 4)
+        "vulkan-cpu-texture", texturePixels.data(), 1, 1, 4);
+    if (!texture || texture->GetRgba8Pixels().size() != 4)
         return 9;
     render::Material material({.color = glm::vec4(0.8f, 0.2f, 0.1f, 1.0f), .albedoTexture = texture});
     // Imported node transforms and mesh offsets must be present in both

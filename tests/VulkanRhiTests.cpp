@@ -517,12 +517,6 @@ int main(int argc, char **argv)
             light.GetLight().castsShadows = true;
             if (light.GetLight().directionalShadowSettings.method != ShadowMethod::Virtual)
                 throw std::runtime_error("Directional light did not default to VSM");
-            light.GetLight().activeShadowCascadeCount = 4;
-            light.Initialize();
-            if (light.GetLight().activeShadowCascadeCount != 0 ||
-                std::any_of(light.GetLight().shadowCascadeMaps.begin(), light.GetLight().shadowCascadeMaps.end(),
-                            [](const auto &map) { return bool(map); }))
-                throw std::runtime_error("VSM light component retained legacy cascade state");
             CheckVsmOnlyRendering(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }

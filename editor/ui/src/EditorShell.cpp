@@ -11,8 +11,6 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
@@ -97,6 +95,7 @@
 #include <shellapi.h>
 #include <psapi.h>
 #endif
+#include <GLFW/glfw3.h>
 
 namespace PlutoGE::ui
 {

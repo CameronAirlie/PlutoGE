@@ -636,7 +636,7 @@ add_executable(PlutoGEGenerateRoadCity EXCLUDE_FROM_ALL ../tools/GenerateRoadCit
 target_link_libraries(PlutoGEGenerateRoadCity PRIVATE PlutoGE::Scene)
 
 add_executable(PlutoGERenderRoadCity EXCLUDE_FROM_ALL ../tools/RenderRoadCity.cpp)
-target_link_libraries(PlutoGERenderRoadCity PRIVATE PlutoGE::Scene PlutoGE::Platform)
+target_link_libraries(PlutoGERenderRoadCity PRIVATE PlutoGE::Scene PlutoGE::Platform PlutoGE::glad)
 target_compile_definitions(PlutoGERenderRoadCity PRIVATE PLUTO_CITY_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 
 add_executable(PlutoGERenderVisualLab EXCLUDE_FROM_ALL ../tools/RenderVisualLab.cpp)
@@ -1075,7 +1075,6 @@ if(TARGET PlutoGECore)
     add_executable(PlutoGETextureRefreshTests TextureRefreshTests.cpp)
     pluto_link_engine(PlutoGETextureRefreshTests)
     add_test(NAME PlutoGETextureRefreshTests COMMAND PlutoGETextureRefreshTests)
-    add_test(NAME PlutoGETextureRefreshOpenGLTests COMMAND PlutoGETextureRefreshTests opengl)
     add_dependencies(PlutoGEAssetPipelineChecks PlutoGETextureRefreshTests)
 endif()
 
@@ -1171,3 +1170,29 @@ add_test(NAME PlutoGEOpenGLDdgiTests COMMAND PlutoGEOpenGLRhiTests --ddgi-only)
 add_executable(PlutoGEGraphicsQualityProjectTests GraphicsQualityProjectTests.cpp)
 pluto_link_engine(PlutoGEGraphicsQualityProjectTests)
 add_test(NAME PlutoGEGraphicsQualityProjectTests COMMAND PlutoGEGraphicsQualityProjectTests)
+
+# Test harnesses that call OpenGL directly (fixture contexts, readbacks and the
+# GlTestProgram shader checks). The engine libraries keep glad private.
+foreach(target IN ITEMS
+        PlutoGECameraUiVisibilityTests
+        PlutoGEEditorLoadingScreenTests
+        PlutoGEEditorProfilerPanelTests
+        PlutoGEEditorVulkanTextureTests
+        PlutoGEIblCaptureTests
+        PlutoGEInputMappingEditorTests
+        PlutoGENativeUIRenderTests
+        PlutoGEOpenGLRhiTests
+        PlutoGEPostProcessEditorTests
+        PlutoGEPostProcessInitializationTests
+        PlutoGERhiOceanTests
+        PlutoGERmlDocumentPreviewTests
+        PlutoGERmlUiAntialiasingTests
+        PlutoGERuntimeProfilerTests
+        PlutoGESceneLoadingTests
+        PlutoGEUIThemeEditorTests
+        PlutoGEVulkanPresentationTests
+    )
+    if (TARGET ${target})
+        target_link_libraries(${target} PRIVATE PlutoGE::glad)
+    endif()
+endforeach()

@@ -12,7 +12,6 @@
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/ShaderGraph.h"
-#include "PlutoGE/render/Texture.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/UISystem.h"
@@ -2507,36 +2506,6 @@ namespace PlutoGE::scene
         m_environmentIntensity = std::max(intensity, 0.0f);
     }
 
-    void Scene::RebuildBakedProbeTexture()
-    {
-        const auto &volume = GetBakedProbeVolume();
-        m_bakedProbeTexture.reset();
-        if (!volume.IsValid())
-        {
-            return;
-        }
-
-        m_bakedProbeTexture = std::unique_ptr<render::Texture>(render::Texture::ColorVolume(
-            volume.resolution.x,
-            volume.resolution.y,
-            volume.resolution.z));
-        if (!m_bakedProbeTexture)
-        {
-            return;
-        }
-
-        std::vector<float> volumePixels;
-        volumePixels.reserve(volume.irradiance.size() * 3);
-        for (const auto &sample : volume.irradiance)
-        {
-            volumePixels.push_back(sample.r);
-            volumePixels.push_back(sample.g);
-            volumePixels.push_back(sample.b);
-        }
-
-        m_bakedProbeTexture->Upload3D(GL_RGB, GL_FLOAT, volumePixels.data());
-    }
-
     std::vector<AmbientLightVolumeComponent *> Scene::GetAmbientLightVolumes() const
     {
         std::vector<AmbientLightVolumeComponent *> volumes;
@@ -2615,25 +2584,11 @@ namespace PlutoGE::scene
             component->SetSize(volume.size);
         }
         component->SetBakedVolume(std::move(volume));
-        m_bakedProbeTexture.reset();
-    }
-    render::Texture *Scene::GetBakedProbeTexture() const
-    {
-        const auto revision = GetBakedProbeRevision();
-        if (m_bakedProbeRevision != revision)
-        {
-            m_bakedProbeTexture.reset();
-            m_bakedProbeRevision = revision;
-        }
-        if (!m_bakedProbeTexture && HasBakedProbeVolume())
-            const_cast<Scene *>(this)->RebuildBakedProbeTexture();
-        return m_bakedProbeTexture.get();
     }
     void Scene::ClearBakedProbeVolume()
     {
         for (auto *component : GetAmbientLightVolumes())
             component->ClearBake();
-        m_bakedProbeTexture.reset();
     }
 
     namespace
@@ -2682,10 +2637,6 @@ namespace PlutoGE::scene
             if (light && light->castsShadows)
             {
                 light->isDirty = true;
-                light->shadowRefreshPending = false;
-                light->pendingPointShadowFaceMask = 0;
-                light->pendingShadowCascadeMask = 0;
-                light->nextShadowCascadeToRefresh = 0;
             }
         }
     }

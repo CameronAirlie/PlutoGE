@@ -1,3 +1,4 @@
+#include <glad/glad.h>
 #include "SsaoRenderingChecks.h"
 #include "ContactShadowRenderingChecks.h"
 #include "AreaLightRenderingChecks.h"

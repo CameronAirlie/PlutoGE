@@ -351,7 +351,7 @@ namespace PlutoGE::scene
         });
 
         delete m_runtimeMesh;
-        m_runtimeMesh = render::Mesh::CreateInitialized(config);
+        m_runtimeMesh = render::Mesh::FromConfig(config);
         if (auto *meshComponent = ResolveMeshComponent())
         {
             meshComponent->SetMesh(m_runtimeMesh);

@@ -5,7 +5,6 @@
 #include "../TextureUpdates.h"
 
 #include <volk.h>
-#include <GLFW/glfw3.h>
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 1
 #define VMA_IMPLEMENTATION
@@ -27,6 +26,8 @@
 #include <sl_helpers_vk.h>
 #include "StreamlineSecurity.h"
 #endif
+
+#include <GLFW/glfw3.h>
 
 #include <array>
 #include <algorithm>

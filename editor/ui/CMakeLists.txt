@@ -141,6 +141,8 @@ target_link_libraries(PlutoGEEditorUI PUBLIC
     PlutoGE::imguizmo
     PlutoGE::glfw
 )
+# The ImGui OpenGL compositor presents the editor on OpenGL hosts.
+target_link_libraries(PlutoGEEditorUI PRIVATE PlutoGE::glad)
 
 get_target_property(PLUTO_EDITOR_RMLUI_TYPE RmlUi::Core TYPE)
 if (PLUTO_EDITOR_RMLUI_TYPE STREQUAL "STATIC_LIBRARY")

@@ -1,6 +1,5 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/Entity.h"
-#include "PlutoGE/render/Texture.h"
 
 #include <algorithm>
 #include <cmath>
@@ -15,91 +14,14 @@ namespace PlutoGE::scene
             return std::clamp(cascadeCount, 1, kMaxDirectionalShadowCascades);
         }
 
-        int ResolveShadowResolution(const Light &light)
-        {
-            return std::max(light.directionalShadowSettings.resolution, 256);
-        }
-
-        int ResolveDirectionalCascadeResolution(const Light &light, int cascadeIndex)
-        {
-            const int baseResolution = ResolveShadowResolution(light);
-            const float falloff = std::clamp(light.directionalShadowSettings.cascadeResolutionFalloff, 0.25f, 1.0f);
-            const float scale = std::pow(falloff, static_cast<float>(std::max(cascadeIndex, 0)));
-            return std::max(static_cast<int>(std::lround(static_cast<float>(baseResolution) * scale)), 256);
-        }
-
         bool ParseBool(const std::string &value)
         {
             return value == "true" || value == "1";
         }
 
-        void ResetShadowState(Light &light)
-        {
-            light.shadowMap.reset();
-            light.shadowMatrix = glm::mat4(1.0f);
-            for (auto &shadowCascadeMap : light.shadowCascadeMaps)
-            {
-                shadowCascadeMap.reset();
-            }
-            for (auto &staticShadowCascadeMap : light.staticShadowCascadeMaps)
-            {
-                staticShadowCascadeMap.reset();
-            }
-            for (auto &staticShadowCascadeScratchMaps : light.staticShadowCascadeScratchMaps)
-            {
-                for (auto &staticShadowCascadeScratchMap : staticShadowCascadeScratchMaps)
-                {
-                    staticShadowCascadeScratchMap.reset();
-                }
-            }
-            light.nextStaticShadowScratchIndex.fill(0);
-            light.staticShadowCascadeValid.fill(false);
-            for (auto &shadowCascadeWorldOrigin : light.shadowCascadeWorldOrigins)
-            {
-                shadowCascadeWorldOrigin = glm::vec3(0.0f);
-            }
-            for (auto &shadowCascadeMatrix : light.shadowCascadeMatrices)
-            {
-                shadowCascadeMatrix = glm::mat4(1.0f);
-            }
-            light.shadowCascadeSplits.fill(0.0f);
-            light.activeShadowCascadeCount = 0;
-            light.shadowFarPlane = 0.0f;
-            light.pendingPointShadowFaceMask = 0;
-            light.pendingShadowCascadeMask = 0;
-            light.nextShadowCascadeToRefresh = 0;
-        }
-
         bool ApproximatelyEqual(const glm::vec3 &a, const glm::vec3 &b, float epsilon = 0.0001f)
         {
             return glm::dot(a - b, a - b) <= epsilon * epsilon;
-        }
-
-        GLenum GetExpectedShadowTextureType(const Light &light)
-        {
-            return light.type == LightType::Point ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
-        }
-
-        std::unique_ptr<render::Texture> CreateShadowTextureForLight(const Light &light)
-        {
-            const int resolution = ResolveShadowResolution(light);
-            if (light.type == LightType::Point)
-            {
-                return std::unique_ptr<render::Texture>(render::Texture::DepthCubemap(resolution, resolution));
-            }
-
-            return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(resolution, resolution));
-        }
-
-        std::unique_ptr<render::Texture> CreateDirectionalCascadeTexture(const Light &light, int cascadeIndex)
-        {
-            const int resolution = ResolveDirectionalCascadeResolution(light, cascadeIndex);
-            return std::unique_ptr<render::Texture>(render::Texture::DepthTexture(resolution, resolution));
-        }
-
-        bool NeedsShadowTextureRecreation(const render::Texture *texture, GLenum expectedTextureType, int resolution)
-        {
-            return !texture || texture->GetType() != expectedTextureType || texture->GetWidth() != resolution || texture->GetHeight() != resolution;
         }
 
         glm::vec3 EulerDegreesFromDirection(const glm::vec3 &direction)
@@ -122,7 +44,7 @@ namespace PlutoGE::scene
         }
 
         m_config.type = type;
-        Initialize();
+        MarkDirty();
     }
 
     void LightComponent::SetIntensity(float intensity)
@@ -196,7 +118,6 @@ namespace PlutoGE::scene
 
         m_config.castsShadows = castsShadows;
         MarkDirty();
-        Initialize();
     }
 
     void LightComponent::SetSourceShape(float radius, float length)
@@ -224,24 +145,16 @@ namespace PlutoGE::scene
         m_config.directionalShadowSettings = settings;
         m_config.directionalShadowSettings.cascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
         MarkDirty();
-        Initialize();
     }
 
     void LightComponent::MarkDirty()
     {
         m_config.isDirty = true;
-        m_config.shadowRefreshPending = false;
-        m_config.pendingPointShadowFaceMask = 0;
-        m_config.pendingShadowCascadeMask = 0;
-        m_config.nextShadowCascadeToRefresh = 0;
     }
 
     void LightComponent::ClearDirty()
     {
         m_config.isDirty = false;
-        m_config.shadowRefreshPending = false;
-        m_config.pendingPointShadowFaceMask = 0;
-        m_config.pendingShadowCascadeMask = 0;
     }
 
     bool LightComponent::IsDirty() const
@@ -464,123 +377,8 @@ namespace PlutoGE::scene
             }
         }
         m_config.spotCone.Sanitize();
-        // Most directional-shadow settings (distance, first split, lambda and
-        // blend width) do not require texture recreation. They still change the
-        // cascade projections, so explicitly invalidate the cached shadow state
-        // before Initialize(); otherwise the shadow pass keeps using the old
-        // splits and the cascade debug view appears unaffected by inspector edits.
+        // Every deserialized setting can change the light's shadows.
         MarkDirty();
-        Initialize(); // Re-initialize to apply changes that require setup (like shadow map creation)
-    }
-
-    void LightComponent::Initialize()
-    {
-        if (!m_config.castsShadows || m_config.type == LightType::Rect || (m_config.type == LightType::Directional &&
-            m_config.directionalShadowSettings.method == render::ShadowMethod::Virtual))
-        {
-            // VSM resources belong to the RHI renderer. Do not allocate or
-            // retain the legacy dynamic/static/scratch cascade textures here.
-            ResetShadowState(m_config);
-            ClearDirty();
-            return;
-        }
-
-        const int resolution = ResolveShadowResolution(m_config);
-
-        if (m_config.type == LightType::Directional)
-        {
-            m_config.shadowMap.reset();
-            bool recreatedShadowMap = false;
-            m_config.directionalShadowSettings.cascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
-            m_config.activeShadowCascadeCount = ClampCascadeCount(m_config.directionalShadowSettings.cascadeCount);
-
-            for (int cascadeIndex = 0; cascadeIndex < kMaxDirectionalShadowCascades; ++cascadeIndex)
-            {
-                if (cascadeIndex >= m_config.activeShadowCascadeCount)
-                {
-                    if (m_config.shadowCascadeMaps[cascadeIndex])
-                    {
-                        m_config.shadowCascadeMaps[cascadeIndex].reset();
-                        recreatedShadowMap = true;
-                    }
-                    if (m_config.staticShadowCascadeMaps[cascadeIndex])
-                    {
-                        m_config.staticShadowCascadeMaps[cascadeIndex].reset();
-                        recreatedShadowMap = true;
-                    }
-                    for (auto &scratchMap : m_config.staticShadowCascadeScratchMaps[cascadeIndex])
-                    {
-                        scratchMap.reset();
-                    }
-                    m_config.nextStaticShadowScratchIndex[cascadeIndex] = 0;
-                    m_config.staticShadowCascadeValid[cascadeIndex] = false;
-                    m_config.shadowCascadeWorldOrigins[cascadeIndex] = glm::vec3(0.0f);
-                    m_config.shadowCascadeMatrices[cascadeIndex] = glm::mat4(1.0f);
-                    m_config.shadowCascadeSplits[cascadeIndex] = 0.0f;
-                    m_config.shadowCascadeWorldTexelSizes[cascadeIndex] = 0.0f;
-                    m_config.shadowCascadeDepthRanges[cascadeIndex] = 1.0f;
-                    continue;
-                }
-
-                const int cascadeResolution = ResolveDirectionalCascadeResolution(m_config, cascadeIndex);
-                if (NeedsShadowTextureRecreation(m_config.shadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, cascadeResolution))
-                {
-                    m_config.shadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config, cascadeIndex);
-                    recreatedShadowMap = true;
-                }
-                if (NeedsShadowTextureRecreation(m_config.staticShadowCascadeMaps[cascadeIndex].get(), GL_TEXTURE_2D, cascadeResolution))
-                {
-                    m_config.staticShadowCascadeMaps[cascadeIndex] = CreateDirectionalCascadeTexture(m_config, cascadeIndex);
-                    m_config.staticShadowCascadeValid[cascadeIndex] = false;
-                    recreatedShadowMap = true;
-                }
-            }
-
-            if (recreatedShadowMap)
-            {
-                MarkDirty();
-            }
-
-            return;
-        }
-
-        for (auto &shadowCascadeMap : m_config.shadowCascadeMaps)
-        {
-            shadowCascadeMap.reset();
-        }
-        for (auto &staticShadowCascadeMap : m_config.staticShadowCascadeMaps)
-        {
-            staticShadowCascadeMap.reset();
-        }
-        for (auto &staticShadowCascadeScratchMaps : m_config.staticShadowCascadeScratchMaps)
-        {
-            for (auto &staticShadowCascadeScratchMap : staticShadowCascadeScratchMaps)
-            {
-                staticShadowCascadeScratchMap.reset();
-            }
-        }
-        m_config.nextStaticShadowScratchIndex.fill(0);
-        m_config.staticShadowCascadeValid.fill(false);
-        m_config.activeShadowCascadeCount = 0;
-
-        const GLenum expectedTextureType = GetExpectedShadowTextureType(m_config);
-        bool recreatedShadowMap = false;
-        if (NeedsShadowTextureRecreation(m_config.shadowMap.get(), expectedTextureType, resolution))
-        {
-            m_config.shadowMap.reset();
-            recreatedShadowMap = true;
-        }
-
-        if (!m_config.shadowMap)
-        {
-            m_config.shadowMap = CreateShadowTextureForLight(m_config);
-            recreatedShadowMap = true;
-        }
-
-        if (recreatedShadowMap)
-        {
-            MarkDirty();
-        }
     }
 
     void LightComponent::Update(float deltaTime)

@@ -2,16 +2,12 @@
 
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/render/Texture.h"
 
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
 #include <span>
-
-namespace PlutoGE::render
-{
-    class Texture;
-}
 
 namespace PlutoGE::scene
 {
@@ -59,9 +55,7 @@ namespace PlutoGE::scene
         void SetRelightFromAmbient(bool relight) { m_relightFromAmbient = relight; }
         bool IsDirty() const { return m_dirty; }
         render::Texture *GetCaptureTexture() const { return m_captureTexture.get(); }
-        render::Texture *EnsureCaptureTexture();
         void DiscardCaptureResult();
-        bool StoreCapturePixelsFromTexture();
         bool SetCapturePixels(std::span<const float> pixels);
         glm::mat4 GetVolumeTransform() const;
         IblCaptureVolume BuildCaptureVolume() const;
@@ -82,7 +76,5 @@ namespace PlutoGE::scene
         glm::vec3 m_automaticSize{10.0f};
         std::unique_ptr<render::Texture> m_captureTexture;
         std::vector<float> m_capturePixels;
-
-        void UploadStoredCapturePixels();
     };
 }

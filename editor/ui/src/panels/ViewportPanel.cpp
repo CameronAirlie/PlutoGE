@@ -61,7 +61,6 @@
 #include <filesystem>
 
 #include <imgui.h>
-#include <glad/glad.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>

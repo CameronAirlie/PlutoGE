@@ -25,9 +25,6 @@
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core/Elements/ElementFormControlInput.h>
 #include <RmlUi/Core/Factory.h>
-#include <RmlUi_Platform_GLFW.h>
-#include <PlutoGE_RmlUi_FontRaster.h>
-
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -35,6 +32,8 @@
 #include <Windows.h>
 #endif
 
+#include <RmlUi_Platform_GLFW.h>
+#include <PlutoGE_RmlUi_FontRaster.h>
 #include <GLFW/glfw3.h>
 
 #include <algorithm>

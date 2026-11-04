@@ -30,7 +30,8 @@ else()
     )
 endif()
 
-target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm PlutoGE::imgui PlutoGE::glfw)
+# The runtime profiler draws its ImGui window through OpenGL.
+target_link_libraries(PlutoGERuntime PRIVATE PlutoGE::glm PlutoGE::imgui PlutoGE::glfw PlutoGE::glad)
 
 add_dependencies(PlutoGERuntime PlutoGE::Platform PlutoGE::Render PlutoGE::Assets PlutoGE::Core PlutoGE::Scene)
 pluto_attach_streamline_runtime(PlutoGERuntime)

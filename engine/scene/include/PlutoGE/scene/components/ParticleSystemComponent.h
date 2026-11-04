@@ -3,9 +3,7 @@
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/assets/ParticleSystemAsset.h"
 
-#include <array>
 #include <cstdint>
-#include <glad/glad.h>
 #include <glm/glm.hpp>
 #include <memory>
 #include <string>
@@ -25,14 +23,6 @@ namespace PlutoGE::scene
         Sphere = 1,
         Box = 2,
         Cone = 3,
-    };
-
-    struct ParticleGpuData
-    {
-        glm::vec4 positionAge{0.0f, 0.0f, 0.0f, 999999.0f};
-        glm::vec4 velocityLifetime{0.0f, 0.0f, 0.0f, 1.0f};
-        glm::vec4 colorSize{1.0f};
-        glm::vec4 seed{0.0f};
     };
 
     struct ParticleCpuData
@@ -89,17 +79,6 @@ namespace PlutoGE::scene
         int GetNextEmitIndex() const { return m_nextEmitIndex; }
         int GetNextEmitSequence() const { return m_nextEmitSequence; }
         void AdvanceEmitCursor(int count);
-
-        void EnsureGpuResources();
-        void ReleaseGpuResources();
-        bool HasGpuResources() const { return m_gpuInitialized; }
-        GLuint GetReadVao() const { return m_vaos[static_cast<std::size_t>(m_readBufferIndex)]; }
-        GLuint GetReadBuffer() const { return m_buffers[static_cast<std::size_t>(m_readBufferIndex)]; }
-        GLuint GetWriteBuffer() const { return m_buffers[static_cast<std::size_t>(1 - m_readBufferIndex)]; }
-        int GetGpuCapacity() const { return m_gpuCapacity; }
-        void SwapGpuBuffers() { m_readBufferIndex = 1 - m_readBufferIndex; }
-        void MarkGpuStateDirty() { m_gpuStateDirty = true; }
-        bool ConsumeGpuStateDirty();
 
         bool GetLooping() const { return m_looping; }
         void SetLooping(bool looping) { m_looping = looping; }
@@ -191,7 +170,6 @@ namespace PlutoGE::scene
         };
 
         void ResetPlaybackState(bool clearParticles);
-        void ConfigureParticleAttributes(GLuint vao, GLuint buffer) const;
         void UpdateCpuSimulation(float deltaTime);
         void SpawnCpuParticles(int count);
         void SpawnCpuParticlesAt(const glm::vec3 &worldPosition, int count);
@@ -290,13 +268,6 @@ namespace PlutoGE::scene
         std::vector<ParticleCpuData> m_cpuParticles;
         std::vector<std::vector<ParticleTrailPoint>> m_trails;
         int m_nextCpuEmitIndex = 0;
-
-        bool m_gpuInitialized = false;
-        bool m_gpuStateDirty = true;
-        int m_gpuCapacity = 0;
-        int m_readBufferIndex = 0;
-        std::array<GLuint, 2> m_buffers{0, 0};
-        std::array<GLuint, 2> m_vaos{0, 0};
     };
 
     // Keep allocation in the same translation unit as the implementation.

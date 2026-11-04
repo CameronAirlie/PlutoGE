@@ -1,6 +1,4 @@
 #include "PlutoGE/platform/Window.h"
-#include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/TextureManager.h"
 
 #include <glad/glad.h>
 #include "VctProbeCacheChecks.h"
@@ -36,44 +34,6 @@ int main(int argc, char** argv)
 
     while (glGetError() != GL_NO_ERROR)
     {
-    }
-
-    {
-        // Simulate an editor subsystem leaving pixel-unpack state active before a scene texture load.
-        // A CPU pointer passed with this buffer still bound would be interpreted as a buffer offset.
-        GLuint unpackBuffer = 0;
-        glGenBuffers(1, &unpackBuffer);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpackBuffer);
-        glBufferData(GL_PIXEL_UNPACK_BUFFER, 16, nullptr, GL_STREAM_DRAW);
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, 37);
-        glPixelStorei(GL_UNPACK_SKIP_PIXELS, 5);
-
-        constexpr unsigned char pixels[] = {
-            255, 0, 0, 0, 255, 0,
-            0, 0, 255, 255, 255, 255,
-        };
-        PlutoGE::render::TextureManager textureManager;
-        textureManager.SetWindow(&window);
-        PlutoGE::render::Texture *texture = textureManager.LoadTextureFromMemory(
-            "pixel-unpack-state-regression", pixels, 2, 2, 3);
-
-        GLint unpackBinding = -1;
-        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpackBinding);
-        const GLenum error = glGetError();
-        if (!texture || unpackBinding != 0 || error != GL_NO_ERROR)
-        {
-            std::cerr << "Texture upload did not isolate inherited pixel-unpack state; binding="
-                      << unpackBinding << ", error=0x" << std::hex << error << ".\n";
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-            glDeleteBuffers(1, &unpackBuffer);
-            window.Close();
-            return 1;
-        }
-
-        const GLuint textureId = texture->GetTextureID();
-        glDeleteTextures(1, &textureId);
-        delete texture;
-        glDeleteBuffers(1, &unpackBuffer);
     }
 
     if (!CheckVctProbeCache() || !CheckVctStationaryLighting() || glGetError() != GL_NO_ERROR)

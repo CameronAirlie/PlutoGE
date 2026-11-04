@@ -267,7 +267,6 @@ namespace PlutoGE::scene
         std::vector<AmbientLightVolumeComponent *> GetAmbientLightVolumes() const;
         std::vector<const BakedProbeVolume *> GetBakedProbeVolumes() const;
         bool HasBakedProbeVolume() const { return !GetBakedProbeVolumes().empty(); }
-        render::Texture *GetBakedProbeTexture() const;
         std::uint64_t GetBakedProbeRevision() const;
         void SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume);
         void ClearBakedProbeVolume();
@@ -377,8 +376,6 @@ namespace PlutoGE::scene
         float m_physicsTimeAccumulator = 0.0f;
         SceneUpdateTimingStats m_updateTimingStats;
         bool m_detailedTimingEnabled = true;
-        mutable std::uint64_t m_bakedProbeRevision = 0;
-        mutable std::unique_ptr<render::Texture> m_bakedProbeTexture;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;
         std::unordered_set<uint64_t> m_activeCollisionPairs;
         std::vector<EntityID> m_pendingDestroyEntities;
@@ -401,7 +398,6 @@ namespace PlutoGE::scene
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();
-        void RebuildBakedProbeTexture();
         PhysicsQueryCache &GetPhysicsQueryCache() const;
         void RefreshPhysicsQueryCache() const;
         void RefreshPhysicsQueryMembership() const;

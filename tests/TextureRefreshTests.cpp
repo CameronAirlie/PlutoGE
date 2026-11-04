@@ -1,13 +1,11 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Material.h"
-#include "PlutoGE/platform/Window.h"
 #include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-#include <string_view>
 
 using namespace PlutoGE;
 namespace
@@ -40,13 +38,9 @@ namespace
             "Refreshed source pixels differ from authored bytes");
     }
 }
-int main(int argc, char **argv)
+int main()
 try
 {
-    const bool gpu = argc > 1 && std::string_view(argv[1]) == "opengl";
-    platform::Window window;
-    if (gpu) Require(window.Create({.title="Texture refresh", .width=64, .height=64, .visible=false}) &&
-        window.EnsureOpenGLContextCurrent(true), "Could not create OpenGL fixture context");
     Scratch scratch;
     std::filesystem::create_directories(scratch.root);
     const auto path = scratch.root / "Authored.bmp";
@@ -54,14 +48,12 @@ try
     std::weak_ptr<const void> linearLifetime, srgbLifetime;
     {
         render::TextureManager textures(true);
-        if (gpu) textures.SetWindow(&window);
         auto *linear = textures.LoadTextureFromFile(path.string().c_str(), render::TextureColorSpace::Linear);
         auto *srgb = textures.LoadTextureFromFile(path.string().c_str(), render::TextureColorSpace::SRGB);
         Require(linear && srgb && linear != srgb, "Colour-space caches were not independent");
         linearLifetime = linear->GetLifetimeToken(); srgbLifetime = srgb->GetLifetimeToken();
         const auto identity = linear->GetIdentity(), srgbIdentity = srgb->GetIdentity();
         const auto revision = linear->GetContentRevision(), srgbRevision = srgb->GetContentRevision();
-        const auto oldLinearGpu = linear->GetTextureID(), oldSrgbGpu = srgb->GetTextureID();
         render::Material borrowed({.albedoTexture=srgb, .normalTexture=linear});
         WriteImage(path, 20, 40, 60);
         std::string error;
@@ -73,15 +65,6 @@ try
             borrowed.ReadConfig().normalTexture == linear && borrowed.ReadConfig().albedoTexture == srgb,
             "Refresh invalidated a borrower or did not publish content revisions");
         Pixels(*linear,20,40,60); Pixels(*srgb,20,40,60);
-        if (gpu)
-        {
-            Require(linear->GetTextureID() && srgb->GetTextureID() && !glIsTexture(oldLinearGpu) && !glIsTexture(oldSrgbGpu),
-                "Previous GPU allocations were not retired");
-            std::array<unsigned char,4> readback{};
-            glBindTexture(GL_TEXTURE_2D, linear->GetTextureID());
-            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, readback.data());
-            Require(readback == std::array<unsigned char,4>{20,40,60,255}, "OpenGL refresh did not upload new pixels");
-        }
         const auto validRevision = linear->GetContentRevision(), validSrgbRevision = srgb->GetContentRevision();
         { std::ofstream invalid(path, std::ios::binary | std::ios::trunc); invalid << "invalid image"; }
         Require(!textures.ReloadFileTexture(path.string(), &error) && !error.empty() &&
@@ -93,7 +76,6 @@ try
             "Missing image changed its accepted texture");
     }
     Require(linearLifetime.expired() && srgbLifetime.expired(), "Owning texture cache leaked refreshed resources");
-    if (gpu) window.Close();
     std::cout << "Stable texture refresh checks passed.\n";
     return 0;
 }

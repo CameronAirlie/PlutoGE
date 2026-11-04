@@ -217,6 +217,41 @@ Items 1 to 3 were done in Phase 1.
 `SceneBaker.cpp` keeps its raw GL bake compute. It is separate from the legacy
 pipeline and is out of scope here.
 
+Status (2026-11-04): done, uncommitted. Items 5, 8 and 10 were already done in
+Phases 1 and 2. `SceneBaker.cpp` no longer has a GL bake compute, so it needs no
+`glad`. Done here:
+- `Mesh` holds CPU data only. `CreateInitialized` went; callers use
+  `FromConfig`.
+- `Texture` keeps its CPU pixels and gains `TextureKind` (`Texture2D`,
+  `Cubemap`) in place of the GL target. The GL handle, the depth framebuffers,
+  `GetDepth`, `EnsureCubemapGpuTexture`, the depth, color-cube and volume
+  factories and `Upload3D` are gone.
+- `TextureManager` decodes and caches only. `SetWindow`, the GL uploads and the
+  depth/cube factories are gone, as is the colour-space argument of
+  `LoadTextureFromMemory`. Only tests set a window, so the engine's manager
+  never uploaded anyway. HDR and PFM environment maps are still decoded to
+  validate them, but they keep only their size, because no renderer samples
+  them.
+- `LightComponent` loses the legacy shadow-pass state: the GL shadow and
+  cascade textures, the static cascade cache and scratch maps, cascade
+  matrices, splits and refresh masks, and the `Initialize` override that
+  allocated them. Nothing read them. The Inspector's cascade-range readout,
+  which only ever showed its placeholder, went with them.
+- The particle GPU buffers and VAOs, the GL cubemap code in
+  `IblCaptureComponent` and the baked-probe `ColorVolume` in `Scene` are gone.
+- `Window::EnsureOpenGLContextCurrent` checks the loaded GL version instead of
+  the texture entry points the old uploads used.
+- `glad` is in no public header and out of the precompiled headers. It is a
+  private dependency of `PlutoGEPlatform` (`Window`), `PlutoGERender`
+  (`OpenGLDevice`), the editor (the ImGui OpenGL compositor), the runtime
+  profiler, the road-city tool and the test harnesses that call GL directly.
+  `PlutoGEImport` and ImGui no longer link it. Units that include
+  `<windows.h>` do so before GLFW or `glad`, so the `APIENTRY` redefinition
+  warnings are gone.
+- Tests: the OpenGL variant of `TextureRefreshTests` (pulled forward from
+  Phase 4) and the texture-upload check in `PostProcessInitializationTests` are
+  removed, along with assertions that only checked GL handles were absent.
+
 ## Phase 4: data, tests and docs
 
 1. **Data:** remove the LPV and RSM entries and the LPV Only/RSM Only debug-view

@@ -1355,7 +1355,7 @@ namespace PlutoGE::scene
         {
             render::MeshConfig config;
             config.data = std::move(data);
-            m_runtimeGeometry.reset(render::Mesh::CreateInitialized(config));
+            m_runtimeGeometry.reset(render::Mesh::FromConfig(config));
         }
         else if (!m_runtimeGeometry->ReplaceGeometry(std::move(data)))
         {

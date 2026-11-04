@@ -221,6 +221,8 @@ pipeline and is out of scope here.
 - **Baseline (HEAD `cdac46df`, msvc18 Release, `--clean-first --parallel`):**
   `PlutoGERender` and the engine libraries it depends on rebuilt in 581 s. The
   most recent `CTestCostData.txt` sums to about 452 s of serial test time.
+- **After Phase 1 (`a2da4812`):** the same rebuild took 519 s (-11%), and
+  the Release render objects total 59 MB.
 - **Baseline failures:** compare against the known failing suites at HEAD.
 - **Skip:** don't run the OpenGL DDGI suite on the Vega 8 iGPU, because it
   crashes the driver.

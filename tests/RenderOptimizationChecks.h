@@ -103,6 +103,10 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     draw.preparedMaterialHash = 42;
     BasicLighting lighting;
     lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    // These checks cover the per-draw retained material and parameter records.
+    // Eligible opaque draws otherwise take the bindless GPU-driven path where it
+    // is available, which has its own material table and checks (GpuDrivenOpaqueChecks.h).
+    renderer.SetGpuDrivenOpaqueEnabled(false);
     // More than the number of buffered frames: immutable geometry records
     // must stay resident, while a changed material must become visible.
     std::uint64_t coldPersistentBytes = 0;
@@ -149,6 +153,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
                 "Time-dependent graph reused a previous frame's material record");
         }
     }
+    renderer.SetGpuDrivenOpaqueEnabled(true);
     // Compare the interpreter-free material variant against the full shader,
     // including instancing and both alpha coverage paths.
     for (int scenario = 0; scenario < 18; ++scenario)

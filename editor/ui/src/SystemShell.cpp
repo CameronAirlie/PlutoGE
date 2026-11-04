@@ -241,9 +241,9 @@ namespace PlutoGE::ui
                 continue;
             }
 #ifdef _WIN32
-            infoFile = _wfopen(infoPath.c_str(), L"wx");
+            infoFile = _wfopen(infoPath.c_str(), L"wxb"); // Binary: .trashinfo lines end in LF.
 #else
-            infoFile = std::fopen(infoPath.c_str(), "wx");
+            infoFile = std::fopen(infoPath.c_str(), "wxb");
 #endif
         }
         if (!infoFile)

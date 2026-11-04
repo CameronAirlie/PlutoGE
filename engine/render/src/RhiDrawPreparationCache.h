@@ -56,8 +56,11 @@ namespace PlutoGE::render
                        lod == listLod && input.minShadowLodIndex == command.minShadowLodIndex &&
                        input.castsShadow == command.castsShadow && input.probeDebug == command.probeDebug;
                 if (!common) return false;
+                // A producer revision vouches for array contents, not for which array is attached.
                 if (command.sourceObject && command.sourceRevision)
-                    return input.sourceObject == command.sourceObject && input.sourceRevision == command.sourceRevision;
+                    return input.sourceObject == command.sourceObject && input.sourceRevision == command.sourceRevision &&
+                           input.instanceModels == command.instanceModels &&
+                           input.previousInstanceModels == command.previousInstanceModels;
                 return input.sourceObject == command.sourceObject &&
                        input.worldBounds.center == command.worldBounds.center &&
                        input.worldBounds.radius == command.worldBounds.radius &&

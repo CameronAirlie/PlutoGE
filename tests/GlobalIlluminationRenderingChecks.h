@@ -589,12 +589,13 @@ inline void CheckDdgiLeakage(PlutoGE::render::BasicRenderer &renderer, PlutoGE::
     settings.relocateFromThinSurfaces = false;
     settings.leakReduction = 0.0f;
     const double unreduced = MeasureDdgiLeak(scene, cube, settings, offsets[0], narrowRoom);
-    // Measured: wide rooms below 0.001 at every placement (thin relocation reached 0.04 before the occlusion volume),
-    // the narrow room 0.05 on average (0.49 without leak reduction).
-    if (wideWorst >= 0.005 || narrowMean >= 0.12 || unreduced <= 0.3)
+    // Measured: wide rooms below 0.0012 at every placement (thin relocation reached 0.04 before the occlusion volume),
+    // the narrow room 0.05 on average; without leak reduction 0.49 when written, 0.24 on the Vega 8 (voxel ray source).
+    // Without leak reduction the narrow room must leak past its pass bound (0.12), so the check still sees leaks.
+    if (wideWorst >= 0.005 || narrowMean >= 0.12 || unreduced <= 0.15)
         std::cerr << "DDGI leak: wide room worst " << wideWorst << ", narrow room mean " << narrowMean
                   << ", narrow room without leak reduction " << unreduced << '\n';
-    Require(unreduced > 0.3, "DDGI leak check no longer sees light leak into a narrow room");
+    Require(unreduced > 0.15, "DDGI leak check no longer sees light leak into a narrow room");
     Require(wideWorst < 0.005, "DDGI leaked light into a sealed room");
     Require(narrowMean < 0.12, "DDGI leaked light into a sealed room narrower than the probe spacing");
     std::cout << "DDGI leakage passed (wide room worst " << wideWorst << ", narrow room mean " << narrowMean

@@ -1522,7 +1522,7 @@ namespace PlutoGE::render
             m_emptyVirtualShadowPageTable = rhi::Texture(device, device.CreateTexture(
                 {1, 1, rhi::Format::R32Float, rhi::TextureUsage::Sampled, "Empty VSM page table"}, Bytes(zero)));
             m_emptyVirtualShadowTable = rhi::Buffer(device, device.CreateBuffer(
-                {sizeof(emptyTable), rhi::BufferUsage::Uniform, "Empty virtual shadow table"}, Bytes(emptyTable)));
+                {sizeof(emptyTable), rhi::BufferUsage::Uniform, "Empty virtual shadow table", /*immutable=*/true}, Bytes(emptyTable)));
             m_debugViewBuffer = rhi::Buffer(device, device.CreateBuffer(
                 {sizeof(BasicDebugViewParameters), rhi::BufferUsage::Uniform, "BasicRenderer debug view"}));
             m_postProcessResourcePool = std::make_unique<PostProcessResourcePool>(device);

@@ -131,6 +131,9 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         return total;
     };
     const auto originalCeiling = draws[1];
+    // Keep the linear 8-bit readback below saturation: at full intensity even
+    // exact irradiance clamps the floor under both reflector sizes.
+    effect.parameters[0].y = .1f;
     draws[1].model = glm::translate(glm::mat4(1), glm::vec3(0,12,0)) *
         glm::rotate(glm::mat4(1), glm::radians(90.0f), glm::vec3(1,0,0));
     draws[1].shadowBoundsCenter = {0,12,0};
@@ -147,6 +150,7 @@ void CheckVctWorldCacheRendering(PlutoGE::render::BasicRenderer &renderer, ReadP
         throw std::runtime_error("VCT distant reflected light did not respect source area and trace range");
     draws[1] = originalCeiling;
     effect.parameters[0].w = 81;
+    effect.parameters[0].y = 1;
     renderFrames(8);
     // Put the real surface beyond a frame's triangle budget. Its final GI
     // must match the small mesh, proving that partial draws resume at the

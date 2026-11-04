@@ -346,7 +346,7 @@ VCT's progressive voxelization and relighting work (see [VCT world cache](vct-wo
   them red after the floor goes dark (blending their stale ray slots peaked at 0.09 of the light; now 0).
   Leakage: sealed rooms with 0.3-thick walls at five placements against the grid. An 8-unit room must stay below 0.5%
   of the outside light in every placement, a 2.4-unit room below 12% on average (5% measured), and the same narrow
-  room must still leak over 30% with Leak Reduction off (49%), so the check keeps measuring leaks. `--ddgi-leakage`
+  room must still leak over 15% with Leak Reduction off (above its 12% bound; 49% when written, 24% on the Vega 8 voxel ray source), so the check keeps measuring leaks. `--ddgi-leakage`
   prints every placement.
 - `PlutoGEEngineGraphicsApiTests --ddgi-scene <project> <scene> <output> <frames> [eye target]` captures a project scene
   with DDGI off, on and in each debug view, for checking real content, and prints each DDGI stage's GPU time (averaged

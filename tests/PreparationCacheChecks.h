@@ -193,11 +193,17 @@ void CheckPreparationCache(Device &device, const PlutoGE::render::BasicRendererS
     require(renderer.GetTimingStats().rebuiltDrawPackets == 1 && renderer.GetTimingStats().sharedDrawPacketHits == 2,
         "Retained material invalidation was not shared across all passes");
     commands[0].instanceModels = instances;
-    render();
-    (*instances)[0][3].x += .2f;
-    render();
-    require(renderer.GetTimingStats().rebuiltDrawPackets == 2, "Producer IDs hid mutable instance changes");
+    const auto producerInstances = render();
+    require(renderer.GetTimingStats().rebuiltDrawPackets == 1, "Attaching a producer instance array reused a rigid packet");
+    // Producer-stamped arrays are immutable: new contents arrive as a new array with a new revision.
+    auto rebuiltInstances = std::make_shared<std::vector<glm::mat4>>(*instances);
+    (*rebuiltInstances)[0][3].x += .2f;
+    commands[0].instanceModels = rebuiltInstances;
+    ++commands[0].sourceRevision;
+    require(render() != producerInstances && renderer.GetTimingStats().rebuiltDrawPackets == 1 &&
+        renderer.GetTimingStats().sharedDrawPacketHits == 1, "Producer revision missed a rebuilt instance array");
     commands[0].instanceModels.reset();
+    ++commands[0].sourceRevision;
     RenderSceneFrontend frontend;
     const auto renderFrontend = [&] {
         frontend.PrepareVisibleRenderCommands(camera, 64);

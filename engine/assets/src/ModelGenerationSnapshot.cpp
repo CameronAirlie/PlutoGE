@@ -76,7 +76,8 @@ namespace PlutoGE::assets
             for (const auto &part : relative.parent_path()) { parent /= part; Ordinary(parent, true); }
             const auto path = parent / relative.filename();
             Ordinary(path, false);
-            if (!content::IsPathWithinDirectory(std::filesystem::canonical(path), directory))
+            // Compare canonical forms: the cooked directory comes from the asset path, not the canonical root.
+            if (!content::IsPathWithinDirectory(std::filesystem::canonical(path), std::filesystem::canonical(directory)))
                 throw std::runtime_error("Retained generation file escapes its boundary.");
             return path;
         }

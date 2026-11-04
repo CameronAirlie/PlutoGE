@@ -303,10 +303,15 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     lighting.shadowDistance = 150;
 
     // No opaque receivers: resident coarse VSM pages must also cover fog.
+    // Fog sunlight passes through the medium above each point, so an infinite
+    // homogeneous layer or a sun on the horizon lights nothing: use a finite
+    // layer under a raised sun. The caster still occludes the far part of each ray.
+    lighting.directionalDirection = glm::normalize(glm::vec3(0, -1, -1));
+    lighting.directionalIntensity = 4;
     BasicPostProcessEffect fog{BasicPostProcessEffectType::VolumetricFog};
     fog.quality = 32;
     fog.parameters[0] = {1, 1, 1, 0.2f};
-    fog.parameters[1] = {0, 0, 3, 1};
+    fog.parameters[1] = {1, 0, 3, 1};
     fog.parameters[2] = {0, 0, 1, 1};
     fog.parameters[3].x = 1;
     const auto renderFog = [&]
@@ -335,6 +340,8 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     }
     if (clearEnergy <= shadowedEnergy + 64)
         throw std::runtime_error("Fog ignored VSM caster visibility");
+    lighting.directionalDirection = {0, 0, -1};
+    lighting.directionalIntensity = 1;
 
     lighting.shadowsEnabled = false;
     renderSurface();

@@ -13,6 +13,22 @@ float luminance(float3 color)
     return max(dot(max(color, 0.0), float3(0.2126, 0.7152, 0.0722)), 0.0001);
 }
 
+// Mirrors AutoExposureEffect::ComputeTargetExposure. Lanes: 0 = key, min,
+// max, adapt up; 1 = adapt down, low-light luminance, low-light darkening.
+float targetExposure(float averageLuminance)
+{
+    const float key = pass.parameters[0].x;
+    const float minExposure = pass.parameters[0].y;
+    const float maxExposure = pass.parameters[0].z;
+    const float lowLightLuminance = pass.parameters[1].y;
+    const float lowLightDarkening = pass.parameters[1].z;
+    // Scenes darker than the low-light level lose `darkening` stops of
+    // exposure per stop, so night stays dark instead of adapting to mid-grey.
+    const float stopsBelowLowLight = max(0.0, log2(lowLightLuminance / averageLuminance));
+    const float exposure = key / averageLuminance * exp2(-stopsBelowLowLight * lowLightDarkening);
+    return clamp(exposure, min(minExposure, maxExposure), max(minExposure, maxExposure));
+}
+
 [shader("fragment")]
 float meterMain(FullscreenVertexOutput input) : SV_Target
 {
@@ -28,9 +44,7 @@ float meterMain(FullscreenVertexOutput input) : SV_Target
         }
     }
     const float averageLuminance = exp(logarithmicLuminance / float(sampleExtent * sampleExtent));
-    const float target = clamp(pass.parameters[0].x / averageLuminance,
-                               min(pass.parameters[0].y, pass.parameters[0].z),
-                               max(pass.parameters[0].y, pass.parameters[0].z));
+    const float target = targetExposure(averageLuminance);
     if (pass.parameters[5].w < 0.5)
         return target;
     const float previous = exposureTexture.Sample(float2(0.5, 0.5)).r;

@@ -137,7 +137,14 @@ Cameras from older scenes may keep their own inline stack. The Inspector offers
 Tune in this order so later effects do not obscure fundamental lighting errors:
 
 1. Exposure and tone mapping: keep ordinary surfaces readable in both bright and
-   dark areas; test auto exposure while moving between them.
+   dark areas; test auto exposure while moving between them. Auto exposure
+   normally pulls every scene toward mid-grey (**Key Value**), so night and
+   interiors brighten to daylight levels. To keep them dark without lowering
+   **Max Exposure** for daytime, set **Low Light EV** to the metered EV100 where
+   darkening should begin (EV100 = log2(average luminance × 8)) and raise
+   **Low Light Darkening**: 0 adapts fully, 1 holds exposure at that level, and
+   above 1 gives darker scenes less exposure. Max Exposure then only caps the
+   brightest boost.
 2. Ambient occlusion and indirect lighting: inspect corners and contact regions;
    excessive occlusion can make every surface look dirty.
 3. Reflections: compare smooth and rough surfaces and move objects off screen to

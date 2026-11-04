@@ -296,6 +296,47 @@ int main()
         !Near(exposurePacket->parameters[0].z, 3.5f))
         return 10;
 
+    // Low-light compensation: off by default, so every scene adapts fully toward Key Value.
+    {
+        const AutoExposureEffect::Settings defaults;
+        if (!Near(defaults.lowLightDarkening, 0.0f) ||
+            !Near(AutoExposureEffect::ComputeTargetExposure(defaults, 0.4f), 0.5f) ||
+            !Near(AutoExposureEffect::Ev100ToLuminance(AutoExposureEffect::LuminanceToEv100(0.03f)), 0.03f) ||
+            !Near(AutoExposureEffect::Ev100ToLuminance(0.0f), 0.125f))
+            return 160;
+
+        // One configuration covering a sunlit scene (needs ~32x) and a night scene four stops darker.
+        AutoExposureEffect lowLight;
+        lowLight.ApplyParameters({{.name = "Key Value", .type = PostProcessParameterType::Float, .value = "0.18"},
+                                  {.name = "Max Exposure", .type = PostProcessParameterType::Float, .value = "64"},
+                                  {.name = "Low Light EV", .type = PostProcessParameterType::Float,
+                                   .value = std::to_string(AutoExposureEffect::LuminanceToEv100(0.18f / 32.0f))},
+                                  {.name = "Low Light Darkening", .type = PostProcessParameterType::Float, .value = "1.5"}});
+        const auto &settings = lowLight.GetSettings();
+        const float day = AutoExposureEffect::ComputeTargetExposure(settings, 0.18f / 32.0f);
+        const float night = AutoExposureEffect::ComputeTargetExposure(settings, 0.18f / 32.0f / 16.0f);
+        const float brighter = AutoExposureEffect::ComputeTargetExposure(settings, 0.18f);
+        if (std::abs(day - 32.0f) > 0.01f || std::abs(night - 8.0f) > 0.01f || !Near(brighter, 1.0f))
+            return 161;
+
+        // Darkening 1 holds exposure at the low-light level; darkening is clamped to [0, 4].
+        lowLight.ApplyParameters({{.name = "Low Light Darkening", .type = PostProcessParameterType::Float, .value = "1"}});
+        if (std::abs(AutoExposureEffect::ComputeTargetExposure(lowLight.GetSettings(), 0.0001f) - 32.0f) > 0.01f)
+            return 162;
+        lowLight.ApplyParameters({{.name = "Low Light Darkening", .type = PostProcessParameterType::Float, .value = "9"}});
+        if (!Near(lowLight.GetSettings().lowLightDarkening, 4.0f))
+            return 163;
+
+        // Settings round-trip through the parameter list and reach the shader lanes.
+        AutoExposureEffect restored;
+        restored.SetParameters(lowLight.GetParameters());
+        const auto packet = AdaptPostProcessEffect(restored);
+        if (!Near(restored.GetSettings().lowLightEv, settings.lowLightEv) || !packet ||
+            std::abs(packet->parameters[1].y - 0.18f / 32.0f) > 1e-5f || !Near(packet->parameters[1].z, 4.0f) ||
+            restored.GetSummary().empty())
+            return 164;
+    }
+
     TAAEffect taa({.historyWeight = 0.88f, .sharpening = 0.2f, .quality = 1,
                    .jitterDebug = true});
     const auto taaPacket = AdaptPostProcessEffect(taa);

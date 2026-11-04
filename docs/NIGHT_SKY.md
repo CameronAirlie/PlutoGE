@@ -69,7 +69,8 @@ and sets `directionalIsMoon` when the moon has the light. Atmosphere passes
   `PhysicalSkyCelestial.slang`.
 - **Night perception:** a scotopic (Purkinje) tone-mapping stage, which
   shifts colour toward blue and reduces saturation and detail in low light,
-  pairs naturally with auto-exposure limits for night scenes.
+  pairs naturally with auto exposure's low-light darkening (Low Light EV /
+  Low Light Darkening), which keeps night scenes dark.
 
 Tests: `PlutoGEPhysicalSkyModelTests` (celestial model, light handoff,
 scene integration, serialization) and `PlutoGEVulkanNightSkyTests` /

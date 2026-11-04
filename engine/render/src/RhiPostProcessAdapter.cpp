@@ -172,11 +172,14 @@ namespace PlutoGE::render
         {
             return AdaptTyped<AutoExposureEffect>(effect, [](const AutoExposureEffect &typed)
             {
-                const auto settings = typed.GetSettings();
+                const auto &settings = typed.GetSettings();
                 BasicPostProcessEffect result{BasicPostProcessEffectType::AutoExposure};
                 result.parameters[0] = {settings.keyValue, settings.minExposure,
                                         settings.maxExposure, settings.adaptationSpeedUp};
-                result.parameters[1].x = settings.adaptationSpeedDown;
+                // Lane 5.w is reserved for the renderer's exposure-history flag.
+                result.parameters[1] = {settings.adaptationSpeedDown,
+                                        AutoExposureEffect::Ev100ToLuminance(settings.lowLightEv),
+                                        settings.lowLightDarkening, 0.0f};
                 return result;
             });
         }

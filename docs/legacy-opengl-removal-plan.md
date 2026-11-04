@@ -284,6 +284,11 @@ Phases 1 and 2. `SceneBaker.cpp` no longer has a GL bake compute, so it needs no
   render objects totalling 57 MB. The clean rebuild time is now dominated by
   the large RHI units (`RhiSceneRenderer`, `BasicRenderer`, `VulkanDevice`)
   and the engine libraries it rebuilds with it.
+- **After Phase 3 (`46bfae09`):** 554 s, one sample, so no gain over Phase 2
+  is measurable (single runs on this machine vary by tens of seconds). Most
+  of the rebuild is the large RHI units and the dependencies `--clean-first`
+  rebuilds with them, such as OpenAL. The full suite runs 257 tests in 283 s
+  of `ctest -j4` wall time, with no baseline failures left.
 - **Baseline failures:** compare against the known failing suites at HEAD.
 - **Skip:** don't run the OpenGL DDGI suite on the Vega 8 iGPU, because it
   crashes the driver.

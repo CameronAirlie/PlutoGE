@@ -250,6 +250,10 @@ pipeline and is out of scope here.
   most recent `CTestCostData.txt` sums to about 452 s of serial test time.
 - **After Phase 1 (`a2da4812`):** the same rebuild took 519 s (-11%), and
   the Release render objects total 59 MB.
+- **After Phase 2 (`36d8ad72`):** 510 s (-12% from the baseline), with 98
+  render objects totalling 57 MB. The clean rebuild time is now dominated by
+  the large RHI units (`RhiSceneRenderer`, `BasicRenderer`, `VulkanDevice`)
+  and the engine libraries it rebuilds with it.
 - **Baseline failures:** compare against the known failing suites at HEAD.
 - **Skip:** don't run the OpenGL DDGI suite on the Vega 8 iGPU, because it
   crashes the driver.

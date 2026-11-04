@@ -22,8 +22,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <array>
 #include <cmath>
-#include <thread>
-#include <chrono>
 #include <iostream>
 #include <stdexcept>
 #include <filesystem>
@@ -91,7 +89,7 @@ int main(int argc, char **argv) try
         auto authored=scene::SceneSerializer::Load(argv[3],&error);
         if (!authored) throw std::runtime_error("Cannot load authored scene: "+error);
         std::cout << "Authored ambient volumes=" << authored->GetAmbientLightVolumes().size() << std::endl;
-        scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+        scene::SceneBakeSettings options; options.probesOnly=true;
         options.probeBounceStrength=1; options.logProbeDiagnostics=true;
         const auto result=scene::SceneBaker().Bake(*authored,options);
         if (!result.succeeded) throw std::runtime_error(result.message);
@@ -142,7 +140,7 @@ int main(int argc, char **argv) try
         auto object=std::make_unique<scene::Entity>();
         object->AddComponent(new scene::MeshComponent({&mesh,&material}))->SetStatic(true);
         imported.AddEntity(std::move(object));
-        scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+        scene::SceneBakeSettings options; options.probesOnly=true;
         options.maxProbeCount=8; options.probeDirectionCount=8;
         const bool baked=scene::SceneBaker().Bake(imported,options).succeeded;
         const auto &volume=imported.GetBakedProbeVolume();
@@ -169,7 +167,7 @@ int main(int argc, char **argv) try
             component->SetMesh(&shared); component->SetMaterial(&material); component->SetStatic(true);
             component->SetSubmeshRange(0,count); component->SetSubmeshPositionOffset(0,{10,0,0});
             selected.AddEntity(std::move(object));
-            scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+            scene::SceneBakeSettings options; options.probesOnly=true;
             options.maxProbeCount=8; options.probeDirectionCount=8;
             const auto baked=scene::SceneBaker().Bake(selected,options);
             const auto &volume=selected.GetBakedProbeVolume();
@@ -177,31 +175,6 @@ int main(int argc, char **argv) try
             if (!baked.succeeded || std::abs(volume.origin.x-(10-expectedExtent*.05f))>.01f ||
                 std::abs(volume.size.x-expectedExtent*1.1f)>.01f)
                 throw std::runtime_error("Bake includes unselected shared mesh sections or ignores section offsets");
-            if (!component->GenerateLightmapUvAtlasForSubmeshes({0}) ||
-                component->GetMesh()->GetMeshData().indices.size()!=static_cast<std::size_t>(count*3) ||
-                shared.GetMeshData().indices.size()!=9)
-                throw std::runtime_error("Fallback UVs clone unselected geometry or mutate shared source");
-            if (count==1 && api==rhi::GraphicsApi::OpenGL) {
-                auto lamp=std::make_unique<scene::Entity>();
-                auto *light=lamp->AddComponent(new scene::LightComponent());
-                light->GetLight().type=scene::LightType::Directional;
-                light->GetLight().direction={0,0,-1}; light->SetStatic(true);
-                selected.AddEntity(std::move(lamp));
-                selected.SetFilePath("shared_section_bake_regression.plutoscene");
-                options.probesOnly=false; options.bakeProbeVolume=false;
-                options.lightmapResolution=8; options.directShadowSampleCount=1;
-                auto task=scene::SceneBaker().BeginBake(selected,options);
-                if (!task) throw std::runtime_error("Cannot start lightmap regression bake");
-                while (!task->IsFinished()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                const auto result=task->Finalize(selected);
-                if (!result.succeeded || result.bakedLightmapCount!=1 ||
-                    !component->GetMaterialForSubmesh(0)->GetConfig().lightmapTexture ||
-                    task->Finalize(selected).bakedLightmapCount!=1)
-                    throw std::runtime_error("Disk-backed lightmap upload or repeated finalization failed: "+result.message);
-            }
-            component->SetSubmeshIndex(2);
-            if (component->GetMesh()!=&shared || component->GetMesh()->GetSubmesh(2).indexCount!=3)
-                throw std::runtime_error("Changing selection loses geometry after a compact fallback unwrap");
         }
     }
     // Optional read-only stress check with the real Bistro geometry. No project
@@ -220,7 +193,7 @@ int main(int argc, char **argv) try
             component->SetMesh(&shared); component->SetMaterial(&material); component->SetStatic(true);
             component->SetSubmeshIndex(static_cast<int>(index)); bistro.AddEntity(std::move(object));
         }
-        scene::SceneBakeSettings options; options.probesOnly=true; options.bakeIndirectBounce=false;
+        scene::SceneBakeSettings options; options.probesOnly=true;
         options.maxProbeCount=4096; options.probeDirectionCount=128; options.probeSpacing=.05f;
         const auto baked=scene::SceneBaker().Bake(bistro,options);
         if (!baked.succeeded) throw std::runtime_error("Bistro bake failed: "+baked.message);
@@ -276,7 +249,7 @@ int main(int argc, char **argv) try
     }
     if (!service.CaptureIbl({0,0,0},0,10,commands,scene).empty()) throw std::runtime_error("Invalid capture size accepted");
     // Exercise the real asynchronous baker with an emissive room and a closed
-    // solid at the central grid cell. No lightmaps or static lights are required.
+    // solid at the central grid cell. No static lights are required.
     for (unsigned i = 0; i < meshes.size(); ++i) {
         auto entity = std::make_unique<scene::Entity>();
         auto *component = entity->AddComponent(new scene::MeshComponent({}));
@@ -302,13 +275,13 @@ int main(int argc, char **argv) try
     solidComponent->SetMesh(&solidMesh); solidComponent->SetMaterial(&solidMaterial); solidComponent->SetStatic(true);
     scene.AddEntity(std::move(solidEntity));
     scene::SceneBakeSettings settings;
-    settings.probesOnly = true; settings.bakeIndirectBounce = false;
+    settings.probesOnly = true;
     settings.probeSpacing = 1; settings.maxProbeCount = 125; settings.probeDirectionCount = 128;
     const auto result = scene::SceneBaker().Bake(scene,settings);
     const auto &grid = scene.GetBakedProbeVolume();
-    if (!result.succeeded || !grid.HasDirectionalData() || result.bakedLightmapCount != 0 || grid.positions.size() > 125 ||
+    if (!result.succeeded || !grid.HasDirectionalData() || grid.positions.size() > 125 ||
         grid.visibilityNormals.size() != grid.positions.size())
-        throw std::runtime_error("Ambient-only bake failed, exceeded budget or baked unwanted lightmaps: "+result.message);
+        throw std::runtime_error("Ambient-only bake failed or exceeded budget: "+result.message);
     std::size_t closest = 0;
     int valid = 0; float light = 0;
     bool hasVisibilitySurface = false;

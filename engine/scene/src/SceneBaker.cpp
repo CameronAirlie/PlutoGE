@@ -2,7 +2,6 @@
 #include "PlutoGE/scene/SceneBaker.h"
 
 #include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/Texture.h"
@@ -16,14 +15,10 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
-#include <fstream>
-#include <functional>
 #include <future>
 #include <limits>
 #include <map>
@@ -39,9 +34,6 @@ namespace PlutoGE::scene
     namespace
     {
         constexpr float kMinRayHitDistance = 0.0000001f;
-        constexpr int kLightmapDilationIterations = 16;
-        constexpr float kLightmapDilationNormalThreshold = 0.5f;
-        constexpr std::size_t kMinLightmapTasksPerBakeWorker = 1;
         constexpr std::size_t kMinProbeCellsPerBakeWorker = 1;
 
         void LogBakeMessage(const std::string &message)
@@ -86,32 +78,6 @@ namespace PlutoGE::scene
             }
 
             return std::max<std::size_t>(1, std::min({hardwareWorkers, taskCount, desiredWorkers}));
-        }
-
-        int ResolveEffectiveLightmapTileSize(int requestedTileSize, int resolution)
-        {
-            const int safeResolution = std::max(resolution, 1);
-            int effectiveTileSize = std::clamp(requestedTileSize, 1, safeResolution);
-            const std::size_t hardwareWorkers = std::max<std::size_t>(std::thread::hardware_concurrency(), 1);
-            const std::size_t desiredTaskCount = std::max<std::size_t>(hardwareWorkers * 4, 1);
-
-            while (effectiveTileSize > 4)
-            {
-                const std::size_t tileCountX = static_cast<std::size_t>((safeResolution + effectiveTileSize - 1) / effectiveTileSize);
-                const std::size_t tileCountY = static_cast<std::size_t>((safeResolution + effectiveTileSize - 1) / effectiveTileSize);
-                if (tileCountX * tileCountY >= desiredTaskCount)
-                {
-                    break;
-                }
-
-                effectiveTileSize = std::max(effectiveTileSize / 2, 4);
-                if (effectiveTileSize == 4)
-                {
-                    break;
-                }
-            }
-
-            return effectiveTileSize;
         }
 
         struct BakeLight
@@ -242,11 +208,6 @@ namespace PlutoGE::scene
             return lights;
         }
 
-        glm::vec2 ResolveBakeUv(const render::MeshVertexData &vertex, bool useLightmapUvs)
-        {
-            return useLightmapUvs ? glm::vec2(vertex.uv2[0], vertex.uv2[1]) : glm::vec2(vertex.uv[0], vertex.uv[1]);
-        }
-
         struct BakeTriangle
         {
             std::shared_ptr<const render::MaterialConfig> graphMaterial;
@@ -255,69 +216,13 @@ namespace PlutoGE::scene
             glm::vec3 worldNormals[3]{};
             glm::vec2 primaryUvs[3]{};
             glm::vec2 emissionUvs[3]{};
-            glm::vec2 lightmapUvs[3]{};
             glm::vec3 baseColor{1.0f};
             float baseAlpha = 1.0f;
             render::Texture *albedoTexture = nullptr;
             MeshComponent *meshComponent = nullptr;
-            uint32_t materialSlot = 0;
             bool castsShadow = true;
             render::AlphaMode alphaMode = render::AlphaMode::Opaque;
             float alphaCutoff = 0.5f;
-        };
-
-        struct BakeTarget
-        {
-            MeshComponent *meshComponent = nullptr;
-            TerrainComponent *terrainComponent = nullptr;
-            render::Mesh *mesh = nullptr;
-            std::size_t submeshIndex = 0;
-            uint32_t materialSlot = 0;
-            std::vector<std::size_t> triangleIndices;
-            std::filesystem::path outputPath;
-            int resolution = 0;
-            float localSurfaceArea = 0.0f;
-            float worldSurfaceArea = 0.0f;
-            float maximumLinearScale = 1.0f;
-            bool uvCoordinatesInRange = true;
-            bool hasOverlappingUvCharts = false;
-            glm::vec4 lightmapUvTransform{1.0f, 1.0f, 0.0f, 0.0f};
-        };
-
-        using BakeTargetKey = std::pair<const void *, std::size_t>;
-
-        struct RasterizedBakeTriangle
-        {
-            std::size_t triangleIndex = 0;
-            glm::vec2 texel0{0.0f};
-            glm::vec2 texel1{0.0f};
-            glm::vec2 texel2{0.0f};
-            int minX = 0;
-            int maxX = 0;
-            int minY = 0;
-            int maxY = 0;
-            int centerX = 0;
-            int centerY = 0;
-        };
-
-        struct BakeTileTask
-        {
-            int minX = 0;
-            int maxX = 0;
-            int minY = 0;
-            int maxY = 0;
-            std::vector<std::size_t> rasterIndices;
-        };
-
-        struct BakedTexelLighting
-        {
-            glm::vec3 direct{0.0f};
-            glm::vec3 indirect{0.0f};
-
-            glm::vec3 Total() const
-            {
-                return direct + indirect;
-            }
         };
 
         struct RayHit
@@ -361,13 +266,6 @@ namespace PlutoGE::scene
             std::vector<unsigned char> pixels;
         };
 
-        struct GpuBakedLightmap
-        {
-            std::vector<glm::vec3> direct;
-            std::vector<glm::vec3> indirect;
-            bool includesIndirect = false;
-        };
-
         struct ProbeBakeRequest { EntityID entity; SceneBakeSettings settings; };
 
         struct PreparedSceneBake
@@ -377,33 +275,20 @@ namespace PlutoGE::scene
             std::chrono::steady_clock::time_point bakeStartTime;
             std::vector<BakeLight> lights;
             std::vector<BakeTriangle> triangles;
-            std::map<BakeTargetKey, BakeTarget> targets;
             BakeAccelerationStructure acceleration;
             std::unordered_map<render::Texture *, CpuTextureData> albedoTextureCache;
-            std::vector<glm::vec3> indirectBounceDirections;
             std::map<int,std::vector<glm::vec3>> probeEnvironments;
-            std::map<BakeTargetKey, GpuBakedLightmap> gpuLightmaps;
-            bool gpuBakeActive = false;
-            bool gpuGiActive = false;
             bool shouldStoreProbeVolume = false;
             // The probe environment is a physical sky, which the renderer can re-evaluate live.
             bool physicalSkyEnvironment = false;
-        };
-
-        struct CompletedBakeLightmap
-        {
-            BakeTarget target;
         };
 
         struct BackgroundBakeOutput
         {
             bool cancelled = false;
             bool shouldStoreProbeVolume = false;
-            int failedLightmapWrites = 0;
-            int invalidLightmapUvCount = 0;
             BakedProbeVolume probeVolume;
             std::vector<std::pair<EntityID, BakedProbeVolume>> componentVolumes;
-            std::vector<CompletedBakeLightmap> lightmaps;
             long long elapsedMs = 0;
         };
 
@@ -416,16 +301,6 @@ namespace PlutoGE::scene
                                   const glm::vec3 &barycentric,
                                   const std::unordered_map<render::Texture *, CpuTextureData> &textureCache);
         std::unordered_map<render::Texture *, CpuTextureData> BuildAlbedoTextureCache(const std::vector<BakeTriangle> &triangles);
-
-        std::string ResolveBakeDirectoryName(const Scene &scene)
-        {
-            if (!scene.GetFilePath().empty())
-            {
-                return std::filesystem::path(scene.GetFilePath()).stem().string();
-            }
-
-            return "unsaved_scene";
-        }
 
         void CollectEntitiesRecursive(const Entity *entity, std::vector<const Entity *> &entities)
         {
@@ -513,23 +388,6 @@ namespace PlutoGE::scene
             const float coordinatePrecisionEpsilon =
                 largestWorldCoordinate * std::numeric_limits<float>::epsilon() * 8.0f;
             return std::max({scaleRelativeEpsilon, coordinatePrecisionEpsilon, kMinRayHitDistance});
-        }
-
-        float ResolveWorldTexelTolerance(const BakeTriangle &triangle, int resolution)
-        {
-            float largestWorldUnitsPerTexel = 0.0f;
-            for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex)
-            {
-                const int nextIndex = (edgeIndex + 1) % 3;
-                const float worldLength = glm::length(triangle.worldPositions[nextIndex] - triangle.worldPositions[edgeIndex]);
-                const float texelLength = glm::length(triangle.lightmapUvs[nextIndex] - triangle.lightmapUvs[edgeIndex]) *
-                                          static_cast<float>(std::max(resolution, 1));
-                if (texelLength > 1e-4f)
-                {
-                    largestWorldUnitsPerTexel = std::max(largestWorldUnitsPerTexel, worldLength / texelLength);
-                }
-            }
-            return std::max(largestWorldUnitsPerTexel * 2.5f, 0.005f);
         }
 
         void ExpandBounds(BakeAabb &bounds, const glm::vec3 &point)
@@ -641,32 +499,6 @@ namespace PlutoGE::scene
             return acceleration;
         }
 
-        std::vector<glm::vec3> GenerateHemisphereDirections(int directionCount)
-        {
-            std::vector<glm::vec3> directions;
-            if (directionCount <= 0)
-            {
-                return directions;
-            }
-
-            directions.resize(static_cast<std::size_t>(directionCount));
-            constexpr float kGoldenAngle = 2.39996322972865332f;
-            constexpr float kTwoPi = 6.28318530717958648f;
-            for (int index = 0; index < directionCount; ++index)
-            {
-                const float u = (static_cast<float>(index) + 0.5f) / static_cast<float>(directionCount);
-                const float cosTheta = std::sqrt(std::max(1.0f - u, 0.0f));
-                const float sinTheta = std::sqrt(std::max(1.0f - cosTheta * cosTheta, 0.0f));
-                const float angle = std::fmod(kGoldenAngle * static_cast<float>(index), kTwoPi);
-                directions[static_cast<std::size_t>(index)] = glm::vec3(
-                    std::cos(angle) * sinTheta,
-                    std::sin(angle) * sinTheta,
-                    cosTheta);
-            }
-
-            return directions;
-        }
-
         std::vector<glm::vec3> GenerateSphereDirections(int directionCount)
         {
             std::vector<glm::vec3> directions;
@@ -698,1126 +530,6 @@ namespace PlutoGE::scene
                                                 : glm::vec3(1.0f, 0.0f, 0.0f);
             outTangent = glm::normalize(glm::cross(referenceAxis, normal));
             outBitangent = glm::normalize(glm::cross(normal, outTangent));
-        }
-
-        bool TryComputeTexelBarycentric(const glm::vec2 &texel0,
-                                        const glm::vec2 &texel1,
-                                        const glm::vec2 &texel2,
-                                        const glm::vec2 &samplePoint,
-                                        glm::vec3 &outBarycentric)
-        {
-            const float triangleArea = (texel1.x - texel0.x) * (texel2.y - texel0.y) - (texel1.y - texel0.y) * (texel2.x - texel0.x);
-            if (std::abs(triangleArea) < 1e-6f)
-            {
-                return false;
-            }
-
-            const float w0 = ((texel1.x - samplePoint.x) * (texel2.y - samplePoint.y) - (texel1.y - samplePoint.y) * (texel2.x - samplePoint.x)) / triangleArea;
-            const float w1 = ((texel2.x - samplePoint.x) * (texel0.y - samplePoint.y) - (texel2.y - samplePoint.y) * (texel0.x - samplePoint.x)) / triangleArea;
-            const float w2 = 1.0f - w0 - w1;
-            if (w0 < -0.001f || w1 < -0.001f || w2 < -0.001f)
-            {
-                return false;
-            }
-
-            outBarycentric = glm::vec3(w0, w1, w2);
-            return true;
-        }
-
-        bool TrySampleConservativeTexel(const glm::vec2 &texel0,
-                                        const glm::vec2 &texel1,
-                                        const glm::vec2 &texel2,
-                                        int x,
-                                        int y,
-                                        glm::vec3 &outBarycentric)
-        {
-            static const std::array<glm::vec2, 5> kSubSamples = {
-                glm::vec2(0.5f, 0.5f),
-                glm::vec2(0.25f, 0.25f),
-                glm::vec2(0.75f, 0.25f),
-                glm::vec2(0.25f, 0.75f),
-                glm::vec2(0.75f, 0.75f),
-            };
-
-            glm::vec3 accumulatedBarycentric{0.0f};
-            float sampleCount = 0.0f;
-            for (const auto &offset : kSubSamples)
-            {
-                glm::vec3 barycentric{0.0f};
-                const glm::vec2 samplePoint(static_cast<float>(x) + offset.x, static_cast<float>(y) + offset.y);
-                if (!TryComputeTexelBarycentric(texel0, texel1, texel2, samplePoint, barycentric))
-                {
-                    continue;
-                }
-
-                accumulatedBarycentric += barycentric;
-                sampleCount += 1.0f;
-            }
-
-            if (sampleCount <= 0.0f)
-            {
-                return false;
-            }
-
-            outBarycentric = accumulatedBarycentric / sampleCount;
-            return true;
-        }
-
-        std::vector<RasterizedBakeTriangle> BuildLightmapTileTasks(const BakeTarget &target,
-                                                                   const std::vector<BakeTriangle> &triangles,
-                                                                   int tileSize,
-                                                                   std::vector<BakeTileTask> &outTileTasks)
-        {
-            outTileTasks.clear();
-            const int safeTileSize = std::max(tileSize, 1);
-            const int tileCountX = std::max((target.resolution + safeTileSize - 1) / safeTileSize, 1);
-            const int tileCountY = std::max((target.resolution + safeTileSize - 1) / safeTileSize, 1);
-            outTileTasks.resize(static_cast<std::size_t>(tileCountX * tileCountY));
-
-            auto flattenTile = [tileCountX](int tileX, int tileY)
-            {
-                return static_cast<std::size_t>(tileX + tileY * tileCountX);
-            };
-
-            for (int tileY = 0; tileY < tileCountY; ++tileY)
-            {
-                for (int tileX = 0; tileX < tileCountX; ++tileX)
-                {
-                    auto &tileTask = outTileTasks[flattenTile(tileX, tileY)];
-                    tileTask.minX = tileX * safeTileSize;
-                    tileTask.minY = tileY * safeTileSize;
-                    tileTask.maxX = std::min(tileTask.minX + safeTileSize - 1, target.resolution - 1);
-                    tileTask.maxY = std::min(tileTask.minY + safeTileSize - 1, target.resolution - 1);
-                }
-            }
-
-            std::vector<RasterizedBakeTriangle> rasterizedTriangles;
-            rasterizedTriangles.reserve(target.triangleIndices.size());
-
-            for (const auto triangleIndex : target.triangleIndices)
-            {
-                const auto &triangle = triangles[triangleIndex];
-                const glm::vec2 uv0 = triangle.lightmapUvs[0];
-                const glm::vec2 uv1 = triangle.lightmapUvs[1];
-                const glm::vec2 uv2 = triangle.lightmapUvs[2];
-
-                RasterizedBakeTriangle rasterizedTriangle;
-                rasterizedTriangle.triangleIndex = triangleIndex;
-                // Normalized texture coordinates address texel boundaries in
-                // [0, resolution], while texel centers are x + 0.5. Mapping to
-                // resolution - 1 compressed every chart and displaced shadows.
-                rasterizedTriangle.texel0 = uv0 * static_cast<float>(target.resolution);
-                rasterizedTriangle.texel1 = uv1 * static_cast<float>(target.resolution);
-                rasterizedTriangle.texel2 = uv2 * static_cast<float>(target.resolution);
-                rasterizedTriangle.minX = std::clamp(static_cast<int>(std::floor(std::min({rasterizedTriangle.texel0.x, rasterizedTriangle.texel1.x, rasterizedTriangle.texel2.x}))), 0, target.resolution - 1);
-                rasterizedTriangle.maxX = std::clamp(static_cast<int>(std::ceil(std::max({rasterizedTriangle.texel0.x, rasterizedTriangle.texel1.x, rasterizedTriangle.texel2.x}))), 0, target.resolution - 1);
-                rasterizedTriangle.minY = std::clamp(static_cast<int>(std::floor(std::min({rasterizedTriangle.texel0.y, rasterizedTriangle.texel1.y, rasterizedTriangle.texel2.y}))), 0, target.resolution - 1);
-                rasterizedTriangle.maxY = std::clamp(static_cast<int>(std::ceil(std::max({rasterizedTriangle.texel0.y, rasterizedTriangle.texel1.y, rasterizedTriangle.texel2.y}))), 0, target.resolution - 1);
-
-                const glm::vec2 centerUv = glm::clamp((uv0 + uv1 + uv2) / 3.0f, glm::vec2(0.0f), glm::vec2(1.0f));
-                rasterizedTriangle.centerX = std::clamp(static_cast<int>(std::floor(centerUv.x * static_cast<float>(target.resolution))), 0, target.resolution - 1);
-                rasterizedTriangle.centerY = std::clamp(static_cast<int>(std::floor(centerUv.y * static_cast<float>(target.resolution))), 0, target.resolution - 1);
-
-                const std::size_t rasterIndex = rasterizedTriangles.size();
-                rasterizedTriangles.push_back(rasterizedTriangle);
-
-                const int tileMinX = rasterizedTriangle.minX / safeTileSize;
-                const int tileMaxX = rasterizedTriangle.maxX / safeTileSize;
-                const int tileMinY = rasterizedTriangle.minY / safeTileSize;
-                const int tileMaxY = rasterizedTriangle.maxY / safeTileSize;
-                for (int tileY = tileMinY; tileY <= tileMaxY; ++tileY)
-                {
-                    for (int tileX = tileMinX; tileX <= tileMaxX; ++tileX)
-                    {
-                        outTileTasks[flattenTile(tileX, tileY)].rasterIndices.push_back(rasterIndex);
-                    }
-                }
-            }
-
-            if (outTileTasks.size() > 1)
-            {
-                std::vector<BakeTileTask> compactedTileTasks;
-                compactedTileTasks.reserve(outTileTasks.size());
-                for (auto &tileTask : outTileTasks)
-                {
-                    if (!tileTask.rasterIndices.empty())
-                    {
-                        compactedTileTasks.push_back(std::move(tileTask));
-                    }
-                }
-
-                if (!compactedTileTasks.empty())
-                {
-                    outTileTasks = std::move(compactedTileTasks);
-                }
-            }
-
-            return rasterizedTriangles;
-        }
-
-        struct alignas(16) GpuBakeSample
-        {
-            glm::vec4 positionAndEpsilon{0.0f};
-            glm::vec4 shadingNormal{0.0f};
-            glm::vec4 geometricNormal{0.0f};
-        };
-
-        struct alignas(16) GpuBakeTriangle
-        {
-            glm::vec4 position0AndCastsShadow{0.0f};
-            glm::vec4 position1{0.0f};
-            glm::vec4 position2{0.0f};
-            glm::vec4 baseColor{1.0f};
-            glm::vec4 uv0AndUv1{0.0f};
-            glm::vec4 uv2AndAlpha{0.0f};
-            glm::uvec4 alphaTexture{0u};
-        };
-
-        struct alignas(16) GpuBakeBvhNode
-        {
-            glm::vec4 minBounds{0.0f};
-            glm::vec4 maxBounds{0.0f};
-            glm::uvec4 linksAndRange{0u};
-        };
-
-        struct alignas(16) GpuBakeLight
-        {
-            glm::vec4 positionAndType{0.0f};
-            glm::vec4 colorAndIntensity{0.0f};
-            glm::vec4 directionAndRange{0.0f};
-            glm::vec4 castsShadows{0.0f};
-        };
-
-        struct alignas(16) GpuBakeResult
-        {
-            glm::vec4 direct{0.0f};
-            glm::vec4 indirect{0.0f};
-        };
-
-        GLuint CreateGpuDirectBakeProgram()
-        {
-            static constexpr const char *sources[] = {
-                R"(
-                #version 430 core
-                layout(local_size_x = 64) in;
-
-                struct BakeSample { vec4 PositionEpsilon; vec4 ShadingNormal; vec4 GeometricNormal; };
-                struct BakeTriangle
-                {
-                    vec4 P0CastsShadow;
-                    vec4 P1;
-                    vec4 P2;
-                    vec4 BaseColor;
-                    vec4 Uv0Uv1;
-                    vec4 Uv2Alpha;
-                    uvec4 AlphaTexture;
-                };
-                struct BakeBvhNode
-                {
-                    vec4 MinBounds;
-                    vec4 MaxBounds;
-                    uvec4 LinksAndRange;
-                };
-                struct BakeLight { vec4 PositionType; vec4 ColorIntensity; vec4 DirectionRange; vec4 CastsShadows; };
-                struct BakeResult { vec4 Direct; vec4 Indirect; };
-
-                layout(std430, binding = 0) readonly buffer Samples { BakeSample samples[]; };
-                layout(std430, binding = 1) readonly buffer Triangles { BakeTriangle triangles[]; };
-                layout(std430, binding = 2) readonly buffer Lights { BakeLight lights[]; };
-                layout(std430, binding = 3) writeonly buffer Results { BakeResult results[]; };
-                layout(std430, binding = 4) readonly buffer TexturePixels { uint texturePixels[]; };
-                layout(std430, binding = 5) readonly buffer BvhNodes { BakeBvhNode bvhNodes[]; };
-                layout(std430, binding = 6) readonly buffer BvhTriangleIndices { uint bvhTriangleIndices[]; };
-                uniform uint uSampleCount;
-                uniform uint uSampleOffset;
-                uniform uint uTriangleCount;
-                uniform uint uLightCount;
-                uniform int uGiEnabled;
-                uniform int uGiRayCount;
-                uniform int uBounceCount;
-                uniform int uDirectShadowSampleCount;
-                uniform float uBounceStrength;
-
-                vec4 UnpackTexturePixel(uint packedPixel)
-                {
-                    return vec4(
-                        float(packedPixel & 255u),
-                        float((packedPixel >> 8u) & 255u),
-                        float((packedPixel >> 16u) & 255u),
-                        float((packedPixel >> 24u) & 255u)) / 255.0;
-                }
-
-                vec4 SampleTriangleTexture(BakeTriangle triangle, vec3 barycentric)
-                {
-                    if ((triangle.AlphaTexture.w & 1u) == 0u) return vec4(1.0);
-
-                    vec2 uv0 = triangle.Uv0Uv1.xy;
-                    vec2 uv1 = triangle.Uv0Uv1.zw;
-                    vec2 uv2 = triangle.Uv2Alpha.xy;
-                    vec2 uv = fract(uv0 * barycentric.x + uv1 * barycentric.y + uv2 * barycentric.z);
-                    uint width = triangle.AlphaTexture.y;
-                    uint height = triangle.AlphaTexture.z;
-                    vec2 texel = uv * vec2(max(width, 1u) - 1u, max(height, 1u) - 1u);
-                    uvec2 p0 = uvec2(floor(texel));
-                    uvec2 p1 = min(p0 + uvec2(1u), uvec2(width - 1u, height - 1u));
-                    vec2 blend = fract(texel);
-                    uint offset = triangle.AlphaTexture.x;
-                    vec4 texture00 = UnpackTexturePixel(texturePixels[offset + p0.x + p0.y * width]);
-                    vec4 texture10 = UnpackTexturePixel(texturePixels[offset + p1.x + p0.y * width]);
-                    vec4 texture01 = UnpackTexturePixel(texturePixels[offset + p0.x + p1.y * width]);
-                    vec4 texture11 = UnpackTexturePixel(texturePixels[offset + p1.x + p1.y * width]);
-                    return mix(mix(texture00, texture10, blend.x),
-                               mix(texture01, texture11, blend.x), blend.y);
-                }
-
-                float ReadTriangleAlpha(BakeTriangle triangle, vec3 barycentric)
-                {
-                    if ((triangle.AlphaTexture.w & 4u) != 0u) return 0.0;
-                    return triangle.Uv2Alpha.z * SampleTriangleTexture(triangle, barycentric).a;
-                }
-
-                bool TriangleVisibleAt(BakeTriangle triangle, vec3 barycentric)
-                {
-                    if ((triangle.AlphaTexture.w & 4u) != 0u) return false;
-                    if ((triangle.AlphaTexture.w & 2u) == 0u) return true;
-                    return ReadTriangleAlpha(triangle, barycentric) >= triangle.Uv2Alpha.w;
-                }
-
-                bool IntersectsTriangle(vec3 origin, vec3 direction, BakeTriangle triangle, float maxDistance)
-                {
-                    vec3 edgeA = triangle.P1.xyz - triangle.P0CastsShadow.xyz;
-                    vec3 edgeB = triangle.P2.xyz - triangle.P0CastsShadow.xyz;
-                    vec3 p = cross(direction, edgeB);
-                    float determinant = dot(edgeA, p);
-                    if (abs(determinant) < 1e-8) return false;
-                    float inverseDeterminant = 1.0 / determinant;
-                    vec3 s = origin - triangle.P0CastsShadow.xyz;
-                    float u = dot(s, p) * inverseDeterminant;
-                    if (u < 0.0 || u > 1.0) return false;
-                    vec3 q = cross(s, edgeA);
-                    float v = dot(direction, q) * inverseDeterminant;
-                    if (v < 0.0 || u + v > 1.0) return false;
-                    float distanceToHit = dot(edgeB, q) * inverseDeterminant;
-                    return distanceToHit > 0.0000001 &&
-                           distanceToHit < maxDistance &&
-                           TriangleVisibleAt(triangle, vec3(1.0 - u - v, u, v));
-                }
-
-                bool IntersectsBounds(BakeBvhNode node,
-                                      vec3 origin,
-                                      vec3 direction,
-                                      vec3 inverseDirection,
-                                      float maxDistance,
-                                      out float entryDistance)
-                {
-                    entryDistance = 0.0;
-                    float exitDistance = maxDistance;
-                    for (int axis = 0; axis < 3; ++axis)
-                    {
-                        if (abs(direction[axis]) < 1e-8)
-                        {
-                            if (origin[axis] < node.MinBounds[axis] ||
-                                origin[axis] > node.MaxBounds[axis]) return false;
-                            continue;
-                        }
-
-                        float distance0 = (node.MinBounds[axis] - origin[axis]) * inverseDirection[axis];
-                        float distance1 = (node.MaxBounds[axis] - origin[axis]) * inverseDirection[axis];
-                        if (distance0 > distance1)
-                        {
-                            float temporaryDistance = distance0;
-                            distance0 = distance1;
-                            distance1 = temporaryDistance;
-                        }
-                        entryDistance = max(entryDistance, distance0);
-                        exitDistance = min(exitDistance, distance1);
-                        if (exitDistance < entryDistance) return false;
-                    }
-                    return true;
-                }
-
-                bool IsShadowed(vec3 origin, vec3 direction, float maxDistance)
-                {
-                    // Division is paid once per ray rather than once per axis
-                    // for every BVH node visited by that ray.
-                    vec3 inverseDirection = 1.0 / direction;
-                    int nodeStack[64];
-                    float entryStack[64];
-                    int stackSize = 1;
-                    nodeStack[0] = 0;
-                    entryStack[0] = 0.0;
-                    while (stackSize > 0)
-                    {
-                        --stackSize;
-                        BakeBvhNode node = bvhNodes[nodeStack[stackSize]];
-                        if (entryStack[stackSize] > maxDistance) continue;
-
-                        uint triangleCount = node.LinksAndRange.w;
-                        if (triangleCount > 0u)
-                        {
-                            uint startIndex = node.LinksAndRange.z;
-                            for (uint index = 0u; index < triangleCount; ++index)
-                            {
-                                uint triangleIndex = bvhTriangleIndices[startIndex + index];
-                                if (triangles[triangleIndex].P0CastsShadow.w > 0.5 &&
-                                    IntersectsTriangle(origin, direction, triangles[triangleIndex], maxDistance)) return true;
-                            }
-                            continue;
-                        }
-
-                        uint leftIndex = node.LinksAndRange.x;
-                        uint rightIndex = node.LinksAndRange.y;
-                        float leftEntry = 0.0;
-                        float rightEntry = 0.0;
-                        bool hitLeft = leftIndex != 0xffffffffu &&
-                                       IntersectsBounds(
-                                           bvhNodes[leftIndex],
-                                           origin,
-                                           direction,
-                                           inverseDirection,
-                                           maxDistance,
-                                           leftEntry);
-                        bool hitRight = rightIndex != 0xffffffffu &&
-                                        IntersectsBounds(
-                                            bvhNodes[rightIndex],
-                                            origin,
-                                            direction,
-                                            inverseDirection,
-                                            maxDistance,
-                                            rightEntry);
-                        // LIFO: push the farther child first so an any-hit
-                        // shadow ray reaches likely occluders sooner.
-                        if (hitLeft && hitRight && stackSize <= 62)
-                        {
-                            bool leftIsNear = leftEntry <= rightEntry;
-                            nodeStack[stackSize] = int(leftIsNear ? rightIndex : leftIndex);
-                            entryStack[stackSize++] = leftIsNear ? rightEntry : leftEntry;
-                            nodeStack[stackSize] = int(leftIsNear ? leftIndex : rightIndex);
-                            entryStack[stackSize++] = leftIsNear ? leftEntry : rightEntry;
-                        }
-                        else if (hitLeft && stackSize < 64)
-                        {
-                            nodeStack[stackSize] = int(leftIndex);
-                            entryStack[stackSize++] = leftEntry;
-                        }
-                        else if (hitRight && stackSize < 64)
-                        {
-                            nodeStack[stackSize] = int(rightIndex);
-                            entryStack[stackSize++] = rightEntry;
-                        }
-                    }
-                    return false;
-                }
-
-                float ShadowVisibility(BakeLight light,
-                                       vec3 origin,
-                                       vec3 lightDirection,
-                                       float maxDistance,
-                                       int shadowSampleCount)
-                {
-                    if (light.CastsShadows.x <= 0.5) return 1.0;
-                    int rayCount = light.PositionType.w > 0.5 && light.PositionType.w < 1.5
-                                       ? clamp(shadowSampleCount, 1, 32)
-                                       : 1;
-                    float softness = max(light.CastsShadows.y, 0.0);
-                    if (rayCount == 1 || softness <= 0.001)
-                    {
-                        return IsShadowed(origin, lightDirection, maxDistance) ? 0.0 : 1.0;
-                    }
-
-                    vec3 referenceAxis = abs(lightDirection.y) < 0.999
-                                             ? vec3(0.0, 1.0, 0.0)
-                                             : vec3(1.0, 0.0, 0.0);
-                    vec3 tangent = normalize(cross(referenceAxis, lightDirection));
-                    vec3 bitangent = normalize(cross(lightDirection, tangent));
-                    float visibleRays = 0.0;
-                    float angularRadius = min(0.0015 * softness, 0.012);
-                    for (int rayIndex = 0; rayIndex < rayCount; ++rayIndex)
-                    {
-                        float unitRadius = sqrt((float(rayIndex) + 0.5) / float(rayCount));
-                        float angle = float(rayIndex) * 2.39996322973;
-                        vec3 rayDirection = normalize(
-                            lightDirection +
-                            (tangent * cos(angle) + bitangent * sin(angle)) * (angularRadius * unitRadius));
-                        if (!IsShadowed(origin, rayDirection, maxDistance)) visibleRays += 1.0;
-                    }
-                    return visibleRays / float(rayCount);
-                }
-
-                )",
-                R"(
-                bool TraceClosest(vec3 origin, vec3 direction, out uint hitTriangleIndex, out vec3 hitBarycentric, out float hitDistance)
-                {
-                    bool foundHit = false;
-                    hitDistance = 1e30;
-                    vec3 inverseDirection = 1.0 / direction;
-                    int nodeStack[64];
-                    float entryStack[64];
-                    int stackSize = 1;
-                    nodeStack[0] = 0;
-                    entryStack[0] = 0.0;
-                    while (stackSize > 0)
-                    {
-                        --stackSize;
-                        BakeBvhNode node = bvhNodes[nodeStack[stackSize]];
-                        if (entryStack[stackSize] > hitDistance) continue;
-
-                        uint triangleCount = node.LinksAndRange.w;
-                        if (triangleCount > 0u)
-                        {
-                            uint startIndex = node.LinksAndRange.z;
-                            for (uint index = 0u; index < triangleCount; ++index)
-                            {
-                                uint triangleIndex = bvhTriangleIndices[startIndex + index];
-                                BakeTriangle triangle = triangles[triangleIndex];
-                                vec3 edgeA = triangle.P1.xyz - triangle.P0CastsShadow.xyz;
-                                vec3 edgeB = triangle.P2.xyz - triangle.P0CastsShadow.xyz;
-                                vec3 p = cross(direction, edgeB);
-                                float determinant = dot(edgeA, p);
-                                if (abs(determinant) < 1e-8) continue;
-                                float inverseDeterminant = 1.0 / determinant;
-                                vec3 s = origin - triangle.P0CastsShadow.xyz;
-                                float u = dot(s, p) * inverseDeterminant;
-                                if (u < 0.0 || u > 1.0) continue;
-                                vec3 q = cross(s, edgeA);
-                                float v = dot(direction, q) * inverseDeterminant;
-                                if (v < 0.0 || u + v > 1.0) continue;
-                                float distanceToHit = dot(edgeB, q) * inverseDeterminant;
-                                if (distanceToHit <= 0.0000001 || distanceToHit >= hitDistance) continue;
-                                vec3 candidateBarycentric = vec3(1.0 - u - v, u, v);
-                                if (!TriangleVisibleAt(triangle, candidateBarycentric)) continue;
-                                foundHit = true;
-                                hitDistance = distanceToHit;
-                                hitTriangleIndex = triangleIndex;
-                                hitBarycentric = candidateBarycentric;
-                            }
-                            continue;
-                        }
-
-                        uint leftIndex = node.LinksAndRange.x;
-                        uint rightIndex = node.LinksAndRange.y;
-                        float leftEntry = 0.0;
-                        float rightEntry = 0.0;
-                        bool hitLeft = leftIndex != 0xffffffffu &&
-                                       IntersectsBounds(
-                                           bvhNodes[leftIndex],
-                                           origin,
-                                           direction,
-                                           inverseDirection,
-                                           hitDistance,
-                                           leftEntry);
-                        bool hitRight = rightIndex != 0xffffffffu &&
-                                        IntersectsBounds(
-                                            bvhNodes[rightIndex],
-                                            origin,
-                                            direction,
-                                            inverseDirection,
-                                            hitDistance,
-                                            rightEntry);
-                        // LIFO: visit the nearer child first. A close triangle
-                        // hit then prunes farther queued nodes without changing
-                        // the closest-hit result.
-                        if (hitLeft && hitRight && stackSize <= 62)
-                        {
-                            bool leftIsNear = leftEntry <= rightEntry;
-                            nodeStack[stackSize] = int(leftIsNear ? rightIndex : leftIndex);
-                            entryStack[stackSize++] = leftIsNear ? rightEntry : leftEntry;
-                            nodeStack[stackSize] = int(leftIsNear ? leftIndex : rightIndex);
-                            entryStack[stackSize++] = leftIsNear ? leftEntry : rightEntry;
-                        }
-                        else if (hitLeft && stackSize < 64)
-                        {
-                            nodeStack[stackSize] = int(leftIndex);
-                            entryStack[stackSize++] = leftEntry;
-                        }
-                        else if (hitRight && stackSize < 64)
-                        {
-                            nodeStack[stackSize] = int(rightIndex);
-                            entryStack[stackSize++] = rightEntry;
-                        }
-                    }
-                    return foundHit;
-                }
-
-                vec3 EvaluateDirect(vec3 position,
-                                    vec3 shadingNormal,
-                                    vec3 geometricNormal,
-                                    float epsilon,
-                                    int shadowSampleCount)
-                {
-                    vec3 irradiance = vec3(0.0);
-                    for (uint lightIndex = 0; lightIndex < uLightCount; ++lightIndex)
-                    {
-                        BakeLight light = lights[lightIndex];
-                        int lightType = int(light.PositionType.w + 0.5);
-                        vec3 lightDirection;
-                        float attenuation = 1.0;
-                        float maxDistance = 1e30;
-                        if (lightType == 1)
-                        {
-                            lightDirection = normalize(-light.DirectionRange.xyz);
-                        }
-                        else
-                        {
-                            vec3 toLight = light.PositionType.xyz - position;
-                            float lightDistance = length(toLight);
-                            float lightRange = light.DirectionRange.w;
-                            if (lightDistance <= 0.0001 || lightRange <= 0.0001 || lightDistance >= lightRange) continue;
-                            lightDirection = toLight / lightDistance;
-                            maxDistance = max(lightDistance - epsilon, epsilon);
-                            attenuation = (1.0 - smoothstep(lightRange * 0.9, lightRange, lightDistance)) / max(lightDistance * lightDistance, 0.0001);
-                            if (lightType == 2)
-                            {
-                                float coneFactor = dot(-lightDirection, normalize(light.DirectionRange.xyz));
-                                attenuation *= smoothstep(light.CastsShadows.z, max(light.CastsShadows.w, light.CastsShadows.z + 0.000001), coneFactor);
-                            }
-                        }
-
-                        // Use the interpolated vertex normal for the lighting
-                        // response. Clamping it by the per-triangle geometric
-                        // normal makes otherwise smooth surfaces visibly faceted.
-                        // The geometric normal is still used below to offset
-                        // shadow rays safely away from the surface.
-                        float ndotl = max(dot(shadingNormal, lightDirection), 0.0);
-                        if (ndotl <= 0.0 || attenuation <= 0.0) continue;
-                        float visibility = ShadowVisibility(
-                            light,
-                            position + geometricNormal * epsilon,
-                            lightDirection,
-                            maxDistance,
-                            shadowSampleCount);
-                        irradiance += light.ColorIntensity.rgb * light.ColorIntensity.w * attenuation * ndotl * visibility;
-                    }
-                    return max(irradiance, vec3(0.0));
-                }
-
-                uint Hash(uint value)
-                {
-                    value ^= value >> 16;
-                    value *= 0x7feb352du;
-                    value ^= value >> 15;
-                    value *= 0x846ca68bu;
-                    value ^= value >> 16;
-                    return value;
-                }
-
-                float Random01(inout uint state)
-                {
-                    state = Hash(state);
-                    return float(state) / 4294967295.0;
-                }
-
-                vec3 CosineHemisphere(vec3 normal, inout uint state)
-                {
-                    float r1 = Random01(state);
-                    float r2 = Random01(state);
-                    float radius = sqrt(r1);
-                    float angle = 6.28318530718 * r2;
-                    vec3 referenceAxis = abs(normal.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
-                    vec3 tangent = normalize(cross(referenceAxis, normal));
-                    vec3 bitangent = normalize(cross(normal, tangent));
-                    return normalize(tangent * (cos(angle) * radius) +
-                                     bitangent * (sin(angle) * radius) +
-                                     normal * sqrt(max(1.0 - r1, 0.0)));
-                }
-
-                vec3 EvaluateIndirect(uint sampleIndex, BakeSample bakeSample)
-                {
-                    if (uGiEnabled == 0 || uGiRayCount <= 0 || uBounceCount <= 0 || uBounceStrength <= 0.0) return vec3(0.0);
-                    vec3 sourcePosition = bakeSample.PositionEpsilon.xyz;
-                    float sourceEpsilon = bakeSample.PositionEpsilon.w;
-                    vec3 sourceNormal = normalize(bakeSample.ShadingNormal.xyz);
-                    vec3 sourceGeometricNormal = normalize(bakeSample.GeometricNormal.xyz);
-                    vec3 accumulated = vec3(0.0);
-                    float continuationStrength = min(uBounceStrength, 0.95);
-
-                    for (int rayIndex = 0; rayIndex < uGiRayCount; ++rayIndex)
-                    {
-                        uint randomState = Hash(sampleIndex * 9781u + uint(rayIndex) * 6271u + 0x9e3779b9u);
-                        vec3 direction = CosineHemisphere(sourceNormal, randomState);
-                        if (dot(sourceGeometricNormal, direction) <= 0.0) direction = CosineHemisphere(sourceGeometricNormal, randomState);
-                        vec3 origin = sourcePosition + sourceGeometricNormal * sourceEpsilon;
-                        vec3 throughput = vec3(1.0);
-                        float bounceWeight = uBounceStrength;
-
-                        for (int bounceIndex = 0; bounceIndex < uBounceCount; ++bounceIndex)
-                        {
-                            uint triangleIndex = 0u;
-                            vec3 barycentric = vec3(0.0);
-                            float hitDistance = 0.0;
-                            if (!TraceClosest(origin, direction, triangleIndex, barycentric, hitDistance)) break;
-                            BakeTriangle triangle = triangles[triangleIndex];
-                            vec3 geometricNormal = normalize(cross(triangle.P1.xyz - triangle.P0CastsShadow.xyz,
-                                                                   triangle.P2.xyz - triangle.P0CastsShadow.xyz));
-                            if (dot(geometricNormal, -direction) <= 0.0) break;
-                            vec3 hitPosition = origin + direction * hitDistance;
-                            throughput *= clamp(triangle.BaseColor.rgb *
-                                                SampleTriangleTexture(triangle, barycentric).rgb,
-                                                vec3(0.0), vec3(1.0));
-                            accumulated += throughput * EvaluateDirect(hitPosition, geometricNormal, geometricNormal, sourceEpsilon, 1) * bounceWeight;
-                            bounceWeight *= continuationStrength;
-                            direction = CosineHemisphere(geometricNormal, randomState);
-                            origin = hitPosition + geometricNormal * sourceEpsilon;
-                        }
-                    }
-                    return accumulated / float(uGiRayCount);
-                }
-
-                void main()
-                {
-                    uint sampleIndex = uSampleOffset + gl_GlobalInvocationID.x;
-                    if (sampleIndex >= uSampleCount) return;
-                    BakeSample bakeSample = samples[sampleIndex];
-                    vec3 direct = EvaluateDirect(bakeSample.PositionEpsilon.xyz,
-                                                 normalize(bakeSample.ShadingNormal.xyz),
-                                                 normalize(bakeSample.GeometricNormal.xyz),
-                                                 bakeSample.PositionEpsilon.w,
-                                                 uDirectShadowSampleCount);
-                    results[sampleIndex].Direct = vec4(direct, 1.0);
-                    results[sampleIndex].Indirect = vec4(EvaluateIndirect(sampleIndex, bakeSample), 1.0);
-                }
-            )"};
-
-            const GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
-            glShaderSource(shader, 2, sources, nullptr);
-            glCompileShader(shader);
-            GLint compiled = GL_FALSE;
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-            if (compiled != GL_TRUE)
-            {
-                char log[2048]{};
-                glGetShaderInfoLog(shader, static_cast<GLsizei>(sizeof(log)), nullptr, log);
-                LogBakeMessage(std::string("GPU bake shader compilation failed: ") + log);
-                glDeleteShader(shader);
-                return 0;
-            }
-
-            const GLuint program = glCreateProgram();
-            glAttachShader(program, shader);
-            glLinkProgram(program);
-            glDeleteShader(shader);
-            GLint linked = GL_FALSE;
-            glGetProgramiv(program, GL_LINK_STATUS, &linked);
-            if (linked != GL_TRUE)
-            {
-                char log[2048]{};
-                glGetProgramInfoLog(program, static_cast<GLsizei>(sizeof(log)), nullptr, log);
-                LogBakeMessage(std::string("GPU bake shader linking failed: ") + log);
-                glDeleteProgram(program);
-                return 0;
-            }
-            return program;
-        }
-
-        bool BuildGpuDirectLightmaps(PreparedSceneBake &preparedBake)
-        {
-            if(std::any_of(preparedBake.triangles.begin(),preparedBake.triangles.end(),[](const auto &t){return bool(t.graphMaterial->shaderGraphProgram);}))
-            {
-                LogBakeMessage("Using CPU bake for procedural shader materials.");
-                return false;
-            }
-            GLint majorVersion = 0;
-            GLint minorVersion = 0;
-            glGetIntegerv(GL_MAJOR_VERSION, &majorVersion);
-            glGetIntegerv(GL_MINOR_VERSION, &minorVersion);
-            if (majorVersion < 4 || (majorVersion == 4 && minorVersion < 3))
-            {
-                LogBakeMessage("GPU bake requires OpenGL 4.3; falling back to CPU.");
-                return false;
-            }
-
-            struct GpuTextureInfo
-            {
-                std::uint32_t offset = 0;
-                std::uint32_t width = 0;
-                std::uint32_t height = 0;
-                glm::vec2 alphaRange{1.0f};
-            };
-            std::vector<std::uint32_t> gpuTexturePixels;
-            std::unordered_map<render::Texture *, GpuTextureInfo> gpuTextures;
-            for (const auto &[texture, textureData] : preparedBake.albedoTextureCache)
-            {
-                GpuTextureInfo textureInfo;
-                if (textureData.channels >= 3 && !textureData.pixels.empty())
-                {
-                    unsigned char minimumAlpha = 255;
-                    unsigned char maximumAlpha = 0;
-                    const std::size_t pixelCount =
-                        static_cast<std::size_t>(textureData.width) *
-                        static_cast<std::size_t>(textureData.height);
-                    textureInfo.offset = static_cast<std::uint32_t>(gpuTexturePixels.size());
-                    textureInfo.width = static_cast<std::uint32_t>(textureData.width);
-                    textureInfo.height = static_cast<std::uint32_t>(textureData.height);
-                    gpuTexturePixels.reserve(gpuTexturePixels.size() + pixelCount);
-                    for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
-                    {
-                        const std::size_t sourceIndex =
-                            pixelIndex * static_cast<std::size_t>(textureData.channels);
-                        const std::uint32_t red = textureData.pixels[sourceIndex];
-                        const std::uint32_t green = textureData.pixels[sourceIndex + 1];
-                        const std::uint32_t blue = textureData.pixels[sourceIndex + 2];
-                        const unsigned char alpha = textureData.channels >= 4
-                                                        ? textureData.pixels[sourceIndex + 3]
-                                                        : 255;
-                        minimumAlpha = std::min(minimumAlpha, alpha);
-                        maximumAlpha = std::max(maximumAlpha, alpha);
-                        gpuTexturePixels.push_back(
-                            red |
-                            (green << 8u) |
-                            (blue << 16u) |
-                            (static_cast<std::uint32_t>(alpha) << 24u));
-                    }
-                    textureInfo.alphaRange = glm::vec2(
-                        static_cast<float>(minimumAlpha) / 255.0f,
-                        static_cast<float>(maximumAlpha) / 255.0f);
-                }
-                gpuTextures.emplace(texture, textureInfo);
-            }
-            if (gpuTexturePixels.empty())
-            {
-                gpuTexturePixels.push_back(0xffffffffu);
-            }
-
-            const auto resolveMaskAlphaRange = [&gpuTextures](const BakeTriangle &triangle)
-            {
-                const auto alphaRangeIt = gpuTextures.find(triangle.albedoTexture);
-                const glm::vec2 textureRange =
-                    alphaRangeIt != gpuTextures.end() ? alphaRangeIt->second.alphaRange : glm::vec2(1.0f);
-                return textureRange * triangle.baseAlpha;
-            };
-
-            const auto shaderBuildStart = std::chrono::steady_clock::now();
-            const GLuint program = CreateGpuDirectBakeProgram();
-            if (program == 0)
-            {
-                return false;
-            }
-            LogBakeTiming("Compile/link GPU bake shader", shaderBuildStart);
-            LogBakeMessage("GPU bake shader compiled; uploading scene acceleration data.");
-
-            const auto gpuScenePreparationStart = std::chrono::steady_clock::now();
-            const bool gpuGiEnabled = preparedBake.settings.bakeIndirectBounce &&
-                                      preparedBake.settings.indirectBounceSampleCount > 0 &&
-                                      preparedBake.settings.indirectBounceCount > 0;
-
-            std::vector<GpuBakeTriangle> gpuTriangles;
-            gpuTriangles.reserve(preparedBake.triangles.size());
-            for (const auto &triangle : preparedBake.triangles)
-            {
-                bool castsOpaqueShadow = triangle.castsShadow;
-                glm::uvec4 alphaTextureInfo(0u);
-                const auto textureInfoIt = gpuTextures.find(triangle.albedoTexture);
-                if (textureInfoIt != gpuTextures.end() &&
-                    textureInfoIt->second.width > 0 &&
-                    textureInfoIt->second.height > 0)
-                {
-                    alphaTextureInfo = glm::uvec4(
-                        textureInfoIt->second.offset,
-                        textureInfoIt->second.width,
-                        textureInfoIt->second.height,
-                        1u);
-                }
-                if (triangle.alphaMode == render::AlphaMode::Mask)
-                {
-                    const glm::vec2 alphaRange = resolveMaskAlphaRange(triangle);
-                    if (alphaRange.y < triangle.alphaCutoff)
-                    {
-                        castsOpaqueShadow = false;
-                        alphaTextureInfo.w |= 4u;
-                    }
-                    else if (alphaRange.x < triangle.alphaCutoff)
-                    {
-                        alphaTextureInfo.w |= 2u;
-                    }
-                }
-                gpuTriangles.push_back(GpuBakeTriangle{
-                    .position0AndCastsShadow = glm::vec4(triangle.worldPositions[0], castsOpaqueShadow ? 1.0f : 0.0f),
-                    .position1 = glm::vec4(triangle.worldPositions[1], 0.0f),
-                    .position2 = glm::vec4(triangle.worldPositions[2], 0.0f),
-                    .baseColor = glm::vec4(triangle.baseColor, 1.0f),
-                    .uv0AndUv1 = glm::vec4(triangle.primaryUvs[0], triangle.primaryUvs[1]),
-                    .uv2AndAlpha = glm::vec4(triangle.primaryUvs[2], triangle.baseAlpha, triangle.alphaCutoff),
-                    .alphaTexture = alphaTextureInfo,
-                });
-            }
-
-            std::vector<GpuBakeBvhNode> gpuBvhNodes;
-            gpuBvhNodes.reserve(preparedBake.acceleration.nodes.size());
-            for (const auto &node : preparedBake.acceleration.nodes)
-            {
-                const std::uint32_t leftChild =
-                    node.leftChild >= 0 ? static_cast<std::uint32_t>(node.leftChild) : 0xffffffffu;
-                const std::uint32_t rightChild =
-                    node.rightChild >= 0 ? static_cast<std::uint32_t>(node.rightChild) : 0xffffffffu;
-                gpuBvhNodes.push_back(GpuBakeBvhNode{
-                    .minBounds = glm::vec4(node.bounds.minBounds, 0.0f),
-                    .maxBounds = glm::vec4(node.bounds.maxBounds, 0.0f),
-                    .linksAndRange = glm::uvec4(
-                        leftChild,
-                        rightChild,
-                        static_cast<std::uint32_t>(node.startIndex),
-                        static_cast<std::uint32_t>(node.triangleCount)),
-                });
-            }
-
-            std::vector<std::uint32_t> gpuBvhTriangleIndices;
-            gpuBvhTriangleIndices.reserve(preparedBake.acceleration.triangleIndices.size());
-            for (const auto triangleIndex : preparedBake.acceleration.triangleIndices)
-            {
-                gpuBvhTriangleIndices.push_back(static_cast<std::uint32_t>(triangleIndex));
-            }
-
-            std::vector<GpuBakeLight> gpuLights;
-            gpuLights.reserve(preparedBake.lights.size());
-            for (const auto &light : preparedBake.lights)
-            {
-                gpuLights.push_back(GpuBakeLight{
-                    .positionAndType = glm::vec4(light.position, static_cast<float>(light.type)),
-                    .colorAndIntensity = glm::vec4(light.color, light.intensity),
-                    .directionAndRange = glm::vec4(light.direction, light.range),
-                    .castsShadows = glm::vec4(light.castsShadows ? 1.0f : 0.0f, light.shadowSoftness, light.spotCosines.x, light.spotCosines.y),
-                });
-            }
-
-            GLuint buffers[7]{};
-            glGenBuffers(7, buffers);
-            const auto uploadStaticBuffer = [](GLuint buffer, GLuint binding, const void *data, std::size_t byteSize)
-            {
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(byteSize), data, GL_STATIC_DRAW);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, binding, buffer);
-            };
-            uploadStaticBuffer(buffers[1], 1, gpuTriangles.data(), gpuTriangles.size() * sizeof(GpuBakeTriangle));
-            uploadStaticBuffer(buffers[2], 2, gpuLights.data(), gpuLights.size() * sizeof(GpuBakeLight));
-            uploadStaticBuffer(
-                buffers[4],
-                4,
-                gpuTexturePixels.data(),
-                gpuTexturePixels.size() * sizeof(std::uint32_t));
-            uploadStaticBuffer(
-                buffers[5],
-                5,
-                gpuBvhNodes.data(),
-                gpuBvhNodes.size() * sizeof(GpuBakeBvhNode));
-            uploadStaticBuffer(
-                buffers[6],
-                6,
-                gpuBvhTriangleIndices.data(),
-                gpuBvhTriangleIndices.size() * sizeof(std::uint32_t));
-            LogBakeTiming("Pack and upload GPU scene data", gpuScenePreparationStart);
-            LogBakeMessage(
-                "GPU scene upload completed with " + std::to_string(gpuTriangles.size()) +
-                " triangle(s) and " + std::to_string(gpuBvhNodes.size()) + " BVH node(s).");
-
-            glUseProgram(program);
-            glUniform1ui(glGetUniformLocation(program, "uTriangleCount"), static_cast<GLuint>(gpuTriangles.size()));
-            glUniform1ui(glGetUniformLocation(program, "uLightCount"), static_cast<GLuint>(gpuLights.size()));
-            glUniform1i(glGetUniformLocation(program, "uGiEnabled"), gpuGiEnabled ? 1 : 0);
-            glUniform1i(glGetUniformLocation(program, "uGiRayCount"), preparedBake.settings.indirectBounceSampleCount);
-            glUniform1i(glGetUniformLocation(program, "uBounceCount"), preparedBake.settings.indirectBounceCount);
-            glUniform1i(glGetUniformLocation(program, "uDirectShadowSampleCount"), preparedBake.settings.directShadowSampleCount);
-            glUniform1f(glGetUniformLocation(program, "uBounceStrength"), preparedBake.settings.lightmapBounceStrength);
-
-            bool bakedAnyTarget = false;
-            int gpuTargetIndex = 0;
-            for (auto &[targetKey, target] : preparedBake.targets)
-            {
-                ++gpuTargetIndex;
-                if (!target.uvCoordinatesInRange)
-                {
-                    LogBakeMessage(
-                        "GPU skipping target " + std::to_string(gpuTargetIndex) + "/" +
-                        std::to_string(preparedBake.targets.size()) + ": bake UVs are outside 0..1.");
-                    continue;
-                }
-
-                const auto gpuSamplePreparationStart = std::chrono::steady_clock::now();
-                std::vector<BakeTileTask> unusedTasks;
-                const auto rasterizedTriangles = BuildLightmapTileTasks(target, preparedBake.triangles, target.resolution, unusedTasks);
-                std::vector<GpuBakeSample> samples;
-                std::vector<std::size_t> samplePixelIndices;
-                const std::size_t targetPixelCount =
-                    static_cast<std::size_t>(target.resolution * target.resolution);
-                std::vector<glm::vec3> sampledWorldPositions(targetPixelCount, glm::vec3(0.0f));
-                std::vector<float> sampledPositionTolerances(targetPixelCount, 0.0f);
-                std::vector<float> sampledWeights(targetPixelCount, 0.0f);
-                for (const auto &rasterizedTriangle : rasterizedTriangles)
-                {
-                    const auto &triangle = preparedBake.triangles[rasterizedTriangle.triangleIndex];
-                    const float worldTexelTolerance = ResolveWorldTexelTolerance(triangle, target.resolution);
-                    for (int y = rasterizedTriangle.minY; y <= rasterizedTriangle.maxY; ++y)
-                    {
-                        for (int x = rasterizedTriangle.minX; x <= rasterizedTriangle.maxX; ++x)
-                        {
-                            glm::vec3 barycentric{0.0f};
-                            if (!TrySampleConservativeTexel(rasterizedTriangle.texel0, rasterizedTriangle.texel1, rasterizedTriangle.texel2, x, y, barycentric))
-                            {
-                                continue;
-                            }
-                            const glm::vec3 position = triangle.worldPositions[0] * barycentric.x +
-                                                       triangle.worldPositions[1] * barycentric.y +
-                                                       triangle.worldPositions[2] * barycentric.z;
-                            const std::size_t pixelIndex =
-                                static_cast<std::size_t>(x + y * target.resolution);
-                            if (sampledWeights[pixelIndex] > 0.0f)
-                            {
-                                const float positionTolerance = std::max(
-                                    worldTexelTolerance,
-                                    sampledPositionTolerances[pixelIndex] / sampledWeights[pixelIndex]);
-                                const glm::vec3 positionDelta =
-                                    sampledWorldPositions[pixelIndex] / sampledWeights[pixelIndex] - position;
-                                if (glm::dot(positionDelta, positionDelta) >
-                                    positionTolerance * positionTolerance)
-                                {
-                                    target.hasOverlappingUvCharts = true;
-                                    break;
-                                }
-                            }
-                            sampledWorldPositions[pixelIndex] += position;
-                            sampledPositionTolerances[pixelIndex] += worldTexelTolerance;
-                            sampledWeights[pixelIndex] += 1.0f;
-                            samples.push_back(GpuBakeSample{
-                                .positionAndEpsilon = glm::vec4(position, ResolveRayEpsilon(triangle)),
-                                .shadingNormal = glm::vec4(ResolveInterpolatedNormal(triangle, barycentric), 0.0f),
-                                .geometricNormal = glm::vec4(ComputeTriangleNormal(triangle), 0.0f),
-                            });
-                            samplePixelIndices.push_back(pixelIndex);
-                        }
-                        if (target.hasOverlappingUvCharts) break;
-                    }
-                    if (target.hasOverlappingUvCharts) break;
-                }
-                if (target.hasOverlappingUvCharts)
-                {
-                    LogBakeMessage(
-                        "GPU skipping target " + std::to_string(gpuTargetIndex) + "/" +
-                        std::to_string(preparedBake.targets.size()) +
-                        ": overlapping bake UV charts were detected.");
-                    continue;
-                }
-                if (samples.empty())
-                {
-                    LogBakeMessage(
-                        "GPU skipping target " + std::to_string(gpuTargetIndex) + "/" +
-                        std::to_string(preparedBake.targets.size()) + ": no covered texels.");
-                    continue;
-                }
-
-                LogBakeTiming(
-                    "GPU target " + std::to_string(gpuTargetIndex) +
-                        " rasterize covered texels",
-                    gpuSamplePreparationStart);
-                LogBakeMessage(
-                    "GPU baking target " + std::to_string(gpuTargetIndex) + "/" +
-                    std::to_string(preparedBake.targets.size()) + " with " +
-                    std::to_string(samples.size()) + " covered texel sample(s).");
-                uploadStaticBuffer(buffers[0], 0, samples.data(), samples.size() * sizeof(GpuBakeSample));
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[3]);
-                glBufferData(GL_SHADER_STORAGE_BUFFER, static_cast<GLsizeiptr>(samples.size() * sizeof(GpuBakeResult)), nullptr, GL_DYNAMIC_READ);
-                glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, buffers[3]);
-                glUniform1ui(glGetUniformLocation(program, "uSampleCount"), static_cast<GLuint>(samples.size()));
-                const auto gpuTargetBegin = std::chrono::steady_clock::now();
-                // Keep expensive GI commands small enough for the Windows TDR
-                // watchdog while allowing preview and direct-only bakes to use
-                // substantially larger submissions. The budget is calibrated
-                // so Ultra retains the previous 256-sample command size.
-                constexpr std::size_t kMinGpuBakeChunkSize = 256;
-                constexpr std::size_t kMaxGpuBakeChunkSize = 8192;
-                constexpr std::size_t kLargeSceneGpuBakeChunkSize = 2048;
-                constexpr std::size_t kLargeSceneTriangleThreshold = 250000;
-                constexpr std::size_t kGpuBakeWorkBudget = 256 * 192 * 6;
-                const std::size_t giWorkPerSample = gpuGiEnabled
-                                                        ? static_cast<std::size_t>(
-                                                              preparedBake.settings.indirectBounceSampleCount) *
-                                                              static_cast<std::size_t>(
-                                                                  preparedBake.settings.indirectBounceCount)
-                                                        : 1;
-                const std::size_t unalignedChunkSize = std::clamp(
-                    kGpuBakeWorkBudget / std::max<std::size_t>(giWorkPerSample, 1),
-                    kMinGpuBakeChunkSize,
-                    kMaxGpuBakeChunkSize);
-                const std::size_t sceneChunkLimit = preparedBake.triangles.size() >= kLargeSceneTriangleThreshold
-                                                        ? kLargeSceneGpuBakeChunkSize
-                                                        : kMaxGpuBakeChunkSize;
-                const std::size_t gpuBakeChunkSize = std::min(
-                    sceneChunkLimit,
-                    std::max(kMinGpuBakeChunkSize, unalignedChunkSize - unalignedChunkSize % 64));
-                const GLint sampleOffsetLocation = glGetUniformLocation(program, "uSampleOffset");
-                for (std::size_t sampleOffset = 0; sampleOffset < samples.size(); sampleOffset += gpuBakeChunkSize)
-                {
-                    const std::size_t chunkSampleCount = std::min(gpuBakeChunkSize, samples.size() - sampleOffset);
-                    glUniform1ui(sampleOffsetLocation, static_cast<GLuint>(sampleOffset));
-                    glDispatchCompute(static_cast<GLuint>((chunkSampleCount + 63) / 64), 1, 1);
-                    // Do not leave several seconds of compute queued as one
-                    // uninterrupted submission. On Windows that can trigger
-                    // TDR, particularly on AMD drivers, even though each
-                    // individual dispatch is reasonably small.
-                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-                    GLsync dispatchFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-                    glFlush();
-                    if (dispatchFence)
-                    {
-                        GLenum waitResult = GL_TIMEOUT_EXPIRED;
-                        while (waitResult == GL_TIMEOUT_EXPIRED)
-                        {
-                            waitResult = glClientWaitSync(
-                                dispatchFence, GL_SYNC_FLUSH_COMMANDS_BIT, 100000000ull);
-                        }
-                        glDeleteSync(dispatchFence);
-                    }
-                }
-                // Dispatches are ordered and write disjoint result ranges. A
-                // single barrier is sufficient before the blocking readback.
-                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
-
-                std::vector<GpuBakeResult> results(samples.size());
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffers[3]);
-                glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, static_cast<GLsizeiptr>(results.size() * sizeof(GpuBakeResult)), results.data());
-                const auto gpuTargetElapsedMs =
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() - gpuTargetBegin)
-                        .count();
-                LogBakeMessage(
-                    "GPU target " + std::to_string(gpuTargetIndex) + "/" +
-                    std::to_string(preparedBake.targets.size()) + " completed in " +
-                    std::to_string(gpuTargetElapsedMs) + " ms using " +
-                    std::to_string(gpuBakeChunkSize) + "-sample dispatches.");
-                const std::size_t pixelCount = targetPixelCount;
-                GpuBakedLightmap gpuLightmap;
-                gpuLightmap.direct.assign(pixelCount, glm::vec3(0.0f));
-                gpuLightmap.indirect.assign(pixelCount, glm::vec3(0.0f));
-                gpuLightmap.includesIndirect = gpuGiEnabled;
-                std::vector<float> weights(pixelCount, 0.0f);
-                for (std::size_t sampleIndex = 0; sampleIndex < results.size(); ++sampleIndex)
-                {
-                    gpuLightmap.direct[samplePixelIndices[sampleIndex]] += glm::vec3(results[sampleIndex].direct);
-                    gpuLightmap.indirect[samplePixelIndices[sampleIndex]] += glm::vec3(results[sampleIndex].indirect);
-                    weights[samplePixelIndices[sampleIndex]] += 1.0f;
-                }
-                for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
-                {
-                    if (weights[pixelIndex] > 0.0f)
-                    {
-                        gpuLightmap.direct[pixelIndex] /= weights[pixelIndex];
-                        gpuLightmap.indirect[pixelIndex] /= weights[pixelIndex];
-                    }
-                }
-                preparedBake.gpuLightmaps[targetKey] = std::move(gpuLightmap);
-                bakedAnyTarget = true;
-            }
-
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-            glUseProgram(0);
-            glDeleteBuffers(7, buffers);
-            glDeleteProgram(program);
-            if (bakedAnyTarget)
-            {
-                preparedBake.gpuGiActive = gpuGiEnabled;
-                LogBakeMessage(gpuGiEnabled
-                                   ? "GPU direct-light and multi-bounce GI path tracing completed."
-                                   : "GPU primary visibility/direct-light stage completed.");
-            }
-            return bakedAnyTarget;
         }
 
         bool IntersectTriangle(const glm::vec3 &origin,
@@ -2044,148 +756,6 @@ namespace PlutoGE::scene
             return irradiance;
         }
 
-        glm::vec3 EvaluateIndirectBounceIrradiance(const BakeTriangle &sourceTriangle,
-                                                   const glm::vec3 &position,
-                                                   const glm::vec3 &shadingNormal,
-                                                   const glm::vec3 &geometricNormal,
-                                                   float rayEpsilon,
-                                                   const std::vector<BakeLight> &lights,
-                                                   const std::vector<BakeTriangle> &triangles,
-                                                   const BakeAccelerationStructure &acceleration,
-                                                   const std::vector<glm::vec3> &localDirections,
-                                                   int bounceCount,
-                                                   float bounceStrength,
-                                                   const std::unordered_map<render::Texture *, CpuTextureData> &textureCache)
-        {
-            static_cast<void>(sourceTriangle);
-            if (localDirections.empty() || bounceCount <= 0 || bounceStrength <= 0.0f)
-            {
-                return glm::vec3(0.0f);
-            }
-
-            glm::vec3 accumulatedIrradiance{0.0f};
-            for (std::size_t sampleIndex = 0; sampleIndex < localDirections.size(); ++sampleIndex)
-            {
-                glm::vec3 currentNormal = shadingNormal;
-                glm::vec3 currentGeometricNormal = geometricNormal;
-                glm::vec3 tangent{1.0f, 0.0f, 0.0f};
-                glm::vec3 bitangent{0.0f, 0.0f, 1.0f};
-                BuildTangentBasis(currentNormal, tangent, bitangent);
-                glm::vec3 sampleDirection = glm::normalize(
-                    tangent * localDirections[sampleIndex].x +
-                    bitangent * localDirections[sampleIndex].y +
-                    currentNormal * localDirections[sampleIndex].z);
-                if (glm::dot(currentGeometricNormal, sampleDirection) <= 0.0f)
-                {
-                    continue;
-                }
-
-                glm::vec3 traceOrigin = position + currentGeometricNormal * rayEpsilon;
-                glm::vec3 throughput(1.0f);
-                float bounceWeight = bounceStrength;
-                const float continuationStrength = std::min(bounceStrength, 0.95f);
-                for (int bounceIndex = 0; bounceIndex < bounceCount; ++bounceIndex)
-                {
-                    const auto hit = TraceScene(traceOrigin, sampleDirection, std::numeric_limits<float>::max(), triangles, acceleration, &textureCache);
-                    if (!hit.has_value())
-                    {
-                        break;
-                    }
-
-                    const auto &triangle = triangles[hit->triangleIndex];
-                    const glm::vec3 hitPosition = triangle.worldPositions[0] * hit->barycentric.x +
-                                                  triangle.worldPositions[1] * hit->barycentric.y +
-                                                  triangle.worldPositions[2] * hit->barycentric.z;
-                    const glm::vec3 hitGeometricNormal = ComputeTriangleNormal(triangle);
-                    glm::vec3 hitShadingNormal = ResolveInterpolatedNormal(triangle, hit->barycentric);
-                    if (glm::dot(hitGeometricNormal, -sampleDirection) <= 0.0f)
-                    {
-                        break;
-                    }
-
-                    const glm::vec3 hitAlbedo = glm::clamp(SampleTriangleAlbedo(triangle, hit->barycentric, textureCache), glm::vec3(0.0f), glm::vec3(1.0f));
-                    if (triangle.graphMaterial->shaderGraphProgram)
-                    {
-                        const auto surface = SampleBakeGraph(triangle, hit->barycentric);
-                        accumulatedIrradiance += throughput * surface.emission * bounceWeight;
-                        if (triangle.graphMaterial->shaderGraphProgram->data.header.y != 0)
-                        {
-                            accumulatedIrradiance += throughput * glm::vec3(surface.color) * bounceWeight;
-                            break;
-                        }
-                    }
-                    throughput *= hitAlbedo;
-                    const float hitRayEpsilon = ResolveRayEpsilon(triangle);
-                    const glm::vec3 directIrradiance = EvaluateStaticLightIrradiance(hitPosition, hitShadingNormal, hitGeometricNormal, hitRayEpsilon, lights, triangles, acceleration, textureCache, 1);
-                    accumulatedIrradiance += throughput * directIrradiance * bounceWeight;
-                    bounceWeight *= continuationStrength;
-
-                    const std::size_t directionIndex = (sampleIndex * 17 + static_cast<std::size_t>(bounceIndex + 1) * 13) % localDirections.size();
-                    currentNormal = hitShadingNormal;
-                    currentGeometricNormal = hitGeometricNormal;
-                    BuildTangentBasis(currentNormal, tangent, bitangent);
-                    const glm::vec3 &nextLocalDirection = localDirections[directionIndex];
-                    sampleDirection = glm::normalize(
-                        tangent * nextLocalDirection.x +
-                        bitangent * nextLocalDirection.y +
-                        currentNormal * nextLocalDirection.z);
-                    if (glm::dot(currentGeometricNormal, sampleDirection) <= 0.0f)
-                    {
-                        currentNormal = currentGeometricNormal;
-                        BuildTangentBasis(currentNormal, tangent, bitangent);
-                        sampleDirection = glm::normalize(
-                            tangent * nextLocalDirection.x +
-                            bitangent * nextLocalDirection.y +
-                            currentNormal * nextLocalDirection.z);
-                    }
-                    traceOrigin = hitPosition + currentGeometricNormal * hitRayEpsilon;
-                }
-            }
-
-            return accumulatedIrradiance / static_cast<float>(localDirections.size());
-        }
-
-        bool WritePfm(const std::filesystem::path &path, const std::vector<glm::vec3> &pixels, int width, int height)
-        {
-            std::ofstream output(path, std::ios::binary | std::ios::trunc);
-            if (!output.is_open())
-            {
-                return false;
-            }
-
-            output << "PF\n"
-                   << width << ' ' << height << "\n-1.0\n";
-            for (int y = height - 1; y >= 0; --y)
-            {
-                for (int x = 0; x < width; ++x)
-                {
-                    const glm::vec3 pixel = glm::max(pixels[static_cast<std::size_t>(x + y * width)], glm::vec3(0.0f));
-                    const std::array<float, 3> rgb = {pixel.r, pixel.g, pixel.b};
-                    output.write(reinterpret_cast<const char *>(rgb.data()), static_cast<std::streamsize>(rgb.size() * sizeof(float)));
-                }
-            }
-
-            return static_cast<bool>(output);
-        }
-
-        // Completed maps are already on disk. Read just one for upload rather
-        // than keeping every finished float image alive until the bake ends.
-        std::vector<float> ReadBakedLightmap(const std::filesystem::path &path, int resolution)
-        {
-            std::ifstream input(path, std::ios::binary);
-            std::string magic;
-            int width=0,height=0;
-            float scale=0;
-            if (!(input >> magic >> width >> height >> scale) || magic!="PF" ||
-                width!=resolution || height!=resolution || scale!=-1.0f) return {};
-            input.get();
-            std::vector<float> pixels(static_cast<std::size_t>(width)*height*3);
-            for (int y=height-1; y>=0; --y)
-                if (!input.read(reinterpret_cast<char *>(pixels.data()+static_cast<std::size_t>(y)*width*3),
-                                static_cast<std::streamsize>(width)*3*sizeof(float))) return {};
-            return pixels;
-        }
-
         const CpuTextureData *FindCpuTexture(const std::unordered_map<render::Texture *, CpuTextureData> &textureCache, render::Texture *texture)
         {
             if (!texture)
@@ -2351,480 +921,24 @@ namespace PlutoGE::scene
                     continue;
                 }
 
+                const auto retained = texture->GetRgba8Pixels();
+                if (texture->GetWidth() <= 0 || texture->GetHeight() <= 0 || retained.empty())
+                {
+                    continue;
+                }
+
                 CpuTextureData textureData;
                 textureData.width = texture->GetWidth();
                 textureData.height = texture->GetHeight();
-                const auto retained = texture->GetRgba8Pixels();
-                textureData.channels = retained.empty() ? std::max(texture->GetChannels(), 3) : 4;
-                if (textureData.width <= 0 || textureData.height <= 0)
-                {
-                    continue;
-                }
-
-                if (!retained.empty()) {
-                    textureData.pixels.assign(retained.begin(), retained.end());
-                    textureCache.emplace(texture, std::move(textureData));
-                    continue;
-                }
-                if (!texture->GetTextureID()) continue;
-                textureData.pixels.resize(static_cast<std::size_t>(textureData.width * textureData.height * textureData.channels));
-                GLenum format = GL_RGB;
-                if (textureData.channels == 1)
-                {
-                    format = GL_RED;
-                }
-                else if (textureData.channels == 2)
-                {
-                    format = GL_RG;
-                }
-                else if (textureData.channels >= 4)
-                {
-                    format = GL_RGBA;
-                }
-
-                GLint binding = 0, pack = 4, buffer = 0;
-                glGetIntegerv(GL_TEXTURE_BINDING_2D, &binding);
-                glGetIntegerv(GL_PACK_ALIGNMENT, &pack);
-                glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &buffer);
-                glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-                glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                glBindTexture(GL_TEXTURE_2D, texture->GetTextureID());
-                glGetTexImage(GL_TEXTURE_2D, 0, format, GL_UNSIGNED_BYTE, textureData.pixels.data());
-                glBindTexture(GL_TEXTURE_2D, binding);
-                glPixelStorei(GL_PACK_ALIGNMENT, pack);
-                glBindBuffer(GL_PIXEL_PACK_BUFFER, buffer);
+                textureData.channels = 4;
+                textureData.pixels.assign(retained.begin(), retained.end());
                 textureCache.emplace(texture, std::move(textureData));
             }
 
             return textureCache;
         }
 
-        void FillLightmapHoles(std::vector<glm::vec3> &pixels,
-                               std::vector<float> &weights,
-                               std::vector<glm::vec3> &surfaceNormals,
-                               int resolution)
-        {
-            if (resolution <= 0 || pixels.size() != weights.size() || pixels.size() != surfaceNormals.size())
-            {
-                return;
-            }
-
-            std::vector<glm::vec3> sourcePixels = pixels;
-            std::vector<float> sourceWeights = weights;
-            std::vector<glm::vec3> sourceNormals = surfaceNormals;
-            std::vector<glm::vec3> destinationPixels = pixels;
-            std::vector<float> destinationWeights = weights;
-            std::vector<glm::vec3> destinationNormals = surfaceNormals;
-
-            auto flatten = [resolution](int x, int y)
-            {
-                return static_cast<std::size_t>(x + y * resolution);
-            };
-
-            for (int iteration = 0; iteration < kLightmapDilationIterations; ++iteration)
-            {
-                bool filledAnyPixel = false;
-                destinationPixels = sourcePixels;
-                destinationWeights = sourceWeights;
-                destinationNormals = sourceNormals;
-
-                for (int y = 0; y < resolution; ++y)
-                {
-                    for (int x = 0; x < resolution; ++x)
-                    {
-                        const std::size_t pixelIndex = flatten(x, y);
-                        if (sourceWeights[pixelIndex] > 0.0f)
-                        {
-                            continue;
-                        }
-
-                        glm::vec3 accumulatedColor{0.0f};
-                        glm::vec3 accumulatedNormal{0.0f};
-                        float accumulatedWeight = 0.0f;
-                        int contributingSamples = 0;
-                        glm::vec3 referenceNormal{0.0f};
-                        bool hasReferenceNormal = false;
-                        for (int offsetY = -1; offsetY <= 1; ++offsetY)
-                        {
-                            for (int offsetX = -1; offsetX <= 1; ++offsetX)
-                            {
-                                if (offsetX == 0 && offsetY == 0)
-                                {
-                                    continue;
-                                }
-
-                                const int sampleX = x + offsetX;
-                                const int sampleY = y + offsetY;
-                                if (sampleX < 0 || sampleX >= resolution || sampleY < 0 || sampleY >= resolution)
-                                {
-                                    continue;
-                                }
-
-                                const std::size_t sampleIndex = flatten(sampleX, sampleY);
-                                if (sourceWeights[sampleIndex] <= 0.0f)
-                                {
-                                    continue;
-                                }
-
-                                const glm::vec3 sampleNormal = sourceNormals[sampleIndex];
-                                const float sampleNormalLengthSq = glm::dot(sampleNormal, sampleNormal);
-                                if (sampleNormalLengthSq <= 1e-8f)
-                                {
-                                    continue;
-                                }
-
-                                const glm::vec3 normalizedSampleNormal = sampleNormal / std::sqrt(sampleNormalLengthSq);
-                                if (!hasReferenceNormal)
-                                {
-                                    referenceNormal = normalizedSampleNormal;
-                                    hasReferenceNormal = true;
-                                }
-                                else if (glm::dot(referenceNormal, normalizedSampleNormal) < kLightmapDilationNormalThreshold)
-                                {
-                                    continue;
-                                }
-
-                                const float sampleWeight = (std::abs(offsetX) + std::abs(offsetY) == 1) ? 1.0f : 0.70710678f;
-                                accumulatedColor += sourcePixels[sampleIndex] * sampleWeight;
-                                accumulatedNormal += normalizedSampleNormal * sampleWeight;
-                                accumulatedWeight += sampleWeight;
-                                ++contributingSamples;
-                            }
-                        }
-
-                        const float accumulatedNormalLengthSq = glm::dot(accumulatedNormal, accumulatedNormal);
-                        if (contributingSamples < 2 || accumulatedWeight <= 0.0f || accumulatedNormalLengthSq <= 1e-8f)
-                        {
-                            continue;
-                        }
-
-                        destinationPixels[pixelIndex] = accumulatedColor / accumulatedWeight;
-                        destinationWeights[pixelIndex] = 1.0f;
-                        destinationNormals[pixelIndex] = accumulatedNormal / std::sqrt(accumulatedNormalLengthSq);
-                        filledAnyPixel = true;
-                    }
-                }
-
-                sourcePixels.swap(destinationPixels);
-                sourceWeights.swap(destinationWeights);
-                sourceNormals.swap(destinationNormals);
-                if (!filledAnyPixel)
-                {
-                    break;
-                }
-            }
-
-            pixels = std::move(sourcePixels);
-            weights = std::move(sourceWeights);
-            surfaceNormals = std::move(sourceNormals);
-        }
-
-        void DenoiseLightmap(std::vector<glm::vec3> &pixels,
-                             const std::vector<float> &weights,
-                             const std::vector<glm::vec3> &surfaceNormals,
-                             const std::vector<glm::vec3> &worldPositions,
-                             const std::vector<float> &positionTolerances,
-                             int resolution,
-                             int passCount)
-        {
-            if (resolution <= 0 ||
-                passCount <= 0 ||
-                pixels.size() != weights.size() ||
-                pixels.size() != surfaceNormals.size() ||
-                pixels.size() != worldPositions.size() ||
-                pixels.size() != positionTolerances.size())
-            {
-                return;
-            }
-
-            auto flatten = [resolution](int x, int y)
-            {
-                return static_cast<std::size_t>(x + y * resolution);
-            };
-
-            std::vector<glm::vec3> sourcePixels = pixels;
-            std::vector<glm::vec3> destinationPixels = pixels;
-            const int clampedPassCount = std::clamp(passCount, 0, 4);
-            for (int passIndex = 0; passIndex < clampedPassCount; ++passIndex)
-            {
-                const int sampleStep = 1 << passIndex;
-                destinationPixels = sourcePixels;
-                for (int y = 0; y < resolution; ++y)
-                {
-                    for (int x = 0; x < resolution; ++x)
-                    {
-                        const std::size_t pixelIndex = flatten(x, y);
-                        if (weights[pixelIndex] <= 0.0f)
-                        {
-                            continue;
-                        }
-
-                        glm::vec3 accumulated = sourcePixels[pixelIndex] * 4.0f;
-                        float accumulatedWeight = 4.0f;
-                        for (int offsetY = -1; offsetY <= 1; ++offsetY)
-                        {
-                            for (int offsetX = -1; offsetX <= 1; ++offsetX)
-                            {
-                                if (offsetX == 0 && offsetY == 0)
-                                {
-                                    continue;
-                                }
-
-                                const int sampleX = x + offsetX * sampleStep;
-                                const int sampleY = y + offsetY * sampleStep;
-                                if (sampleX < 0 || sampleX >= resolution || sampleY < 0 || sampleY >= resolution)
-                                {
-                                    continue;
-                                }
-
-                                const std::size_t sampleIndex = flatten(sampleX, sampleY);
-                                if (weights[sampleIndex] <= 0.0f)
-                                {
-                                    continue;
-                                }
-
-                                const float normalSimilarity =
-                                    glm::dot(surfaceNormals[pixelIndex], surfaceNormals[sampleIndex]);
-                                if (normalSimilarity < 0.75f)
-                                {
-                                    continue;
-                                }
-
-                                const float basePositionTolerance =
-                                    std::max(positionTolerances[pixelIndex], positionTolerances[sampleIndex]);
-                                const float positionTolerance =
-                                    basePositionTolerance *
-                                    std::max(0.75f * static_cast<float>(sampleStep), 1.0f);
-                                const glm::vec3 positionDelta =
-                                    worldPositions[pixelIndex] - worldPositions[sampleIndex];
-                                if (glm::dot(positionDelta, positionDelta) >
-                                    positionTolerance * positionTolerance)
-                                {
-                                    continue;
-                                }
-                                const float planeSeparation = std::max(
-                                    std::abs(glm::dot(positionDelta, surfaceNormals[pixelIndex])),
-                                    std::abs(glm::dot(positionDelta, surfaceNormals[sampleIndex])));
-                                if (planeSeparation > basePositionTolerance * 0.5f)
-                                {
-                                    continue;
-                                }
-
-                                const float spatialWeight =
-                                    (std::abs(offsetX) + std::abs(offsetY) == 1) ? 2.0f : 1.0f;
-                                const float sampleWeight =
-                                    spatialWeight * std::pow(std::max(normalSimilarity, 0.0f), 8.0f);
-                                accumulated += sourcePixels[sampleIndex] * sampleWeight;
-                                accumulatedWeight += sampleWeight;
-                            }
-                        }
-
-                        destinationPixels[pixelIndex] =
-                            accumulated / std::max(accumulatedWeight, 0.0001f);
-                    }
-                }
-                sourcePixels.swap(destinationPixels);
-            }
-
-            pixels = std::move(sourcePixels);
-        }
-
-        void StitchGeneratedLightmapSeams(std::vector<glm::vec3> &directPixels,
-                                          std::vector<glm::vec3> &indirectPixels,
-                                          const std::vector<float> &weights,
-                                          const std::vector<glm::vec3> &surfaceNormals,
-                                          const std::vector<glm::vec3> &worldPositions,
-                                          const std::vector<float> &positionTolerances)
-        {
-            if (directPixels.size() != weights.size() ||
-                indirectPixels.size() != weights.size() ||
-                directPixels.size() != surfaceNormals.size() ||
-                directPixels.size() != worldPositions.size() ||
-                directPixels.size() != positionTolerances.size())
-            {
-                return;
-            }
-
-            struct WorldCell
-            {
-                std::int64_t x = 0;
-                std::int64_t y = 0;
-                std::int64_t z = 0;
-
-                bool operator==(const WorldCell &) const = default;
-            };
-            struct WorldCellHash
-            {
-                std::size_t operator()(const WorldCell &cell) const
-                {
-                    std::size_t seed = std::hash<std::int64_t>{}(cell.x);
-                    seed ^= std::hash<std::int64_t>{}(cell.y) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
-                    seed ^= std::hash<std::int64_t>{}(cell.z) + 0x9e3779b9u + (seed << 6) + (seed >> 2);
-                    return seed;
-                }
-            };
-
-            std::vector<float> validTolerances;
-            validTolerances.reserve(positionTolerances.size());
-            for (std::size_t pixelIndex = 0; pixelIndex < directPixels.size(); ++pixelIndex)
-            {
-                if (weights[pixelIndex] > 0.0f &&
-                    std::isfinite(positionTolerances[pixelIndex]) &&
-                    positionTolerances[pixelIndex] > 0.0f)
-                {
-                    validTolerances.push_back(positionTolerances[pixelIndex]);
-                }
-            }
-            if (validTolerances.empty())
-            {
-                return;
-            }
-
-            const auto middle = validTolerances.begin() +
-                                static_cast<std::ptrdiff_t>(validTolerances.size() / 2);
-            std::nth_element(validTolerances.begin(), middle, validTolerances.end());
-            const float cellSize = std::max(*middle, 0.0001f);
-            const auto resolveCell = [cellSize](const glm::vec3 &position)
-            {
-                return WorldCell{
-                    static_cast<std::int64_t>(std::floor(position.x / cellSize)),
-                    static_cast<std::int64_t>(std::floor(position.y / cellSize)),
-                    static_cast<std::int64_t>(std::floor(position.z / cellSize))};
-            };
-
-            std::unordered_map<WorldCell, std::vector<std::size_t>, WorldCellHash> cells;
-            cells.reserve(validTolerances.size());
-            for (std::size_t pixelIndex = 0; pixelIndex < directPixels.size(); ++pixelIndex)
-            {
-                if (weights[pixelIndex] > 0.0f)
-                {
-                    cells[resolveCell(worldPositions[pixelIndex])].push_back(pixelIndex);
-                }
-            }
-
-            const std::vector<glm::vec3> sourceDirectPixels = directPixels;
-            const std::vector<glm::vec3> sourceIndirectPixels = indirectPixels;
-            const auto &readOnlyCells = cells;
-            const std::size_t workerCount =
-                ResolveBakeWorkerCount(directPixels.size(), 4096);
-            ParallelFor(directPixels.size(), workerCount, [&](std::size_t pixelIndex, std::size_t workerIndex)
-                        {
-                static_cast<void>(workerIndex);
-                if (weights[pixelIndex] <= 0.0f)
-                {
-                    return;
-                }
-
-                const float searchRadius = std::max(positionTolerances[pixelIndex], cellSize);
-                const int cellRadius = std::clamp(
-                    static_cast<int>(std::ceil(searchRadius / cellSize)),
-                    1,
-                    3);
-                const WorldCell centerCell = resolveCell(worldPositions[pixelIndex]);
-                glm::vec3 accumulatedDirect = sourceDirectPixels[pixelIndex] * 4.0f;
-                glm::vec3 accumulatedIndirect = sourceIndirectPixels[pixelIndex] * 4.0f;
-                float accumulatedWeight = 4.0f;
-                for (int z = -cellRadius; z <= cellRadius; ++z)
-                {
-                    for (int y = -cellRadius; y <= cellRadius; ++y)
-                    {
-                        for (int x = -cellRadius; x <= cellRadius; ++x)
-                        {
-                            const auto cellIt = readOnlyCells.find(WorldCell{
-                                centerCell.x + x,
-                                centerCell.y + y,
-                                centerCell.z + z});
-                            if (cellIt == readOnlyCells.end())
-                            {
-                                continue;
-                            }
-
-                            for (const std::size_t sampleIndex : cellIt->second)
-                            {
-                                if (sampleIndex == pixelIndex)
-                                {
-                                    continue;
-                                }
-
-                                const float normalSimilarity =
-                                    glm::dot(surfaceNormals[pixelIndex], surfaceNormals[sampleIndex]);
-                                if (normalSimilarity < 0.85f)
-                                {
-                                    continue;
-                                }
-
-                                const float tolerance = std::max(
-                                    positionTolerances[pixelIndex],
-                                    positionTolerances[sampleIndex]);
-                                const glm::vec3 positionDelta =
-                                    worldPositions[pixelIndex] - worldPositions[sampleIndex];
-                                const float distanceSq = glm::dot(positionDelta, positionDelta);
-                                if (distanceSq > tolerance * tolerance)
-                                {
-                                    continue;
-                                }
-
-                                const float planeSeparation = std::max(
-                                    std::abs(glm::dot(positionDelta, surfaceNormals[pixelIndex])),
-                                    std::abs(glm::dot(positionDelta, surfaceNormals[sampleIndex])));
-                                if (planeSeparation > tolerance * 0.35f)
-                                {
-                                    continue;
-                                }
-
-                                const float distanceWeight =
-                                    1.0f - std::sqrt(distanceSq) / std::max(tolerance, 0.0001f);
-                                const float sampleWeight =
-                                    std::max(distanceWeight, 0.0f) *
-                                    std::pow(std::max(normalSimilarity, 0.0f), 8.0f);
-                                accumulatedDirect += sourceDirectPixels[sampleIndex] * sampleWeight;
-                                accumulatedIndirect += sourceIndirectPixels[sampleIndex] * sampleWeight;
-                                accumulatedWeight += sampleWeight;
-                            }
-                        }
-                    }
-                }
-                directPixels[pixelIndex] =
-                    accumulatedDirect / std::max(accumulatedWeight, 0.0001f);
-                indirectPixels[pixelIndex] =
-                    accumulatedIndirect / std::max(accumulatedWeight, 0.0001f); });
-        }
-
-        BakedTexelLighting EvaluateBakedTexelLighting(const BakeTriangle &triangle,
-                                                      const glm::vec3 &barycentric,
-                                                      const std::vector<BakeLight> &lights,
-                                                      const std::vector<BakeTriangle> &triangles,
-                                                      const BakeAccelerationStructure &acceleration,
-                                                      const std::vector<glm::vec3> &indirectBounceDirections,
-                                                      bool evaluateDirect,
-                                                      bool evaluateIndirect,
-                                                      int directShadowSampleCount,
-                                                      int indirectBounceCount,
-                                                      float lightmapBounceStrength,
-                                                      const std::unordered_map<render::Texture *, CpuTextureData> &albedoTextureCache)
-        {
-            const glm::vec3 worldPosition = triangle.worldPositions[0] * barycentric.x + triangle.worldPositions[1] * barycentric.y + triangle.worldPositions[2] * barycentric.z;
-            const glm::vec3 geometricNormal = ComputeTriangleNormal(triangle);
-            const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-            const float rayEpsilon = ResolveRayEpsilon(triangle);
-
-            BakedTexelLighting lighting;
-            if (evaluateDirect)
-            {
-                lighting.direct = EvaluateStaticLightIrradiance(worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, albedoTextureCache, directShadowSampleCount);
-            }
-            if (evaluateIndirect)
-            {
-                lighting.indirect = EvaluateIndirectBounceIrradiance(triangle, worldPosition, shadingNormal, geometricNormal, rayEpsilon, lights, triangles, acceleration, indirectBounceDirections, indirectBounceCount, lightmapBounceStrength, albedoTextureCache);
-            }
-            return lighting;
-        }
-
-        void CollectStaticTriangles(const Scene &scene,
-                                    std::vector<BakeTriangle> &triangles,
-                                    std::map<BakeTargetKey, BakeTarget> &targets,
-                                    const std::filesystem::path &outputDirectory,
-                                    int lightmapResolution)
+        void CollectStaticTriangles(const Scene &scene, std::vector<BakeTriangle> &triangles)
         {
             std::vector<const Entity *> entities;
             for (auto *rootEntity : scene.GetRootEntities())
@@ -2849,8 +963,7 @@ namespace PlutoGE::scene
                                                     std::size_t submeshIndex,
                                                     render::Material &material,
                                                     const glm::mat4 &worldTransform,
-                                                    bool castsShadow,
-                                                    BakeTarget *target = nullptr)
+                                                    bool castsShadow)
             {
                 if (material.GetConfig().alphaMode == render::AlphaMode::Blend ||
                     submeshIndex >= mesh.GetSubmeshCount())
@@ -2864,8 +977,6 @@ namespace PlutoGE::scene
                 for (uint32_t triangleOffset = 0; triangleOffset + 2 < submesh.indexCount; triangleOffset += 3)
                 {
                     BakeTriangle triangle;
-                    glm::vec3 localPositions[3]{};
-                    triangle.materialSlot = submesh.materialIndex;
                     triangle.graphMaterial=snapshotMaterial(material);
                     triangle.graphTime=render::ShaderGraphTimeSeconds();
                     triangle.baseColor = glm::vec3(material.GetConfig().color);
@@ -2885,8 +996,6 @@ namespace PlutoGE::scene
                             break;
                         }
                         const auto &sourceVertex = meshData.vertices[sourceIndex];
-                        localPositions[vertexIndex] = glm::vec3(sourceVertex.position[0], sourceVertex.position[1],
-                                                                sourceVertex.position[2]);
                         triangle.worldPositions[vertexIndex] = glm::vec3(
                             worldTransform * glm::vec4(sourceVertex.position[0], sourceVertex.position[1],
                                                        sourceVertex.position[2], 1.0f));
@@ -2896,7 +1005,6 @@ namespace PlutoGE::scene
                         triangle.primaryUvs[vertexIndex] =
                             glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]) * material.GetConfig().uvScale;
                         triangle.emissionUvs[vertexIndex] = glm::vec2(sourceVertex.uv2[0], sourceVertex.uv2[1]) * material.GetConfig().uvScale;
-                        triangle.lightmapUvs[vertexIndex] = glm::vec2(sourceVertex.uv[0], sourceVertex.uv[1]);
                         if(triangle.graphMaterial->shaderGraphProgram) {
                             render::ShaderGraphSample sample;
                             sample.worldPosition=triangle.worldPositions[vertexIndex];sample.worldNormal=triangle.worldNormals[vertexIndex];
@@ -2909,15 +1017,6 @@ namespace PlutoGE::scene
                     const glm::vec3 geometricNormal = ComputeTriangleNormal(triangle);
                     for (auto &worldNormal : triangle.worldNormals)
                         worldNormal = NormalizeOr(worldNormal, geometricNormal);
-                    if (target)
-                    {
-                        target->localSurfaceArea += glm::length(glm::cross(
-                            localPositions[1] - localPositions[0], localPositions[2] - localPositions[0])) * 0.5f;
-                        target->worldSurfaceArea += glm::length(glm::cross(
-                            triangle.worldPositions[1] - triangle.worldPositions[0],
-                            triangle.worldPositions[2] - triangle.worldPositions[0])) * 0.5f;
-                        target->triangleIndices.push_back(triangles.size());
-                    }
                     triangles.push_back(triangle);
                 }
             };
@@ -2930,16 +1029,9 @@ namespace PlutoGE::scene
                 {
                     if (auto *terrainMesh = terrain->GetMeshForBaking())
                     {
-                        const BakeTargetKey targetKey{terrain, 0};
-                        auto &terrainTarget = targets[targetKey];
-                        terrainTarget.terrainComponent = terrain;
-                        terrainTarget.mesh = terrainMesh;
-                        terrainTarget.outputPath = outputDirectory /
-                            ("lightmap_terrain_entity_" + std::to_string(entity->GetID()) + ".pfm");
-                        terrainTarget.resolution = lightmapResolution;
                         for (std::size_t submeshIndex = 0; submeshIndex < terrainMesh->GetSubmeshCount(); ++submeshIndex)
                             appendOccluderSubmesh(*terrainMesh, submeshIndex, *terrain->GetRenderMaterial(),
-                                                  entity->GetWorldTransform(), true, &terrainTarget);
+                                                  entity->GetWorldTransform(), true);
                     }
                 }
 
@@ -2996,40 +1088,10 @@ namespace PlutoGE::scene
                         continue;
                     }
 
-                    const bool useLightmapUvs = meshComponent->GetMesh()->HasUsableLightmapUvsForSubmesh(submeshIndex);
-                    const bool hasBakeUvs = useLightmapUvs || meshComponent->GetMesh()->HasUsablePrimaryUvsForSubmesh(submeshIndex);
-
-                    BakeTarget *target = nullptr;
-                    if (hasBakeUvs)
-                    {
-                        const auto targetKey = std::make_pair(meshComponent, submeshIndex);
-                        auto &targetEntry = targets[targetKey];
-                        targetEntry.meshComponent = meshComponent;
-                        targetEntry.mesh = meshComponent->GetMesh();
-                        targetEntry.submeshIndex = submeshIndex;
-                        targetEntry.materialSlot = submesh.materialIndex;
-                        targetEntry.outputPath = outputDirectory / ("lightmap_entity_" + std::to_string(entity->GetID()) + "_submesh_" + std::to_string(submeshIndex) + ".pfm");
-                        targetEntry.resolution = lightmapResolution;
-                        if (meshComponent->GetMesh()->HasGeneratedLightmapUvsForSubmesh(submeshIndex))
-                        {
-                            const int triangleGridWidth = static_cast<int>(std::ceil(
-                                std::sqrt(static_cast<float>(submesh.indexCount / 3))));
-                            // Preserve enough texels per isolated triangle for
-                            // filtering and dilation after the fallback unwrap.
-                            targetEntry.resolution = std::max(
-                                targetEntry.resolution,
-                                ((triangleGridWidth * 8 + 3) / 4) * 4);
-                            targetEntry.resolution = std::min(targetEntry.resolution, 2048);
-                        }
-                        target = &targetEntry;
-                    }
-
                     for (uint32_t triangleOffset = 0; triangleOffset + 2 < submesh.indexCount; triangleOffset += 3)
                     {
                         BakeTriangle triangle;
-                        glm::vec3 localPositions[3]{};
                         triangle.meshComponent = meshComponent;
-                        triangle.materialSlot = submesh.materialIndex;
                         triangle.graphMaterial=snapshotMaterial(*material);
                         triangle.graphTime=render::ShaderGraphTimeSeconds();
                         triangle.baseColor = glm::vec3(material->GetConfig().color);
@@ -3050,8 +1112,8 @@ namespace PlutoGE::scene
                             }
 
                             const auto &sourceVertex = meshData.vertices[sourceIndex];
-                            localPositions[vertexIndex] = glm::vec3(sourceVertex.position[0], sourceVertex.position[1], sourceVertex.position[2]);
-                            triangle.worldPositions[vertexIndex] = glm::vec3(worldTransform * glm::vec4(localPositions[vertexIndex], 1.0f));
+                            const glm::vec3 localPosition(sourceVertex.position[0], sourceVertex.position[1], sourceVertex.position[2]);
+                            triangle.worldPositions[vertexIndex] = glm::vec3(worldTransform * glm::vec4(localPosition, 1.0f));
                             triangle.worldNormals[vertexIndex] = NormalizeOr(
                                 normalMatrix * glm::vec3(sourceVertex.normal[0], sourceVertex.normal[1], sourceVertex.normal[2]),
                                 glm::vec3(0.0f));
@@ -3064,15 +1126,6 @@ namespace PlutoGE::scene
                             sample.uv=triangle.primaryUvs[vertexIndex];sample.time=triangle.graphTime;
                             triangle.worldPositions[vertexIndex]+=render::EvaluateMaterialShaderGraph(*triangle.graphMaterial,sample,true).vertexOffset;
                         }
-                            triangle.lightmapUvs[vertexIndex] = useLightmapUvs
-                                                                    ? ResolveBakeUv(sourceVertex, true)
-                                                                    : sourcePrimaryUv;
-                            if (target &&
-                                (glm::any(glm::lessThan(triangle.lightmapUvs[vertexIndex], glm::vec2(-0.0001f))) ||
-                                 glm::any(glm::greaterThan(triangle.lightmapUvs[vertexIndex], glm::vec2(1.0001f)))))
-                            {
-                                target->uvCoordinatesInRange = false;
-                            }
                         }
 
                         if (!validTriangle)
@@ -3086,211 +1139,10 @@ namespace PlutoGE::scene
                             worldNormal = NormalizeOr(worldNormal, geometricNormal);
                         }
 
-                        if (target)
-                        {
-                            target->localSurfaceArea +=
-                                glm::length(glm::cross(
-                                    localPositions[1] - localPositions[0],
-                                    localPositions[2] - localPositions[0])) *
-                                0.5f;
-                            target->worldSurfaceArea +=
-                                glm::length(glm::cross(
-                                    triangle.worldPositions[1] - triangle.worldPositions[0],
-                                    triangle.worldPositions[2] - triangle.worldPositions[0])) *
-                                0.5f;
-                            for (int edgeIndex = 0; edgeIndex < 3; ++edgeIndex)
-                            {
-                                const int nextEdgeIndex = (edgeIndex + 1) % 3;
-                                const float localEdgeLength = glm::length(
-                                    localPositions[nextEdgeIndex] - localPositions[edgeIndex]);
-                                if (localEdgeLength > 1e-8f)
-                                {
-                                    const float worldEdgeLength = glm::length(
-                                        triangle.worldPositions[nextEdgeIndex] -
-                                        triangle.worldPositions[edgeIndex]);
-                                    target->maximumLinearScale = std::max(
-                                        target->maximumLinearScale,
-                                        worldEdgeLength / localEdgeLength);
-                                }
-                            }
-                            target->triangleIndices.push_back(triangles.size());
-                        }
                         triangles.push_back(triangle);
                     }
                 }
             }
-
-            constexpr int kMaximumAdaptiveLightmapResolution = 2048;
-            for (auto &[targetKey, target] : targets)
-            {
-                static_cast<void>(targetKey);
-                if (target.localSurfaceArea <= 1e-10f || target.worldSurfaceArea <= 1e-10f)
-                {
-                    continue;
-                }
-
-                // Surface area grows with the square of linear scale. Raising
-                // the lightmap dimension by sqrt(area ratio) preserves roughly
-                // constant world-space texel density under uniform and
-                // non-uniform entity/parent scaling.
-                const float linearAreaScale = std::max(
-                    std::sqrt(target.worldSurfaceArea / target.localSurfaceArea),
-                    target.maximumLinearScale);
-                if (linearAreaScale <= 1.0f)
-                {
-                    continue;
-                }
-
-                const int scaledResolution = static_cast<int>(std::ceil(
-                    static_cast<float>(lightmapResolution) * linearAreaScale / 4.0f)) * 4;
-                target.resolution = std::clamp(
-                    scaledResolution,
-                    lightmapResolution,
-                    kMaximumAdaptiveLightmapResolution);
-            }
-
-            for (auto &[targetKey, target] : targets)
-            {
-                static_cast<void>(targetKey);
-                if (target.uvCoordinatesInRange || target.triangleIndices.empty())
-                {
-                    continue;
-                }
-
-                glm::vec2 minimumUv(std::numeric_limits<float>::max());
-                glm::vec2 maximumUv(std::numeric_limits<float>::lowest());
-                for (const auto triangleIndex : target.triangleIndices)
-                {
-                    for (const auto &uv : triangles[triangleIndex].lightmapUvs)
-                    {
-                        minimumUv = glm::min(minimumUv, uv);
-                        maximumUv = glm::max(maximumUv, uv);
-                    }
-                }
-
-                const glm::vec2 uvExtent = maximumUv - minimumUv;
-                if (!std::isfinite(uvExtent.x) || !std::isfinite(uvExtent.y) ||
-                    uvExtent.x <= 1e-6f || uvExtent.y <= 1e-6f)
-                {
-                    continue;
-                }
-
-                const float atlasPadding = std::clamp(
-                    2.0f / static_cast<float>(std::max(target.resolution, 1)),
-                    0.0025f,
-                    0.05f);
-                const glm::vec2 normalizedScale =
-                    glm::vec2(1.0f - atlasPadding * 2.0f) / uvExtent;
-                const glm::vec2 normalizedOffset =
-                    glm::vec2(atlasPadding) - minimumUv * normalizedScale;
-                for (const auto triangleIndex : target.triangleIndices)
-                {
-                    for (auto &uv : triangles[triangleIndex].lightmapUvs)
-                    {
-                        uv = uv * normalizedScale + normalizedOffset;
-                    }
-                }
-
-                target.lightmapUvTransform = glm::vec4(normalizedScale, normalizedOffset);
-                target.uvCoordinatesInRange = true;
-                LogBakeMessage(
-                    "Normalized out-of-range bake UVs for submesh " +
-                    std::to_string(target.submeshIndex) + " into a padded 0..1 atlas.");
-            }
-        }
-
-        bool BakeTargetHasOverlappingUvs(const BakeTarget &target,
-                                         const std::vector<BakeTriangle> &triangles)
-        {
-            std::vector<BakeTileTask> unusedTasks;
-            const auto rasterizedTriangles =
-                BuildLightmapTileTasks(target, triangles, target.resolution, unusedTasks);
-            const std::size_t pixelCount =
-                static_cast<std::size_t>(target.resolution * target.resolution);
-            std::vector<glm::vec3> sampledWorldPositions(pixelCount, glm::vec3(0.0f));
-            std::vector<float> sampledPositionTolerances(pixelCount, 0.0f);
-            std::vector<float> sampledWeights(pixelCount, 0.0f);
-
-            for (const auto &rasterizedTriangle : rasterizedTriangles)
-            {
-                const auto &triangle = triangles[rasterizedTriangle.triangleIndex];
-                const float worldTexelTolerance =
-                    ResolveWorldTexelTolerance(triangle, target.resolution);
-                for (int y = rasterizedTriangle.minY; y <= rasterizedTriangle.maxY; ++y)
-                {
-                    for (int x = rasterizedTriangle.minX; x <= rasterizedTriangle.maxX; ++x)
-                    {
-                        glm::vec3 barycentric{0.0f};
-                        if (!TrySampleConservativeTexel(
-                                rasterizedTriangle.texel0,
-                                rasterizedTriangle.texel1,
-                                rasterizedTriangle.texel2,
-                                x,
-                                y,
-                                barycentric))
-                        {
-                            continue;
-                        }
-
-                        const glm::vec3 position =
-                            triangle.worldPositions[0] * barycentric.x +
-                            triangle.worldPositions[1] * barycentric.y +
-                            triangle.worldPositions[2] * barycentric.z;
-                        const std::size_t pixelIndex =
-                            static_cast<std::size_t>(x + y * target.resolution);
-                        if (sampledWeights[pixelIndex] > 0.0f)
-                        {
-                            const float positionTolerance = std::max(
-                                worldTexelTolerance,
-                                sampledPositionTolerances[pixelIndex] /
-                                    sampledWeights[pixelIndex]);
-                            const glm::vec3 positionDelta =
-                                sampledWorldPositions[pixelIndex] /
-                                    sampledWeights[pixelIndex] -
-                                position;
-                            if (glm::dot(positionDelta, positionDelta) >
-                                positionTolerance * positionTolerance)
-                            {
-                                return true;
-                            }
-                        }
-                        sampledWorldPositions[pixelIndex] += position;
-                        sampledPositionTolerances[pixelIndex] += worldTexelTolerance;
-                        sampledWeights[pixelIndex] += 1.0f;
-                    }
-                }
-            }
-            return false;
-        }
-
-        size_t GenerateFallbackLightmapUvAtlases(
-            std::map<BakeTargetKey, BakeTarget> &targets,
-            const std::vector<BakeTriangle> &triangles)
-        {
-            std::map<MeshComponent *, std::vector<size_t>> invalidSubmeshes;
-            for (auto &[targetKey, target] : targets)
-            {
-                static_cast<void>(targetKey);
-                if (!target.uvCoordinatesInRange ||
-                    BakeTargetHasOverlappingUvs(target, triangles))
-                {
-                    if (target.meshComponent)
-                        invalidSubmeshes[target.meshComponent].push_back(target.submeshIndex);
-                    else
-                        target.hasOverlappingUvCharts = true;
-                }
-            }
-
-            size_t generatedCount = 0;
-            for (auto &[meshComponent, submeshIndices] : invalidSubmeshes)
-            {
-                if (meshComponent &&
-                    meshComponent->GenerateLightmapUvAtlasForSubmeshes(submeshIndices))
-                {
-                    generatedCount += submeshIndices.size();
-                }
-            }
-            return generatedCount;
         }
 
         BakedProbeVolume BuildProbeVolume(const std::vector<BakeLight> &lights,
@@ -3524,9 +1376,6 @@ namespace PlutoGE::scene
             const auto preparationStart = std::chrono::steady_clock::now();
             PreparedSceneBake preparedBake;
             preparedBake.settings = settings;
-            preparedBake.settings.directShadowSampleCount = std::clamp(preparedBake.settings.directShadowSampleCount, 1, 32);
-            preparedBake.settings.indirectBounceCount = std::clamp(preparedBake.settings.indirectBounceCount, 1, 8);
-            preparedBake.settings.indirectDenoisePassCount = std::clamp(preparedBake.settings.indirectDenoisePassCount, 0, 4);
             preparedBake.bakeStartTime = std::chrono::steady_clock::now();
             const auto lightSnapshotStart = std::chrono::steady_clock::now();
             preparedBake.lights = SnapshotStaticLights(scene, settings.probesOnly);
@@ -3582,63 +1431,27 @@ namespace PlutoGE::scene
             }
 
             LogBakeMessage("Starting scene bake with " + std::to_string(staticLightCount) + " static light(s).");
-            LogBakeMessage("Bake settings: " + std::to_string(settings.lightmapResolution) + "px lightmaps, " + std::to_string(preparedBake.settings.directShadowSampleCount) + " direct shadow ray(s), " + std::to_string(settings.indirectBounceSampleCount) + " GI ray(s), " + std::to_string(preparedBake.settings.indirectBounceCount) + " bounce(s), " + std::to_string(settings.probeDirectionCount) + " probe direction(s).");
-
-            const std::filesystem::path bakeRoot = std::filesystem::current_path() / "baked" / ResolveBakeDirectoryName(scene);
-            std::error_code errorCode;
-            if (!settings.probesOnly) std::filesystem::create_directories(bakeRoot, errorCode);
-            if (errorCode)
-            {
-                outImmediateResult.message = "Failed to create bake output directory.";
-                return std::nullopt;
-            }
+            LogBakeMessage("Bake settings: " + std::to_string(settings.probeDirectionCount) + " probe direction(s).");
 
             const auto geometryCollectionStart = std::chrono::steady_clock::now();
-            CollectStaticTriangles(scene, preparedBake.triangles, preparedBake.targets, bakeRoot, std::max(settings.lightmapResolution, 4));
-            const size_t generatedAtlasCount =
-                settings.probesOnly ? 0 : GenerateFallbackLightmapUvAtlases(preparedBake.targets, preparedBake.triangles);
-            if (generatedAtlasCount > 0)
+            CollectStaticTriangles(scene, preparedBake.triangles);
+            LogBakeTiming("Collect geometry", geometryCollectionStart);
+            LogBakeMessage("Collected " + std::to_string(preparedBake.triangles.size()) + " triangle(s).");
+            if (preparedBake.triangles.empty())
             {
-                LogBakeMessage(
-                    "Generated unique fallback UV2 atlases for " +
-                    std::to_string(generatedAtlasCount) +
-                    " mesh section(s) with overlapping bake UVs.");
-                preparedBake.triangles.clear();
-                preparedBake.targets.clear();
-                CollectStaticTriangles(
-                    scene,
-                    preparedBake.triangles,
-                    preparedBake.targets,
-                    bakeRoot,
-                    std::max(settings.lightmapResolution, 4));
-            }
-            LogBakeTiming("Collect geometry and validate/generate UV atlases", geometryCollectionStart);
-            LogBakeMessage("Collected " + std::to_string(preparedBake.targets.size()) + " bake target(s) across " + std::to_string(preparedBake.triangles.size()) + " triangle(s).");
-            if (preparedBake.triangles.empty() || (!settings.probesOnly && preparedBake.targets.empty()))
-            {
-                outImmediateResult.message = "No static meshes with usable bake UVs were found to bake.";
+                outImmediateResult.message = "No static meshes were found to bake.";
                 return std::nullopt;
             }
 
             const auto bvhBuildStart = std::chrono::steady_clock::now();
             preparedBake.acceleration = BuildAccelerationStructure(preparedBake.triangles);
-            LogBakeTiming("Build CPU/GPU BVH", bvhBuildStart);
+            LogBakeTiming("Build BVH", bvhBuildStart);
             LogBakeMessage("Built bake BVH with " + std::to_string(preparedBake.acceleration.nodes.size()) + " node(s).");
             const auto textureCaptureStart = std::chrono::steady_clock::now();
             preparedBake.albedoTextureCache = BuildAlbedoTextureCache(preparedBake.triangles);
-            LogBakeTiming("Read back bake textures", textureCaptureStart);
+            LogBakeTiming("Capture bake textures", textureCaptureStart);
             LogBakeMessage("Captured " + std::to_string(preparedBake.albedoTextureCache.size()) + " albedo texture(s) for bake sampling.");
 
-            preparedBake.indirectBounceDirections = settings.bakeIndirectBounce
-                                                        ? GenerateHemisphereDirections(settings.indirectBounceSampleCount)
-                                                        : std::vector<glm::vec3>{};
-            if (settings.useGpu && !settings.probesOnly)
-            {
-                LogBakeMessage("Preparing GPU bake backend.");
-                const auto gpuBakeStart = std::chrono::steady_clock::now();
-                preparedBake.gpuBakeActive = BuildGpuDirectLightmaps(preparedBake);
-                LogBakeTiming("GPU lighting total", gpuBakeStart);
-            }
             for (auto *volume : scene.GetAmbientLightVolumes()) {
                 if (!volume->IsEnabled() || !volume->GetOwner()->IsActive()) continue;
                 if (settings.ambientVolumeEntity && volume->GetOwner()->GetID()!=settings.ambientVolumeEntity) continue;
@@ -3705,486 +1518,31 @@ namespace PlutoGE::scene
                 }
             }
 
-            if (preparedBake.settings.probesOnly) {
-                output.elapsedMs = ElapsedBakeMilliseconds(backgroundStart);
-                return output;
-            }
-            int targetIndex = 0;
-            for (const auto &[targetKey, target] : preparedBake.targets)
-            {
-                if (IsBakeCancelled(cancelRequested))
-                {
-                    output.cancelled = true;
-                    break;
-                }
-
-                ++targetIndex;
-                const auto targetStart = std::chrono::steady_clock::now();
-                LogBakeMessage("Baking lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " at " + std::to_string(target.resolution) + "x" + std::to_string(target.resolution) + ".");
-                if (!target.uvCoordinatesInRange)
-                {
-                    ++output.invalidLightmapUvCount;
-                    LogBakeMessage("Skipping lightmap " + std::to_string(targetIndex) + ": bake UVs must stay inside the 0..1 atlas.");
-                    continue;
-                }
-                if (target.hasOverlappingUvCharts)
-                {
-                    ++output.invalidLightmapUvCount;
-                    LogBakeMessage("Skipping lightmap " + std::to_string(targetIndex) + ": overlapping bake UV charts map different surfaces to the same texels. Supply a non-overlapping UV2 atlas.");
-                    continue;
-                }
-
-                const std::size_t pixelCount = static_cast<std::size_t>(target.resolution * target.resolution);
-                const auto gpuLightmapIt = preparedBake.gpuLightmaps.find(targetKey);
-                const GpuBakedLightmap *gpuLightmap =
-                    gpuLightmapIt != preparedBake.gpuLightmaps.end() &&
-                            gpuLightmapIt->second.direct.size() == pixelCount
-                        ? &gpuLightmapIt->second
-                        : nullptr;
-                std::vector<glm::vec3> bakedPixels(pixelCount, glm::vec3(0.0f));
-                std::vector<glm::vec3> bakedDirectPixels(pixelCount, glm::vec3(0.0f));
-                std::vector<glm::vec3> bakedIndirectPixels(pixelCount, glm::vec3(0.0f));
-                std::vector<glm::vec3> bakedSurfaceNormals(pixelCount, glm::vec3(0.0f));
-                std::vector<glm::vec3> bakedWorldPositions(pixelCount, glm::vec3(0.0f));
-                std::vector<float> bakedPositionTolerances(pixelCount, 0.0f);
-                std::vector<float> bakedWeights(pixelCount, 0.0f);
-                const int tileSize = ResolveEffectiveLightmapTileSize(preparedBake.settings.lightmapTileSize, target.resolution);
-                std::vector<BakeTileTask> tileTasks;
-                const auto rasterSetupStart = std::chrono::steady_clock::now();
-                const auto rasterizedTriangles = BuildLightmapTileTasks(target, preparedBake.triangles, tileSize, tileTasks);
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " raster/task setup",
-                    rasterSetupStart);
-                const std::size_t workerCount = ResolveBakeWorkerCount(tileTasks.size(), kMinLightmapTasksPerBakeWorker);
-                LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " using " + std::to_string(workerCount) + " worker(s) across " + std::to_string(tileTasks.size()) + " tile(s) at " + std::to_string(tileSize) + "px.");
-
-                std::atomic<std::size_t> processedTiles{0};
-                std::atomic<bool> foundOverlappingUvCharts{false};
-                std::atomic<std::size_t> nextProgressTileCount{std::max<std::size_t>(tileTasks.size() / 8, 1)};
-                const std::size_t progressBatch = std::max<std::size_t>(tileTasks.size() / 8, 1);
-
-                const auto texelResolveStart = std::chrono::steady_clock::now();
-                ParallelFor(tileTasks.size(), workerCount, [&](std::size_t taskIndex, std::size_t workerIndex)
-                            {
-                    static_cast<void>(workerIndex);
-                    if (IsBakeCancelled(cancelRequested))
-                    {
-                        return;
-                    }
-
-                    const auto &tileTask = tileTasks[taskIndex];
-                    for (const auto rasterIndex : tileTask.rasterIndices)
-                    {
-                        if (IsBakeCancelled(cancelRequested))
-                        {
-                            return;
-                        }
-
-                        const auto &rasterizedTriangle = rasterizedTriangles[rasterIndex];
-                        const auto &triangle = preparedBake.triangles[rasterizedTriangle.triangleIndex];
-                        const float worldTexelTolerance = ResolveWorldTexelTolerance(triangle, target.resolution);
-                        bool wrotePixel = false;
-
-                        const int beginX = std::max(rasterizedTriangle.minX, tileTask.minX);
-                        const int endX = std::min(rasterizedTriangle.maxX, tileTask.maxX);
-                        const int beginY = std::max(rasterizedTriangle.minY, tileTask.minY);
-                        const int endY = std::min(rasterizedTriangle.maxY, tileTask.maxY);
-
-                        for (int y = beginY; y <= endY; ++y)
-                        {
-                            for (int x = beginX; x <= endX; ++x)
-                            {
-                                if (IsBakeCancelled(cancelRequested))
-                                {
-                                    return;
-                                }
-
-                                glm::vec3 barycentric{0.0f};
-                                if (!TrySampleConservativeTexel(rasterizedTriangle.texel0, rasterizedTriangle.texel1, rasterizedTriangle.texel2, x, y, barycentric))
-                                {
-                                    continue;
-                                }
-
-                                const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-                                const glm::vec3 worldPosition = triangle.worldPositions[0] * barycentric.x +
-                                                                triangle.worldPositions[1] * barycentric.y +
-                                                                triangle.worldPositions[2] * barycentric.z;
-                                const std::size_t pixelIndex = static_cast<std::size_t>(x + y * target.resolution);
-                                if (bakedWeights[pixelIndex] > 0.0f)
-                                {
-                                    const float positionTolerance = std::max(
-                                        worldTexelTolerance,
-                                        bakedPositionTolerances[pixelIndex] / bakedWeights[pixelIndex]);
-                                    const glm::vec3 positionDelta = bakedWorldPositions[pixelIndex] / bakedWeights[pixelIndex] - worldPosition;
-                                    if (glm::dot(positionDelta, positionDelta) > positionTolerance * positionTolerance)
-                                    {
-                                        foundOverlappingUvCharts.store(true, std::memory_order_relaxed);
-                                        continue;
-                                    }
-                                }
-                                BakedTexelLighting lighting;
-                                if (gpuLightmap && gpuLightmap->includesIndirect)
-                                {
-                                    lighting.direct = gpuLightmap->direct[pixelIndex];
-                                    lighting.indirect = gpuLightmap->indirect[pixelIndex];
-                                }
-                                else
-                                {
-                                    lighting = EvaluateBakedTexelLighting(
-                                        triangle,
-                                        barycentric,
-                                        preparedBake.lights,
-                                        preparedBake.triangles,
-                                        preparedBake.acceleration,
-                                        preparedBake.indirectBounceDirections,
-                                        gpuLightmap == nullptr,
-                                        true,
-                                        preparedBake.settings.directShadowSampleCount,
-                                        preparedBake.settings.indirectBounceCount,
-                                        preparedBake.settings.lightmapBounceStrength,
-                                        preparedBake.albedoTextureCache);
-                                    if (gpuLightmap)
-                                    {
-                                        lighting.direct = gpuLightmap->direct[pixelIndex];
-                                    }
-                                }
-                                bakedPixels[pixelIndex] += lighting.Total();
-                                bakedDirectPixels[pixelIndex] += lighting.direct;
-                                bakedIndirectPixels[pixelIndex] += lighting.indirect;
-                                bakedSurfaceNormals[pixelIndex] += shadingNormal;
-                                bakedWorldPositions[pixelIndex] += worldPosition;
-                                bakedPositionTolerances[pixelIndex] += worldTexelTolerance;
-                                bakedWeights[pixelIndex] += 1.0f;
-                                wrotePixel = true;
-                            }
-                        }
-
-                        if (!wrotePixel &&
-                            rasterizedTriangle.centerX >= tileTask.minX && rasterizedTriangle.centerX <= tileTask.maxX &&
-                            rasterizedTriangle.centerY >= tileTask.minY && rasterizedTriangle.centerY <= tileTask.maxY)
-                        {
-                            const glm::vec3 barycentric(1.0f / 3.0f);
-                            const glm::vec3 shadingNormal = ResolveInterpolatedNormal(triangle, barycentric);
-                            const glm::vec3 worldPosition = triangle.worldPositions[0] * barycentric.x +
-                                                            triangle.worldPositions[1] * barycentric.y +
-                                                            triangle.worldPositions[2] * barycentric.z;
-                            const std::size_t pixelIndex = static_cast<std::size_t>(rasterizedTriangle.centerX + rasterizedTriangle.centerY * target.resolution);
-                            if (bakedWeights[pixelIndex] > 0.0f)
-                            {
-                                const float positionTolerance = std::max(
-                                    worldTexelTolerance,
-                                    bakedPositionTolerances[pixelIndex] / bakedWeights[pixelIndex]);
-                                const glm::vec3 positionDelta = bakedWorldPositions[pixelIndex] / bakedWeights[pixelIndex] - worldPosition;
-                                if (glm::dot(positionDelta, positionDelta) > positionTolerance * positionTolerance)
-                                {
-                                    foundOverlappingUvCharts.store(true, std::memory_order_relaxed);
-                                    continue;
-                                }
-                            }
-                            BakedTexelLighting lighting;
-                            if (gpuLightmap && gpuLightmap->includesIndirect)
-                            {
-                                lighting.direct = gpuLightmap->direct[pixelIndex];
-                                lighting.indirect = gpuLightmap->indirect[pixelIndex];
-                            }
-                            else
-                            {
-                                lighting = EvaluateBakedTexelLighting(
-                                    triangle,
-                                    barycentric,
-                                    preparedBake.lights,
-                                    preparedBake.triangles,
-                                    preparedBake.acceleration,
-                                    preparedBake.indirectBounceDirections,
-                                    gpuLightmap == nullptr,
-                                    true,
-                                    preparedBake.settings.directShadowSampleCount,
-                                    preparedBake.settings.indirectBounceCount,
-                                    preparedBake.settings.lightmapBounceStrength,
-                                    preparedBake.albedoTextureCache);
-                                if (gpuLightmap)
-                                {
-                                    lighting.direct = gpuLightmap->direct[pixelIndex];
-                                }
-                            }
-
-                            bakedPixels[pixelIndex] += lighting.Total();
-                            bakedDirectPixels[pixelIndex] += lighting.direct;
-                            bakedIndirectPixels[pixelIndex] += lighting.indirect;
-                            bakedSurfaceNormals[pixelIndex] += shadingNormal;
-                            bakedWorldPositions[pixelIndex] += worldPosition;
-                            bakedPositionTolerances[pixelIndex] += worldTexelTolerance;
-                            bakedWeights[pixelIndex] += 1.0f;
-                        }
-                    }
-
-                    const std::size_t completedTiles = processedTiles.fetch_add(1) + 1;
-                    std::size_t expectedThreshold = nextProgressTileCount.load();
-                    while (completedTiles >= expectedThreshold)
-                    {
-                        if (nextProgressTileCount.compare_exchange_weak(expectedThreshold, expectedThreshold + progressBatch))
-                        {
-                            LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " processed " + std::to_string(completedTiles) + "/" + std::to_string(tileTasks.size()) + " tile(s).");
-                            break;
-                        }
-                    } });
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " texel resolve",
-                    texelResolveStart);
-
-                if (IsBakeCancelled(cancelRequested))
-                {
-                    output.cancelled = true;
-                    break;
-                }
-                if (foundOverlappingUvCharts.load(std::memory_order_relaxed))
-                {
-                    ++output.invalidLightmapUvCount;
-                    LogBakeMessage("Skipping lightmap " + std::to_string(targetIndex) + ": overlapping bake UV charts map different surfaces to the same texels. Supply a non-overlapping UV2 atlas.");
-                    continue;
-                }
-
-                const auto postProcessStart = std::chrono::steady_clock::now();
-                for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
-                {
-                    if (bakedWeights[pixelIndex] > 0.0f)
-                    {
-                        bakedPixels[pixelIndex] /= bakedWeights[pixelIndex];
-                        bakedDirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
-                        bakedIndirectPixels[pixelIndex] /= bakedWeights[pixelIndex];
-                        bakedSurfaceNormals[pixelIndex] /= bakedWeights[pixelIndex];
-                        bakedWorldPositions[pixelIndex] /= bakedWeights[pixelIndex];
-                        bakedPositionTolerances[pixelIndex] /= bakedWeights[pixelIndex];
-                        const float normalLengthSq = glm::dot(bakedSurfaceNormals[pixelIndex], bakedSurfaceNormals[pixelIndex]);
-                        if (normalLengthSq > 1e-8f)
-                        {
-                            bakedSurfaceNormals[pixelIndex] /= std::sqrt(normalLengthSq);
-                        }
-                        else
-                        {
-                            bakedSurfaceNormals[pixelIndex] = glm::vec3(0.0f);
-                        }
-                    }
-                }
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " normalize buffers",
-                    postProcessStart);
-
-                const auto denoiseStart = std::chrono::steady_clock::now();
-                if (preparedBake.settings.bakeIndirectBounce &&
-                    preparedBake.settings.indirectDenoisePassCount > 0)
-                {
-                    DenoiseLightmap(
-                        bakedIndirectPixels,
-                        bakedWeights,
-                        bakedSurfaceNormals,
-                        bakedWorldPositions,
-                        bakedPositionTolerances,
-                        target.resolution,
-                        preparedBake.settings.indirectDenoisePassCount);
-                }
-                if (preparedBake.settings.directShadowSampleCount > 1)
-                {
-                    DenoiseLightmap(
-                        bakedDirectPixels,
-                        bakedWeights,
-                        bakedSurfaceNormals,
-                        bakedWorldPositions,
-                        bakedPositionTolerances,
-                        target.resolution,
-                        1);
-                }
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " denoise",
-                    denoiseStart);
-                const auto seamStitchStart = std::chrono::steady_clock::now();
-                if (target.meshComponent &&
-                    target.meshComponent && target.mesh &&
-                    target.mesh->HasGeneratedLightmapUvsForSubmesh(
-                        target.submeshIndex))
-                {
-                    // The emergency UV generator isolates every triangle in
-                    // the atlas. Reconnect samples in world space so those
-                    // artificial chart boundaries do not reveal the mesh
-                    // triangulation. Normal and plane tests preserve real hard
-                    // edges and prevent bleeding between nearby surfaces.
-                    StitchGeneratedLightmapSeams(
-                        bakedDirectPixels,
-                        bakedIndirectPixels,
-                        bakedWeights,
-                        bakedSurfaceNormals,
-                        bakedWorldPositions,
-                        bakedPositionTolerances);
-                }
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " seam stitch",
-                    seamStitchStart);
-                if (preparedBake.settings.bakeIndirectBounce ||
-                    preparedBake.settings.directShadowSampleCount > 1 ||
-                    (target.meshComponent &&
-                     target.meshComponent && target.mesh &&
-                     target.mesh->HasGeneratedLightmapUvsForSubmesh(
-                         target.submeshIndex)))
-                {
-                    for (std::size_t pixelIndex = 0; pixelIndex < bakedPixels.size(); ++pixelIndex)
-                    {
-                        if (bakedWeights[pixelIndex] > 0.0f)
-                        {
-                            bakedPixels[pixelIndex] =
-                                bakedDirectPixels[pixelIndex] + bakedIndirectPixels[pixelIndex];
-                        }
-                    }
-                }
-
-                const auto dilationStart = std::chrono::steady_clock::now();
-                auto bakedFilledWeights = bakedWeights;
-                auto bakedFilledNormals = bakedSurfaceNormals;
-                FillLightmapHoles(bakedPixels, bakedFilledWeights, bakedFilledNormals, target.resolution);
-                auto bakedDirectWeights = bakedWeights;
-                auto bakedDirectNormals = bakedSurfaceNormals;
-                auto bakedIndirectWeights = bakedWeights;
-                auto bakedIndirectNormals = bakedSurfaceNormals;
-                FillLightmapHoles(bakedDirectPixels, bakedDirectWeights, bakedDirectNormals, target.resolution);
-                FillLightmapHoles(bakedIndirectPixels, bakedIndirectWeights, bakedIndirectNormals, target.resolution);
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " dilation",
-                    dilationStart);
-
-                const auto statisticsStart = std::chrono::steady_clock::now();
-                float directAverageLuminance = 0.0f;
-                float directMaxLuminance = 0.0f;
-                float indirectAverageLuminance = 0.0f;
-                float indirectMaxLuminance = 0.0f;
-                std::size_t coveredPixelCount = 0;
-                for (std::size_t pixelIndex = 0; pixelIndex < bakedIndirectPixels.size(); ++pixelIndex)
-                {
-                    if (bakedWeights[pixelIndex] <= 0.0f)
-                    {
-                        continue;
-                    }
-
-                    const glm::vec3 directPixel = bakedDirectPixels[pixelIndex];
-                    const glm::vec3 indirectPixel = bakedIndirectPixels[pixelIndex];
-                    const float directLuminance = glm::dot(directPixel, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-                    const float luminance = glm::dot(indirectPixel, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-                    directAverageLuminance += directLuminance;
-                    directMaxLuminance = std::max(directMaxLuminance, directLuminance);
-                    indirectAverageLuminance += luminance;
-                    indirectMaxLuminance = std::max(indirectMaxLuminance, luminance);
-                    ++coveredPixelCount;
-                }
-                if (coveredPixelCount > 0)
-                {
-                    directAverageLuminance /= static_cast<float>(coveredPixelCount);
-                    indirectAverageLuminance /= static_cast<float>(coveredPixelCount);
-                }
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " luminance statistics",
-                    statisticsStart);
-
-                const std::filesystem::path directOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_direct" + target.outputPath.extension().string());
-                const std::filesystem::path indirectOutputPath = target.outputPath.parent_path() / (target.outputPath.stem().string() + "_indirect" + target.outputPath.extension().string());
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) +
-                        " normalize/denoise/seam/dilation/stats",
-                    postProcessStart);
-                const auto fileWriteStart = std::chrono::steady_clock::now();
-                const bool mainLightmapWritten=WritePfm(target.outputPath, bakedPixels, target.resolution, target.resolution);
-                if (!mainLightmapWritten)
-                {
-                    ++output.failedLightmapWrites;
-                }
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " write three PFM files",
-                    fileWriteStart);
-                if (!WritePfm(directOutputPath, bakedDirectPixels, target.resolution, target.resolution))
-                {
-                    ++output.failedLightmapWrites;
-                }
-                if (!WritePfm(indirectOutputPath, bakedIndirectPixels, target.resolution, target.resolution))
-                {
-                    ++output.failedLightmapWrites;
-                }
-
-                const float indirectToDirectRatio = directAverageLuminance > 1e-6f ? indirectAverageLuminance / directAverageLuminance : 0.0f;
-                LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " direct avg luminance=" + std::to_string(directAverageLuminance) + ", max luminance=" + std::to_string(directMaxLuminance) + ".");
-                LogBakeMessage("Lightmap " + std::to_string(targetIndex) + "/" + std::to_string(preparedBake.targets.size()) + " indirect avg luminance=" + std::to_string(indirectAverageLuminance) + ", max luminance=" + std::to_string(indirectMaxLuminance) + ", ratio=" + std::to_string(indirectToDirectRatio) + ".");
-
-                if (mainLightmapWritten)
-                {
-                    auto completedTarget=target;
-                    completedTarget.triangleIndices.clear();
-                    completedTarget.triangleIndices.shrink_to_fit();
-                    output.lightmaps.push_back(CompletedBakeLightmap{.target=std::move(completedTarget)});
-                }
-                LogBakeTiming(
-                    "Lightmap " + std::to_string(targetIndex) + " background total",
-                    targetStart);
-            }
-
             const auto bakeEndTime = std::chrono::steady_clock::now();
             output.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(bakeEndTime - preparedBake.bakeStartTime).count();
-            LogBakeMessage(
-                "Background bake computation finished with " +
-                std::to_string(output.lightmaps.size()) + " lightmap(s) ready and " +
-                std::to_string(output.invalidLightmapUvCount) + " invalid UV target(s) skipped.");
             LogBakeTiming("Background bake total", backgroundStart);
             return output;
         }
 
-        SceneBakeResult BuildBakeResult(int bakedLightmapCount,
-                                        const BakedProbeVolume &probeVolume,
-                                        int failedLightmapLoads,
-                                        int failedLightmapWrites,
-                                        int invalidLightmapUvCount,
-                                        bool gpuBakeActive,
-                                        bool gpuGiActive,
+        SceneBakeResult BuildBakeResult(const BakedProbeVolume &probeVolume,
                                         long long elapsedMs, int componentProbeCount = -1)
         {
             SceneBakeResult result;
-            result.bakedLightmapCount = bakedLightmapCount;
             result.bakedProbeCount = !probeVolume.IsValid() ? 0 : probeVolume.HasDirectionalData()
                 ? static_cast<int>(std::count_if(probeVolume.positions.begin(), probeVolume.positions.end(),
                     [](const glm::vec4 &p) { return p.w > 0.5f; }))
                 : static_cast<int>(probeVolume.irradiance.size());
             if (componentProbeCount>=0) result.bakedProbeCount=componentProbeCount;
-            result.succeeded = result.bakedLightmapCount > 0 || result.bakedProbeCount > 0;
+            result.succeeded = result.bakedProbeCount > 0;
 
             std::ostringstream message;
-            message << "Baked " << result.bakedLightmapCount << " lightmap(s)";
-            if (gpuBakeActive)
+            if (result.succeeded)
             {
-                message << (gpuGiActive
-                                ? " using GPU direct lighting and multi-bounce GI"
-                                : " using GPU primary visibility and CPU multi-bounce GI");
-            }
-            if (probeVolume.IsValid())
-            {
-                message << " and generated " << result.bakedProbeCount << " probe samples.";
+                message << "Generated " << result.bakedProbeCount << " probe samples.";
             }
             else
             {
-                message << ".";
-            }
-
-            if (failedLightmapLoads > 0)
-            {
-                message << " " << failedLightmapLoads << " baked lightmap file(s) could not be loaded back into the scene.";
-            }
-
-            if (failedLightmapWrites > 0)
-            {
-                message << " " << failedLightmapWrites << " baked lightmap file(s) could not be written to disk.";
-            }
-
-            if (invalidLightmapUvCount > 0)
-            {
-                message << " " << invalidLightmapUvCount << " mesh section(s) were skipped because their bake UVs are outside 0..1 or overlap; generate a unique, padded UV2 atlas.";
-            }
-
-            if (!result.succeeded)
-            {
-                message << " Check that your static meshes have valid UVs and that the contributing lights are marked Static.";
+                message << "No probe samples were baked. Check that probe volume baking is enabled and that the contributing lights are marked Static.";
             }
 
             message << " Bake time: " << elapsedMs << " ms.";
@@ -4210,49 +1568,6 @@ namespace PlutoGE::scene
                 return BuildCancelledBakeResult(output.elapsedMs);
             }
 
-            int failedLightmapLoads = 0;
-            int bakedLightmapCount = 0;
-            int lightmapIndex = 0;
-            for (const auto &lightmap : output.lightmaps)
-            {
-                ++lightmapIndex;
-                const auto uploadStart = std::chrono::steady_clock::now();
-                LogBakeMessage(
-                    "Uploading baked lightmap " + std::to_string(lightmapIndex) + "/" +
-                    std::to_string(output.lightmaps.size()) + " to the GPU.");
-                const auto floatPixels=ReadBakedLightmap(lightmap.target.outputPath,lightmap.target.resolution);
-                if (floatPixels.empty()) { ++failedLightmapLoads; continue; }
-                auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromMemory(
-                    lightmap.target.outputPath.string(),
-                    floatPixels.data(),
-                    lightmap.target.resolution,
-                    lightmap.target.resolution,
-                    3);
-                if (!lightmapTexture)
-                {
-                    ++failedLightmapLoads;
-                    continue;
-                }
-
-                auto *material = lightmap.target.meshComponent
-                                     ? lightmap.target.meshComponent->CreateUniqueMaterialForSubmesh(lightmap.target.submeshIndex)
-                                     : lightmap.target.terrainComponent
-                                           ? lightmap.target.terrainComponent->CreateUniqueMaterialForBaking()
-                                           : nullptr;
-                if (!material)
-                {
-                    ++failedLightmapLoads;
-                    continue;
-                }
-                material->SetLightmapTexture(lightmapTexture);
-                material->SetLightmapUvTransform(lightmap.target.lightmapUvTransform);
-                ++bakedLightmapCount;
-                LogBakeMessage("Assigned baked lightmap to submesh " + std::to_string(lightmap.target.submeshIndex) + " (material slot " + std::to_string(lightmap.target.materialSlot) + ").");
-                LogBakeTiming(
-                    "Upload lightmap " + std::to_string(lightmapIndex),
-                    uploadStart);
-            }
-
             if (!output.componentVolumes.empty()) {
                 for (const auto &[id,volume]:output.componentVolumes) {
                     if (auto *entity=scene.FindEntityByID(id))
@@ -4272,8 +1587,8 @@ namespace PlutoGE::scene
                     componentProbeCount+=volume.HasDirectionalData() ? static_cast<int>(std::count_if(volume.positions.begin(),volume.positions.end(),[](const auto &p){return p.w>.5f;})) : static_cast<int>(volume.irradiance.size());
                 }
             }
-            SceneBakeResult result = BuildBakeResult(bakedLightmapCount, output.probeVolume, failedLightmapLoads, output.failedLightmapWrites, output.invalidLightmapUvCount, preparedBake.gpuBakeActive, preparedBake.gpuGiActive, output.elapsedMs, componentProbeCount);
-            LogBakeTiming("Finalize and upload", finalizationStart);
+            SceneBakeResult result = BuildBakeResult(output.probeVolume, output.elapsedMs, componentProbeCount);
+            LogBakeTiming("Finalize", finalizationStart);
             LogBakeMessage(result.message);
             return result;
         }
@@ -4380,80 +1695,12 @@ namespace PlutoGE::scene
         return result;
     }
 
-    SceneBakeSettings SceneBakeSettings::FastPreview()
-    {
-        SceneBakeSettings settings;
-        settings.lightmapResolution = 32;
-        settings.lightmapTileSize = 16;
-        settings.directShadowSampleCount = 1;
-        settings.probeDirectionCount = 0;
-        settings.indirectBounceSampleCount = 0;
-        settings.indirectBounceCount = 1;
-        settings.indirectDenoisePassCount = 0;
-        settings.bakeProbeVolume = false;
-        settings.bakeIndirectBounce = false;
-        settings.probeBounceStrength = 0.0f;
-        settings.lightmapBounceStrength = 0.0f;
-        return settings;
-    }
-
-    SceneBakeSettings SceneBakeSettings::BalancedPreview()
-    {
-        SceneBakeSettings settings;
-        settings.lightmapResolution = 96;
-        settings.lightmapTileSize = 16;
-        settings.directShadowSampleCount = 4;
-        settings.probeDirectionCount = 0;
-        settings.indirectBounceSampleCount = 12;
-        settings.indirectBounceCount = 2;
-        settings.indirectDenoisePassCount = 2;
-        settings.bakeProbeVolume = false;
-        settings.bakeIndirectBounce = true;
-        settings.probeBounceStrength = 0.0f;
-        settings.lightmapBounceStrength = 1.25f;
-        return settings;
-    }
-
     SceneBakeSettings SceneBakeSettings::Final()
     {
         SceneBakeSettings settings;
-        settings.lightmapResolution = 192;
-        settings.lightmapTileSize = 16;
-        settings.directShadowSampleCount = 8;
         settings.probeDirectionCount = 12;
-        settings.indirectBounceSampleCount = 48;
-        settings.indirectBounceCount = 4;
-        settings.indirectDenoisePassCount = 2;
         settings.bakeProbeVolume = true;
-        settings.bakeIndirectBounce = true;
         settings.probeBounceStrength = 1.0f;
-        settings.lightmapBounceStrength = 1.5f;
-        return settings;
-    }
-
-    SceneBakeSettings SceneBakeSettings::HighQuality()
-    {
-        SceneBakeSettings settings = Final();
-        settings.lightmapResolution = 512;
-        settings.directShadowSampleCount = 16;
-        settings.probeDirectionCount = 24;
-        settings.indirectBounceSampleCount = 96;
-        settings.indirectBounceCount = 5;
-        settings.indirectDenoisePassCount = 3;
-        settings.useGpu = true;
-        return settings;
-    }
-
-    SceneBakeSettings SceneBakeSettings::Ultra()
-    {
-        SceneBakeSettings settings = HighQuality();
-        settings.lightmapResolution = 1024;
-        settings.directShadowSampleCount = 32;
-        settings.probeDirectionCount = 48;
-        settings.indirectBounceSampleCount = 192;
-        settings.indirectBounceCount = 6;
-        settings.indirectDenoisePassCount = 3;
-        settings.useGpu = true;
         return settings;
     }
 
@@ -4539,7 +1786,7 @@ namespace PlutoGE::scene
 
         if (m_impl->backgroundState->finished.load(std::memory_order_acquire))
         {
-            return "Bake computation complete; applying lightmaps...";
+            return "Bake computation complete; applying results...";
         }
 
         return IsCancelled() ? "Cancelling bake..." : "Bake running in background...";
@@ -4614,9 +1861,7 @@ namespace PlutoGE::scene
             }
         }
 
-        LogBakeMessage(
-            "Applying " + std::to_string(m_impl->completedOutput->lightmaps.size()) +
-            " completed lightmap(s) to the scene.");
+        LogBakeMessage("Applying bake results to the scene.");
         m_impl->finalizedResult = FinalizePreparedBake(scene, *m_impl->preparedBake, *m_impl->completedOutput);
         m_impl->preparedBake.reset();
         m_impl->completedOutput.reset();

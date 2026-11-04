@@ -4245,17 +4245,10 @@ namespace PlutoGE::ui
 
             auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
             {
-                settings.lightmapResolution = (std::max)(settings.lightmapResolution, 4);
-                settings.lightmapTileSize = (std::max)(settings.lightmapTileSize, 1);
-                settings.directShadowSampleCount = std::clamp(settings.directShadowSampleCount, 1, 32);
-                settings.indirectBounceSampleCount = (std::max)(settings.indirectBounceSampleCount, 0);
-                settings.indirectBounceCount = std::clamp(settings.indirectBounceCount, 1, 8);
-                settings.indirectDenoisePassCount = std::clamp(settings.indirectDenoisePassCount, 0, 4);
                 settings.probeDirectionCount = std::clamp(settings.probeDirectionCount, 0, 4096);
                 settings.probeSpacing = std::clamp(settings.probeSpacing, 0.05f, 100.0f);
                 settings.probeSurfaceClearance = std::clamp(settings.probeSurfaceClearance, 0.001f, .1f);
                 settings.maxProbeCount = std::clamp(settings.maxProbeCount, 8, 16384);
-                settings.lightmapBounceStrength = (std::max)(settings.lightmapBounceStrength, 0.0f);
                 settings.probeBounceStrength = (std::max)(settings.probeBounceStrength, 0.0f);
             };
 
@@ -4653,17 +4646,8 @@ namespace PlutoGE::ui
                     if (ImGui::BeginMenu("Lighting", m_scene != nullptr))
                     {
                         if (ImGui::MenuItem("Bake Lighting"))
-                            runBake(scene::SceneBakeSettings::BalancedPreview());
-                        ImGui::SetItemTooltip("Bake with the balanced preview preset.");
-                        if (ImGui::BeginMenu("Bake with Preset"))
-                        {
-                            if (ImGui::MenuItem("Fast Preview")) runBake(scene::SceneBakeSettings::FastPreview());
-                            if (ImGui::MenuItem("Balanced Preview")) runBake(scene::SceneBakeSettings::BalancedPreview());
-                            if (ImGui::MenuItem("Final")) runBake(scene::SceneBakeSettings::Final());
-                            if (ImGui::MenuItem("High (512px)")) runBake(scene::SceneBakeSettings::HighQuality());
-                            if (ImGui::MenuItem("Ultra (1024px)")) runBake(scene::SceneBakeSettings::Ultra());
-                            ImGui::EndMenu();
-                        }
+                            runBake(scene::SceneBakeSettings::Final());
+                        ImGui::SetItemTooltip("Bake the probe volume from static lights.");
                         if (ImGui::MenuItem("Bake Ambient Grid..."))
                             shouldOpenBakeSceneCustomPopup = true;
                         ImGui::Separator();
@@ -4672,11 +4656,9 @@ namespace PlutoGE::ui
                         if (ImGui::MenuItem("Clear Baked Lighting"))
                         {
                             const bool hadProbeVolume = m_scene->HasBakedProbeVolume();
-                            const std::size_t clearedLightmaps = m_scene->ClearBakedLighting();
+                            m_scene->ClearBakedProbeVolume();
                             MarkSceneDirty();
-                            m_statusMessage = "Cleared " + std::to_string(clearedLightmaps) +
-                                              " baked lightmap(s)" +
-                                              (hadProbeVolume ? " and the baked probe volume." : ".");
+                            m_statusMessage = hadProbeVolume ? "Cleared the baked probe volume." : "No baked lighting to clear.";
                             Log(ConsoleSeverity::Info, m_statusMessage);
                         }
                         ImGui::EndMenu();
@@ -5392,42 +5374,6 @@ namespace PlutoGE::ui
                 sanitizeBakeSettings(m_customBakeSettings);
                 ImGui::PushItemWidth(180.0f);
 
-                static constexpr const char *presetLabels[] = {"Fast Preview", "Balanced Preview", "Final", "High (512px)", "Ultra (1024px)"};
-                if (ImGui::BeginCombo("Load Preset", "Choose..."))
-                {
-                    for (int preset = 0; preset < static_cast<int>(std::size(presetLabels)); ++preset)
-                    {
-                        if (!ImGui::Selectable(presetLabels[preset])) continue;
-                        switch (preset)
-                        {
-                            case 0: m_customBakeSettings = scene::SceneBakeSettings::FastPreview(); break;
-                            case 1: m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview(); break;
-                            case 2: m_customBakeSettings = scene::SceneBakeSettings::Final(); break;
-                            case 3: m_customBakeSettings = scene::SceneBakeSettings::HighQuality(); break;
-                            default: m_customBakeSettings = scene::SceneBakeSettings::Ultra(); break;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                ImGui::SetItemTooltip("Replaces the values below with a preset; edit them afterwards as needed.");
-
-                ImGui::SeparatorText("Lightmaps");
-                ImGui::InputInt("Resolution", &m_customBakeSettings.lightmapResolution);
-                ImGui::InputInt("Tile Size", &m_customBakeSettings.lightmapTileSize);
-                ImGui::InputInt("Direct Shadow Samples", &m_customBakeSettings.directShadowSampleCount);
-                ImGui::Checkbox("Use GPU Bake", &m_customBakeSettings.useGpu);
-                if (m_customBakeSettings.useGpu)
-                    ImGui::SetItemTooltip("GPU traces direct light and GI for base-colour scenes; textured GI uses the accurate CPU fallback.");
-
-                ImGui::SeparatorText("Global Illumination");
-                ImGui::Checkbox("Bake Indirect Bounce", &m_customBakeSettings.bakeIndirectBounce);
-                ImGui::BeginDisabled(!m_customBakeSettings.bakeIndirectBounce);
-                ImGui::InputInt("Indirect Samples", &m_customBakeSettings.indirectBounceSampleCount);
-                ImGui::InputInt("Bounce Count", &m_customBakeSettings.indirectBounceCount);
-                ImGui::InputInt("Denoise Passes", &m_customBakeSettings.indirectDenoisePassCount);
-                ImGui::SliderFloat("Lightmap Bounce Strength", &m_customBakeSettings.lightmapBounceStrength, 0.0f, 4.0f, "%.2f");
-                ImGui::EndDisabled();
-
                 ImGui::SeparatorText("Probe Volume");
                 ImGui::Checkbox("Bake Probe Volume", &m_customBakeSettings.bakeProbeVolume);
                 ImGui::SetItemTooltip("Grid bounds follow static geometry. Solid cells are rejected; visibility limits interpolation through walls.");
@@ -5457,7 +5403,6 @@ namespace PlutoGE::ui
                     auto settings = m_customBakeSettings;
                     settings.probesOnly = true;
                     settings.bakeProbeVolume = true;
-                    settings.bakeIndirectBounce = false;
                     settings.probeDirectionCount = (std::max)(settings.probeDirectionCount, 64);
                     if (settings.probeBounceStrength <= 0) settings.probeBounceStrength = 1.0f;
                     m_generateAmbientReflections = m_autoAmbientReflections;
@@ -5465,7 +5410,7 @@ namespace PlutoGE::ui
                     if (!m_activeBakeTask) m_generateAmbientReflections = false;
                     ImGui::CloseCurrentPopup();
                 }
-                ImGui::SetItemTooltip("Bakes only the probe volume (and automatic reflection captures), leaving lightmaps untouched.");
+                ImGui::SetItemTooltip("Bakes the probe volume (and automatic reflection captures) from every enabled light, static or not.");
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 if (ImGui::Button("Close"))

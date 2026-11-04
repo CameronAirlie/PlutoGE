@@ -28,7 +28,8 @@ resizing the box invalidates its old bake until rebaked.
 **Scene > Lighting > Bake Ambient Grid...** bakes all enabled, active volume components. If none
 exist, the first bake creates an **Ambient Light Volume** object fitted to static
 geometry. Old scene-level grids are migrated into this component when loaded.
-This action does not generate UV2 or replace lightmaps. Mark bake geometry **Static**.
+Mark bake geometry **Static**. Lightmap baking was removed; scene bakes produce
+only probe volumes and reflection captures.
 
 Vulkan/OpenGL RHI supports eight active baked volumes. In overlaps, the volume with
 the smallest actual maximum cell dimension supplies ambient lighting. A small,
@@ -75,7 +76,7 @@ lighting owns the solar disk. Retained HDR cubemap pixels are also supported as 
 environment source. Geometry and lighting changes require another bake; this is
 baked lighting, not continuously updated GI (a **Live** sky is the exception: see
 [BAKED_ENVIRONMENT_LIGHTING.md](BAKED_ENVIRONMENT_LIGHTING.md)). The grid currently captures one diffuse
-bounce, independently of the lightmap bounce-count setting.
+bounce.
 
 With **Automatic Reflection Captures** enabled, baking also places sparse 128px HDR
 captures at valid grid cells. Placement spreads the captures across the grid and
@@ -118,11 +119,7 @@ stored in node space; omitting the node transform places the bake geometry away
 from what is rendered, so probes see sky instead of the room and receive no
 directional or local light. Split imports such as Bistro share one source mesh across many objects;
 unselected sections must not be duplicated into each object's bake snapshot.
-Material configurations are snapshotted once per material. Fallback lightmap UV
-geometry owns only the selected sections, preserving section indices and the shared
-source; changing the selection restores the source if another section is needed.
-Completed lightmap pixels are read from the written PFM files one at a time for
-upload rather than retained for the entire bake.
+Material configurations are snapshotted once per material.
 
 For a read-only geometry stress check with a local SCGI checkout, run
 `PlutoGEIblCaptureTests --bistro S:\PlutoGE\SCGI`. This uses the actual Bistro mesh

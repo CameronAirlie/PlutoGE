@@ -238,7 +238,6 @@ namespace PlutoGE::scene
             command.previousWorldBounds = ComputeWorldBounds(*m_mesh, submeshIndex, command.previousModel);
             command.submeshIndex = static_cast<uint32_t>(submeshIndex);
             command.isStatic = m_isStatic;
-            command.usePrimaryUvForLightmap = true;
             command.terrainGeomorph = true;
             renderScene.SubmitRenderCommand(command);
         }
@@ -252,12 +251,6 @@ namespace PlutoGE::scene
         if (m_meshDirty)
             RebuildMesh();
         return m_mesh.get();
-    }
-
-    render::Material *TerrainComponent::CreateUniqueMaterialForBaking()
-    {
-        m_material = m_material ? new render::Material(m_material->GetConfig()) : new render::Material();
-        return m_material;
     }
 
     std::vector<Property> TerrainComponent::Serialize() const

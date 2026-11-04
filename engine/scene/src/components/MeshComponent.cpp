@@ -1,5 +1,4 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
-#include "../MeshGeometryCopy.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -238,8 +237,6 @@ namespace PlutoGE::scene
             std::optional<glm::vec3> attenuationColor;
             std::optional<float> attenuationDistance;
             std::optional<bool> flipNormalY;
-            std::optional<std::string> lightmapPath;
-            std::optional<glm::vec4> lightmapUvTransform;
         };
 
         bool IsExtendedInlineTextureSlot(render::MaterialTextureSlot slot)
@@ -327,8 +324,6 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "AttenuationColor", PropertyType::String, SerializeVec3(config.attenuationColor)});
             properties.push_back({prefix + "AttenuationDistance", PropertyType::Float, std::to_string(config.attenuationDistance)});
             properties.push_back({prefix + "FlipNormalY", PropertyType::Bool, config.flipNormalY ? "true" : "false"});
-            properties.push_back({prefix + "LightmapPath", PropertyType::String, config.lightmapTexture ? config.lightmapTexture->GetFilePath() : std::string{}});
-            properties.push_back({prefix + "LightmapUvTransform", PropertyType::String, SerializeVec4(config.lightmapUvTransform)});
         }
 
         std::size_t ParseMaterialIndex(std::string_view value, std::size_t maximum)
@@ -490,14 +485,6 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.flipNormalY = (value == "true");
             }
-            else if (fieldName == "LightmapPath")
-            {
-                serializedMaterial.lightmapPath = value;
-            }
-            else if (fieldName == "LightmapUvTransform")
-            {
-                serializedMaterial.lightmapUvTransform = ParseVec4(value, glm::vec4(1.0f, 1.0f, 0.0f, 0.0f));
-            }
         }
 
         void ApplySerializedMaterialData(render::Material &material, const SerializedMaterialData &serializedMaterial, assets::AssetManager &manager)
@@ -617,23 +604,6 @@ namespace PlutoGE::scene
             {
                 material.SetFlipNormalY(*serializedMaterial.flipNormalY);
             }
-            if (serializedMaterial.lightmapPath.has_value())
-            {
-                if (serializedMaterial.lightmapPath->empty())
-                {
-                    material.SetLightmapTexture(nullptr);
-                }
-                else
-                {
-                    const auto resolvedPath = manager.ResolveAssetPath(*serializedMaterial.lightmapPath);
-                    auto *lightmapTexture = core::Engine::GetInstance().GetTextureManager().LoadLightmapFromFile(resolvedPath.c_str());
-                    material.SetLightmapTexture(lightmapTexture);
-                }
-            }
-            if (serializedMaterial.lightmapUvTransform.has_value())
-            {
-                material.SetLightmapUvTransform(*serializedMaterial.lightmapUvTransform);
-            }
             if (serializedMaterial.shaderGraphPath || serializedMaterial.graphVariableCount || serializedMaterial.graphTextureCount ||
                 !serializedMaterial.graphVariables.empty() || !serializedMaterial.graphTextures.empty())
             {
@@ -671,7 +641,6 @@ namespace PlutoGE::scene
 
         m_mesh = mesh;
         m_previousSubmeshModels.clear();
-        m_generatedLightmapUvSubmeshes.clear();
         RefreshMeshDerivedState();
         MarkRenderCommandsDirty();
 
@@ -1000,19 +969,6 @@ namespace PlutoGE::scene
             {"PivotOffset", PropertyType::Vec3, SerializeVec3(m_pivotOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
         };
-        if (!m_generatedLightmapUvSubmeshes.empty())
-        {
-            std::string generatedSubmeshes;
-            for (const size_t submeshIndex : m_generatedLightmapUvSubmeshes)
-            {
-                if (!generatedSubmeshes.empty())
-                {
-                    generatedSubmeshes += ",";
-                }
-                generatedSubmeshes += std::to_string(submeshIndex);
-            }
-            properties.push_back({"GeneratedLightmapUvSubmeshes", PropertyType::String, generatedSubmeshes});
-        }
 
         const auto *assetMaterialReferences = m_sourceMeshPath.empty()
                                                   ? nullptr
@@ -1109,7 +1065,6 @@ namespace PlutoGE::scene
         std::string modelAssetId;
         std::uint64_t modelObjectId = 0;
         bool useGeneratedLods = m_useGeneratedLods;
-        std::vector<size_t> generatedLightmapUvSubmeshes;
         std::vector<std::string> assetMaterialReferences;
         const std::vector<std::string> *serializedAssetMaterialReferences = nullptr;
 
@@ -1153,21 +1108,6 @@ namespace PlutoGE::scene
             else if (property.name == "MinShadowLod")
             {
                 m_minShadowLod = std::clamp(std::stoi(property.value), 0, MaxMinShadowLod);
-            }
-            else if (property.name == "GeneratedLightmapUvSubmeshes")
-            {
-                std::stringstream stream(property.value);
-                std::string token;
-                while (std::getline(stream, token, ','))
-                {
-                    try
-                    {
-                        generatedLightmapUvSubmeshes.push_back(static_cast<size_t>(std::stoull(token)));
-                    }
-                    catch (...)
-                    {
-                    }
-                }
             }
             else if (property.name == "PivotOffset")
             {
@@ -1394,51 +1334,6 @@ namespace PlutoGE::scene
             if (!material) continue;
             ApplySerializedMaterialData(*material, serializedMaterial, manager);
         }
-
-        GenerateLightmapUvAtlasForSubmeshes(generatedLightmapUvSubmeshes);
-    }
-
-    void MeshComponent::RestoreSourceGeometryForRange()
-    {
-        if (!m_lightmapGeometry || m_mesh != m_lightmapGeometry.get() || !m_lightmapGeometrySource) return;
-        const auto count=m_lightmapGeometrySource->GetSubmeshCount();
-        const std::size_t begin=m_submeshIndex>=0 ? static_cast<std::size_t>(m_submeshIndex) : 0;
-        const std::size_t end=m_submeshIndex>=0 ? std::min(count,begin+static_cast<std::size_t>(m_submeshCount)) : count;
-        for (auto index=begin; index<end; ++index)
-            if (m_lightmapGeometrySource->GetSubmesh(index).indexCount && !m_mesh->GetSubmesh(index).indexCount)
-            {
-                m_mesh=m_lightmapGeometrySource;
-                m_retiredLightmapGeometry.push_back(std::move(m_lightmapGeometry));
-                m_lightmapGeometrySource=nullptr;
-                m_generatedLightmapUvSubmeshes.clear();
-                RefreshMeshDerivedState();
-                return;
-            }
-    }
-
-    bool MeshComponent::GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices)
-    {
-        if (!m_mesh || submeshIndices.empty()) return false;
-        auto requested=m_generatedLightmapUvSubmeshes;
-        for (const auto index : submeshIndices)
-            if (index < m_mesh->GetSubmeshCount() && std::find(requested.begin(), requested.end(), index) == requested.end()) requested.push_back(index);
-        std::sort(requested.begin(), requested.end());
-        if (requested == m_generatedLightmapUvSubmeshes) return false;
-        const bool replace=!m_lightmapGeometry || m_mesh != m_lightmapGeometry.get();
-        auto staged=replace ? detail::CopyMeshGeometry(*m_mesh, m_submeshIndex, m_submeshCount) : nullptr;
-        auto *edited=replace ? staged.get() : m_lightmapGeometry.get();
-        if (!edited->GenerateLightmapUvAtlasForSubmeshes(requested)) return false;
-        if (replace)
-        {
-            m_lightmapGeometrySource=m_mesh;
-            if (m_lightmapGeometry) m_retiredLightmapGeometry.push_back(std::move(m_lightmapGeometry));
-            m_lightmapGeometry=std::move(staged);
-            m_mesh=m_lightmapGeometry.get();
-            RefreshMeshDerivedState();
-        }
-        m_generatedLightmapUvSubmeshes=std::move(requested);
-        MarkRenderCommandsDirty();
-        return true;
     }
 
     bool MeshComponent::SetRuntimeGeometry(render::MeshData data)
@@ -1790,7 +1685,6 @@ namespace PlutoGE::scene
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.minShadowLodIndex = static_cast<uint32_t>(m_minShadowLod);
                 command.isStatic = m_isStatic;
-                command.usePrimaryUvForLightmap = !m_mesh->HasUsableLightmapUvsForSubmesh(submeshIndex);
 
                 if (!canCacheRenderCommands) renderScene.SubmitRenderCommand(command);
                 if (canCacheRenderCommands)

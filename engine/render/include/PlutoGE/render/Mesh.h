@@ -23,7 +23,7 @@ namespace PlutoGE::render
         std::array<float, 3> normal;          // Vertex normal (x, y, z)
         std::array<float, 2> uv;              // Texture coordinates (u, v)
         std::array<float, 4> tangent;         // Vertex tangent (x, y, z, w) - w can be used for handedness
-        std::array<float, 2> uv2{0.0f, 0.0f}; // Secondary UVs for baked lightmaps
+        std::array<float, 2> uv2{0.0f, 0.0f}; // Secondary texture coordinates
         std::array<int, 4> joints{0, 0, 0, 0};
         std::array<float, 4> weights{0.0f, 0.0f, 0.0f, 0.0f};
     };
@@ -246,16 +246,6 @@ namespace PlutoGE::render
                     m_meshData, submesh.indexOffset, submesh.indexCount,
                     submesh.boundsMin, submesh.boundsMax);
             }
-
-            m_hasUsablePrimaryUvs = HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), false);
-            m_hasUsableLightmapUvs = HasUsableUvs(m_meshData, 0, static_cast<uint32_t>(m_meshData.indices.size()), true);
-            m_submeshHasUsablePrimaryUvs.reserve(m_config.submeshes.size());
-            m_submeshHasUsableLightmapUvs.reserve(m_config.submeshes.size());
-            for (const auto &submesh : m_config.submeshes)
-            {
-                m_submeshHasUsablePrimaryUvs.push_back(HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, false));
-                m_submeshHasUsableLightmapUvs.push_back(HasUsableUvs(m_meshData, submesh.indexOffset, submesh.indexCount, true));
-            }
         }
 
         static Mesh *CreateInitialized(const MeshConfig &config)
@@ -301,9 +291,9 @@ namespace PlutoGE::render
             };
 
             // The material UVs intentionally fill 0..1 independently on every
-            // face, which is unsuitable for lightmaps. Give the built-in cube a
-            // separate padded 3x2 atlas so each face owns unique bake texels.
-            constexpr float lightmapChartPadding = 0.08f;
+            // face. Give the built-in cube a separate padded 3x2 atlas in its
+            // secondary UV channel so each face owns unique texels.
+            constexpr float chartPadding = 0.08f;
             for (std::size_t faceIndex = 0; faceIndex < 6; ++faceIndex)
             {
                 const float chartColumn = static_cast<float>(faceIndex % 3);
@@ -311,10 +301,10 @@ namespace PlutoGE::render
                 for (std::size_t faceVertexIndex = 0; faceVertexIndex < 4; ++faceVertexIndex)
                 {
                     auto &vertex = vertices[faceIndex * 4 + faceVertexIndex];
-                    const float chartU = lightmapChartPadding +
-                                         vertex.uv[0] * (1.0f - lightmapChartPadding * 2.0f);
-                    const float chartV = lightmapChartPadding +
-                                         vertex.uv[1] * (1.0f - lightmapChartPadding * 2.0f);
+                    const float chartU = chartPadding +
+                                         vertex.uv[0] * (1.0f - chartPadding * 2.0f);
+                    const float chartV = chartPadding +
+                                         vertex.uv[1] * (1.0f - chartPadding * 2.0f);
                     vertex.uv2 = {
                         (chartColumn + chartU) / 3.0f,
                         (chartRow + chartV) / 2.0f,
@@ -732,30 +722,6 @@ namespace PlutoGE::render
         const std::vector<AnimationNode> &GetAnimationNodes() const { return m_config.animationNodes; }
         const std::vector<AnimationClip> &GetAnimations() const { return m_config.animations; }
         bool HasLightmapUvs() const { return m_config.hasLightmapUvs; }
-        bool HasUsablePrimaryUvsForSubmesh(size_t submeshIndex) const
-        {
-            if (submeshIndex >= m_submeshHasUsablePrimaryUvs.size())
-            {
-                return m_hasUsablePrimaryUvs;
-            }
-
-            return m_submeshHasUsablePrimaryUvs[submeshIndex];
-        }
-        bool HasUsableLightmapUvsForSubmesh(size_t submeshIndex) const
-        {
-            if (submeshIndex >= m_submeshHasUsableLightmapUvs.size())
-            {
-                return m_hasUsableLightmapUvs;
-            }
-
-            return m_submeshHasUsableLightmapUvs[submeshIndex];
-        }
-        bool HasGeneratedLightmapUvsForSubmesh(size_t submeshIndex) const
-        {
-            return submeshIndex < m_generatedLightmapUvSubmeshes.size() &&
-                   m_generatedLightmapUvSubmeshes[submeshIndex] != 0;
-        }
-        bool GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices);
         const MeshData &GetMeshData() const { return m_meshData; }
         Mesh *GetTessellated(unsigned level);
         void UpdateVertexData(const std::vector<MeshVertexData> &vertices);
@@ -777,13 +743,6 @@ namespace PlutoGE::render
 
     private:
         bool m_geometryImmutable = false;
-        bool m_hasUsablePrimaryUvs = false;
-        bool m_hasUsableLightmapUvs = false;
-        std::vector<uint8_t> m_submeshHasUsablePrimaryUvs;
-        std::vector<uint8_t> m_submeshHasUsableLightmapUvs;
-        bool m_hasLightmapUvSourceData = false;
-        MeshData m_lightmapUvSourceData;
-        std::vector<uint8_t> m_generatedLightmapUvSubmeshes;
 
         static glm::vec3 ToVec3(const std::array<float, 3> &value)
         {
@@ -820,39 +779,6 @@ namespace PlutoGE::render
             }
 
             return true;
-        }
-
-        static bool HasUsableUvs(const MeshData &meshData, uint32_t indexOffset, uint32_t indexCount, bool useLightmapUvs)
-        {
-            if (indexOffset + indexCount > meshData.indices.size())
-            {
-                return false;
-            }
-
-            for (uint32_t triangleStart = indexOffset; triangleStart + 2 < indexOffset + indexCount; triangleStart += 3)
-            {
-                const auto index0 = meshData.indices[triangleStart];
-                const auto index1 = meshData.indices[triangleStart + 1];
-                const auto index2 = meshData.indices[triangleStart + 2];
-                if (index0 >= meshData.vertices.size() || index1 >= meshData.vertices.size() || index2 >= meshData.vertices.size())
-                {
-                    continue;
-                }
-
-                const auto &vertex0 = meshData.vertices[index0];
-                const auto &vertex1 = meshData.vertices[index1];
-                const auto &vertex2 = meshData.vertices[index2];
-                const glm::vec2 uv0 = useLightmapUvs ? ToVec2(vertex0.uv2) : ToVec2(vertex0.uv);
-                const glm::vec2 uv1 = useLightmapUvs ? ToVec2(vertex1.uv2) : ToVec2(vertex1.uv);
-                const glm::vec2 uv2 = useLightmapUvs ? ToVec2(vertex2.uv2) : ToVec2(vertex2.uv);
-                const float signedArea = (uv1.x - uv0.x) * (uv2.y - uv0.y) - (uv1.y - uv0.y) * (uv2.x - uv0.x);
-                if (std::abs(signedArea) > 1e-6f)
-                {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         static Submesh::LodRange ResolveSubmeshLodRange(const Submesh &submesh, size_t lodIndex, size_t totalIndexCount)
@@ -1082,7 +1008,7 @@ namespace PlutoGE::render
             glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv));
             glEnableVertexAttribArray(3); // Tangent
             glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, tangent));
-            glEnableVertexAttribArray(4); // Lightmap UVs
+            glEnableVertexAttribArray(4); // Secondary UVs
             glVertexAttribPointer(4, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, uv2));
             glEnableVertexAttribArray(14); // Joints
             glVertexAttribIPointer(14, 4, GL_INT, sizeof(MeshVertexData), (void *)offsetof(MeshVertexData, joints));

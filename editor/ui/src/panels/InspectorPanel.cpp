@@ -1220,13 +1220,6 @@ namespace PlutoGE::ui
             return parsedValue;
         }
 
-        std::array<char, kInspectorPathBufferSize> &GetLightmapPathBuffer(const scene::Entity &entity, uint32_t materialSlot)
-        {
-            static std::unordered_map<std::string, std::array<char, kInspectorPathBufferSize>> lightmapPathBuffers;
-            const std::string key = std::to_string(entity.GetID()) + ":" + std::to_string(materialSlot);
-            return lightmapPathBuffers[key];
-        }
-
         std::array<char, kInspectorPathBufferSize> &GetTerrainHeightMapPathBuffer(const scene::Entity &entity)
         {
             static std::unordered_map<scene::EntityID, std::array<char, kInspectorPathBufferSize>> heightMapPathBuffers;
@@ -4706,48 +4699,6 @@ namespace PlutoGE::ui
                         if (materialConfig.*slot.texture)
                             textureSummary += (textureSummary.empty() ? "" : ", ") + std::string(slot.displayName);
                     ImGui::Text("Textures: %s", textureSummary.empty() ? "none" : textureSummary.c_str());
-
-                    auto &lightmapPathBuffer = GetLightmapPathBuffer(entity, static_cast<uint32_t>(submeshIndex));
-                    ImGui::InputText("Lightmap Path", lightmapPathBuffer.data(), lightmapPathBuffer.size());
-                    ImGui::SameLine();
-                    if (ImGui::Button("...##Lightmap"))
-                    {
-#ifdef _WIN32
-                        OPENFILENAMEA ofn = {};
-                        char fileName[MAX_PATH] = "";
-                        ofn.lStructSize = sizeof(ofn);
-                        ofn.hwndOwner = nullptr;
-                        ofn.lpstrFilter = "Texture Files\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr\0All Files\0*.*\0";
-                        ofn.lpstrFile = fileName;
-                        ofn.nMaxFile = MAX_PATH;
-                        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                        if (GetOpenFileNameA(&ofn))
-                        {
-                            strncpy_s(lightmapPathBuffer.data(), lightmapPathBuffer.size(), fileName, _TRUNCATE);
-                        }
-#endif
-                    }
-
-                    ImGui::BeginDisabled(std::strlen(lightmapPathBuffer.data()) == 0);
-                    if (ImGui::Button("Load Lightmap"))
-                    {
-                        auto *lightmapTexture = engine.GetTextureManager().LoadLightmapFromFile(lightmapPathBuffer.data());
-                        material->SetLightmapTexture(lightmapTexture);
-                    }
-                    ImGui::EndDisabled();
-
-                    ImGui::SameLine();
-                    if (ImGui::Button("Clear Lightmap"))
-                    {
-                        material->SetLightmapTexture(nullptr);
-                    }
-
-                    ImGui::Text("Baked Lightmap: %s", materialConfig.lightmapTexture ? "yes" : "no");
-
-                    if (meshComponent.IsStatic() && materialConfig.lightmapTexture && meshComponent.GetMesh() && !meshComponent.GetMesh()->HasUsableLightmapUvsForSubmesh(submeshIndex))
-                    {
-                        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Baking is using UV0 because TEXCOORD_1 / UV2 is missing. UV2 is still preferred to avoid overlap artifacts.");
-                    }
 
                     if (materialUsesAssetReference)
                     {

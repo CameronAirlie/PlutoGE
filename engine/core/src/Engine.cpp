@@ -300,9 +300,6 @@ namespace PlutoGE::core
             if (width > 0 && height > 0)
                 static_cast<void>(m_rhiRenderService->Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
         });
-        // Baked lightmaps are still created as GL textures (removal plan, Phase 3).
-        if (m_config.graphicsApi == render::rhi::GraphicsApi::OpenGL)
-            m_textureManager->SetWindow(&m_window);
 
         if (!m_audioSystem->Initialize())
         {
@@ -579,7 +576,6 @@ namespace PlutoGE::core
         scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: audio");
         m_audioSystem->Shutdown();
         scripting::DispatchScriptLog(scripting::ScriptLogSeverity::Info, "Shutdown: renderer");
-        m_textureManager->SetWindow(nullptr);
         m_rhiRenderService->Shutdown();
         m_swapchain.reset();
         m_renderDevice.reset();

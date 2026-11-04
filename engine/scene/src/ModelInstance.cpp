@@ -173,7 +173,7 @@ namespace PlutoGE::scene
                     for (const auto *component : bucket)
                         if (component != mesh) geometryEdit(node.sourceNodeId);
                 for (const auto &property : mesh->Serialize())
-                    if (property.name.starts_with("SubmeshTransforms.") || property.name == "GeneratedLightmapUvSubmeshes" ||
+                    if (property.name.starts_with("SubmeshTransforms.") ||
                         ((property.name.starts_with("MaterialSlots.") || property.name.starts_with("SubmeshOverrides.")) &&
                             !property.name.ends_with("MaterialAsset"))) geometryEdit(node.sourceNodeId);
                 for (std::size_t slot = 0; slot < candidate.defaultMaterials.size(); ++slot)

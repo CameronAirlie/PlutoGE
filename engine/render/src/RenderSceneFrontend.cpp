@@ -409,21 +409,7 @@ namespace PlutoGE::render
                 return false;
             }
 
-            // A generated fallback UV2 atlas is built against the source
-            // submesh triangles. Generated geometry LODs have different
-            // topology, so they cannot safely sample that same lightmap.
-            if (command.mesh->HasGeneratedLightmapUvsForSubmesh(command.submeshIndex))
-            {
-                if (command.lodIndex != 0 ||
-                    command.GetLodTransitionIndex() != 0 ||
-                    command.GetLodTransitionFade() != 0.0f)
-                {
-                    changed |= command.lodIndex != 0;
-                    command.lodIndex = 0;
-                    command.SetLodTransition(0, 0.0f);
-                }
-            }
-            else if (command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
+            if (command.mesh->GetSubmeshLodCount(command.submeshIndex) > 1)
             {
                 const glm::vec3 cameraOffset = command.worldBounds.center - cameraPosition;
                 const float safeDistance = std::sqrt(std::max(glm::dot(cameraOffset, cameraOffset), 0.000001f));

@@ -441,7 +441,7 @@ namespace PlutoGE::ui
         std::unique_ptr<scene::Scene> m_entityClipboardScene;
         scene::EntityID m_entityClipboardRootId = 0;
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
-        scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::BalancedPreview();
+        scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::Final();
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;
         bool m_generateAmbientReflections = false;
         bool m_saveAfterAmbientCaptures = false;

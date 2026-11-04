@@ -442,21 +442,7 @@ try
     Require(sharedBaseline->IsGeometryImmutable(), "Retained source geometry was mutable");
     const auto baselineRevision = sharedBaseline->GetContentRevision();
     sharedBaseline->UpdateVertexData(sharedBaseline->GetMeshData().vertices);
-    Require(!sharedBaseline->GenerateLightmapUvAtlasForSubmeshes({0}) && sharedBaseline->GetContentRevision() == baselineRevision,
-        "Direct geometry edits changed the accepted baseline");
-    Require(firstMesh->GenerateLightmapUvAtlasForSubmeshes({0}), "Instance lightmap UV generation failed");
-    Require(firstMesh->GetMesh() != sharedBaseline && !firstMesh->GetMesh()->IsGeometryImmutable() &&
-        firstMesh->UsesRetainedGeometry(sharedBaseline) && secondMesh->GetMesh() == sharedBaseline &&
-        sharedBaseline->GetContentRevision() == baselineRevision, "Lightmap UV edits escaped their instance");
-    Require(!firstMesh->GenerateLightmapUvAtlasForSubmeshes({0}), "Repeated UV generation was not idempotent");
-    std::string uvScene;
-    Require(scene::SceneSerializer::SaveToString(*sharedInstances, uvScene, &error), error);
-    auto restoredUvScene = scene::SceneSerializer::LoadFromString(uvScene, &error);
-    Require(restoredUvScene != nullptr, "Owned UV geometry did not survive scene persistence: " + error);
-    auto *restoredUv = restoredUvScene->FindEntityByID(firstInstance->second.state.bindingEntities.front())->GetComponent<scene::MeshComponent>();
-    auto *restoredShared = restoredUvScene->FindEntityByID(secondInstance->second.state.bindingEntities.front())->GetComponent<scene::MeshComponent>();
-    Require(restoredUv->GetMesh() != restoredShared->GetMesh() && restoredUv->UsesRetainedGeometry(restoredShared->GetMesh()),
-        "Scene reload shared edited instance geometry");
+    Require(sharedBaseline->GetContentRevision() == baselineRevision, "Direct geometry edits changed the accepted baseline");
     std::unique_ptr<scene::Scene> mixed;
     Require(scene::PrepareStaticModelInstanceUnpacking(*sharedInstances, firstInstance->first, extraction.references, manager, mixed, &error), error);
     Require(mixed->GetStaticModelInstances().size() == 1 && mixed->GetStaticModelInstances().contains(secondInstance->first) &&

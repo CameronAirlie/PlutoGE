@@ -49,7 +49,6 @@ namespace PlutoGE::assets
             throw std::invalid_argument("Shared assets require a scoped source reader and an application reader.");
         if (m_ownedResources)
         {
-            m_ownedResources->textureReader.SetWindow(&core::Engine::GetInstance().GetWindow());
             m_ownedResources->sharedAssets = sharedAssets;
             m_ownedResources->sourceAssetId = std::move(retainedSourceAssetId);
             if (sharedAssets) sharedAssets->m_scopedReaders.insert(this);
@@ -2633,7 +2632,6 @@ namespace PlutoGE::assets
 
             for (const auto &slot : render::MaterialTextureSlots())
                 cachedConfig.*slot.texture = reloadTexture(config.*slot.texture, render::GetMaterialTextureColorSpace(config, slot.slot));
-            cachedConfig.lightmapTexture = nullptr;
             if (cachedConfig.shaderGraphReference.empty())
             {
                 cachedConfig.shaderGraphReference = std::string(Project::kBuiltinDefaultShaderGraphReference);

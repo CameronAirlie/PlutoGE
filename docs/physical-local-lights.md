@@ -6,7 +6,7 @@ Range is no longer an authored LightComponent property. Its internal culling/sha
 
 Examples for white sources: 1 cd gives a 10 m cutoff, 4 cd gives 20 m, and 100 cd gives 100 m. Four times the intensity doubles the radius. These radii are performance bounds, not distances with uniform illumination. Direct lighting, shadows, viewport gizmos, VCT, LPV, particles, transparent materials, and CPU/GPU baking use the new model. Local Light Bounce remains an optional artistic GI multiplier.
 
-Old scene Range properties are accepted and ignored, and disappear when saved. Numeric intensity values are retained; old lighting appearance cannot be preserved at every distance because the falloff law changed. Re-tune intensities and rebake lightmaps as needed. Low-level BasicPointLight packets still carry an explicit internal cutoff for renderer callers; the scene adapter always derives it. C++ callers of the removed LightComponent::SetRange should set intensity instead.
+Old scene Range properties are accepted and ignored, and disappear when saved. Numeric intensity values are retained; old lighting appearance cannot be preserved at every distance because the falloff law changed. Re-tune intensities and rebake probe volumes as needed. Low-level BasicPointLight packets still carry an explicit internal cutoff for renderer callers; the scene adapter always derives it. C++ callers of the removed LightComponent::SetRange should set intensity instead.
 
 Point and spot lights may also have an emitter shape (**Source Radius**, and **Source Length** for point lights), which
 softens and sizes their highlights without changing falloff or shadows; see [Surface lighting](SURFACE_LIGHTING.md#spherical-and-tube-lights).

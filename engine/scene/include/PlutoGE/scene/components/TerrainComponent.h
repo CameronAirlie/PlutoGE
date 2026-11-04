@@ -73,7 +73,6 @@ namespace PlutoGE::scene
         void SetStatic(bool isStatic) { m_isStatic = isStatic; }
         bool IsStatic() const { return m_isStatic; }
         render::Mesh *GetMeshForBaking();
-        render::Material *CreateUniqueMaterialForBaking();
 
         void SetMaterial(render::Material *material);
         render::Material *GetMaterial() const { return m_material; }

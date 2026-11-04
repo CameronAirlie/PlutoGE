@@ -75,7 +75,7 @@ int main(int argc, char **argv) try
 
     if (std::string_view(argv[3]) == "--bake-ambient")
     {
-        auto settings = scene::SceneBakeSettings::BalancedPreview();
+        auto settings = scene::SceneBakeSettings::Final();
         settings.probesOnly = true;
         settings.bakeProbeVolume = true;
         settings.ambientVolumeEntity = 0;
@@ -180,7 +180,6 @@ int main(int argc, char **argv) try
                         glm::length(glm::vec3(draw.model[1])), glm::length(glm::vec3(draw.model[2]))});
                     draw.previousWorldBounds = draw.worldBounds;
                     draw.isStatic = true;
-                    draw.usePrimaryUvForLightmap = true;
                     draw.terrainGeomorph = true;
                     draws.push_back(draw);
                 }

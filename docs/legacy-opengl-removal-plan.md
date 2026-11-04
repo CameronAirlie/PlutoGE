@@ -16,15 +16,10 @@ OpenGL projects keep working, but they render through `OpenGLDevice`,
   never showed the paint.
 - **Legacy per-pass CPU/GPU timings** in the editor and runtime profilers:
   removed along with the passes.
-- **Open: baked lightmaps.** Found during Phase 0, so it needs a decision before
-  Phase 3. `TextureManager::LoadLightmapFromMemory` creates GL-only textures
-  with no CPU pixels, and only the legacy `Material::Bind` samples
-  `lightmapTexture`. No RHI path renders baked lightmaps, so a lightmap bake
-  only applies its result on an OpenGL host, and even there nothing draws it
-  any more. Baked probe volumes are unaffected. Choose between porting lightmap
-  sampling to the RHI (keeping CPU pixels) and removing lightmap baking. Until
-  then, OpenGL hosts keep `TextureManager::SetWindow`, so the bake and its
-  `PlutoGEOpenGLIblCaptureTests` check behave as before.
+- **Baked lightmaps:** removed. No RHI path sampled them. The lightmap bake
+  stage, its GL compute path, generated UV2 atlases, material lightmap fields,
+  the GL-only `TextureManager` lightmap loaders and the OpenGL-host
+  `TextureManager::SetWindow` call went; probe baking and the `uv2` channel stay.
 
 ## Findings
 

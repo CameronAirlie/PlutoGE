@@ -679,7 +679,6 @@ namespace PlutoGE::scene
                     command.impostorOwner = type.impostor && submeshIndex == impostorOwner;
                     command.isStatic = m_isStatic;
                     command.castsShadow = m_castShadows;
-                    command.usePrimaryUvForLightmap = true;
                     // The instance array is rebuilt (a new identity) whenever it changes, so the renderer may reuse
                     // its prepared packet, batches and shadow signatures for as long as this command lives.
                     command.sourceObject = render::RenderObjectIdentity().Value();

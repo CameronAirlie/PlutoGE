@@ -271,10 +271,6 @@ namespace PlutoGE::scene
         std::uint64_t GetBakedProbeRevision() const;
         void SetBakedProbeVolume(BakedProbeVolume bakedProbeVolume);
         void ClearBakedProbeVolume();
-        // Clears every baked-lighting reference owned by the scene, including
-        // mesh/submesh overrides, terrain and foliage materials, and probes.
-        // Returns the number of material lightmaps that were removed.
-        std::size_t ClearBakedLighting();
         const std::vector<IblCaptureVolume> &GetIblCaptureVolumes() const { return m_iblCaptureVolumes; }
         const std::vector<ParticleSystemComponent *> &GetParticleSystemComponents() const { return m_particleSystemComponents; }
         const std::vector<CanvasComponent *> &GetCanvasComponents() const { return m_canvasComponents; }

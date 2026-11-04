@@ -66,8 +66,7 @@ namespace PlutoGE::scene
 
         void SetMesh(render::Mesh *mesh);
         render::Mesh *GetMesh() const { return m_mesh; }
-        bool UsesRetainedGeometry(const render::Mesh *baseline) const
-        { return m_mesh == baseline || (m_lightmapGeometry && m_mesh == m_lightmapGeometry.get() && m_lightmapGeometrySource == baseline); }
+        bool UsesRetainedGeometry(const render::Mesh *baseline) const { return m_mesh == baseline; }
         void NotifyMeshDataChanged() { MarkRenderCommandsDirty(); }
         // Script-built geometry (vision cones, trails) owned by this component.
         // Later calls replace it in place; an empty triangle list draws nothing.
@@ -75,7 +74,6 @@ namespace PlutoGE::scene
         bool SetRuntimeGeometry(render::MeshData data);
         void ClearRuntimeGeometry();
         bool HasRuntimeGeometry() const { return m_runtimeGeometryActive; }
-        bool GenerateLightmapUvAtlasForSubmeshes(const std::vector<size_t> &submeshIndices);
         void SetStatic(bool isStatic)
         {
             if (m_isStatic == isStatic)
@@ -122,7 +120,6 @@ namespace PlutoGE::scene
             }
 
             m_submeshIndex = submeshIndex;
-            RestoreSourceGeometryForRange();
             MarkRenderCommandsDirty();
         }
         int GetSubmeshIndex() const { return m_submeshIndex; }
@@ -136,7 +133,6 @@ namespace PlutoGE::scene
 
             m_submeshIndex = submeshIndex;
             m_submeshCount = normalizedCount;
-            RestoreSourceGeometryForRange();
             MarkRenderCommandsDirty();
         }
         int GetSubmeshRangeCount() const { return m_submeshCount; }
@@ -284,7 +280,6 @@ namespace PlutoGE::scene
         std::size_t CompactSkeletonAttachmentEntities();
 
     private:
-        void RestoreSourceGeometryForRange();
         void DeserializeUsingAssets(const std::vector<Property> &properties, assets::AssetManager &assets, bool allowSourceImport);
         void MarkRenderCommandsDirty();
         void RefreshMeshDerivedState();
@@ -297,10 +292,6 @@ namespace PlutoGE::scene
         // Inline retained-instance materials die before the reader supplying
         // their borrowed textures/shaders. Old clones survive slot replacement.
         std::vector<std::shared_ptr<render::Material>> m_privateMaterials;
-        // Atlas edits own geometry; accepted/native cache meshes stay unchanged.
-        std::unique_ptr<render::Mesh> m_lightmapGeometry;
-        render::Mesh *m_lightmapGeometrySource = nullptr;
-        std::vector<std::unique_ptr<render::Mesh>> m_retiredLightmapGeometry;
         std::unique_ptr<render::Mesh> m_runtimeGeometry;
         render::Mesh *m_runtimeGeometrySource = nullptr;
         bool m_runtimeGeometryActive = false;
@@ -337,6 +328,5 @@ namespace PlutoGE::scene
         bool m_hasAnimatedNodeSubmeshes = false;
         std::uint64_t m_lastSubmittedJointPoseRevision = 0;
         bool m_hasSubmittedJointPoseRevision = false;
-        std::vector<size_t> m_generatedLightmapUvSubmeshes;
     };
 }

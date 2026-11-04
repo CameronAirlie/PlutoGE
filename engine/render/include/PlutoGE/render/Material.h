@@ -97,9 +97,6 @@ namespace PlutoGE::render
         glm::vec3 attenuationColor{1.0f, 1.0f, 1.0f};     // Color retained after passing through the material
         float attenuationDistance = 1.0f;                 // Distance at which attenuationColor is reached
 
-        Texture *lightmapTexture = nullptr; // Optional baked lighting texture sampled with UV2
-        glm::vec4 lightmapUvTransform{1.0f, 1.0f, 0.0f, 0.0f}; // scale.xy, offset.zw
-
         ShaderGraphOutline outline; // Resolved from the shader asset, not serialized in the material.
         std::string shaderGraphReference;
         std::shared_ptr<const ShaderGraphProgram> shaderGraphProgram;
@@ -165,8 +162,6 @@ namespace PlutoGE::render
         void SetThickness(float thickness) { if (m_config.thickness != (thickness)) { m_config.thickness = thickness; Touch(); } }
         void SetAttenuationColor(const glm::vec3 &color) { if (m_config.attenuationColor != (color)) { m_config.attenuationColor = color; Touch(); } }
         void SetAttenuationDistance(float distance) { if (m_config.attenuationDistance != (distance)) { m_config.attenuationDistance = distance; Touch(); } }
-        void SetLightmapTexture(Texture *texture) { if (m_config.lightmapTexture != (texture)) { m_config.lightmapTexture = texture; Touch(); } }
-        void SetLightmapUvTransform(const glm::vec4 &transform) { if (m_config.lightmapUvTransform != (transform)) { m_config.lightmapUvTransform = transform; Touch(); } }
         void SetTerrainLayers(std::shared_ptr<const TerrainLayerSet> layers) { if (m_config.terrainLayers != layers) { m_config.terrainLayers = std::move(layers); Touch(); } }
         // Legacy mutable references can outlive a call. Never trust revisions after
         // one escapes; those materials retain value-based validation.

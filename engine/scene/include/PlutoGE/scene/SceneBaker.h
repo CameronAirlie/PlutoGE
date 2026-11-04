@@ -15,9 +15,6 @@ namespace PlutoGE::scene
 
     struct SceneBakeSettings
     {
-        int lightmapResolution = 64;
-        int lightmapTileSize = 16;
-        int directShadowSampleCount = 8;
         int probeDirectionCount = 64;
         float probeSpacing = 2.0f;
         float probeSurfaceClearance = 0.02f;
@@ -25,31 +22,20 @@ namespace PlutoGE::scene
         std::optional<glm::vec3> probeVolumeOrigin, probeVolumeSize; // Snapshot of component bounds.
         std::optional<glm::mat3> probeGridBasis;
         int maxProbeCount = 4096;
-        int indirectBounceSampleCount = 6;
-        int indirectBounceCount = 2;
-        int indirectDenoisePassCount = 2;
         bool bakeProbeVolume = true;
         // Leave direct sky light out of probe SH and store sky visibility instead, so the
         // renderer applies the current physical sky. Ignored without a physical sky.
         bool probeLiveSky = true;
         bool probesOnly = false;
         bool logProbeDiagnostics = false; // Read-only source attribution for bake troubleshooting.
-        bool bakeIndirectBounce = true;
-        bool useGpu = false;
         float probeBounceStrength = 0.65f;
-        float lightmapBounceStrength = 0.75f;
 
-        static SceneBakeSettings FastPreview();
-        static SceneBakeSettings BalancedPreview();
         static SceneBakeSettings Final();
-        static SceneBakeSettings HighQuality();
-        static SceneBakeSettings Ultra();
     };
 
     struct SceneBakeResult
     {
         bool succeeded = false;
-        int bakedLightmapCount = 0;
         int bakedProbeCount = 0;
         std::string message;
     };

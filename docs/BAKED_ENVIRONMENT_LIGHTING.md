@@ -14,6 +14,10 @@ All three are on by default. They need no post-processing effect, so they work o
 Low, which disables SSAO, GI and SSR. For a low-end target, combine them with material ambient occlusion maps and
 contact shadows. SSAO and DDGI can be enabled on higher presets and work alongside them.
 
+Probe volumes and reflection captures are the only baked lighting. Lightmap baking was removed: **Scene > Lighting >
+Bake Lighting** bakes probes, and saved scenes that still reference lightmaps load without them. Meshes keep their
+secondary UV channel (`uv2`) as ordinary geometry.
+
 ## Using it
 
 1. Add an **Ambient Light Volume** around the playable space and a **Physical Sky** to the scene.
@@ -87,7 +91,7 @@ steps:
 
 - A live sun bounce: bake the directional light's bounce into its own SH and scale it by the current sun colour and
   intensity.
-- Baked per-vertex or lightmap AO for small-scale occlusion without SSAO.
+- Baked per-vertex AO for small-scale occlusion without SSAO.
 
 ## Tests
 

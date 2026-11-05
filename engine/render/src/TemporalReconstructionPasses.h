@@ -47,10 +47,11 @@ namespace PlutoGE::render
         rhi::Buffer m_parameters;
     };
 
-    // Contrast-adaptive sharpening of a temporal upscaler's output, applied by
-    // the renderer for every upscaler technology. SDK sharpeners run on linear
-    // HDR colour, where their range limiter fails at bright/dark edges; this
-    // pass filters in a bounded tone-mapped space. See UpscalerSharpening.slang.
+    // Contrast-adaptive sharpening of a temporal reconstruction's output: every
+    // SDK upscaler technology, and native TAA (whose history stays unsharpened).
+    // SDK sharpeners run on linear HDR colour, where their range limiter fails
+    // at bright/dark edges; this pass filters in a bounded tone-mapped space.
+    // See UpscalerSharpening.slang.
     class UpscalerSharpening
     {
     public:

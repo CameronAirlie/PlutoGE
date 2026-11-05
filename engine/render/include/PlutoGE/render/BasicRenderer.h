@@ -947,6 +947,9 @@ namespace PlutoGE::render
         // VolumetricFog uses lanes 0-3 for its medium and haze, 4.y/4.z for
         // noise strength/frequency and 6.xyz for wind velocity; the renderer
         // writes 4.x (ocean depth) and 5.xyz (wind offset) per frame.
+        // TAA: 0 = history weights + RCAS sharpness, 1 = rejection thresholds +
+        // jitter strength, 2 = current/previous jitter (UV), 3.x jitter debug;
+        // the renderer writes 3.y (current-sample weight), 4.w and 5.w.
         std::array<glm::vec4, PLUTO_POST_PROCESS_LANES> parameters{};
         glm::mat4 worldToLocal{1.0f};
         const void *historyOwner = nullptr; // CPU-only identity for persistent effect resources
@@ -1253,6 +1256,10 @@ namespace PlutoGE::render
                                                                    bool prepassed);
         // The fallback maps and sampler bound-path materials use, for bindless materials.
         [[nodiscard]] BindlessMaterialFallbacks MaterialFallbacks() const;
+        // The material texture LOD bias this frame's temporal reconstruction needs (src/TemporalSampling.h).
+        [[nodiscard]] float TemporalMipLodBias(std::span<const BasicPostProcessEffect> postProcessEffects) const noexcept;
+        // Recreates the material sampler when its LOD bias changes; bindless materials re-register with it.
+        void ApplyMaterialMipLodBias(float bias);
         // Binds a terrain draw's weight maps, layer arrays and layer parameters (terrain pipelines only).
         void BindTerrainLayers(rhi::ICommandContext &commands, const BasicTerrainLayers &terrain);
         void EnsureGeometryTargets(GeometryOutputLayout layout);

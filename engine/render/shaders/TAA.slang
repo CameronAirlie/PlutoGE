@@ -76,7 +76,12 @@ float3 clipHistoryToNeighborhood(float3 historyColor, float3 minColor, float3 ma
     return maxUnit > 1.0 ? center + offset / maxUnit : historyColor;
 }
 
-float4 sampleCatmullRom(Sampler2D source, float2 uv)
+// Bicubic Catmull-Rom from bilinear taps. Bilinear history alone re-filters
+// every reprojected frame, compounding into blur over the history's lifetime;
+// Catmull-Rom keeps the frequencies a pixel can hold. The corner taps carry
+// the smallest weights (w0*w3 products): dropping them and renormalising costs
+// little sharpness for five taps instead of nine.
+float4 sampleCatmullRom(Sampler2D source, float2 uv, bool corners)
 {
     uint width = 0;
     uint height = 0;
@@ -99,16 +104,23 @@ float4 sampleCatmullRom(Sampler2D source, float2 uv)
     const float2 uv3 = (texel + 2.5) * inverseSize;
 
     float4 result = 0.0;
-    result += source.Sample(float2(uv0.x, uv0.y)) * w0.x * w0.y;
-    result += source.Sample(float2(uv12.x, uv0.y)) * w12.x * w0.y;
-    result += source.Sample(float2(uv3.x, uv0.y)) * w3.x * w0.y;
-    result += source.Sample(float2(uv0.x, uv12.y)) * w0.x * w12.y;
-    result += source.Sample(float2(uv12.x, uv12.y)) * w12.x * w12.y;
-    result += source.Sample(float2(uv3.x, uv12.y)) * w3.x * w12.y;
-    result += source.Sample(float2(uv0.x, uv3.y)) * w0.x * w3.y;
-    result += source.Sample(float2(uv12.x, uv3.y)) * w12.x * w3.y;
-    result += source.Sample(float2(uv3.x, uv3.y)) * w3.x * w3.y;
-    return result;
+    float weight = 0.0;
+    result += source.Sample(float2(uv12.x, uv0.y)) * (w12.x * w0.y);
+    result += source.Sample(float2(uv0.x, uv12.y)) * (w0.x * w12.y);
+    result += source.Sample(float2(uv12.x, uv12.y)) * (w12.x * w12.y);
+    result += source.Sample(float2(uv3.x, uv12.y)) * (w3.x * w12.y);
+    result += source.Sample(float2(uv12.x, uv3.y)) * (w12.x * w3.y);
+    weight += w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    if (corners)
+    {
+        result += source.Sample(float2(uv0.x, uv0.y)) * (w0.x * w0.y);
+        result += source.Sample(float2(uv3.x, uv0.y)) * (w3.x * w0.y);
+        result += source.Sample(float2(uv0.x, uv3.y)) * (w0.x * w3.y);
+        result += source.Sample(float2(uv3.x, uv3.y)) * (w3.x * w3.y);
+        weight += w0.x * w0.y + w3.x * w0.y + w0.x * w3.y + w3.x * w3.y;
+    }
+    // Negative lobes can ring below zero next to bright HDR edges.
+    return max(result / max(weight, 0.0001), 0.0);
 }
 
 float2 responsiveMotion(float2 uv)
@@ -224,9 +236,8 @@ TemporalOutput fragmentMain(FullscreenVertexOutput input)
         }
     }
 
-    const float4 historySample = pass.quality > 0
-        ? sampleCatmullRom(historyTexture, historyUv)
-        : historyTexture.Sample(historyUv);
+    // Quality: Balanced 5-tap, High 9-tap Catmull-Rom.
+    const float4 historySample = sampleCatmullRom(historyTexture, historyUv, pass.quality > 0);
     moment1 /= 9.0;
     moment2 /= 9.0;
     const float3 sigma = sqrt(max(moment2 - moment1 * moment1, 0.0));
@@ -341,16 +352,16 @@ TemporalOutput fragmentMain(FullscreenVertexOutput input)
     const float requestedHistoryWeight = lerp(interiorHistoryWeight,
                                                stableEdgeWeight,
                                                edgeConfidence);
-    const float historyWeight = clamp(requestedHistoryWeight * validity, 0.0, 0.96);
+    // Lane 3.y: this frame's sample weight from its jitter offset, mean one
+    // (TemporalSampling.h TaaCurrentSampleWeight). Centred samples count more,
+    // narrowing the converged filter below the pixel box that equal weights
+    // give. Applied before validity so rejected history still yields current.
+    const float currentSampleWeight = max(pass.parameters[3].y, 0.0);
+    const float weightedHistoryWeight = saturate(1.0 - (1.0 - requestedHistoryWeight) * currentSampleWeight);
+    const float historyWeight = clamp(weightedHistoryWeight * validity, 0.0, 0.96);
+    // Sharpening runs after the resolve on the output only (UpscalerSharpening),
+    // so this history never accumulates it.
     float3 resolved = lerp(current.rgb, history, historyWeight);
-    if (pass.parameters[0].w > 0.0)
-    {
-        const float3 sharpenedCurrent = current.rgb + (current.rgb - lowpass) * pass.parameters[0].w;
-        const float sharpenDetailMask = 1.0 - smoothstep(0.08, 0.35, localContrast);
-        resolved = lerp(resolved, sharpenedCurrent,
-                        saturate(pass.parameters[0].w * sharpenDetailMask *
-                                 (0.25 + 0.5 * (1.0 - historyWeight))));
-    }
     const float3 hdrExtent = max(maxHdrColor - minHdrColor, 0.001);
     resolved = clamp(resolved, minHdrColor - hdrExtent * 0.35,
                      maxHdrColor + hdrExtent * 0.35);

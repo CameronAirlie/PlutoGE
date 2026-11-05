@@ -69,7 +69,7 @@ accumulated twice.
 
 `RUNTIME_UPSCALE_SHARPNESS` drives the renderer's own sharpening of the
 upscaled image (`UpscalerSharpening`, `UpscalerSharpening.slang`), applied to
-every upscaler technology. FSR2's built-in RCAS is disabled: it runs on
+every upscaler technology and to native TAA's output ([TAA.md](TAA.md)). FSR2's built-in RCAS is disabled: it runs on
 exposure-scaled linear HDR, where its range limiter fails at bright/dark edges
 and leaves checkered, ringing edges. The renderer runs the same RCAS filter in
 a reversible tone-mapped space (`c / (1 + max(c))`), then returns to linear HDR,

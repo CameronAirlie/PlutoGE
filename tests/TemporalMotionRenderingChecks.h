@@ -106,6 +106,75 @@ void CheckTemporalMotionRendering(PlutoGE::render::BasicRenderer &renderer, Devi
     }
 }
 
+// Native TAA sharpening must reach the output but never the history it
+// accumulates: sharpened history would compound every frame. Sharpening for
+// many frames and then turning it off for one must give exactly the frame an
+// unsharpened run gives with the same jitter.
+template<class ReadPixels>
+void CheckTaaSharpening(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    constexpr unsigned size = 128, settleFrames = 32;
+    renderer.SetTemporalUpscalerOptions({.technology = rhi::TemporalUpscaler::None, .autoExposure = false, .sharpness = 0});
+    renderer.Resize(size, size);
+    // A bright triangle over a dim background: RCAS leaves edges against black
+    // alone, so the background must be lit to show sharpening.
+    const std::array<BasicVertex, 3> triangle{{
+        {{{-.5f,-.8f,.5f}}, {{0,0,1}}, {{0,0}}},
+        {{{ .5f, .8f,.5f}}, {{0,0,1}}, {{1,0}}},
+        {{{-.5f, .8f,.5f}}, {{0,0,1}}, {{0,1}}}}};
+    // Reverse-Z: the smaller depth lies behind the triangle.
+    const std::array<BasicVertex, 4> quad{{
+        {{{-1.f,-1.f,.2f}}, {{0,0,1}}, {{0,0}}}, {{{1.f,-1.f,.2f}}, {{0,0,1}}, {{1,0}}},
+        {{{1.f,1.f,.2f}}, {{0,0,1}}, {{1,1}}}, {{{-1.f,1.f,.2f}}, {{0,0,1}}, {{0,1}}}}};
+    const std::array<std::uint32_t, 3> triangleIndices{0,1,2};
+    const std::array<std::uint32_t, 6> quadIndices{0,1,2,0,2,3};
+    auto triangleMesh = renderer.CreateMesh({triangle, triangleIndices});
+    auto quadMesh = renderer.CreateMesh({quad, quadIndices});
+    BasicDraw background; background.mesh = &quadMesh; background.emission = {.2f,.2f,.2f}; background.castsShadow = false;
+    BasicDraw edge; edge.mesh = &triangleMesh; edge.emission = {.8f,.8f,.8f}; edge.castsShadow = false;
+    const std::array draws{background, edge};
+    BasicLighting lighting; lighting.ambientIntensity = lighting.directionalIntensity = 0; lighting.shadowsEnabled = false;
+    const auto halton = [](unsigned n, unsigned base) {
+        float value = 0, fraction = 1;
+        for (; n; n /= base) { fraction /= base; value += fraction * (n % base); }
+        return value - .5f;
+    };
+    BasicPostProcessEffect taa{BasicPostProcessEffectType::TAA};
+    taa.parameters[1] = {.0035f,.82f,80,1};
+    const auto render = [&](unsigned firstFrame, unsigned frames, float sharpening) {
+        taa.parameters[0] = {.90f,.94f,.55f,sharpening};
+        for (unsigned frame = firstFrame; frame < firstFrame + frames; ++frame)
+        {
+            const glm::vec2 jitter(halton(frame % 16 + 1, 2), halton(frame % 16 + 1, 3));
+            taa.parameters[2] = {jitter / float(size), 0, 0};
+            renderer.Render(glm::mat4(1), lighting, draws, std::span(&taa, 1));
+        }
+    };
+    const auto maxDifference = [](const std::vector<std::byte> &a, const std::vector<std::byte> &b) {
+        int largest = 0;
+        for (std::size_t at = 0; at < a.size(); ++at)
+            largest = std::max(largest, std::abs(int(a[at]) - int(b[at])));
+        return largest;
+    };
+
+    renderer.ResetTemporalHistory();
+    render(0, settleFrames + 1, 0.0f);
+    const auto unsharpened = readPixels(renderer.GetColorTexture());
+    renderer.ResetTemporalHistory();
+    render(0, settleFrames + 1, 1.0f);
+    const auto sharpened = readPixels(renderer.GetColorTexture());
+    renderer.ResetTemporalHistory();
+    render(0, settleFrames, 1.0f);
+    render(settleFrames, 1, 0.0f);
+    const auto released = readPixels(renderer.GetColorTexture());
+
+    const int sharpening = maxDifference(sharpened, unsharpened), feedback = maxDifference(released, unsharpened);
+    std::cout << "TAA sharpening: output change " << sharpening << ", history change " << feedback << std::endl;
+    if (sharpening < 4) throw std::runtime_error("TAA sharpening had no effect on the output");
+    if (feedback > 1) throw std::runtime_error("TAA sharpening leaked into the history");
+}
+
 // Background with no surface must carry camera motion in BasicLit's
 // convention. Under a pure camera rotation a static point's motion depends
 // only on its view direction, so pixels either side of a surface silhouette

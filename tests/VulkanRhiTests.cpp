@@ -466,6 +466,7 @@ int main(int argc, char **argv)
                 CheckUpscalerTranslucentTrail(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             }
             CheckUpscalerSharpening(device, shaders, [&](auto texture) { return device.ReadTextureRgbaFloat(texture); });
+            CheckTaaSharpening(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             CheckBackgroundMotion(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); },
                                   [&](auto texture) { return device.ReadTextureRgbaFloat(texture); });
             return 0;

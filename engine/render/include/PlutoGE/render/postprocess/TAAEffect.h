@@ -4,6 +4,9 @@
 
 namespace PlutoGE::render
 {
+    // See docs/TAA.md. Sharpening (0-1) is the RCAS strength applied to the
+    // resolved output, never to history. Quality selects the history filter:
+    // 0 Balanced (5-tap Catmull-Rom), 1 High (9-tap).
     struct TAAEffectConfig
     {
         float historyWeight = 0.90f;

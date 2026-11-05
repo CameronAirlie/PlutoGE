@@ -20,6 +20,7 @@
 #include "PlutoGE/render/postprocess/SSREffect.h"
 #include "PlutoGE/render/postprocess/VolumetricFogEffect.h"
 #include "PlutoGE/render/postprocess/SceneCompositeEffect.h"
+#include "../engine/render/src/TemporalSampling.h"
 
 #include <algorithm>
 #include <cmath>
@@ -347,6 +348,37 @@ int main()
         !IsRhiPostProcessEffectSupported("AutoExposure") ||
         !IsRhiPostProcessEffectSupported("TAA"))
         return 11;
+
+    // Temporal sampling policy (TemporalSampling.h).
+    if (!Near(UpscalerMipLodBias(1920, 1920), -1.0f) ||
+        !Near(UpscalerMipLodBias(1280, 1920), std::log2(1280.0f / 1920.0f) - 1.0f) ||
+        UpscalerMipLodBias(0, 1920) != 0.0f)
+        return 165;
+    // Native TAA sharpens textures by half a level at full jitter; none without jitter.
+    if (!Near(NativeTaaMipLodBias(1.0f), -0.5f) || !Near(NativeTaaMipLodBias(2.0f), -0.5f) ||
+        NativeTaaMipLodBias(0.0f) != 0.0f)
+        return 166;
+    // Without jitter every frame counts equally; with it, centred samples count more.
+    if (!Near(TaaCurrentSampleWeight(glm::vec2(0.0f), 0.0f), 1.0f) ||
+        !(TaaCurrentSampleWeight(glm::vec2(0.0f), 1.0f) > 1.0f) ||
+        !(TaaCurrentSampleWeight(glm::vec2(0.5f), 1.0f) < 1.0f))
+        return 167;
+    // Mean one over the jitter distribution, so convergence speed is unchanged on average.
+    for (const float strength : {0.5f, 1.0f, 2.0f})
+    {
+        constexpr int steps = 64;
+        double mean = 0.0;
+        for (int y = 0; y < steps; ++y)
+            for (int x = 0; x < steps; ++x)
+                mean += TaaCurrentSampleWeight(
+                    (glm::vec2(x, y) + 0.5f) / float(steps) * strength - 0.5f * strength, strength);
+        mean /= steps * steps;
+        if (std::abs(mean - 1.0) > 0.002)
+        {
+            std::cerr << "TAA sample weight mean " << mean << " at jitter strength " << strength << std::endl;
+            return 168;
+        }
+    }
 
     SSAOEffect ssao;
     // Specular occlusion reaches lane 2.z, is on by default and clamps; off, SSAO keeps the narrower layout.

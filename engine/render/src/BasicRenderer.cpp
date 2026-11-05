@@ -33,6 +33,7 @@
 #include "RhiGpuSkinning.h"
 #include "DeferredProbeIrradiance.h"
 #include "TemporalReconstructionPasses.h"
+#include "TemporalSampling.h"
 #include "screenspace/ScreenSpaceAmbientOcclusion.h"
 #include "screenspace/ScreenSpaceGlobalIllumination.h"
 #include "screenspace/ScreenSpaceContactShadows.h"
@@ -1976,6 +1977,34 @@ namespace PlutoGE::render
         m_upscalerOptions = options;
     }
 
+    void BasicRenderer::ApplyMaterialMipLodBias(float bias)
+    {
+        if (m_fallbackSampler && std::abs(bias - m_materialMipLodBias) <= 0.001f)
+            return;
+        m_fallbackSampler = rhi::Sampler(*m_device, m_device->CreateSampler(
+            {.linearFiltering = true,
+             .repeat = true,
+             .debugName = "BasicRenderer material sampler",
+             .mipFiltering = true,
+             .mipLodBias = bias,
+             .maxAnisotropy = 16.0f}));
+        m_materialMipLodBias = bias;
+        // Bindless materials captured the previous sampler.
+        if (m_gpuDriven)
+            m_gpuDriven->ResetMaterials(*m_device, MaterialFallbacks());
+    }
+
+    float BasicRenderer::TemporalMipLodBias(std::span<const BasicPostProcessEffect> postProcessEffects) const noexcept
+    {
+        // Temporal reconstruction needs more detailed source mips than a
+        // single point-sampled frame (TemporalSampling.h).
+        if (m_upscalerOptions.technology != rhi::TemporalUpscaler::None)
+            return UpscalerMipLodBias(m_width, m_outputWidth);
+        const auto taa = std::ranges::find(postProcessEffects, BasicPostProcessEffectType::TAA,
+                                           &BasicPostProcessEffect::type);
+        return taa != postProcessEffects.end() ? NativeTaaMipLodBias(taa->parameters[1].w) : 0.0f;
+    }
+
     bool BasicRenderer::Resize(std::uint32_t width, std::uint32_t height,
                                std::uint32_t outputWidth, std::uint32_t outputHeight)
     {
@@ -1985,29 +2014,6 @@ namespace PlutoGE::render
         outputHeight = outputHeight == 0 ? height : outputHeight;
         const bool needsTemporalOutput =
             m_upscalerOptions.technology != rhi::TemporalUpscaler::None;
-        // Temporal reconstruction needs more detailed source mips than native
-        // rendering. This is AMD's recommended log2(render/display) - 1 bias.
-        const float materialMipLodBias = needsTemporalOutput
-                                             ? std::clamp(std::log2(
-                                                   static_cast<float>(width) /
-                                                   static_cast<float>(outputWidth)) - 1.0f,
-                                                   -4.0f, 0.0f)
-                                             : 0.0f;
-        if (!m_fallbackSampler || std::abs(materialMipLodBias - m_materialMipLodBias) > 0.001f)
-        {
-            rhi::Sampler materialSampler(*m_device, m_device->CreateSampler(
-                {.linearFiltering = true,
-                 .repeat = true,
-                 .debugName = "BasicRenderer material sampler",
-                 .mipFiltering = true,
-                 .mipLodBias = materialMipLodBias,
-                 .maxAnisotropy = 16.0f}));
-            m_fallbackSampler = std::move(materialSampler);
-            m_materialMipLodBias = materialMipLodBias;
-            // Bindless materials captured the previous sampler.
-            if (m_gpuDriven)
-                m_gpuDriven->ResetMaterials(*m_device, MaterialFallbacks());
-        }
         if (width == m_width && height == m_height && outputWidth == m_outputWidth &&
             outputHeight == m_outputHeight && m_colorTarget && m_depthTarget &&
             static_cast<bool>(m_temporalUpscalerOutput) == needsTemporalOutput)
@@ -2205,6 +2211,8 @@ namespace PlutoGE::render
         m_outputCoverage = {};
         if (!m_device || !m_colorTarget || !m_depthTarget)
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
+        // Before any material is bound; recreated only when the bias changes.
+        ApplyMaterialMipLodBias(TemporalMipLodBias(postProcessEffects));
 
         m_inverseViewProjection = glm::inverse(viewProjection);
         m_postProcessView = lighting.view;
@@ -5031,6 +5039,10 @@ namespace PlutoGE::render
             {
                 effectParameters[5].w = m_taaHistoryValid ? 1.0f : 0.0f;
                 effectParameters[4].w = m_temporalMetadata ? 1.0f : 0.0f;
+                // Lane 2.xy carries this frame's jitter in UV units.
+                const glm::vec2 jitterPixels = glm::vec2(effect.parameters[2]) *
+                    glm::vec2(static_cast<float>(m_postProcessWidth), static_cast<float>(m_postProcessHeight));
+                effectParameters[3].y = TaaCurrentSampleWeight(jitterPixels, effect.parameters[1].w);
             }
             BasicPostProcessParameters parameters{
                 effect.exposure,
@@ -5156,6 +5168,15 @@ namespace PlutoGE::render
                 m_taaHistoryIndex = 1u - m_taaHistoryIndex;
                 m_taaHistoryValid = true;
                 m_outputCoverage = m_taaCoverageHistoryTargets[m_taaHistoryIndex].Get();
+                // Sharpen the resolve's output, never its history: sharpened
+                // history would feed back and compound every frame. Native TAA
+                // and SDK upscalers never resolve in the same frame, so they
+                // share one sharpening pass and target.
+                if (m_upscalerSharpening)
+                    if (const auto sharpened = m_upscalerSharpening->Record({
+                            .source = colorDestination, .sampler = m_screenSampler.Get(), .width = passWidth,
+                            .height = passHeight, .sharpness = effect.parameters[0].w}))
+                        m_outputColor = sharpened;
             }
         }
         if (m_cloudTemporal)

@@ -204,7 +204,7 @@ outer angle also changes the VSM projection and invalidates its cached pages.
 
 ## Dense foliage and dynamic casters
 
-Instanced chunks plan, cost and sway each model separately. Fine clipmap levels follow the shadow distance (4 up to
+Instanced chunks plan and cost each model separately, and swaying is decided per page. Fine clipmap levels follow the shadow distance (4 up to
 256 m, at most 8), so the root is `VirtualShadowParameters::levels.x` rather than a constant. Dynamic (unrevised)
 casters draw over a cached static layer. See [VSM in dense foliage](vsm-dense-foliage.md).
 

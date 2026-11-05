@@ -1488,7 +1488,7 @@ namespace PlutoGE::render
         std::vector<std::uint8_t> m_shadowVisibleInAnyCascade;
         std::vector<std::uint64_t> m_shadowDrawSignatures;
         // The same casters' signatures without the wind's per-frame parameters: what a swaying caster's rest pose
-        // casts (FoliageWindFrame::ShadowSways). Equal to m_shadowDrawSignatures for casters that do not sway.
+        // casts (VirtualShadowCompute's swayingMask). Equal to m_shadowDrawSignatures for casters that do not sway.
         std::vector<std::uint64_t> m_shadowStillSignatures;
         // Shadow draw signatures by the immutable packet they describe (BasicDraw::preparationRevision), not by list
         // position: the caster list gains and loses draws as the camera moves, and a positional cache then misses for

@@ -106,8 +106,8 @@ namespace PlutoGE::ui
                 wind.SetShadowSwayDistance(shadowSway);
                 Changed(context, "Shadow Sway Distance");
             }
-            ImGui::SetItemTooltip("Swaying foliage animates its virtual shadow within this distance of the camera and casts\n"
-                                  "its rest pose beyond it, so distant shadow pages stay cached. 0 sways shadows everywhere.");
+            ImGui::SetItemTooltip("Virtual shadows within this distance of the camera sway; beyond it they hold the rest pose\n"
+                                  "and stay cached. Lower it if shadows update slowly under trees. 0 sways shadows everywhere.");
 
             std::erase_if(properties, [](const scene::Property &property) {
                 for (const std::string_view name : {"Direction", "Speed", "Gustiness", "Gust Size", "Shadow Sway Distance"})

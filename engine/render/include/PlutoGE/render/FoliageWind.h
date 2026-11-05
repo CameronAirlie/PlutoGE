@@ -73,15 +73,6 @@ namespace PlutoGE::render
         {
             return FoliageWindMaxDisplacement(wind, response, localTop);
         }
-        // Whether a swaying caster whose bounding sphere is `bounds` (centre, radius) animates its virtual shadow
-        // seen from `camera`: within SceneWindSettings::shadowSwayDistance of it, or everywhere when that is 0. A
-        // caster that does not casts its rest pose, the calm draw: zero parameters and a signature without time.
-        bool ShadowSways(const FoliageWindResponse &response, const glm::vec4 &bounds, const glm::vec3 &camera) const
-        {
-            if (!Animates(response)) return false;
-            if (!(wind.shadowSwayDistance > 0.0f) || bounds.w < 0.0f) return true;
-            return glm::length(glm::vec3(bounds) - camera) - bounds.w < wind.shadowSwayDistance;
-        }
     };
 
     // CPU reference of FoliageWind.slang's foliageWindOffset: the world-space displacement of a vertex at

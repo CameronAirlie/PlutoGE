@@ -72,18 +72,6 @@ namespace PlutoGE::render
         {
             return std::clamp(lighting.virtualShadowPageBudget, 1u, poolCapacity);
         }
-        // The models of a chunk that cast their swaying pose: a bit per model of a masked chunk (`models` holds their
-        // spheres), otherwise every bit when the chunk as a whole is within the wind's shadow sway distance.
-        std::uint32_t ShadowSwayMask(const FoliageWindFrame &wind, const FoliageWindResponse &response,
-                                     const glm::vec4 &chunkBounds, std::span<const glm::vec4> models, const glm::vec3 &camera)
-        {
-            if (!wind.ShadowSways(response, chunkBounds, camera)) return 0;
-            if (models.empty()) return ~0u;
-            std::uint32_t mask = 0;
-            for (std::size_t model = 0; model < models.size(); ++model)
-                if (wind.ShadowSways(response, models[model], camera)) mask |= 1u << model;
-            return mask;
-        }
         // Whether a chunk of `models` models plans and sways each model separately (VirtualShadowCommon's masked casters).
         constexpr bool MaskedModels(std::size_t models) noexcept { return models > 1 && models <= PLUTO_VSM_MASKED_INSTANCES; }
         // Subdivision buys little when the entire mesh fits within one page's
@@ -161,7 +149,8 @@ namespace PlutoGE::render
         const auto tiles = VirtualShadowPoolTiles(lighting.virtualShadowPoolPages);
         result.pool = {tiles * tiles, tiles, tiles * PLUTO_VSM_PAGE_SIZE, VirtualShadowSpotGrid(lighting.virtualShadowSpotResolution)};
         result.scheduling = {std::clamp(lighting.virtualShadowMaxPageAge, 1u, 120u), lighting.virtualShadowAllowOversizedPages ? 1u : 0u, 0, 0};
-        result.culling = {std::clamp(lighting.virtualShadowCoarseMinCasterTexels, 0.0f, 4.0f), 0, 0, 0};
+        result.culling = {std::clamp(lighting.virtualShadowCoarseMinCasterTexels, 0.0f, 4.0f),
+                          std::max(lighting.wind.shadowSwayDistance, 0.0f), 0, 0};
         glm::vec3 direction = lighting.directionalDirection;
         if (!std::isfinite(glm::dot(direction, direction)) || glm::dot(direction, direction) < 1.e-8f)
             direction = glm::vec3(0, -1, 0);
@@ -653,12 +642,8 @@ namespace PlutoGE::render
                 const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
                 for (const auto &part : packet->chunks)
                 {
-                    // Models beyond the shadow sway distance cast their rest pose under the draw's still signature, so
-                    // their pages stay cached until they come within the distance. Masked chunks decide per model.
-                    const auto swaying = ShadowSwayMask(wind, draw.foliageWind, part.bounds,
-                        MaskedModels(part.instances) ? std::span(part.instanceBounds).first(part.instances)
-                                                     : std::span<const glm::vec4>{}, lighting.cameraPosition);
-                    const FoliageWindParameters chunkWind = swaying ? wind.Parameters(draw.foliageWind) : FoliageWindParameters{};
+                    // Pages beyond the shadow sway distance zero these per entry (VirtualShadowCompute's swayingMask).
+                    const FoliageWindParameters chunkWind = wind.Parameters(draw.foliageWind);
                     if (casterCursor == m_casterChunks.size()) m_casterChunks.emplace_back();
                     auto &chunk = m_casterChunks[casterCursor];
                     const auto firstIndex = baseIndex + part.indexOffset;
@@ -683,12 +668,12 @@ namespace PlutoGE::render
                     }
                     else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances, chunkWind);
                     // One identity per chunk geometry, whether its packet was rebuilt or reused this frame. Pages choose
-                    // the swaying or the rest-pose one by the models that reach them (VirtualShadowCompute's swayingMask).
+                    // the swaying or the rest-pose one by their distance from the camera (VirtualShadowCompute's swayingMask).
                     const auto geometry = std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull;
                     const auto signature = signatures[index] ^ geometry, still = stillSignatures[index] ^ geometry;
                     inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
                         {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, 0}, part.extents,
-                        {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, swaying, dynamic ? 1u : 0u}});
+                        {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, chunkWind.Active() ? 1u : 0u, dynamic ? 1u : 0u}});
                     instanceBounds.push_back(part.instanceBounds);
                     ++casterCursor;
                 }

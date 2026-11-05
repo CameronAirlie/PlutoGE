@@ -316,12 +316,19 @@ uint intersectionMask(uint index, VirtualShadowCaster caster, VirtualShadowPage 
             mask |= 1u << model;
     return mask;
 }
-// The models of `mask` that cast their swaying pose on this page. Coarse levels are low-resolution fallbacks: they cast
-// the rest pose, so a swaying caster does not redraw their large, expensive pages every frame.
+// Whether a page animates swaying casters: within the shadow sway distance of the camera, so the pages redrawn every
+// frame are bounded by the distance rather than by how far a tree's crown reaches. Coarse levels are low-resolution
+// fallbacks, whose large, expensive pages always hold the rest pose.
+bool pageSways(VirtualShadowPage page)
+{
+    if (virtualCoarseLevel(vsm, page.address.z)) return false;
+    const float distance = vsm.culling.y;
+    return distance <= 0 || intersects(float4(vsm.camera.xyz, distance), float4(-1, -1, -1, 0), page);
+}
+// The models of `mask` that cast their swaying pose on this page.
 uint swayingMask(VirtualShadowCaster caster, VirtualShadowPage page, uint mask)
 {
-    if (virtualCoarseLevel(vsm, page.address.z)) return 0;
-    return virtualMaskedCaster(caster) ? mask & caster.still.z : (caster.still.z != 0 ? mask : 0);
+    return caster.still.z != 0 && pageSways(page) ? mask : 0;
 }
 uint mixHash(uint hash, uint value) { return (hash ^ value) * 16777619u; }
 groupshared uint4 signatureItems[64];
@@ -348,8 +355,7 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             }
             if (cached.z != 0)
             {
-                // The page's content is the rest pose unless one of the models reaching it sways here; the masks
-                // distinguish which models (and which of them sway) the page holds.
+                // The page's content is the rest pose unless it sways; the masks distinguish which models it holds.
                 const uint sways = swayingMask(caster, p, cached.z);
                 const uint2 identity = sways != 0 ? caster.identity.xy : caster.still.xy;
                 const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(cached.z) : caster.draw.z;

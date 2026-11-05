@@ -329,9 +329,9 @@ first). The resolve blends traced pixels into the history and keeps the others f
   largest vertical scale (`InstanceChunkBounds`). This applies to every instanced caster, swaying or not.
 - **Shadow sway distance.** `WindComponent` gains **Shadow Sway Distance** (default 30 m;
   `SceneWindSettings::shadowSwayDistance`). VSM chunks beyond it cast their rest pose under the draw's still signature
-  (`FoliageWindFrame::ShadowSways`, `BasicRenderer` `m_shadowStillSignatures`), so their pages stay cached. The
-  foliage wind check verifies that animating casters beyond the distance dirty no pages. Cascades still redraw
-  swaying casters every frame.
+  (`BasicRenderer` `m_shadowStillSignatures`), so their pages stay cached. The foliage wind check verifies that
+  animating casters beyond the distance dirty no pages. Cascades still redraw swaying casters every frame. The test
+  has since moved from chunks to pages; see [VSM in dense foliage](vsm-dense-foliage.md#per-page-sway).
 
 On Wind Fields' meadow camera, dirty pages per frame fell from 282 to about 115, and page rendering from 2.1 to
 1.35 ms. VSM page updates are budget-limited, so most of the gain shows as shadows that keep up with the sway; the

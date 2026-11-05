@@ -22,7 +22,8 @@
 //  - Swaying blades keep their coverage: the depth prepass deforms exactly as the shaded pass does, so its equal-depth
 //    test discards nothing.
 //  - The blades' shadows move downwind with them, with cascaded shadow maps and (where the backend has them) VSM.
-//  - Beyond the wind's shadow sway distance, VSM casts the rest pose: the shadows stay where calm air leaves them.
+//  - Pages beyond the wind's shadow sway distance hold the rest pose, however far a caster's crown reaches: they stay
+//    cached, where calm air leaves them.
 // pageStatistics: whether the backend reads VSM page statistics back every frame (Vulkan). OpenGL's arrive
 // irregularly, so the page-cache check runs only where they do.
 template <class ReadPixels>
@@ -232,31 +233,47 @@ void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readP
             std::cout << "Foliage wind: VSM page statistics are not read back every frame here; the cache check is skipped\n";
         if (method == ShadowMethod::Virtual && pageStatistics)
         {
-            // Pages the swaying blades dirty while the clock runs. The blades are about 6 m from the camera, so a 1 m
-            // shadow sway distance leaves them casting their rest pose: their pages stay cached.
-            const auto dirtyWhileAnimating = [&](float swayDistance) {
-                auto wind = breeze;
-                wind.shadowSwayDistance = swayDistance;
+            // Pages the swaying blades dirty while the clock runs, seen from `view`.
+            const auto dirtyWhileAnimating = [&](BasicLighting view, const glm::mat4 &viewProjection, float swayDistance,
+                                                 const std::shared_ptr<std::vector<glm::mat4>> &models) {
+                view.wind = breeze;
+                view.wind.shadowSwayDistance = swayDistance;
                 auto copy = caster;
                 copy.foliageWind = response;
-                top.wind = wind;
+                copy.instanceModels = models;
+                copy.previousInstanceModels = models;
                 const std::array draws{ground, copy};
-                (void)render(top, topViewProjection, draws, 3.0f);
+                (void)render(view, viewProjection, draws, 3.0f);
                 std::uint32_t dirty = 0;
                 for (int frame = 1; frame <= 8; ++frame)
                 {
                     SetShaderGraphTimeSeconds(3.0f + 0.1f * float(frame));
-                    renderer.Render(topViewProjection, top, draws);
+                    renderer.Render(viewProjection, view, draws);
                     dirty += renderer.GetFrameStats().virtualShadows.dirty;
                 }
-                top.wind = {};
                 return dirty;
             };
-            const auto everywhere = dirtyWhileAnimating(0.0f), beyond = dirtyWhileAnimating(1.0f);
+            // A camera far off, zoomed in on the blades: every page they reach is beyond a 1 m distance, so all stay cached.
+            auto distant = top;
+            distant.cameraPosition = {40.0f, 6.0f, -0.8f};
+            distant.view = glm::lookAtRH(distant.cameraPosition, glm::vec3(0.0f, 0.0f, -0.8f), glm::vec3(0, 1, 0));
+            const auto distantViewProjection = glm::perspectiveRH_ZO(glm::radians(8.0f), float(Width) / Height, 100.0f, 0.1f) * distant.view;
+            const auto everywhere = dirtyWhileAnimating(distant, distantViewProjection, 0.0f, casterModels);
+            const auto beyond = dirtyWhileAnimating(distant, distantViewProjection, 1.0f, casterModels);
             std::cout << "Foliage wind VSM dirty pages while animating: " << everywhere << " swaying everywhere, "
                       << beyond << " beyond the shadow sway distance\n";
             require(everywhere > 0, "VSM: swaying casters must redraw their pages");
-            require(beyond == 0, "VSM: casters beyond the shadow sway distance must keep their pages cached");
+            require(beyond == 0, "VSM: pages beyond the shadow sway distance must stay cached");
+            // Canopy trees: tall enough to reach the pages around the camera as well as distant ones. Only the near pages
+            // redraw, or a forest's trees, each touching hundreds of pages, would keep them all dirty at any distance.
+            auto tallModels = std::make_shared<std::vector<glm::mat4>>();
+            for (const auto &model : *casterModels) tallModels->push_back(glm::scale(model, glm::vec3(1.0f, 8.0f, 1.0f)));
+            const auto tallEverywhere = dirtyWhileAnimating(top, topViewProjection, 0.0f, tallModels);
+            const auto tallNear = dirtyWhileAnimating(top, topViewProjection, 1.0f, tallModels);
+            std::cout << "Foliage wind VSM dirty pages for tall casters: " << tallEverywhere << " swaying everywhere, "
+                      << tallNear << " within the shadow sway distance\n";
+            require(tallNear > 0, "VSM: swaying casters must redraw the pages within the shadow sway distance");
+            require(tallNear * 2 < tallEverywhere, "VSM: pages beyond the shadow sway distance must stay cached under tall casters");
         }
     }
 

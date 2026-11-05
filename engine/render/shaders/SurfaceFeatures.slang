@@ -18,4 +18,8 @@
 [vk::constant_id(4)] const bool kSurfaceVirtualShadows = true;
 [vk::constant_id(5)] const bool kSurfaceCascadedShadows = true;
 
+// Not a path but a source: a prepassed pipeline takes the directional shadow from the frame's mask
+// (DirectionalShadowMask.slang) instead of filtering it. Off by default, so every other pipeline filters in place.
+[vk::constant_id(6)] const bool kSurfaceShadowMask = false;
+
 #endif

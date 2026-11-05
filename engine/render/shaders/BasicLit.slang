@@ -32,6 +32,9 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 #ifndef PLUTO_GLASS
 // Contact shadows (ContactShadows.slang): up to three lights' visibilities and the device depth they were traced for.
 [[vk::binding(7, 0)]] Sampler2D contactShadowMask : register(t7, space0);
+// The directional shadow at each pixel's coverage depth (DirectionalShadowMask.slang), which prepassed shading
+// pipelines read instead of filtering (kSurfaceShadowMask; BasicRenderer DirectionalShadowMaskSlot).
+[[vk::binding(5, 0)]] Sampler2D directionalShadowMask : register(t5, space0);
 #endif
 
 // contactShadowParameters' id for the directional light (local lights use their index).
@@ -1201,6 +1204,100 @@ SurfaceDerivatives surfaceDerivatives(VertexOutput input)
     return result;
 }
 
+// The directional light's shadow at a receiver, through virtual shadow maps or cascades as the frame selects:
+// shadeSurface's own filter, and DirectionalShadowMask.slang's once per pixel. `shadowNormal` is the receiver plane's
+// normal on the shaded side, `worldDx` and `worldDy` its world position's screen derivatives (the filter's receiver
+// plane), `pixel` the fragment position (dithering).
+struct DirectionalShadowSample
+{
+    float visibility; // 1 is lit
+    float raw;        // the nearest unfiltered tap (geometry diagnostics)
+    float level;      // the normalized cascade or clipmap level (geometry diagnostics)
+};
+DirectionalShadowSample evaluateDirectionalShadow(float3 worldPosition, float3 shadowNormal, float3 worldDx,
+                                                  float3 worldDy, float2 pixel, float3 lightDirection)
+{
+    DirectionalShadowSample result;
+    result.visibility = 1.0;
+    result.raw = 1.0;
+    result.level = 0.0;
+    const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
+    const float slope = 1.0 - shadowNdotl;
+    if (kSurfaceVirtualShadows && shadowCascadeParameters.w > 0.5)
+    {
+        float virtualRaw, virtualLevel;
+        const float visibility = evaluateVirtualShadow(worldPosition, shadowNormal,
+            worldDx, worldDy, slope, pixel, virtualRaw, virtualLevel);
+        // Try resident coarser VSM levels inside evaluateVirtualShadow.
+        // Unmapped/deferred pages are lit until resident, never backed by CSM.
+        result.visibility = visibility >= 0.0 ? visibility : 1.0;
+        result.raw = virtualRaw;
+        result.level = virtualLevel;
+    }
+    else if (kSurfaceCascadedShadows)
+    {
+        const float receiverDistance = -(mul(view, float4(worldPosition, 1.0))).z;
+        const int cascadeCount = clamp((int)shadowCascadeParameters.x, 1, 4);
+        int cascade = cascadeCount - 1;
+        for (int index = 0; index < cascadeCount; ++index)
+        {
+            if (receiverDistance <= shadowCascadeSplits[index])
+            {
+                cascade = index;
+                break;
+            }
+        }
+        const float cascadeWorldTexel = max(shadowCascadeMetrics[cascade].x, 0.00001);
+        const float cascadeDepthRange = max(shadowCascadeMetrics[cascade].y, 0.0001);
+        const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
+        // A large caster range can make the world-space-derived bias approach
+        // zero in the near cascade. Retain a texel-scaled floor to prevent
+        // every receiver from self-shadowing while preserving cascade scale.
+        const float worldDepthBias =
+            cascadeWorldTexel * lerp(0.25, 1.00, slope) / cascadeDepthRange;
+        // Only the tightly fitted first cascade needs a normalized-depth
+        // floor. Applying it to lower-resolution, wide-coverage cascades
+        // turns the same texel fraction into a large world-space offset and
+        // causes distant shadows to detach or disappear.
+        const float depthBias = cascade == 0
+            ? max(worldDepthBias,
+                  shadowInverseResolutions[0].x * lerp(0.5, 2.0, slope))
+            : worldDepthBias;
+        const float3 receiverPosition = worldPosition + shadowNormal * normalBias;
+        result.visibility = evaluateShadowCascade(
+            cascade, receiverPosition, worldDx, worldDy, depthBias);
+        result.raw = evaluateShadowCascadeTap(cascade, receiverPosition, depthBias);
+        result.level = cascadeCount > 1 ? (float)cascade / (float)(cascadeCount - 1) : 0.0;
+        if (cascade + 1 < cascadeCount && shadowCascadeParameters.y > 0.0)
+        {
+            const float blend = saturate((receiverDistance -
+                                          (shadowCascadeSplits[cascade] - shadowCascadeParameters.y)) /
+                                         shadowCascadeParameters.y);
+            if (blend > 0.0)
+            {
+                const float nextWorldTexel = max(shadowCascadeMetrics[cascade + 1].x, 0.00001);
+                const float nextDepthRange = max(shadowCascadeMetrics[cascade + 1].y, 0.0001);
+                const float nextNormalBias = nextWorldTexel * lerp(0.08, 0.60, slope);
+                const float nextWorldDepthBias =
+                    nextWorldTexel * lerp(0.25, 1.00, slope) / nextDepthRange;
+                // A blended next cascade is necessarily cascade 1 or later,
+                // so it must retain the world-scaled bias without the near
+                // cascade's normalized-depth floor.
+                const float nextDepthBias = nextWorldDepthBias;
+                const float3 nextReceiverPosition = worldPosition + shadowNormal * nextNormalBias;
+                result.visibility = lerp(result.visibility,
+                                        evaluateShadowCascade(cascade + 1, nextReceiverPosition,
+                                                              worldDx, worldDy, nextDepthBias), blend);
+                result.raw = lerp(result.raw,
+                                  evaluateShadowCascadeTap(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
+                result.level = lerp(result.level,
+                                    (float)(cascade + 1) / (float)(cascadeCount - 1), blend);
+            }
+        }
+    }
+    return result;
+}
+
 FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDerivatives derivatives)
 {
     const float4 sampledBaseColor = baseColorTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy);
@@ -1447,89 +1544,32 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Mode 2 bypasses directional receiver sampling without changing page generation.
     if (shadowsEnabled != 0 && pointParameters.w != 2.0 && needsDirectionalShadow)
     {
-        // Evaluate derivatives before any per-pixel cascade-dependent work so
-        // they remain continuous when a 2x2 fragment quad straddles a split.
-        const float3 shadowWorldDx = pointWorldDx;
-        const float3 shadowWorldDy = pointWorldDy;
-        // Shadow bias must follow the actual receiver plane. A normal-map
-        // perturbation is a lighting detail and can point the bias back into
-        // the geometry, which becomes visible as acne in wider cascades.
-        float3 shadowNormal = pointReceiverNormal;
-        if (dot(shadowNormal, geometricNormal) < 0.0)
-            shadowNormal = -shadowNormal;
-        const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
-        const float slope = 1.0 - shadowNdotl;
-        if (kSurfaceVirtualShadows && shadowCascadeParameters.w > 0.5)
+#ifndef PLUTO_GLASS
+        if (kSurfaceShadowMask)
         {
-            float virtualRaw, virtualLevel;
-            const float visibility = evaluateVirtualShadow(input.worldPosition, shadowNormal,
-                shadowWorldDx, shadowWorldDy, slope, input.position.xy, virtualRaw, virtualLevel);
-            // Try resident coarser VSM levels inside evaluateVirtualShadow.
-            // Unmapped/deferred pages are lit until resident, never backed by CSM.
-            shadowVisibility = visibility >= 0.0 ? visibility : 1.0;
-            rawShadowVisibility = virtualRaw;
-            normalizedCascade = virtualLevel;
+            // A prepassed pipeline reads the shadow DirectionalShadowMask.slang filtered at this pixel's coverage
+            // depth, which is this fragment's: the shaded pass tests depth for equality.
+            shadowVisibility = directionalShadowMask.Load(int3(int2(input.position.xy), 0)).r;
+            rawShadowVisibility = shadowVisibility;
         }
-        else if (kSurfaceCascadedShadows)
+        else
+#endif
         {
-        const float receiverDistance = -(mul(view, float4(input.worldPosition, 1.0))).z;
-        const int cascadeCount = clamp((int)shadowCascadeParameters.x, 1, 4);
-        int cascade = cascadeCount - 1;
-        for (int index = 0; index < cascadeCount; ++index)
-        {
-            if (receiverDistance <= shadowCascadeSplits[index])
-            {
-                cascade = index;
-                break;
-            }
-        }
-        const float cascadeWorldTexel = max(shadowCascadeMetrics[cascade].x, 0.00001);
-        const float cascadeDepthRange = max(shadowCascadeMetrics[cascade].y, 0.0001);
-        const float normalBias = cascadeWorldTexel * lerp(0.08, 0.60, slope);
-        // A large caster range can make the world-space-derived bias approach
-        // zero in the near cascade. Retain a texel-scaled floor to prevent
-        // every receiver from self-shadowing while preserving cascade scale.
-        const float worldDepthBias =
-            cascadeWorldTexel * lerp(0.25, 1.00, slope) / cascadeDepthRange;
-        // Only the tightly fitted first cascade needs a normalized-depth
-        // floor. Applying it to lower-resolution, wide-coverage cascades
-        // turns the same texel fraction into a large world-space offset and
-        // causes distant shadows to detach or disappear.
-        const float depthBias = cascade == 0
-            ? max(worldDepthBias,
-                  shadowInverseResolutions[0].x * lerp(0.5, 2.0, slope))
-            : worldDepthBias;
-        const float3 receiverPosition = input.worldPosition + shadowNormal * normalBias;
-        shadowVisibility = evaluateShadowCascade(
-            cascade, receiverPosition, shadowWorldDx, shadowWorldDy, depthBias);
-        rawShadowVisibility = evaluateShadowCascadeTap(cascade, receiverPosition, depthBias);
-        normalizedCascade = cascadeCount > 1 ? (float)cascade / (float)(cascadeCount - 1) : 0.0;
-        if (cascade + 1 < cascadeCount && shadowCascadeParameters.y > 0.0)
-        {
-            const float blend = saturate((receiverDistance -
-                                          (shadowCascadeSplits[cascade] - shadowCascadeParameters.y)) /
-                                         shadowCascadeParameters.y);
-            if (blend > 0.0)
-            {
-                const float nextWorldTexel = max(shadowCascadeMetrics[cascade + 1].x, 0.00001);
-                const float nextDepthRange = max(shadowCascadeMetrics[cascade + 1].y, 0.0001);
-                const float nextNormalBias = nextWorldTexel * lerp(0.08, 0.60, slope);
-                const float nextWorldDepthBias =
-                    nextWorldTexel * lerp(0.25, 1.00, slope) / nextDepthRange;
-                // A blended next cascade is necessarily cascade 1 or later,
-                // so it must retain the world-scaled bias without the near
-                // cascade's normalized-depth floor.
-                const float nextDepthBias = nextWorldDepthBias;
-                const float3 nextReceiverPosition = input.worldPosition + shadowNormal * nextNormalBias;
-                shadowVisibility = lerp(shadowVisibility,
-                                        evaluateShadowCascade(cascade + 1, nextReceiverPosition,
-                                                              shadowWorldDx, shadowWorldDy, nextDepthBias), blend);
-                rawShadowVisibility = lerp(rawShadowVisibility,
-                                           evaluateShadowCascadeTap(cascade + 1, nextReceiverPosition, nextDepthBias), blend);
-                normalizedCascade = lerp(normalizedCascade,
-                                         (float)(cascade + 1) / (float)(cascadeCount - 1), blend);
-            }
-        }
+            // Shadow bias must follow the actual receiver plane. A normal-map
+            // perturbation is a lighting detail and can point the bias back into
+            // the geometry, which becomes visible as acne in wider cascades.
+            // Derivatives come from before any per-pixel cascade-dependent work, so
+            // they remain continuous when a 2x2 fragment quad straddles a split.
+            // The plane faces the side in view, as the mask pass orients it from depth: authored normals (vertical
+            // ones on grass, outward ones on leaf cards) need not say which side of a facet that is.
+            float3 shadowNormal = pointReceiverNormal;
+            if (dot(shadowNormal, toCamera) < 0.0)
+                shadowNormal = -shadowNormal;
+            const DirectionalShadowSample directional = evaluateDirectionalShadow(input.worldPosition, shadowNormal,
+                pointWorldDx, pointWorldDy, input.position.xy, lightDirection);
+            shadowVisibility = directional.visibility;
+            rawShadowVisibility = directional.raw;
+            normalizedCascade = directional.level;
         }
     }
     if (shadowsEnabled != 0 && needsDirectionalShadow)

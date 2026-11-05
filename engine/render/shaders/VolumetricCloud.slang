@@ -24,6 +24,20 @@ float cloudSampleOffset(uint index)
 // Lane 7.x is 1 when CloudTemporalFilter reprojects this trace, lane 7.y the frame index.
 bool cloudTemporalJitter() { return pass.parameters[7].x > 0.5; }
 
+// The volumetric pass uv a trace fragment computes. Lane 7.z is 0 for a trace of every pixel, else 1 + phase.x +
+// 2 * phase.y of an interleaved trace (CloudTemporalFilter::TracePlan): a half-by-half trace whose texel t computes
+// pass pixel 2t + phase. Lane 7.w is the pass's resolution divisor, which sizes the pass from the full resolution.
+float2 cloudTraceUv(float2 orientedUv)
+{
+    const uint code = uint(pass.parameters[7].z + 0.5);
+    if (code == 0u)
+        return orientedUv;
+    const float2 passSize = ceil(round(1.0 / pass.inverseResolution) / max(pass.parameters[7].w, 1.0));
+    const float2 traceSize = ceil(passSize * 0.5);
+    const float2 phase = float2(float((code - 1u) & 1u), float((code - 1u) >> 1u));
+    return (floor(orientedUv * traceSize) * 2.0 + phase + 0.5) / passSize;
+}
+
 // Interleaved gradient noise, advanced by the golden ratio every frame: a
 // per-pixel phase whose error the temporal filter averages away.
 float cloudPixelJitter(float2 pixel)
@@ -168,7 +182,7 @@ FullscreenVertexOutput vertexMain(uint id: SV_VertexID)
 // of the trace so reconstruction never blurs opaque geometry.
 float4 integrateCloud(FullscreenVertexOutput input)
 {
-    const float2 pixel = floor(orientFullscreenUv(input.uv, pass.flipY) / pass.inverseResolution);
+    const float2 pixel = floor(cloudTraceUv(orientFullscreenUv(input.uv, pass.flipY)) / pass.inverseResolution);
     const float2 uv = (pixel + 0.5) * pass.inverseResolution;
     const float4x4 inverseVolume = pass.worldToLocal;
     const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);

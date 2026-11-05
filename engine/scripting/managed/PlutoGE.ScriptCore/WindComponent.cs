@@ -20,4 +20,9 @@ public sealed class WindComponent : RegisteredComponent
     public float Gustiness { get => GetFloat("Gustiness"); set => SetFloat("Gustiness", value); }
     /// <summary>Metres between gust fronts, which travel downwind at the wind speed.</summary>
     public float GustSize { get => GetFloat("Gust Size"); set => SetFloat("Gust Size", value); }
+    /// <summary>
+    /// Metres from the camera within which swaying foliage animates its virtual shadow, 0 to 1000; beyond it the
+    /// shadow keeps the rest pose, so its pages stay cached. 0 sways shadows at every distance.
+    /// </summary>
+    public float ShadowSwayDistance { get => GetFloat("Shadow Sway Distance"); set => SetFloat("Shadow Sway Distance", value); }
 }

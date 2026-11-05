@@ -22,8 +22,11 @@
 //  - Swaying blades keep their coverage: the depth prepass deforms exactly as the shaded pass does, so its equal-depth
 //    test discards nothing.
 //  - The blades' shadows move downwind with them, with cascaded shadow maps and (where the backend has them) VSM.
+//  - Beyond the wind's shadow sway distance, VSM casts the rest pose: the shadows stay where calm air leaves them.
+// pageStatistics: whether the backend reads VSM page statistics back every frame (Vulkan). OpenGL's arrive
+// irregularly, so the page-cache check runs only where they do.
 template <class ReadPixels>
-void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels, bool pageStatistics = true)
 {
     using namespace PlutoGE::render;
     const auto require = [](bool condition, const std::string &message) {
@@ -202,10 +205,10 @@ void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readP
     {
         const char *name = method == ShadowMethod::Cascaded ? "cascaded" : "VSM";
         top.shadowMethod = method;
-        const auto shade = [&](bool enabled, bool windy) {
+        const auto shade = [&](bool enabled, bool windy, SceneWindSettings wind = {}) {
             auto copy = caster;
             copy.foliageWind = enabled ? response : FoliageWindResponse{};
-            top.wind = windy ? breeze : SceneWindSettings{};
+            top.wind = windy ? (wind.Calm() ? breeze : wind) : SceneWindSettings{};
             const std::array draws{ground, copy};
             auto pixels = render(top, topViewProjection, draws, 3.0f);
             top.wind = {};
@@ -225,6 +228,36 @@ void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readP
                   << " shadowed pixels, centroid " << before << " -> " << after << " px\n";
         require(rigidCount > 60 && windyCount > 60, std::string(name) + ": the blades must cast shadows");
         require(after - before >= 1.0f, std::string(name) + ": shadows must move downwind with the blades");
+        if (method == ShadowMethod::Virtual && !pageStatistics)
+            std::cout << "Foliage wind: VSM page statistics are not read back every frame here; the cache check is skipped\n";
+        if (method == ShadowMethod::Virtual && pageStatistics)
+        {
+            // Pages the swaying blades dirty while the clock runs. The blades are about 6 m from the camera, so a 1 m
+            // shadow sway distance leaves them casting their rest pose: their pages stay cached.
+            const auto dirtyWhileAnimating = [&](float swayDistance) {
+                auto wind = breeze;
+                wind.shadowSwayDistance = swayDistance;
+                auto copy = caster;
+                copy.foliageWind = response;
+                top.wind = wind;
+                const std::array draws{ground, copy};
+                (void)render(top, topViewProjection, draws, 3.0f);
+                std::uint32_t dirty = 0;
+                for (int frame = 1; frame <= 8; ++frame)
+                {
+                    SetShaderGraphTimeSeconds(3.0f + 0.1f * float(frame));
+                    renderer.Render(topViewProjection, top, draws);
+                    dirty += renderer.GetFrameStats().virtualShadows.dirty;
+                }
+                top.wind = {};
+                return dirty;
+            };
+            const auto everywhere = dirtyWhileAnimating(0.0f), beyond = dirtyWhileAnimating(1.0f);
+            std::cout << "Foliage wind VSM dirty pages while animating: " << everywhere << " swaying everywhere, "
+                      << beyond << " beyond the shadow sway distance\n";
+            require(everywhere > 0, "VSM: swaying casters must redraw their pages");
+            require(beyond == 0, "VSM: casters beyond the shadow sway distance must keep their pages cached");
+        }
     }
 
     SetShaderGraphTimeSeconds(0.0f);

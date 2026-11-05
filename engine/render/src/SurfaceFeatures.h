@@ -41,6 +41,10 @@ namespace PlutoGE::render
         return (frameFeatures & AllSurfaceFeatures) & (UsesSurfaceLayers(draw) ? AllSurfaceFeatures : ~SurfaceLayers);
     }
 
+    // kSurfaceShadowMask's id: a prepassed shading pipeline reading the directional shadow mask (DirectionalShadowMask.h)
+    // instead of filtering. Unlike a feature it is off in the general shader.
+    inline constexpr std::uint32_t SurfaceShadowMaskConstant = 6;
+
     // Specialises the pipeline's shaders to `features`. All features is the general shader, so it adds nothing.
     inline void ApplySurfaceFeatures(rhi::GraphicsPipelineDescriptor &descriptor, std::uint32_t features)
     {
@@ -48,5 +52,10 @@ namespace PlutoGE::render
         if (features == AllSurfaceFeatures) return;
         for (std::uint32_t id = 0; id < SurfaceFeatureCount; ++id)
             descriptor.specializationConstants.push_back({id, (features >> id) & 1u});
+    }
+
+    inline void ApplySurfaceShadowMask(rhi::GraphicsPipelineDescriptor &descriptor, bool shadowMask)
+    {
+        if (shadowMask) descriptor.specializationConstants.push_back({SurfaceShadowMaskConstant, 1u});
     }
 }

@@ -99,9 +99,18 @@ namespace PlutoGE::ui
                 Changed(context, "Gust Size");
             }
             ImGui::SetItemTooltip("Distance between gust fronts, which roll downwind across fields at the wind speed.");
+            float shadowSway = wind.GetShadowSwayDistance();
+            if (ImGui::DragFloat("Shadow Sway Distance", &shadowSway, 0.5f, 0.0f, scene::WindComponent::MaxShadowSwayDistance,
+                                 shadowSway > 0.0f ? "%.1f m" : "Everywhere"))
+            {
+                wind.SetShadowSwayDistance(shadowSway);
+                Changed(context, "Shadow Sway Distance");
+            }
+            ImGui::SetItemTooltip("Swaying foliage animates its virtual shadow within this distance of the camera and casts\n"
+                                  "its rest pose beyond it, so distant shadow pages stay cached. 0 sways shadows everywhere.");
 
             std::erase_if(properties, [](const scene::Property &property) {
-                for (const std::string_view name : {"Direction", "Speed", "Gustiness", "Gust Size"})
+                for (const std::string_view name : {"Direction", "Speed", "Gustiness", "Gust Size", "Shadow Sway Distance"})
                     if (property.name == name)
                         return true;
                 return false;

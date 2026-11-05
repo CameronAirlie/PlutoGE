@@ -163,6 +163,7 @@ namespace PlutoGE::render
         result.ssaoDenoise = {Load("SSAODenoise", "vertex"),Load("SSAODenoise", "fragment")};
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
         result.contactShadows = {Load("ContactShadows", "vertex"), Load("ContactShadows", "fragment")};
+        result.directionalShadowMask = {Load("DirectionalShadowMask", "vertex"), Load("DirectionalShadowMask", "fragment")};
         result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};
         result.diffuseProbeComposite = {Load("DiffuseProbeComposite", "vertex"), Load("DiffuseProbeComposite", "fragment")};
         result.diffuseProbeTraceReflections = {Load("DiffuseProbeTraceReflections", "vertex"), Load("DiffuseProbeTraceReflections", "fragment")};

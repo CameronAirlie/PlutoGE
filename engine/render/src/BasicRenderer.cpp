@@ -7,6 +7,7 @@
 #include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
 #include "SurfaceFeatures.h"
+#include "DirectionalShadowMask.h"
 #include "FoliageWindDraws.h"
 #include "CascadedShadowLayers.h"
 #include "PointShadowLayers.h"
@@ -811,6 +812,8 @@ namespace PlutoGE::render
                 {21, 1, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {20, 1, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {ContactShadowSlot, 0, ContactShadowSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {DirectionalShadowMask::MaskSlot, 0, DirectionalShadowMask::MaskBinding, rhi::ResourceBindingType::SampledTexture,
+                 rhi::ShaderStageMask::Fragment},
                 {LtcTableSlot, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                 {LightClusterGrid::MasksSlot, 0, 4, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment},
@@ -1528,6 +1531,10 @@ namespace PlutoGE::render
             auto contactShadows = std::make_unique<ScreenSpaceContactShadows>();
             if (contactShadows->Initialize(device, fullscreen(shaders.contactShadows)))
                 m_contactShadows = std::move(contactShadows);
+            auto shadowMask = std::make_unique<DirectionalShadowMask>();
+            if (shadowMask->Initialize(device, m_geometryDescriptors[0], shaders.directionalShadowMask.vertex,
+                                       shaders.directionalShadowMask.fragment))
+                m_shadowMask = std::move(shadowMask);
             auto globalIllumination = std::make_unique<ScreenSpaceGlobalIllumination>();
             if (globalIllumination->Initialize(device, {shaders.ssgiTrace, fullscreen(shaders.ssgiFilter),
                                                         fullscreen(shaders.ssgiTemporal), fullscreen(shaders.ssgiComposite)}))
@@ -1724,6 +1731,8 @@ namespace PlutoGE::render
         m_ambientOcclusion.reset();
         m_reflections.reset();
         m_globalIllumination.reset();
+        m_shadowMask.reset();
+        m_shadowMaskActive = false;
         m_ddgi.reset();
         m_rayQueryDdgiRays.reset();
         m_rayTracingScene.reset();
@@ -2334,6 +2343,7 @@ namespace PlutoGE::render
             constexpr std::uint64_t SignatureRetainFrames = 240, SignatureSweepInterval = 64;
             const auto frame = ++m_shadowSignatureFrame;
             m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
+            m_shadowStillSignatures.assign(shadowDraws.size(), 0);
             for (std::size_t index = 0; index < shadowDraws.size(); ++index)
             {
                 const auto &draw = shadowDraws[index];
@@ -2351,7 +2361,9 @@ namespace PlutoGE::render
                         else
                             m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
                         // Swaying casters change shape every frame, in every shadow method (VSM pages included):
-                        // their cached pages and cascades are redrawn, while wind-free casters stay cached.
+                        // their cached pages and cascades are redrawn, while wind-free casters stay cached. VSM
+                        // chunks beyond the shadow sway distance cast their rest pose under the still signature.
+                        m_shadowStillSignatures[index] = m_shadowDrawSignatures[index];
                         if (m_foliageWind.Animates(draw.foliageWind))
                             HashVctValue(m_shadowDrawSignatures[index], m_foliageWind.Parameters(draw.foliageWind));
                         if (draw.shaderGraphProgram && !virtualShadowsActive)
@@ -2375,7 +2387,7 @@ namespace PlutoGE::render
         {
             core::CpuScope prepareScope("VSM preparation", core::CpuCategory::Rendering);
             virtualShadowsActive = m_virtualShadows->Prepare(*m_device, lighting, viewProjection, draws, shadowDraws,
-                m_shadowDrawSignatures, m_width, m_height,
+                m_shadowDrawSignatures, m_shadowStillSignatures, m_width, m_height,
                 coverageDepthPlansShadows ? m_depthTarget.Get() : rhi::TextureHandle{}, m_foliageWind);
         }
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
@@ -2641,6 +2653,20 @@ namespace PlutoGE::render
         m_surfaceFeatures = m_surfaceSpecialization && m_device->GetApi() == rhi::GraphicsApi::Vulkan
             ? FrameSurfaceFeatures(frameParameters) : AllSurfaceFeatures;
         m_frameStats.surfaceFeatures = m_surfaceFeatures;
+        // The directional shadow is filtered once per pixel of the coverage depth when every condition for reading
+        // it holds: a prepass, a shadow to filter, and no diagnostic output that needs the in-shader filter's taps.
+        m_shadowMaskActive = m_shadowMask && m_shadowMaskEnabled && depthPrepassActive && frameParameters.shadowsEnabled != 0 &&
+            geometryLayout != GeometryOutputLayout::Diagnostics && !geometryDebug;
+        m_frameStats.directionalShadowMask = m_shadowMaskActive;
+        if (m_shadowMaskActive)
+        {
+            // The clip transform the coverage depth was drawn with: the view-projection, then the temporal jitter
+            // (BasicLit.slang vertexMain: clip.xy += jitter * clip.w).
+            glm::mat4 jitter(1.0f);
+            jitter[3][0] = frameParameters.temporalClipOffset.x;
+            jitter[3][1] = frameParameters.temporalClipOffset.y;
+            m_shadowMask->Prepare(m_width, m_height, jitter * frameParameters.viewProjection);
+        }
         // Selected geometry is rasterized once more into its own depth mask,
         // without temporal jitter, and outlined over the final display output.
         const bool selectionOutlineActive = !m_selectionDraws.empty() && m_selectionOutlinePipeline &&
@@ -3641,16 +3667,24 @@ namespace PlutoGE::render
                 commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
         };
         // Shadow receivers: bound by a pass's first shading draw.
-        const auto bindShadowResources = [&](rhi::ICommandContext &commands)
+        // The directional shadow maps and their parameters: what surfaces and the directional shadow mask pass read.
+        const auto bindShadowMaps = [&](rhi::ICommandContext &commands)
         {
             for (std::uint32_t cascade = 0; cascade < m_shadowDepthTargets.size(); ++cascade)
                 commands.BindTexture(13 + cascade, m_shadowDepthTargets[cascade]
                     ? m_shadowDepthTargets[cascade].Get() : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
             commands.BindUniformBuffer(1, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
-            commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
-                                 m_shadowSampler.Get());
             commands.BindTexture(19, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
             commands.BindTexture(20, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+        };
+        // Everything shading draws read of shadows: the maps, point shadows and the screen-space masks.
+        const auto bindShadowResources = [&](rhi::ICommandContext &commands)
+        {
+            bindShadowMaps(commands);
+            commands.BindTexture(21, m_pointShadowColor ? m_pointShadowColor.Get() : m_fallbackDataTexture.Get(),
+                                 m_shadowSampler.Get());
+            commands.BindTexture(DirectionalShadowMask::MaskSlot, m_shadowMaskActive ? m_shadowMask->Mask() : m_fallbackDataTexture.Get(),
+                                 m_shadowSampler.Get());
             commands.BindTexture(ContactShadowSlot, contactShadowsActive ? m_contactShadows->Mask() : m_fallbackDataTexture.Get(),
                                  m_shadowSampler.Get());
         };
@@ -4089,6 +4123,19 @@ namespace PlutoGE::render
             }
             if (contactShadowsActive)
                 commands.BindTexture(ContactShadowSlot, m_contactShadows->Mask(), m_shadowSampler.Get());
+            // The directional shadow once per pixel, now that the shadow maps and the coverage depth are complete.
+            if (m_shadowMaskActive)
+            {
+                commands.BeginGpuScope("RHI Geometry / Directional shadow mask");
+                m_shadowMask->Record(commands, m_surfaceFeatures, m_depthTarget.Get(), m_shadowSampler.Get(),
+                    [&](rhi::ICommandContext &maskCommands)
+                    {
+                        maskCommands.BindUniformBuffer(0, drawCameraBuffer);
+                        bindShadowMaps(maskCommands);
+                    });
+                commands.EndGpuScope();
+                commands.BindTexture(DirectionalShadowMask::MaskSlot, m_shadowMask->Mask(), m_shadowSampler.Get());
+            }
             // The legacy simplified occluder pass is two-sided. With material
             // culling it is only safe to use the exact coverage depth produced before.
             occlusionActive = (depthPrepassActive || !m_materialCulling) && m_occlusion && m_occlusion->Record(*m_device, commands, draws, occlusionProjection,
@@ -4858,6 +4905,8 @@ namespace PlutoGE::render
         // Each cloud volume keeps a temporal history, addressed by its order among this frame's cloud packets.
         std::size_t cloudVolumes = 0;
         if (m_cloudTemporal)
+            m_cloudTemporal->SetInterleavedTrace(m_cloudTraceInterleave);
+        if (m_cloudTemporal)
             m_cloudTemporal->BeginFrame({m_postProcessView, m_postProcessProjection, m_previousMotionViewProjection,
                                          glm::vec3(m_postProcessCameraPosition),
                                          m_device->GetApi() == rhi::GraphicsApi::Vulkan},
@@ -4949,6 +4998,16 @@ namespace PlutoGE::render
             const auto passHeight = (m_postProcessHeight + divisor - 1u) / divisor;
             if (reducedVolume)
                 pipeline = m_volumetricTracePipelines[volumeIndex].Get();
+            // Clouds with a temporal filter trace as it plans: interleaved, a quarter of the pixels, while it reprojects.
+            CloudTemporalFilter::TracePlan cloudTrace{passWidth, passHeight};
+            if (effect.type == BasicPostProcessEffectType::VolumetricCloud && reducedVolume && cloudTemporal)
+            {
+                // Lane 1's xyz is the noise's wind drift, which reprojection follows; the rest is the cloud's look.
+                const auto &lanes = effect.parameters;
+                m_cloudTemporal->ObserveAppearance(cloudVolume, {lanes[0], glm::vec4(0.0f, 0.0f, 0.0f, lanes[1].w),
+                                                                 lanes[2], lanes[3], lanes[4], lanes[5]});
+                cloudTrace = m_cloudTemporal->PlanTrace(cloudVolume, passWidth, passHeight, static_cast<std::uint32_t>(m_frameIndex));
+            }
             if (!pipeline)
                 continue;
             auto effectParameters = effect.parameters;
@@ -4961,10 +5020,12 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
             {
                 effectParameters[5].w = volumeDepth ? 1.0f : 0.0f;
-                // Lane 7 (VolumetricCloud.slang cloudTemporalJitter): jitter only when the history will reproject.
-                const bool jitter = reducedVolume && cloudTemporal &&
-                                    m_cloudTemporal->JitterTrace(cloudVolume, passWidth, passHeight);
-                effectParameters[7] = {jitter ? 1.0f : 0.0f, static_cast<float>(m_frameIndex % 1024u), 0.0f, 0.0f};
+                // Lane 7 (VolumetricCloud.slang cloudTemporalJitter, cloudTraceUv): jitter only when the history will
+                // reproject; the interleave phase; the pass's resolution divisor.
+                const float interleave = cloudTrace.interleaved
+                    ? static_cast<float>(1u + cloudTrace.phase.x + 2u * cloudTrace.phase.y) : 0.0f;
+                effectParameters[7] = {cloudTrace.jitter ? 1.0f : 0.0f, static_cast<float>(CloudTemporalFilter::TraceJitterFrame(cloudTrace, static_cast<std::uint32_t>(m_frameIndex)) % 1024u),
+                                       interleave, static_cast<float>(divisor)};
             }
             if (effect.type == BasicPostProcessEffectType::TAA)
             {
@@ -4993,7 +5054,7 @@ namespace PlutoGE::render
             if (effect.type == BasicPostProcessEffectType::TAA)
                 destination = &m_taaHistoryTargets[1u - m_taaHistoryIndex];
             else
-                destination = &AcquirePostProcessTarget(targetIndex++, passWidth, passHeight);
+                destination = &AcquirePostProcessTarget(targetIndex++, cloudTrace.width, cloudTrace.height);
             if (!destination)
                 continue;
             rhi::BufferHandle oceanBuffer{};
@@ -5030,8 +5091,8 @@ namespace PlutoGE::render
                     postInfo.colorAttachments.push_back(m_taaCoverageHistoryTargets[1u - m_taaHistoryIndex].Get());
                     postInfo.colorAttachments.push_back(m_taaDepthHistoryTargets[1u - m_taaHistoryIndex].Get());
                 }
-                postInfo.width = passWidth;
-                postInfo.height = passHeight;
+                postInfo.width = drawPass == 0 ? cloudTrace.width : passWidth;
+                postInfo.height = drawPass == 0 ? cloudTrace.height : passHeight;
                 postInfo.clearDepth = false;
                 commands.BeginRendering(postInfo);
                 commands.BindPipeline(drawPass == 1 ? m_oceanVolumeDepthPipeline.Get() : pipeline);
@@ -5084,7 +5145,7 @@ namespace PlutoGE::render
             }
             if (writeOceanDepth) oceanVolumeDepth = depthDestination;
             const auto volumeResult = reducedVolume && cloudTemporal
-                ? m_cloudTemporal->Resolve(commands, cloudVolume, colorDestination, m_screenSampler.Get(),
+                ? m_cloudTemporal->Resolve(commands, cloudVolume, colorDestination, cloudTrace, m_screenSampler.Get(),
                                            passWidth, passHeight, effect.worldToLocal)
                 : colorDestination;
             m_outputColor = reducedVolume

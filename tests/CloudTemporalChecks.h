@@ -12,7 +12,9 @@
 // trace that accumulates jittered frames must approach a dense reference
 // trace much more closely than a single frame of the same trace, whose shared
 // step offsets show as slices; a still camera must converge to a stable
-// image; and the CPU cloud estimate must agree with the shader's.
+// image; and the CPU cloud estimate must agree with the shader's. The
+// interleaved trace (a quarter of the pixels a frame, the default) must
+// converge nearly as close to the reference as tracing every pixel.
 template <class ReadPixels>
 void CheckCloudTemporal(PlutoGE::render::rhi::IRenderDevice &device,
                         const PlutoGE::render::BasicRendererShaderPackage &shaders, ReadPixels readPixels)
@@ -44,10 +46,13 @@ void CheckCloudTemporal(PlutoGE::render::rhi::IRenderDevice &device,
     }
 
     constexpr unsigned width = 64, height = 48;
-    BasicRenderer cheap, dense;
+    BasicRenderer cheap, dense, fullRate;
     if (!cheap.Initialize(device, shaders) || !cheap.Resize(width, height) ||
-        !dense.Initialize(device, shaders) || !dense.Resize(width, height))
+        !dense.Initialize(device, shaders) || !dense.Resize(width, height) ||
+        !fullRate.Initialize(device, shaders) || !fullRate.Resize(width, height))
         throw std::runtime_error("Cloud temporal fixture initialization failed");
+    dense.SetCloudTraceInterleave(false);
+    fullRate.SetCloudTraceInterleave(false);
     BasicLighting lighting;
     lighting.shadowsEnabled = false;
     lighting.ambientIntensity = 0;
@@ -93,16 +98,23 @@ void CheckCloudTemporal(PlutoGE::render::rhi::IRenderDevice &device,
     const auto single = render(cheap, cloud); // No history yet: shared offsets, sliced.
     auto accumulated = single;
     auto previous = single;
-    for (int frame = 0; frame < 24; ++frame)
+    // An interleaved history follows a change over about 24 frames (CloudTemporalFilter::InterleavedWeight).
+    for (int frame = 0; frame < 96; ++frame)
     {
         previous = accumulated;
         accumulated = render(cheap, cloud);
     }
+    auto fullRateImage = render(fullRate, cloud);
+    for (int frame = 0; frame < 24; ++frame) fullRateImage = render(fullRate, cloud);
     const double singleError = error(single, expected);
     const double accumulatedError = error(accumulated, expected);
+    const double fullRateError = error(fullRateImage, expected);
     const double frameChange = error(accumulated, previous);
-    std::cout << "Cloud temporal: single-frame error " << singleError << ", accumulated " << accumulatedError
-              << ", frame-to-frame change " << frameChange << '\n';
+    std::cout << "Cloud temporal: single-frame error " << singleError << ", interleaved accumulated " << accumulatedError
+              << ", full-rate accumulated " << fullRateError << ", frame-to-frame change " << frameChange << '\n';
     require(accumulatedError < singleError * .75, "Accumulated cloud frames must approach the dense trace");
+    require(fullRateError < singleError * .75, "Full-rate accumulated cloud frames must approach the dense trace");
+    require(accumulatedError < fullRateError * 1.75,
+            "An interleaved cloud trace must converge nearly as close to the dense trace as a full-rate one");
     require(frameChange < 2.0, "A still camera's clouds must converge to a stable image");
 }

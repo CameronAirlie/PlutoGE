@@ -39,6 +39,7 @@ add_library(PlutoGERender
     src/CloudOcclusion.cpp
     src/CloudShadowMap.cpp
     src/atmosphere/CloudTemporalFilter.cpp
+    src/DirectionalShadowMask.cpp
     src/InstanceStorage.cpp
     src/InstanceBinning.cpp
     src/ImpostorDraws.cpp
@@ -353,6 +354,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSAODenoise "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain denoiseMain)
     pluto_add_slang_graphics_shader(SSAOUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOUpsample.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(ContactShadows "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ContactShadows.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(DirectionalShadowMask "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadowMask.slang" shadowMaskVertex shadowMaskFragment
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang")
     pluto_add_slang_graphics_shader(DiffuseProbeTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceMain)
     pluto_add_slang_graphics_shader(DiffuseProbeComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain compositeMain)
     pluto_add_slang_graphics_shader(DiffuseProbeTraceReflections "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseProbeResolve.slang" vertexMain traceReflectionsMain)

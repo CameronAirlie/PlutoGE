@@ -55,6 +55,7 @@ namespace PlutoGE::render
     class ScreenSpaceReflections;
     class ScreenSpaceGlobalIllumination;
     class ScreenSpaceContactShadows;
+    class DirectionalShadowMask;
     class DdgiVolume;
     class VoxelDdgiRaySource;
     class RayQueryDdgiRaySource;
@@ -387,6 +388,8 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage ssaoDenoise, ssaoUpsample;
         // Directional contact shadows traced after the depth prepass (ContactShadows.slang).
         BasicPostProcessShaderPackage contactShadows;
+        // The directional shadow mask (DirectionalShadowMask.slang, Vulkan); without it surfaces filter in place.
+        BasicPostProcessShaderPackage directionalShadowMask;
         // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
         BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
         // Optional: the resolve that also applies baked reflection terms (DiffuseProbeResolve.slang).
@@ -1020,6 +1023,8 @@ namespace PlutoGE::render
         // The lighting paths this frame's geometry pipelines kept (SurfaceFeature bits, src/SurfaceFeatures.h).
         std::uint32_t surfaceFeatures = 0;
         bool virtualShadowsActive = false;
+        // Prepassed surfaces read the directional shadow from the per-pixel mask (DirectionalShadowMask.h).
+        bool directionalShadowMask = false;
         std::string directionalShadowStatus = "Disabled";
         std::size_t shadowObjectUploads = 0;
         // Distinct cascade caster materials this frame (each shared by every draw using it).
@@ -1145,6 +1150,12 @@ namespace PlutoGE::render
         // Instanced shadow-cascade casters with a LOD chain draw each instance chunk at the camera passes' LOD (on by
         // default; off casts whole draws at their own LOD, as virtual shadow maps still do).
         void SetShadowCasterLods(bool enabled) noexcept { m_shadowLods = enabled; }
+        // Volumetric clouds with temporal reconstruction trace a quarter of their pixels a frame once their history
+        // reprojects (CloudTemporalFilter). On by default; off traces every pixel every frame, for comparisons.
+        void SetCloudTraceInterleave(bool enabled) noexcept { m_cloudTraceInterleave = enabled; }
+        // Filters the directional shadow once per pixel into a mask that prepassed surfaces read (src/
+        // DirectionalShadowMask.h, Vulkan). On by default; off filters in each surface shader, for comparisons.
+        void SetDirectionalShadowMask(bool enabled) noexcept { m_shadowMaskEnabled = enabled; }
         // Records shadows and geometry on worker threads when the device supports it. The output is identical;
         // switching it off is for comparisons and debugging.
         void SetParallelRecordingEnabled(bool enabled) noexcept { m_parallelRecording = enabled; }
@@ -1248,6 +1259,8 @@ namespace PlutoGE::render
         bool m_compactGeometry = true, m_depthPrepass = true, m_materialCulling = true;
         bool m_surfaceSpecialization = true;
         bool m_shadowLods = true;
+        bool m_cloudTraceInterleave = true;
+        bool m_shadowMaskEnabled = true;
         // This frame's SurfaceFeature bits (src/SurfaceFeatures.h); all set is the general shader.
         std::uint32_t m_surfaceFeatures = ~0u;
         std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
@@ -1367,6 +1380,9 @@ namespace PlutoGE::render
         std::unique_ptr<ScreenSpaceReflections> m_reflections;
         std::unique_ptr<ScreenSpaceGlobalIllumination> m_globalIllumination;
         std::unique_ptr<ScreenSpaceContactShadows> m_contactShadows;
+        std::unique_ptr<DirectionalShadowMask> m_shadowMask;
+        // Whether this frame's prepassed shading pipelines read m_shadowMask (BasicRenderer::Render).
+        bool m_shadowMaskActive = false;
         std::unique_ptr<DdgiVolume> m_ddgi;
         std::unique_ptr<VoxelDdgiRaySource> m_ddgiRays;
         // Hardware ray tracing (DdgiRaySource::Hardware): the traced scene and its DDGI source, when the device has it.
@@ -1457,6 +1473,9 @@ namespace PlutoGE::render
         std::array<std::vector<std::size_t>, 4> m_shadowCascadeDrawIndices;
         std::vector<std::uint8_t> m_shadowVisibleInAnyCascade;
         std::vector<std::uint64_t> m_shadowDrawSignatures;
+        // The same casters' signatures without the wind's per-frame parameters: what a swaying caster's rest pose
+        // casts (FoliageWindFrame::ShadowSways). Equal to m_shadowDrawSignatures for casters that do not sway.
+        std::vector<std::uint64_t> m_shadowStillSignatures;
         // Shadow draw signatures by the immutable packet they describe (BasicDraw::preparationRevision), not by list
         // position: the caster list gains and loses draws as the camera moves, and a positional cache then misses for
         // every draw after the change, rehashing each one's instance matrices. Entries unused for a while are dropped.

@@ -266,14 +266,88 @@ Specialisation matters most with SSAO or SSGI. Their G-buffer layout keeps more 
 at one wave per SIMD that cost about 25 ms of geometry pass on this view; specialised, the layouts differ by a few
 milliseconds.
 
-### What remains at the default preset (27.7 ms)
+## Fifth pass: shadow mask, interleaved clouds, still shadow pages (Wind Fields, Vega 8)
 
-| Cost | ms | Candidate |
+Same setup as the fourth pass: `samples/WindFields` at 1920×1080, live, Vulkan, Vega 8, nothing else on the GPU,
+default preset with SSAO and SSGI off.
+
+### Directional shadow mask
+
+Filtering the directional shadow in the surface shader cost about 8 ms of the 12.7 ms geometry pass: with it compiled
+out, the pass took 4.8 ms and the shader 88 instead of 126 VGPRs. The filter ran on every lit fragment, at two waves
+per SIMD, and on grass a large share of those were helper lanes on 1–2 pixel wide blades.
+
+`DirectionalShadowMask` (`src/DirectionalShadowMask.h`, `shaders/DirectionalShadowMask.slang`) now evaluates it once
+per pixel of the coverage depth, after the shadow maps and before shading, into an R32 mask. Prepassed shading
+pipelines are specialised to read one texel instead (`kSurfaceShadowMask`, constant id 6). Their fragments are exactly
+the coverage depth's, because the shaded pass tests depth for equality, so the mask is always valid for them and those
+pipelines carry no fallback filter at all. Transparent, outline and diagnostic pipelines keep filtering in place.
+
+- **One filter.** The VSM and cascade code moved out of `shadeSurface` into `evaluateDirectionalShadow`, which both
+  the surface shader and the mask pass call. The mask pass is compiled from BasicLit, so there is no second copy of
+  the filter to keep in step.
+- **Receivers from depth.** The world position comes from the inverse of the jittered view-projection the coverage
+  depth was drawn with. Each screen derivative comes from the neighbour on the same surface: the one nearer in world
+  space. A sliver whose nearer neighbour is still more than 12 pixel footprints away (a distant blade with no
+  neighbour on its surface) takes the view-facing plane instead, rather than a step to another surface.
+- **Receiver orientation.** The receiver plane now faces the camera in both paths. Before, the surface shader turned it
+  toward the interpolated vertex normal, which on authored foliage normals (vertical on grass, outward on leaf cards)
+  need not be the side in view. For ordinary single-sided geometry the two are the same.
+- **Agreement.** On Wind Fields the mask image differs from in-shader filtering by a mean of 0.6/255, with 1% of pixels
+  beyond 16/255, all at blade silhouettes. `CheckDirectionalShadowMask` (`PlutoGEVulkanRhiTests`) compares the two with
+  virtual shadow maps and with a fitted cascade.
+- **Scope.** Vulkan only: OpenGL has no specialisation constants to select the mask. `BasicRenderer::
+  SetDirectionalShadowMask(false)` restores in-shader filtering; `BasicFrameStats::directionalShadowMask` reports it.
+  The pass shows as `RHI Geometry / Directional shadow mask`.
+
+### Interleaved cloud trace
+
+While a cloud volume's history reprojects, `CloudTemporalFilter::PlanTrace` interleaves its trace: a half-by-half trace
+updates one pixel of each 2x2 block of the history per frame, cycling through the block every four frames (diagonals
+first). The resolve blends traced pixels into the history and keeps the others from the reprojected history.
+
+- **Weight.** A traced pixel takes `InterleavedWeight` (0.15), not the full-rate weight's four-frame equivalent. That
+  would average a quarter of the samples and double the noise. The history follows a change over about 24 frames
+  instead of 10.
+- **Clipping.** Traced pixels clip the history to this frame's neighbourhood at 1.25 σ, as before. Skipped pixels clip
+  at 3 σ (`SkippedGamma`): a box of samples two pixels apart, offset by up to a pixel, would otherwise pull them toward
+  their neighbours (measured: error 1.82 instead of 0.74 against the dense reference).
+- **Jitter.** The per-pixel step jitter advances once per period (`TraceJitterFrame`), so each pixel still sees a
+  golden-ratio sequence of offsets.
+- **Appearance jumps.** `ObserveAppearance` restarts a volume's history when its lighting, colour, density or shape
+  parameters jump by more than 5% in a frame (a light switched, a preset applied), so the change shows at once.
+  The wind drift is excluded, and gradual changes such as the time of day still accumulate.
+- **Checks.** `CheckCloudTemporal` requires the interleaved trace to converge within 1.75 times the full-rate error
+  (0.74 against 0.48); `SetCloudTraceInterleave(false)` traces every pixel.
+
+### Still shadow pages for swaying casters
+
+- **Chunk bounds.** With more than `PLUTO_VSM_MAX_DRAW_CHUNKS` clustered chunks in a frame, VSM falls back to
+  64-instance chunks, and each of those took its whole draw's bound: one chunk of a 4,700-clump foliage cell was
+  planned into, and as it swayed dirtied, every page the 36 m cell touched. Fallback chunks now bound their own
+  instances: the draw's merged geometry bound under each instance's model, padded by the wind's reach at the chunk's
+  largest vertical scale (`InstanceChunkBounds`). This applies to every instanced caster, swaying or not.
+- **Shadow sway distance.** `WindComponent` gains **Shadow Sway Distance** (default 30 m;
+  `SceneWindSettings::shadowSwayDistance`). VSM chunks beyond it cast their rest pose under the draw's still signature
+  (`FoliageWindFrame::ShadowSways`, `BasicRenderer` `m_shadowStillSignatures`), so their pages stay cached. The
+  foliage wind check verifies that animating casters beyond the distance dirty no pages. Cascades still redraw
+  swaying casters every frame.
+
+On Wind Fields' meadow camera, dirty pages per frame fell from 282 to about 115, and page rendering from 2.1 to
+1.35 ms. VSM page updates are budget-limited, so most of the gain shows as shadows that keep up with the sway; the
+remaining dirty pages are grass within 30 m, whose sway crosses many 0.27 m pages at the finest level.
+
+### Results (default preset, GPU ms)
+
+| Change | Before | After |
 | --- | --- | --- |
-| Geometry pass | 12.3 | Directional VSM filtering is about 6 ms of it (bypass diagnostic). A screen-space shadow mask resolved from the coverage depth would filter each pixel once, without the thin-grass quad overdraw. |
-| Volumetric clouds | 5.4 | Half resolution, 24 steps. A checkerboard update (a quarter of the trace each frame, reconstructed by `CloudTemporalFilter`) would remove about three quarters of it. |
-| VSM pages and planning | about 4 | Swaying grass dirties about 280 pages a frame at every clipmap level. Coarse levels could cast the rest pose, where sway is below a texel. |
-| Bloom, contact shadows, sky, exposure, tone mapping | about 4.5 | |
+| Interleaved cloud trace: `RHI Volumetric Clouds` | 5.4 | 2.7 |
+| Chunk bounds and sway distance: `RHI Virtual Shadow Pages` | 2.1 | 1.35 |
+| Shadow mask: `RHI Geometry` (including the 3.0 ms mask) | 12.8 | 7.9 |
+| **Frame** | **27.7** | **20.1** |
+
+Every preset after both passes (GPU ms, before the fourth pass in brackets): Low 10.6 (15.6), Medium 15.3 (22.0),
+default 20.1 (29.6), default with SSAO and SSGI 32.4 (45.7).
 
 ## Next candidates
 

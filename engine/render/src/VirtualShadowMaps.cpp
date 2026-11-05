@@ -40,6 +40,29 @@ namespace PlutoGE::render
         static_assert(sizeof(Caster) == 64 && sizeof(DrawParameters) == 4128 + sizeof(FoliageWindParameters));
         // Subdivision buys little when the entire mesh fits within one page's
         // width. Coalesce those ranges to avoid multiplying CPU submissions.
+        // The world bound of an instanced draw's chunk of `count` instances from `first`: its geometry (`range`, mesh
+        // space) under each instance's model, padded by the wind's reach at the chunk's largest vertical scale.
+        // Without it a chunk took the whole draw's bound: one of a foliage cell's thousands of instances was planned
+        // into, and as it swayed dirtied, every page the cell touched. Unknown when the draw is not instanced or the
+        // range has no bound.
+        ShadowWorldBounds InstanceChunkBounds(const BasicDraw &draw, const ShadowGeometryCluster &range,
+                                              std::size_t first, std::size_t count)
+        {
+            if (!draw.instanceModels || draw.instanceModels->size() <= 1 || range.extents.x < 0.0f) return {};
+            const auto models = std::span<const glm::mat4>(*draw.instanceModels).subspan(first, count);
+            auto bounds = ShadowClusterWorldBounds(range, models);
+            if (bounds.sphere.w < 0.0f) return bounds;
+            if (const float reach = FoliageWindMaxDisplacement(draw.foliageWind); reach > 0.0f)
+            {
+                float scale = 0.0f;
+                for (const auto &model : models) scale = std::max(scale, glm::length(glm::vec3(model[1])));
+                const float pad = reach * scale;
+                bounds.sphere.w += pad;
+                bounds.extents += glm::vec4(pad, pad, pad, 0.0f);
+            }
+            return bounds;
+        }
+
         bool FitsShadowPage(const VirtualShadowParameters &parameters, glm::vec4 sphere)
         {
             if (sphere.w < 0) return false;
@@ -260,10 +283,12 @@ namespace PlutoGE::render
     }
     bool VirtualShadowMaps::Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                                    std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
-                                   std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height,
+                                   std::span<const std::uint64_t> signatures, std::span<const std::uint64_t> stillSignatures,
+                                   std::uint32_t width, std::uint32_t height,
                                    rhi::TextureHandle sceneDepth, const FoliageWindFrame &wind)
     {
-        if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
+        if (signatures.size() != casters.size() || stillSignatures.size() != casters.size())
+            throw std::invalid_argument("VSM signature count mismatch");
         const auto planningReceivers = sceneDepth ? std::span<const BasicDraw>{} : receivers;
         if (!CanPrepare(planningReceivers, casters)) return false;
         const auto poolTiles = VirtualShadowPoolTiles(lighting.virtualShadowPoolPages);
@@ -406,7 +431,8 @@ namespace PlutoGE::render
             }
             const bool useClusters = lighting.virtualShadowClusterCulling && clusteredCount <= PLUTO_VSM_MAX_DRAW_CHUNKS;
             // Uploads a chunk's own parameters, for page draws that are not batched and for receivers.
-            const auto uploadChunk = [&](Chunk &chunk, std::size_t cursor, const BasicDraw &draw, std::size_t first, std::uint32_t models)
+            const auto uploadChunk = [&](Chunk &chunk, std::size_t cursor, const BasicDraw &draw, std::size_t first, std::uint32_t models,
+                                         const FoliageWindParameters &chunkWind)
             {
                 const glm::uvec4 drawParameters(cursor, models, draw.alphaMode, 0);
                 const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
@@ -425,14 +451,14 @@ namespace PlutoGE::render
                 if (models == 1)
                 {
                     const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
-                    upload(RigidDrawParameters{model, drawParameters, alpha, wind.Parameters(draw.foliageWind)});
+                    upload(RigidDrawParameters{model, drawParameters, alpha, chunkWind});
                 }
                 else
                 {
                     DrawParameters values;
                     std::copy_n(draw.instanceModels->begin() + first, models, values.models.begin());
                     values.draw = drawParameters; values.alpha = alpha;
-                    values.foliageWind = wind.Parameters(draw.foliageWind);
+                    values.foliageWind = chunkWind;
                     upload(values);
                 }
             };
@@ -481,7 +507,7 @@ namespace PlutoGE::render
                     if (receiverCursor == m_receiverChunks.size()) m_receiverChunks.emplace_back();
                     auto &chunk = m_receiverChunks[receiverCursor];
                     const auto models = static_cast<std::uint32_t>(std::min<std::size_t>(64, modelCount - first));
-                    uploadChunk(chunk, receiverCursor, draw, first, models);
+                    uploadChunk(chunk, receiverCursor, draw, first, models, wind.Parameters(draw.foliageWind));
                     const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
                     changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
                         chunk.texture != texture || chunk.submission.indexCount != count || chunk.submission.firstIndex != firstIndex;
@@ -535,6 +561,10 @@ namespace PlutoGE::render
                 const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
                 for (const auto &part : packet->chunks)
                 {
+                    // A swaying chunk beyond the shadow sway distance casts its rest pose (zero wind constants) under
+                    // the draw's still signature, so its pages stay cached until it comes within the distance.
+                    const bool sways = wind.ShadowSways(draw.foliageWind, part.bounds, lighting.cameraPosition);
+                    const FoliageWindParameters chunkWind = sways ? wind.Parameters(draw.foliageWind) : FoliageWindParameters{};
                     if (casterCursor == m_casterChunks.size()) m_casterChunks.emplace_back();
                     auto &chunk = m_casterChunks[casterCursor];
                     const auto firstIndex = baseIndex + part.indexOffset;
@@ -555,11 +585,12 @@ namespace PlutoGE::render
                         // Batched draws read the shared tables; drop parameters left from unbatched recording.
                         if (chunk.uniform) { chunk.uniform.Reset(); chunk.uploaded = {}; }
                         batched.push_back({glm::uvec4(casterCursor, part.instances, draw.alphaMode, packet->models + part.firstInstance), alpha,
-                                           wind.Parameters(draw.foliageWind)});
+                                           chunkWind});
                     }
-                    else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances);
+                    else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances, chunkWind);
                     // One identity per chunk geometry, whether its packet was rebuilt or reused this frame.
-                    const auto signature = signatures[index] ^ (std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull);
+                    const auto signature = (sways ? signatures[index] : stillSignatures[index]) ^
+                                           (std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull);
                     inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
                         {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, 0}, part.extents});
                     ++casterCursor;
@@ -685,6 +716,8 @@ namespace PlutoGE::render
         if (subdivide && coalesced)
             clusters = std::span<const ShadowGeometryCluster>(&packet.merged, 1);
         const auto rangeCount = subdivide ? clusters.size() : 1;
+        // Without subdivision a chunk covers the draw's whole range; its bound is that range's under the chunk's models.
+        const auto whole = subdivide ? ShadowGeometryCluster{} : MergeShadowGeometryClusters(clusters);
         const std::size_t instanceLimit = subdivide ? 16 : 64;
         const float radius = std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
         for (std::size_t range = 0; range < rangeCount; ++range)
@@ -702,6 +735,11 @@ namespace PlutoGE::render
                     const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
                         ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
                     const auto bounds = ShadowClusterWorldBounds(clusters[range], transforms);
+                    chunk.bounds = bounds.sphere;
+                    chunk.extents = bounds.extents;
+                }
+                else if (const auto bounds = InstanceChunkBounds(draw, whole, first, models); bounds.sphere.w >= 0.0f)
+                {
                     chunk.bounds = bounds.sphere;
                     chunk.extents = bounds.extents;
                 }

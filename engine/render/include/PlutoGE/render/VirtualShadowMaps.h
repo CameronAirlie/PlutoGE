@@ -91,7 +91,8 @@ namespace PlutoGE::render
         // then change with it, so their pages are redrawn.
         bool Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                      std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
-                     std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height,
+                     std::span<const std::uint64_t> signatures, std::span<const std::uint64_t> stillSignatures,
+                     std::uint32_t width, std::uint32_t height,
                      rhi::TextureHandle sceneDepth = {}, const FoliageWindFrame &wind = {});
         // Recording has two phases that execute on the GPU in this order and share no CPU state, so they may record
         // concurrently into separate contexts: receiver depth (unless Prepare was given the scene's) and GPU

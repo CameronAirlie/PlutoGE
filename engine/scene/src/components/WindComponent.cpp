@@ -38,6 +38,7 @@ namespace PlutoGE::scene
         settings.speed = m_speed;
         settings.gustiness = m_gustiness;
         settings.gustSize = m_gustSize;
+        settings.shadowSwayDistance = m_shadowSwayDistance;
         return settings;
     }
 
@@ -48,6 +49,7 @@ namespace PlutoGE::scene
             {"Speed", PropertyType::Float, std::to_string(m_speed)},
             {"Gustiness", PropertyType::Float, std::to_string(m_gustiness)},
             {"Gust Size", PropertyType::Float, std::to_string(m_gustSize)},
+            {"Shadow Sway Distance", PropertyType::Float, std::to_string(m_shadowSwayDistance)},
         };
     }
 
@@ -59,6 +61,8 @@ namespace PlutoGE::scene
             else if (property.name == "Speed") SetSpeed(ParseFloat(property.value, m_speed));
             else if (property.name == "Gustiness") SetGustiness(ParseFloat(property.value, m_gustiness));
             else if (property.name == "Gust Size") SetGustSize(ParseFloat(property.value, m_gustSize));
+            else if (property.name == "Shadow Sway Distance")
+                SetShadowSwayDistance(ParseFloat(property.value, m_shadowSwayDistance));
         }
     }
 }

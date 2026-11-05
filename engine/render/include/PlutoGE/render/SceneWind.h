@@ -12,6 +12,10 @@ namespace PlutoGE::render
         float speed = 0.0f;              // metres per second
         float gustiness = 0.4f;          // 0 steady, 1 gusts swing between calm and twice the mean strength
         float gustSize = 40.0f;          // metres between gust fronts, which travel downwind at the wind speed
+        // Swaying casters animate their virtual shadow pages within this distance of the camera (metres); beyond it
+        // they cast their rest pose, so their pages stay cached instead of being redrawn every frame. 0 sways
+        // shadows at every distance.
+        float shadowSwayDistance = 0.0f;
 
         bool Calm() const { return !(speed > 0.0f); }
         bool operator==(const SceneWindSettings &) const = default;

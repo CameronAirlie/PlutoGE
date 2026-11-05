@@ -105,6 +105,11 @@ is swaying:
   shader graphs do. Shadow material blocks do the same.
 - **Shadow signatures.** These hash the packed parameters, which include time, for the cascaded, point and VSM paths.
   Swaying casters therefore redraw their cascades and VSM pages every frame. Wind-free casters stay cached.
+- **Shadow sway distance.** VSM chunks farther than the wind's **Shadow Sway Distance** from the camera (default
+  30 m, `SceneWindSettings::shadowSwayDistance`, 0 sways everywhere) cast their rest pose, under the draw's signature
+  without the wind parameters (`FoliageWindFrame::ShadowSways`), so their pages stay cached. Beyond a few dozen metres
+  a shadow's sway moves less than a screen pixel but redraws every page it touches. A chunk crossing the distance
+  redraws its pages once. Cascades sway at every distance.
 - **Draw preparation.** `RenderCommand::foliageWind` is part of the draw-preparation cache key
   (`RhiDrawPreparationCache`), the retained-scene change check and surface equality (`SameBasicDrawSurface`), so
   editing a type's wind rebuilds its draws.
@@ -134,7 +139,8 @@ The `WIND_RESPONSE` fields are stiffness, flutter, bend height and pivot height.
 Older scenes and assets have none of these keys and load with wind off, so they do not move until a type opts in.
 Values are sanitized on load and in `SetTypeWind`.
 
-`WindComponent` serializes `Direction`, `Speed`, `Gustiness` and `Gust Size`. Malformed values keep their defaults,
+`WindComponent` serializes `Direction`, `Speed`, `Gustiness`, `Gust Size` and `Shadow Sway Distance` (scenes saved
+before it load with 30 m). Malformed values keep their defaults,
 and out-of-range values are clamped.
 
 ## Performance
@@ -162,9 +168,9 @@ from its `.plutometa`; before, it used the importer's defaults, so Content Brows
 had no effect.
 
 Measured alone, after the renderer's surface specialisation and cascade caster LODs (rendering-performance.md, "Fourth
-pass"), the GPU frame is 12.4 ms at Low, 17.7 ms at Medium and 27.7 ms at the default preset (39.6 ms with SSAO and
-SSGI). At the default preset, VSM filtering in the geometry pass, the volumetric clouds and swaying casters' page
-updates are the largest remaining costs; that section lists a candidate for each.
+pass"), the GPU frame was 12.4 ms at Low, 17.7 ms at Medium and 27.7 ms at the default preset. The fifth pass (the
+directional shadow mask, the interleaved cloud trace and still shadow pages beyond the sway distance) takes the
+default preset to 20.1 ms.
 
 ## Limitations and next steps
 

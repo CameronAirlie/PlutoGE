@@ -31,6 +31,7 @@
 #include "RenderThreadChecks.h"
 #include "GeometryArenaChecks.h"
 #include "SurfaceSpecializationChecks.h"
+#include "DirectionalShadowMaskChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "DecalRenderingChecks.h"
@@ -101,6 +102,8 @@ int main(int argc, char **argv)
         shaders.skyQuadrature = { { .spirv = ReadSpirv("SkyQuadrature.vertex.spv") }, { .spirv = ReadSpirv("SkyQuadrature.fragment.spv") } };
         shaders.cloudShadow = { { .spirv = ReadSpirv("CloudShadow.vertex.spv") }, { .spirv = ReadSpirv("CloudShadow.fragment.spv") } };
         shaders.cloudTemporal = { { .spirv = ReadSpirv("CloudTemporal.vertex.spv") }, { .spirv = ReadSpirv("CloudTemporal.fragment.spv") } };
+        shaders.directionalShadowMask = { { .spirv = ReadSpirv("DirectionalShadowMask.vertex.spv") },
+                                          { .spirv = ReadSpirv("DirectionalShadowMask.fragment.spv") } };
         shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
         shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
         shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
@@ -260,6 +263,7 @@ int main(int argc, char **argv)
             CheckRenderThreadRecording(device, shaders);
             CheckGeometryArena(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             CheckSurfaceSpecialization(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            CheckDirectionalShadowMask(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
         }
 
         if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")

@@ -458,6 +458,16 @@ namespace PlutoGE::scene
             }
         }
 
+        render::MaterialConfig FoliageMaterialConfig(render::MaterialConfig config)
+        {
+            if (config.alphaMode == render::AlphaMode::Blend && config.albedoTexture)
+            {
+                config.alphaMode = render::AlphaMode::Mask;
+                config.alphaCutoff = (std::max)(config.alphaCutoff, 0.35f);
+            }
+            return config;
+        }
+
         void AssignFoliageMaterials(FoliageType &type, const std::vector<render::Material *> &materials)
         {
             // The caller may pass type.materials itself (or another view containing pointers
@@ -484,14 +494,7 @@ namespace PlutoGE::scene
                     continue;
                 }
 
-                auto &config = *materialConfig;
-                if (config.alphaMode == render::AlphaMode::Blend && config.albedoTexture)
-                {
-                    config.alphaMode = render::AlphaMode::Mask;
-                    config.alphaCutoff = (std::max)(config.alphaCutoff, 0.35f);
-                }
-
-                type.ownedMaterials.push_back(std::make_unique<render::Material>(config));
+                type.ownedMaterials.push_back(std::make_unique<render::Material>(FoliageMaterialConfig(*materialConfig)));
                 type.materials.push_back(type.ownedMaterials.back().get());
             }
         }
@@ -1779,6 +1782,56 @@ namespace PlutoGE::scene
             }
             MarkRenderCommandsDirty();
         }
+    }
+
+    void FoliageComponent::SyncTypeMaterials(std::size_t index, const std::vector<render::Material *> &materials)
+    {
+        auto *type = GetType(index);
+        if (!type) return;
+        bool sameLayout = type->materials.size() == materials.size();
+        for (std::size_t slot = 0; sameLayout && slot < materials.size(); ++slot)
+            sameLayout = (type->materials[slot] != nullptr) == (materials[slot] != nullptr);
+        if (sameLayout)
+        {
+            for (std::size_t slot = 0; slot < materials.size(); ++slot)
+                if (materials[slot])
+                    *type->materials[slot] = render::Material(FoliageMaterialConfig(materials[slot]->ReadConfig()));
+        }
+        else
+        {
+            AssignFoliageMaterials(*type, materials);
+        }
+        MarkRenderCommandsDirty();
+    }
+
+    std::size_t FoliageComponent::RefreshMaterialAsset(const render::Material *material)
+    {
+        if (!material) return 0;
+        auto &assets = core::Engine::GetInstance().GetAssetManager();
+        std::size_t refreshed = 0;
+        for (std::size_t index = 0; index < m_types.size(); ++index)
+        {
+            auto &type = m_types[index];
+            if (type.materialOverride == material)
+            {
+                MarkRenderCommandsDirty();
+                ++refreshed;
+            }
+            if (type.sourceMeshPath.empty() || !type.mesh) continue;
+            const auto references = assets.GetMeshAssetMaterialReferences(type.sourceMeshPath);
+            std::vector<render::Material *> current;
+            current.reserve(references.size());
+            bool uses = false;
+            for (const auto &reference : references)
+            {
+                current.push_back(assets.LoadMaterialAsset(reference));
+                uses = uses || current.back() == material;
+            }
+            if (!uses) continue;
+            SyncTypeMaterials(index, current);
+            ++refreshed;
+        }
+        return refreshed;
     }
 
     FoliageType &FoliageComponent::EnsureSelectedType()

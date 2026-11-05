@@ -21,12 +21,10 @@ struct ResolveParameters
 [[vk::binding(6, 0)]] RWTexture3D<float4> secondaryVolume : register(u6, space0);
 
 [[vk::binding(7, 0)]] RWTexture3D<float4> directVolume : register(u7, space0);
+// Sampled, as every image unit an OpenGL driver is sure to have is taken.
+[[vk::binding(8, 0)]] Sampler3D<uint> surfaceRecord : register(t8, space0);
 
-float opacityAt(int3 coordinate, int3 size)
-{
-    if (any(coordinate < 0) || any(coordinate >= size)) return 0.0;
-    return saturate(float(accumulationWeight[coordinate]) / 4095.0);
-}
+#include "VCTVoxelOpacity.slang"
 
 [shader("compute")]
 [numthreads(4, 4, 4)]
@@ -43,10 +41,13 @@ void computeMain(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (weight > 0)
         radiance = float3(accumulationR[coordinate], accumulationG[coordinate],
                           accumulationB[coordinate]) * (1.0 / max(float(weight), 4095.0));
+    const float coverage = saturate(float(weight) / 4095.0);
+    const float opacity = vctVoxelOpacity(weight, surfaceRecord.Load(int4(coordinate, 0)));
+    // Radiance was weighted by coverage: foliage's opacity is lower.
+    if (coverage > 0.0) radiance *= opacity / coverage;
     if (pass.padding != 0)
-        radiance = min(radiance + directVolume[coordinate].rgb, 16.0 * opacityAt(coordinate, size));
+        radiance = min(radiance + directVolume[coordinate].rgb, 16.0 * opacity);
     if (pass.secondaryGain > 0.0) radiance += secondaryVolume[coordinate].rgb * pass.secondaryGain;
-    float opacity = opacityAt(coordinate, size);
     // Coverage and premultiplied radiance describe the same surface footprint.
     // Dilating opacity alone creates dark shells that absorb the source before
     // directional mip compositing, progressively losing distant bounce energy.

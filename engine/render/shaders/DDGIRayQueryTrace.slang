@@ -2,14 +2,18 @@
 // triangles (RayTracingScene's top-level acceleration structure) with an inline ray query. Same bindings and output
 // as DDGIVoxelTrace.slang, which documents the contract:
 //   rgb  radiance arriving along the ray
-//   a    distance to the first surface, PLUTO_DDGI_MISS_DISTANCE for a ray that sees the sky, or minus the distance
-//        to a back face when the probe starts inside geometry.
+//   a    distance to the first solid surface, PLUTO_DDGI_MISS_DISTANCE for a ray that sees the sky, or minus the
+//        distance to a back face when the probe starts inside geometry.
 //
-// A hit is shaded from its instance's record (RayTracingScene: diffuse albedo, emission): the directional light with
-// a shadow ray, the local lights unshadowed, and with multiple bounces (ddgiState.w) the volume's own irradiance.
-// Normals come from the hit triangle's positions (VK_KHR_ray_tracing_position_fetch).
+// A hit is shaded from its instance's record (RayTracingScene: diffuse albedo, emission, transmittance): the directional
+// light with a shadow ray, the local lights unshadowed, and with multiple bounces (ddgiState.w) the volume's own
+// irradiance. Normals come from the hit triangle's positions (VK_KHR_ray_tracing_position_fetch).
 //
-// visibilityMain traces the probe occlusion volume exactly: a segment is visible when no triangle crosses it.
+// Foliage instances are non-opaque, as textures are not sampled at hits: a ray meeting a leaf triangle stops with the
+// probability of the instance's mean opacity and passes otherwise (docs/FOLIAGE_TRANSMISSION.md). Rays that place or
+// classify probes, and the occlusion volume, trace solid instances only.
+//
+// visibilityMain traces the probe occlusion volume exactly: a segment is visible when no solid triangle crosses it.
 [[vk::binding(1, 0)]] StructuredBuffer<uint> probeList : register(t1, space0);
 [[vk::binding(2, 0)]] [format("rgba16f")] RWTexture2D<float4> rayOutput : register(u2, space0);
 [[vk::binding(3, 0)]] Sampler2D probeStateTexture : register(t3, space0);
@@ -40,6 +44,7 @@ struct RayTracedInstance
 {
     float4 albedo;   // rgb diffuse reflectance
     float4 emission; // rgb emitted radiance
+    float4 foliage;  // rgb diffuse transmittance, a chance a ray stops at a triangle (1 for solid instances)
 };
 [[vk::binding(6, 0)]] StructuredBuffer<RayTracedInstance> instances : register(t6, space0);
 
@@ -67,9 +72,54 @@ bool occluded(float3 origin, float3 direction, float distance)
     ray.TMin = 0.0;
     ray.TMax = distance;
     RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
+    query.TraceRayInline(scene, RAY_FLAG_NONE, PLUTO_RT_MASK_SOLID, ray);
     query.Proceed();
     return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+}
+
+// A uniform value in [0, 1) for a ray meeting a triangle at `t`. A probe's rays turn at every update, so this varies
+// over updates and the blend averages it.
+float foliageRandom(float3 origin, float3 direction, float t)
+{
+    uint state = asuint(direction.x) ^ (asuint(direction.y) * 3u) ^ (asuint(direction.z) * 5u) ^ (asuint(origin.x + origin.z) * 7u) ^
+                 (asuint(t) * 11u);
+    state = state * 747796405u + 2891336453u;
+    state = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    state = (state >> 22u) ^ state;
+    return float(state >> 8u) * (1.0 / 16777216.0);
+}
+
+// Whether a ray reaches `distance`, stopped by solid surfaces and by leaves with their chance.
+bool occludedThroughFoliage(float3 origin, float3 direction, float distance)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = direction;
+    ray.TMin = 0.0;
+    ray.TMax = distance;
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
+    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
+    while (query.Proceed())
+    {
+        if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
+            foliageRandom(origin, direction, query.CandidateTriangleRayT()) < instances[query.CandidateInstanceID()].foliage.a)
+            query.CommitNonOpaqueTriangleHit();
+    }
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
+}
+
+// The nearest solid surface along a ray, or a negative value.
+float solidSurfaceDistance(float3 origin, float3 direction, float reach)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = direction;
+    ray.TMin = 0.0;
+    ray.TMax = reach;
+    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
+    query.TraceRayInline(scene, RAY_FLAG_NONE, PLUTO_RT_MASK_SOLID, ray);
+    while (query.Proceed()) {}
+    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? query.CommittedRayT() : -1.0;
 }
 
 // Direct light reaching a surface at `position` with `normal`, per unit of diffuse reflectance (times 1 / pi).
@@ -79,7 +129,7 @@ float3 directLight(float3 position, float3 normal)
     const float3 towardsSun = sunDirectionIntensity.xyz;
     const float sunCosine = dot(normal, towardsSun);
     if (sunDirectionIntensity.w > 0.0 && sunCosine > 0.0 &&
-        (sunColor.w < 0.5 || !occluded(position + normal * RayOffset, towardsSun, PLUTO_RT_MAX_DISTANCE)))
+        (sunColor.w < 0.5 || !occludedThroughFoliage(position + normal * RayOffset, towardsSun, PLUTO_RT_MAX_DISTANCE)))
         light += sunColor.rgb * sunDirectionIntensity.w * sunCosine;
     for (uint index = 0; index < min(localLightCount.x, uint(PLUTO_RT_MAX_LOCAL_LIGHTS)); ++index)
     {
@@ -113,14 +163,23 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     ray.Direction = direction;
     ray.TMin = 0.0;
     ray.TMax = reach;
-    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
-    while (query.Proceed()) {}
+    RayQuery<RAY_FLAG_NONE> query;
+    // Fixed rays place and classify probes, which leaves must not move or switch off: they see solid instances only.
+    query.TraceRayInline(scene, RAY_FLAG_NONE, fixedRay ? PLUTO_RT_MASK_SOLID : 0xFF, ray);
+    while (query.Proceed())
+    {
+        if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
+            foliageRandom(origin, direction, query.CandidateTriangleRayT()) < instances[query.CandidateInstanceID()].foliage.a)
+            query.CommitNonOpaqueTriangleHit();
+    }
     if (query.CommittedStatus() != COMMITTED_TRIANGLE_HIT)
         return float4(fixedRay ? float3(0.0) : missRadiance(origin, direction), escapeDistance(direction, reach));
     const float distance = query.CommittedRayT();
-    // A probe inside geometry first meets a back face: report how far it must travel to leave (negative).
-    if (!query.CommittedTriangleFrontFace())
+    const RayTracedInstance instance = instances[query.CommittedInstanceID()];
+    const bool foliage = instance.foliage.a < 1.0;
+    // A probe inside geometry first meets a back face: report how far it must travel to leave (negative). Leaves have no
+    // inside.
+    if (!foliage && !query.CommittedTriangleFrontFace())
         return float4(0.0, 0.0, 0.0, -distance);
     if (fixedRay)
         return float4(0.0, 0.0, 0.0, distance);
@@ -131,20 +190,33 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     const float normalLength = length(worldNormal);
     float3 normal = normalLength > 1.0e-12 ? worldNormal / normalLength : -direction;
     if (dot(normal, direction) > 0.0) normal = -normal;
-    const RayTracedInstance instance = instances[query.CommittedInstanceID()];
     const float3 position = origin + direction * distance;
     float3 radiance = instance.emission.rgb + instance.albedo.rgb * directLight(position, normal);
+    if (foliage)
+        radiance += instance.foliage.rgb * directLight(position, -normal);
     if (ddgiState.w > 0.0)
     {
         float coverage;
         const float3 irradiance = ddgiIrradiance(position, normal, -direction, coverage);
         radiance += ddgiState.w * instance.albedo.rgb * irradiance * coverage;
+        if (foliage)
+        {
+            const float3 farIrradiance = ddgiIrradiance(position, -normal, direction, coverage);
+            radiance += ddgiState.w * instance.foliage.rgb * farIrradiance * coverage;
+        }
     }
     // Bright, small sources make single rays dominate a probe update: limit the luminance a ray gathers from the
     // scene (the sky is never clamped), as the voxel source does.
     const float luminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
     if (luminance > ddgiBlend.y)
         radiance *= ddgiBlend.y / luminance;
+    // Leaves are not surfaces to probes' visibility (DDGIVoxelTrace.slang explains why). A ray stopped by one reports what
+    // lies beyond: the solid surface there, or something far that is still not sky to reflections.
+    if (foliage)
+    {
+        const float solid = solidSurfaceDistance(origin, direction, PLUTO_RT_MAX_DISTANCE);
+        return float4(radiance, solid >= 0.0 ? solid : PLUTO_RT_MAX_DISTANCE);
+    }
     return float4(radiance, distance);
 }
 

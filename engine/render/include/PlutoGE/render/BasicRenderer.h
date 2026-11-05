@@ -485,6 +485,7 @@ namespace PlutoGE::render
         ClearCoatRoughness,
         SheenColor,
         SheenRoughness,
+        DiffuseTransmission,
         Count,
     };
     inline constexpr std::size_t BasicSurfaceTextureCount = static_cast<std::size_t>(BasicSurfaceTexture::Count);
@@ -673,6 +674,11 @@ namespace PlutoGE::render
         float subsurface = 0.0f;
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};
         float subsurfaceRadius = 1.0f;
+        // MaterialConfig's diffuse transmission. Above zero the surface is also foliage to GI: partly see-through to
+        // voxel and hardware rays (docs/FOLIAGE_TRANSMISSION.md).
+        float diffuseTransmission = 0.0f;
+        glm::vec3 diffuseTransmissionColor{1.0f};
+        float diffuseTransmissionAlbedoTint = 0.0f;
         std::uint32_t surfaceType = 0;
         float transmission = 0.0f;
         float ior = 1.45f;
@@ -707,6 +713,8 @@ namespace PlutoGE::render
         // were not read, and the constant factors are all there is.
         glm::vec3 meanDiffuse{-1.0f};
         glm::vec3 meanEmission{-1.0f};
+        // The mean of the base colour's alpha (masked surfaces' open share of a card); negative when unknown.
+        float meanCoverage = -1.0f;
         float normalizedLod = 0.0f;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;

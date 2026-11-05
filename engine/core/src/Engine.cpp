@@ -150,6 +150,12 @@ namespace PlutoGE::core
                     HashValue(fingerprint, material.subsurfaceColor.g);
                     HashValue(fingerprint, material.subsurfaceColor.b);
                     HashValue(fingerprint, material.subsurfaceRadius);
+                    HashValue(fingerprint, material.diffuseTransmission);
+                    HashValue(fingerprint, material.diffuseTransmissionColor.r);
+                    HashValue(fingerprint, material.diffuseTransmissionColor.g);
+                    HashValue(fingerprint, material.diffuseTransmissionColor.b);
+                    HashValue(fingerprint, material.diffuseTransmissionAlbedoTint);
+                    HashValue(fingerprint, material.diffuseTransmissionTextureIndex);
                     HashValue(fingerprint, material.transmission);
                     HashValue(fingerprint, material.ior);
                     HashValue(fingerprint, material.thickness);

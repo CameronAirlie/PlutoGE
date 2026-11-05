@@ -39,6 +39,9 @@ namespace PlutoGE::render
             && a.subsurface == b.subsurface
             && a.subsurfaceColor == b.subsurfaceColor
             && a.subsurfaceRadius == b.subsurfaceRadius
+            && a.diffuseTransmission == b.diffuseTransmission
+            && a.diffuseTransmissionColor == b.diffuseTransmissionColor
+            && a.diffuseTransmissionAlbedoTint == b.diffuseTransmissionAlbedoTint
             && a.surfaceType == b.surfaceType
             && a.transmission == b.transmission
             && a.ior == b.ior
@@ -165,6 +168,9 @@ namespace PlutoGE::render
         HashBatchValue(hash, draw.subsurface);
         HashBatchValue(hash, draw.subsurfaceColor);
         HashBatchValue(hash, draw.subsurfaceRadius);
+        HashBatchValue(hash, draw.diffuseTransmission);
+        HashBatchValue(hash, draw.diffuseTransmissionColor);
+        HashBatchValue(hash, draw.diffuseTransmissionAlbedoTint);
         HashBatchValue(hash, draw.surfaceType);
         HashBatchValue(hash, draw.transmission);
         HashBatchValue(hash, draw.ior);

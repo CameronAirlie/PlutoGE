@@ -6,3 +6,6 @@
 #define PLUTO_RT_MAX_LOCAL_LIGHTS 16
 // How far probe rays look for surfaces; rays that reach it see the sky.
 #define PLUTO_RT_MAX_DISTANCE 2000.0
+// Top-level instance masks. Foliage is non-opaque (docs/FOLIAGE_TRANSMISSION.md); rays that place probes skip it.
+#define PLUTO_RT_MASK_SOLID 1
+#define PLUTO_RT_MASK_FOLIAGE 2

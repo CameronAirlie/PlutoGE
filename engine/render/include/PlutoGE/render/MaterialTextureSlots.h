@@ -47,6 +47,9 @@ namespace PlutoGE::render
         {MaterialTextureSlot::SheenRoughness, "SheenRoughnessTexture", "SheenRoughnessTextureChannel", "Sheen Roughness",
          "SheenRoughness", TextureColorSpace::Linear, &MaterialConfig::sheenRoughnessTexture,
          &MaterialConfig::sheenRoughnessTextureChannel},
+        {MaterialTextureSlot::DiffuseTransmission, "DiffuseTransmissionTexture", "DiffuseTransmissionTextureChannel",
+         "Diffuse Transmission", "DiffuseTransmission", TextureColorSpace::Linear,
+         &MaterialConfig::diffuseTransmissionTexture, &MaterialConfig::diffuseTransmissionTextureChannel},
     }};
 
     constexpr const std::array<MaterialTextureSlotInfo, MaterialTextureSlotCount> &MaterialTextureSlots()

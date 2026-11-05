@@ -231,6 +231,12 @@ namespace PlutoGE::scene
                                      render::Mesh *mesh,
                                      const std::vector<render::Material *> &materials,
                                      const std::string &sourceMeshPath);
+        // Foliage draws private copies of its materials (it turns blended leaves into masked ones). This updates a
+        // type's copies from `materials`, in place when their layout is unchanged, so the renderer sees a new revision.
+        void SyncTypeMaterials(std::size_t index, const std::vector<render::Material *> &materials);
+        // After `material` changed or was bound to a model (a saved or extracted asset): updates the types that use it.
+        // Returns how many did.
+        std::size_t RefreshMaterialAsset(const render::Material *material);
 
     private:
         FoliageType &EnsureSelectedType();

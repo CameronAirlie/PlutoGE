@@ -2,6 +2,7 @@ float2 shaderGraphScreenUV(float3 p){return float2(0);}
 float4 shaderGraphTexture(int slot, float2 uv);
 #include "ShaderGraphEvaluation.slang"
 #include "VCTCoverage.slang"
+#include "VCTVoxelOpacity.slang"
 
 #include "VCTLightingParameters.slang"
 struct ObjectParameters { column_major float4x4 model; };
@@ -22,6 +23,7 @@ struct MaterialParameters
     float4 graphFactors;
     uint4 emissionParameters;
     float4 emissionChannels[3];
+    float4 diffuseTransmission; // rgb colour, a factor; graphFactors.y its albedo tint
 };
 [[vk::binding(0, 0)]] cbuffer VoxelConstants : register(b0, space0) { VoxelParameters voxel; };
 [[vk::binding(1, 0)]] cbuffer ObjectConstants : register(b1, space0) { ObjectParameters object; };
@@ -178,11 +180,19 @@ void fragmentMain(GeometryOutput input)
     float3 emission = material.emission * emissionSample;
     evaluateShaderGraph(material.graph,input.worldPosition,normal,normalize(material.graphCameraTime.xyz-input.worldPosition),
         material.graphCameraTime.w,input.uv,albedo,normal,metallic,roughness,emission);
-    if (material.alphaMode == 1 && albedo.a < material.alphaCutoff) discard;
-    const float coverage = areaCoverage * (material.alphaMode == 2 ? saturate(albedo.a) : 1.0);
+    // A thin translucent surface is foliage to GI (VCTVoxelOpacity.slang). This fragment stands for a whole voxel, so its
+    // alpha at the voxel's mip is the leaf's real coverage rather than a yes or no at one texel.
+    const bool foliage = material.diffuseTransmission.a > 0.0 && material.graph.header.y == 0;
+    if (foliage ? (material.alphaMode != 0 && albedo.a < VctFoliageMinimumAlpha)
+                : (material.alphaMode == 1 && albedo.a < material.alphaCutoff)) discard;
+    const float coverage = areaCoverage * (material.alphaMode == 2 || (foliage && material.alphaMode == 1) ? saturate(albedo.a) : 1.0);
+    const float3 reflected = albedo.rgb * (1.0 - metallic) * (foliage ? 1.0 - material.diffuseTransmission.a : 1.0);
+    const float3 transmitted = foliage ? material.diffuseTransmission.a * (1.0 - metallic) * material.diffuseTransmission.rgb *
+        lerp(float3(1.0), saturate(albedo.rgb * 2.5), material.graphFactors.y) : float3(0.0);
     float3 direct = voxel.localLightCount.z == 0 ? evaluateDirectLighting(input.worldPosition, normal) : float3(0);
+    float3 farDirect = foliage && voxel.localLightCount.z == 0 ? evaluateDirectLighting(input.worldPosition, -normal) : float3(0);
     float3 radiance = material.graph.header.y != 0 ? albedo.rgb+emission :
-        albedo.rgb*(1.0-metallic)*direct*(1.0/3.14159265)+max(emission,0.0);
+        (reflected*direct+transmitted*farDirect)*(1.0/3.14159265)+max(emission,0.0);
     // Clamp source radiance before weighting so the storage limit cannot
     // change a source's effective brightness as its voxel footprint changes.
     radiance = clamp(radiance, 0.0, 16.0) * coverage;
@@ -198,8 +208,8 @@ void fragmentMain(GeometryOutput input)
     {
         // One coherent representative surface, independent of fragment ordering.
         uint3 n = uint3(round(saturate(normal * 0.5 + 0.5) * 31.0));
-        uint3 c = uint3(round(clamp(material.graph.header.y != 0 ? float3(0) : albedo.rgb * (1.0 - metallic), 0.0, 0.95) * 31.0));
-        uint packed = 0x80000000u | n.x | (n.y << 5) | (n.z << 10) |
+        uint3 c = uint3(round(clamp(material.graph.header.y != 0 ? float3(0) : reflected + transmitted, 0.0, 0.95) * 31.0));
+        uint packed = 0x80000000u | (foliage ? 0u : VctRecordSolid) | n.x | (n.y << 5) | (n.z << 10) |
                       (c.r << 15) | (c.g << 20) | (c.b << 25);
         InterlockedMax(surfaceRecord[coordinate], packed);
     }

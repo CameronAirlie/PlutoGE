@@ -279,9 +279,10 @@ cbuffer MaterialParameters : register(b0, space1)
     uint4 emissionParameters; // map present, UV set, RGB channel masks
     float4 emissionChannels[3];
     uint4 surfaceTextureParameters; // BasicSurfaceParameters.h: x presence bits, y channels
-    float4 occlusionParameters;     // x strength
+    float4 occlusionParameters;     // x strength, y diffuse transmission's albedo tint
     float4 clearCoatParameters;     // x factor, y roughness
     float4 sheenParameters;         // rgb colour, a roughness
+    float4 diffuseTransmissionParameters; // rgb colour, a factor (occlusionParameters.y: albedo tint)
     FoliageWindParameters foliageWind; // FoliageWind.slang; zero unless the draw sways
 };
 FoliageWindParameters materialFoliageWind()
@@ -296,6 +297,7 @@ FoliageWindParameters materialFoliageWind()
 [[vk::binding(28, 1)]] Sampler2D clearCoatRoughnessTexture : register(t28, space1);
 [[vk::binding(29, 1)]] Sampler2D sheenColorTexture : register(t29, space1);
 [[vk::binding(30, 1)]] Sampler2D sheenRoughnessTexture : register(t30, space1);
+[[vk::binding(31, 1)]] Sampler2D diffuseTransmissionTexture : register(t31, space1);
 
 [[vk::binding(1, 1)]]
 Sampler2D baseColorTexture : register(t1, space1);
@@ -313,9 +315,11 @@ static const uint SurfaceTextureClearCoat = 1;
 static const uint SurfaceTextureClearCoatRoughness = 2;
 static const uint SurfaceTextureSheenColor = 3;
 static const uint SurfaceTextureSheenRoughness = 4;
+static const uint SurfaceTextureDiffuseTransmission = 5;
 bool surfaceTexturePresent(uint texture) { return (surfaceTextureParameters.x & (1u << texture)) != 0u; }
 uint surfaceTextureChannel(uint texture) { return (surfaceTextureParameters.y >> (2u * texture)) & 3u; }
 #include "AmbientOcclusion.slang"
+#include "DiffuseResponse.slang"
 [[vk::binding(5, 1)]]
 Sampler2D directionalShadowTexture : register(t5, space1);
 [[vk::binding(6, 1)]]
@@ -1214,6 +1218,13 @@ struct DirectionalShadowSample
     float raw;        // the nearest unfiltered tap (geometry diagnostics)
     float level;      // the normalized cascade or clipmap level (geometry diagnostics)
 };
+// How far a thin surface's far-side shadow lookup moves towards the light to leave its own shadow map entry; bent leaves
+// and shadow map texels both grow the distance it must clear with the distance to the camera.
+float foliageShadowOffset(float3 worldPosition)
+{
+    return 0.04 + 0.004 * length(cameraPositionAmbient.xyz - worldPosition);
+}
+
 DirectionalShadowSample evaluateDirectionalShadow(float3 worldPosition, float3 shadowNormal, float3 worldDx,
                                                   float3 worldDy, float2 pixel, float3 lightDirection)
 {
@@ -1419,7 +1430,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), 1.0);
         output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
                                input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0.0, 1.0);
-        output.albedo = sampledColor;
+        output.albedo = float4(sampledColor.rgb, 1.0);
         output.debug = float4(saturate(input.objectDebug), 0.0, 1.0, 1.0);
         return output;
     }
@@ -1433,10 +1444,24 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), 1.0);
         output.motion = float4((input.currentClip.xy / max(abs(input.currentClip.w), 0.00001) -
                                input.previousClip.xy / max(abs(input.previousClip.w), 0.00001)) * 0.5, 0, 1);
-        output.albedo = sampledColor;
+        output.albedo = float4(sampledColor.rgb, 1.0);
         output.debug = float4(saturate(input.objectDebug), 0, 1, 1);
         return output;
     }
+    // Thin translucency (KHR_materials_diffuse_transmission, docs/FOLIAGE_TRANSMISSION.md): this share of the diffuse
+    // light leaves the far side instead of the near side, so reflection loses what transmission gains.
+    float3 diffuseTransmittance = 0.0;
+    if (diffuseTransmissionParameters.a > 0.0 && !transparentPass && !customLighting)
+    {
+        float transmissionFactor = diffuseTransmissionParameters.a;
+        if (surfaceTexturePresent(SurfaceTextureDiffuseTransmission) && !skipDetailTextures)
+            transmissionFactor *= diffuseTransmissionTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)
+                [surfaceTextureChannel(SurfaceTextureDiffuseTransmission)];
+        diffuseTransmittance = transmissionFactor * (1.0 - materialMetallic) * diffuseTransmissionParameters.rgb *
+                               lerp(float3(1.0), foliageAlbedoTint(sampledColor.rgb), occlusionParameters.y);
+        sampledColor.rgb *= 1.0 - transmissionFactor;
+    }
+    const bool transmits = any(diffuseTransmittance > 0.0);
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
     const float ndotl = saturate(dot(normal, lightDirection));
@@ -1490,6 +1515,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                     window * saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001), rectVisibility);
             else pointLighting += (diffuseRect + specularRect) * rectRadiance;
             pointSpecularLighting += specularRect * rectRadiance;
+            // Through a thin surface: a cosine emitter at its centre, unshadowed as rectangles are.
+            if (transmits)
+                pointLighting += diffuseTransmittance / PI * saturate(-dot(normal, toCentre)) * intensity * window *
+                                 saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001);
             continue;
         }
         // Source shape (SceneLightingParameters.slang): sphere radius, tube axis times length.
@@ -1502,21 +1531,29 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         brdfEvaluate(brdf, shape, nl, diffusePoint, specularPoint);
         layersEvaluate(brdf, layers, shape, nl, diffusePoint, specularPoint);
         float visibility = 1.0;
+        // Through a thin surface: its near side faces away from the light, so the lookup moves to the side the light
+        // reaches, past the surface's own entry in the shadow map. Either nl or this is zero, so one lookup serves both.
+        const float farNdotL = transmits ? saturate(-dot(normal, l)) : 0.0;
+        const float3 shadowPosition = farNdotL > 0.0 ? input.worldPosition + l * foliageShadowOffset(input.worldPosition) : input.worldPosition;
+        const float3 shadowReceiver = farNdotL > 0.0 && dot(pointReceiverNormal, l) < 0.0 ? -pointReceiverNormal : pointReceiverNormal;
         // Standard lighting scales by nl, so surfaces facing away from the
         // light need no shadow lookup. Custom graph lighting receives visibility.
-        if (pointSettings[light].x >= 0.0 && (customLighting || nl > 0.0))
+        if (pointSettings[light].x >= 0.0 && (customLighting || nl > 0.0 || farNdotL > 0.0))
         {
             const uint row = uint(pointSettings[light].x);
-            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, input.worldPosition, pointReceiverNormal, pointSettings[light].yz);
+            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, shadowPosition, shadowReceiver, pointSettings[light].yz);
         }
         float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
         if (localLightType(light) == LocalLightSpot)
         {
             attenuation *= smoothstep(pointSettings[light].z, max(pointSettings[light].w, pointSettings[light].z + 0.000001), dot(-l, pointDirectionSpot[light].xyz));
             if (attenuation > 0 && pointSettings[light].y >= 0)
-                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), input.worldPosition,
-                    pointReceiverNormal, l, pointWorldDx, pointWorldDy);
+                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), shadowPosition,
+                    shadowReceiver, l, pointWorldDx, pointWorldDy);
         }
+        if (farNdotL > 0.0)
+            pointLighting += diffuseTransmittance / PI * farNdotL * pointColorIntensity[light].rgb *
+                             pointColorIntensity[light].w * attenuation * visibility;
         visibility *= microShadowing(materialOcclusion, nl) *
                       contactShadowVisibility(input.position, transparentPass, float(light));
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * attenuation * visibility;
@@ -1536,7 +1573,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                                       (wrappedNdotL * 0.65 + backScatter * 0.35) *
                                       directionalColor.rgb * directionalDirectionIntensity.w * subsurfaceStrength;
     const float3 unshadowedDirectionalLighting = direct * (1.0 - subsurfaceStrength) + subsurfaceLighting;
-    const bool needsDirectionalShadow = customLighting || geometryParameters.x > 0.5 || any(unshadowedDirectionalLighting != float3(0.0));
+    // Sun through a thin surface. Its near side faces away from the sun, so the camera-facing shadow (the mask, or the
+    // filter below) would find the surface's own entry in the map: the lookup moves to the side the sun reaches, where
+    // other leaves and branches still shade it. Either ndotl or this is zero, so one lookup serves both.
+    const float farSunNdotL = transmits && directionalDirectionIntensity.w > 0.0 ? saturate(-dot(normal, lightDirection)) : 0.0;
+    const float3 transmittedSun = diffuseTransmittance / PI * farSunNdotL * directionalColor.rgb * directionalDirectionIntensity.w;
+    const bool needsDirectionalShadow = customLighting || geometryParameters.x > 0.5 || farSunNdotL > 0.0 ||
+                                        any(unshadowedDirectionalLighting != float3(0.0));
     float shadowVisibility = 1.0;
     float rawShadowVisibility = 1.0;
     float normalizedCascade = 0.0;
@@ -1545,7 +1588,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (shadowsEnabled != 0 && pointParameters.w != 2.0 && needsDirectionalShadow)
     {
 #ifndef PLUTO_GLASS
-        if (kSurfaceShadowMask)
+        if (kSurfaceShadowMask && farSunNdotL <= 0.0)
         {
             // A prepassed pipeline reads the shadow DirectionalShadowMask.slang filtered at this pixel's coverage
             // depth, which is this fragment's: the shaded pass tests depth for equality.
@@ -1563,15 +1606,19 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             // The plane faces the side in view, as the mask pass orients it from depth: authored normals (vertical
             // ones on grass, outward ones on leaf cards) need not say which side of a facet that is.
             float3 shadowNormal = pointReceiverNormal;
-            if (dot(shadowNormal, toCamera) < 0.0)
+            if (dot(shadowNormal, farSunNdotL > 0.0 ? lightDirection : toCamera) < 0.0)
                 shadowNormal = -shadowNormal;
-            const DirectionalShadowSample directional = evaluateDirectionalShadow(input.worldPosition, shadowNormal,
+            const float3 shadowPosition = farSunNdotL > 0.0
+                ? input.worldPosition + lightDirection * foliageShadowOffset(input.worldPosition) : input.worldPosition;
+            const DirectionalShadowSample directional = evaluateDirectionalShadow(shadowPosition, shadowNormal,
                 pointWorldDx, pointWorldDy, input.position.xy, lightDirection);
             shadowVisibility = directional.visibility;
             rawShadowVisibility = directional.raw;
             normalizedCascade = directional.level;
         }
     }
+    // Contact shadows and micro-shadowing concern the near side, and do not apply to light from the far side.
+    const float farSunVisibility = shadowVisibility;
     if (shadowsEnabled != 0 && needsDirectionalShadow)
         shadowVisibility *= contactShadowVisibility(input.position, transparentPass, ContactShadowDirectional);
     shadowVisibility *= microShadowing(materialOcclusion, dot(normal, lightDirection));
@@ -1673,10 +1720,42 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         ambient = lerp(ambient, capturedAmbient / max(captureWeightSum, 0.0001), captureCoverage);
         environmentSpecular = lerp(environmentSpecular, capturedSpecular / max(captureWeightSum, 0.0001), captureCoverage);
     }
+#ifndef PLUTO_GLASS
+    // Ambient light reaching the far side of a thin surface, from the same environment layers as the near side's. A
+    // deferred grid and DDGI replace this with their own (DiffuseProbeResolve.slang, DDGIApply.slang).
+    if (transmits)
+    {
+        const float3 farNormal = -normal;
+        const float3 farResponse = diffuseTransmittance / PI;
+        const float3 farOvercast = PI * cloudOvercastRadiance(cloudLighting.overcast, farNormal) * farResponse;
+        float3 farAmbient = 0.0;
+        if (captureCoverage < 1.0)
+        {
+            if (gridCovered)
+                farAmbient = gridDeferred ? float3(0.0)
+                    : sampleDiffuseGrid(input.worldPosition, farNormal, -ambientReceiverNormal).irradiance * farResponse;
+            else if (physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0))
+                farAmbient = cloudySky(samplePhysicalSkyIrradiance(farNormal) * farResponse * physicalSkySettings.z,
+                                       farOvercast, cloudLighting);
+            else
+                farAmbient = cloudySky(diffuseTransmittance * cameraPositionAmbient.w, farOvercast, cloudLighting);
+        }
+        if (captureWeightSum > 0)
+        {
+            float3 capturedFar = float3(0);
+            for (int i = 0; i < 4; ++i)
+                if (captureWeights[i] > 0)
+                    capturedFar += (gridCovered ? float3(0.0) : iblDiffuse(i, farNormal) * farResponse) * captureWeights[i];
+            farAmbient = lerp(farAmbient, capturedFar / max(captureWeightSum, 0.0001), captureCoverage);
+        }
+        ambient += farAmbient;
+    }
+#endif
     ambient *= multiBounceOcclusion(materialOcclusion, sampledColor.rgb);
     environmentSpecular *= specularOcclusion(materialOcclusion, ndotv, materialRoughness);
     ambient += environmentSpecular;
     float3 directionalLighting=unshadowedDirectionalLighting * shadowVisibility;
+    directionalLighting += transmittedSun * farSunVisibility * cloudLighting.sun;
     if(customLighting)
     {
         directionalLighting=float3(0.0);
@@ -1750,7 +1829,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // which already excludes what a baked volume occluded (BakedEnvironment.slang).
     output.environmentSpecular = shaderGraph.header.y != 0 || glass ? float4(0) : float4(environmentSpecular, skySpecularShare);
     // Alpha 1 marks a surface lit by diffuse ambient light, which DDGI and SSGI may replace (unlit and glass are 0).
-    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0) : float4(max(ambient - environmentSpecular, 0.0), 1.0);
+    // Above one half, it is also how much screen-space AO applies (SSAOUpsample.slang): overlapping leaves are not the
+    // closed creases AO darkens, and light reaches them through each other.
+    output.indirect = shaderGraph.header.y != 0 || glass ? float4(0)
+        : float4(max(ambient - environmentSpecular, 0.0), transmits ? FoliageIndirectAlpha : 1.0);
     // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
     output.normal = float4(normal * 0.5 + 0.5, gridDeferred && shaderGraph.header.y == 0 && !glass ? 0.0 : 1.0);
     // Alpha is the material occlusion that passes rebuilding ambient light apply (DiffuseResponse.slang).
@@ -1761,7 +1843,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Temporal upscaler adapters convert direction and texture orientation.
     // Keeping the buffer unbiased preserves sub-pixel precision around zero.
     output.motion = float4((currentNdc - previousNdc) * 0.5, 0.0, 1.0);
-    output.albedo = sampledColor;
+    // Alpha carries the far side's response for the passes rebuilding ambient light (DiffuseResponse.slang).
+    output.albedo = float4(sampledColor.rgb, encodeFoliageTransmittance(diffuseTransmittance, sampledColor.rgb));
     output.debug = float4(saturate(input.objectDebug), normalizedCascade,
                           rawShadowVisibility, shadowVisibility);
     return output;

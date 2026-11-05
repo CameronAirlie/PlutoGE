@@ -3,6 +3,7 @@
 #include "AreaLightRenderingChecks.h"
 #include "MaterialOcclusionRenderingChecks.h"
 #include "TwoSidedShadingChecks.h"
+#include "FoliageTransmissionChecks.h"
 #include "SurfaceLayerRenderingChecks.h"
 #include "RectLightRenderingChecks.h"
 #include "RayTracingChecks.h"
@@ -310,6 +311,14 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--gi-performance")
         {
             CheckGlobalIlluminationPerformance(renderer, device, {1920, 1080});
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--foliage-transmission")
+        {
+            CheckFoliageDirectTransmission(renderer, device);
+            CheckFoliageCanopyGi(renderer, device, DdgiRaySource::Voxels);
+            if (device.GetRayTracingSupport().supported)
+                CheckFoliageCanopyGi(renderer, device, DdgiRaySource::Hardware);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-leakage")

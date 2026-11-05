@@ -12,7 +12,7 @@ namespace PlutoGE::assetimport
         // With generateLods: the vegetation LOD profile, a deeper chain (down to 0.25% of the triangles, and to a few
         // hundred triangles whatever the source) that drops small disconnected parts such as distant leaves instead
         // of locking every island's border. For trees and plants whose source meshes are far denser than a forest
-        // can draw.
+        // can draw. Masked two-sided materials also get default leaf translucency (docs/FOLIAGE_TRANSMISSION.md).
         bool vegetationLods = false;
         // Most triangles the imported model keeps at its finest LOD; 0 keeps the source. A denser static source is
         // simplified to the budget before its LODs are built, and its original geometry is dropped (see
@@ -25,7 +25,7 @@ namespace PlutoGE::assetimport
         static constexpr std::uint32_t FlagMask = 31u;
         // Part of the artifact settings of models with vegetation LODs: bump whenever the vegetation LOD chain's output
         // changes, so their cached imports are rebuilt (other models are unaffected).
-        static constexpr std::uint32_t VegetationLodVersion = 4;
+        static constexpr std::uint32_t VegetationLodVersion = 5;
 
         [[nodiscard]] std::uint32_t ToFlags() const
         {

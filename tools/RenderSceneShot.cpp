@@ -92,6 +92,7 @@ int main(int argc, char **argv) try
     }
 
     float simulateSeconds = 0, shaderTime = 0;
+    int settleFrames = 16; // --frames: raise it for virtual shadow pages and DDGI to converge in large scenes
     unsigned width = 1280, height = 800;
     const bool topDown = std::string_view(argv[4]) == "--top-down";
     assets::JsonValue layout;
@@ -108,6 +109,7 @@ int main(int argc, char **argv) try
     {
         const std::string_view option(argv[argument]);
         if (option == "--simulate" && argument + 1 < argc) simulateSeconds = std::stof(argv[++argument]);
+        else if (option == "--frames" && argument + 1 < argc) settleFrames = std::max(1, std::stoi(argv[++argument]));
         else if (option == "--time" && argument + 1 < argc) shaderTime = std::stof(argv[++argument]);
         else if (option == "--size" && argument + 1 < argc)
         {
@@ -296,7 +298,7 @@ int main(int argc, char **argv) try
     }
     // A frozen clock: every frame shows the same pose, so temporal filters settle on it.
     render::SetShaderGraphTimeSeconds(shaderTime);
-    for (int frame = 0; frame < 16; ++frame)
+    for (int frame = 0; frame < settleFrames; ++frame)
     {
         if (simulateSeconds > 0)
             for (auto *system : world->GetParticleSystemComponents()) system->Update(step);

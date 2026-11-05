@@ -256,8 +256,11 @@ CompositeOutput compositeMain(FullscreenVertexOutput input)
     gathered = weightSum > 0.0001 ? gathered / weightSum : 0.0;
     const float3 viewDirection = -normalize(position);
     const float4 material = saturate(materialTexture.Load(int3(pixel, 0)));
-    const float3 response = ambientDiffuseResponse(albedoTexture.Load(int3(pixel, 0)).rgb, material.x, material.y,
-        receiver.normal, viewDirection, material.a);
+    // A hit share replaces ambient light on both sides of a thin surface; rays only leave the near one, so its light
+    // stands for both.
+    const float4 albedoTexel = albedoTexture.Load(int3(pixel, 0));
+    const float3 response = ambientDiffuseResponse(albedoTexel.rgb, material.x, material.y,
+        receiver.normal, viewDirection, material.a) + foliageFarResponse(albedoTexel, material.a);
     const float3 indirect = max(output.indirect.rgb +
         intensity() * (response * gathered.rgb - saturate(gathered.a) * output.indirect.rgb), 0.0);
     if (debugView == 1)

@@ -70,8 +70,11 @@ CompositeOutput fragmentMain(FullscreenVertexOutput input)
     output.environmentSpecular=environmentSpecularTexture.Load(int3(pixel,0));
     // Unoccluded pixels (usually most of the screen) keep the scene, without reading the indirect inputs.
     if (ao>=1.0 && !diagnostic) return output;
-    const float3 indirect=indirectTexture.Load(int3(pixel,0)).rgb +
+    const float4 indirectTexel=indirectTexture.Load(int3(pixel,0));
+    const float3 indirect=indirectTexel.rgb +
         max(output.color.rgb-geometrySceneTexture.Load(int3(pixel,0)).rgb,0.0);
+    // Translucent surfaces take part of the AO (the indirect target's alpha, BasicLit.slang).
+    if (!diagnostic && indirectTexel.a>0.5) ao=lerp(1.0,ao,saturate(indirectTexel.a*2.0-1.0));
     const float strength=pass.parameters[1].x;
     float specularVisibility=1.0;
     if (strength>0.0)

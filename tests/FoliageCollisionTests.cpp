@@ -300,5 +300,40 @@ int main()
         std::cerr << "Terrain surface bounds query failed.\n";
         return 1;
     }
+    // Foliage draws private copies of its materials: a saved or extracted material must reach them, in place.
+    {
+        Scene materialScene;
+        auto materialOwner = std::make_unique<Entity>(EntityConfig{.name = "Leaves"});
+        auto *leaves = materialScene.AddEntity(std::move(materialOwner))->CreateComponent<FoliageComponent>();
+        leaves->AddType("Leaf");
+        PlutoGE::render::MaterialConfig sourceConfig;
+        sourceConfig.diffuseTransmission = 0.2f;
+        PlutoGE::render::Material source(sourceConfig);
+        leaves->SetTypeMeshAndMaterials(0, nullptr, {&source}, {});
+        auto *copy = leaves->GetBakeMaterial(0, 0);
+        if (!copy || copy == &source || copy->ReadConfig().diffuseTransmission != 0.2f)
+        {
+            std::cerr << "Foliage did not copy its material.\n";
+            return 1;
+        }
+        const auto revision = copy->GetRevision();
+        source.SetDiffuseTransmission(0.7f);
+        source.SetDiffuseTransmissionColor({1.0f, 0.0f, 0.0f});
+        leaves->SyncTypeMaterials(0, {&source});
+        if (leaves->GetBakeMaterial(0, 0) != copy || copy->GetRevision() == revision ||
+            copy->ReadConfig().diffuseTransmission != 0.7f || copy->ReadConfig().diffuseTransmissionColor.g != 0.0f)
+        {
+            std::cerr << "A changed material did not reach foliage's copy in place.\n";
+            return 1;
+        }
+        PlutoGE::render::Material second(sourceConfig);
+        leaves->SyncTypeMaterials(0, {&source, &second});
+        if (leaves->GetType(0)->materials.size() != 2)
+        {
+            std::cerr << "A changed material layout did not reach foliage.\n";
+            return 1;
+        }
+    }
+
     return 0;
 }

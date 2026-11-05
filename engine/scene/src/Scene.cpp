@@ -2920,6 +2920,8 @@ namespace PlutoGE::scene
                 ++refreshedCount;
             }
         }
+        for (auto *foliage : m_foliageComponents)
+            if (foliage) refreshedCount += foliage->RefreshMaterialAsset(material);
         return refreshedCount;
     }
 
@@ -2933,6 +2935,9 @@ namespace PlutoGE::scene
             if (meshComponent && meshComponent->RemapMaterialAsset(oldMaterialAssetReference, newMaterialAssetReference, material))
                 ++remappedCount;
         }
+        // Foliage takes its materials from its model's bindings, which the remap has already changed.
+        for (auto *foliage : m_foliageComponents)
+            if (foliage) remappedCount += foliage->RefreshMaterialAsset(material);
         return remappedCount;
     }
 

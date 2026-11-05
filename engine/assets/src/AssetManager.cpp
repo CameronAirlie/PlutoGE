@@ -2391,6 +2391,18 @@ namespace PlutoGE::assets
                     {
                         ParseFloat(value, config.subsurfaceRadius);
                     }
+                    else if (key == "DiffuseTransmission")
+                    {
+                        ParseFloat(value, config.diffuseTransmission);
+                    }
+                    else if (key == "DiffuseTransmissionColor")
+                    {
+                        ParseVec3(value, config.diffuseTransmissionColor);
+                    }
+                    else if (key == "DiffuseTransmissionAlbedoTint")
+                    {
+                        ParseFloat(value, config.diffuseTransmissionAlbedoTint);
+                    }
                     else if (key == "Transmission")
                     {
                         ParseFloat(value, config.transmission);

@@ -1,3 +1,4 @@
+#include "PlutoGE/render/Material.h"
 #include "ImpostorDraws.h"
 
 #include "BasicDrawBatching.h"
@@ -35,6 +36,10 @@ namespace PlutoGE::render
         draw.alphaCutoff = 0.5f;
         draw.twoSided = true;
         draw.surfaceType = 0;
+        // The atlas holds leaves and trunk alike and no material's maps: cards all take the vegetation default.
+        draw.diffuseTransmission = VegetationDiffuseTransmission;
+        draw.diffuseTransmissionColor = glm::vec3(1.0f);
+        draw.diffuseTransmissionAlbedoTint = 1.0f;
         draw.outlinePass = false;
         // Cards stand in for the camera passes only: shadows and GI keep the mesh.
         draw.castsShadow = false;

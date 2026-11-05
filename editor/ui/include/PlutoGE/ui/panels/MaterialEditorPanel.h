@@ -61,6 +61,9 @@ namespace PlutoGE::ui
         float m_subsurface = 0.0f;
         glm::vec3 m_subsurfaceColor{1.0f, 0.35f, 0.2f};
         float m_subsurfaceRadius = 1.0f;
+        float m_diffuseTransmission = 0.0f;
+        glm::vec3 m_diffuseTransmissionColor{1.0f};
+        float m_diffuseTransmissionAlbedoTint = 0.0f;
         float m_transmission = 0.0f;
         float m_ior = 1.45f;
         float m_thickness = 0.01f;

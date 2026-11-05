@@ -583,6 +583,9 @@ namespace PlutoGE::render
             draw.subsurface = material.subsurface;
             draw.subsurfaceColor = material.subsurfaceColor;
             draw.subsurfaceRadius = material.subsurfaceRadius;
+            draw.diffuseTransmission = std::clamp(material.diffuseTransmission, 0.0f, 1.0f);
+            draw.diffuseTransmissionColor = glm::clamp(material.diffuseTransmissionColor, glm::vec3(0.0f), glm::vec3(1.0f));
+            draw.diffuseTransmissionAlbedoTint = std::clamp(material.diffuseTransmissionAlbedoTint, 0.0f, 1.0f);
             draw.surfaceType = static_cast<std::uint32_t>(material.surfaceType);
             draw.transmission = material.transmission;
             draw.ior = material.ior;
@@ -635,6 +638,8 @@ namespace PlutoGE::render
                               "Scene sheen colour", true);
             setSurfaceTexture(BasicSurfaceTexture::SheenRoughness, material.sheenRoughnessTexture,
                               material.sheenRoughnessTextureChannel, "Scene sheen roughness");
+            setSurfaceTexture(BasicSurfaceTexture::DiffuseTransmission, material.diffuseTransmissionTexture,
+                              material.diffuseTransmissionTextureChannel, "Scene diffuse transmission");
             draw.clearCoat = std::clamp(material.clearCoat, 0.0f, 1.0f);
             draw.clearCoatRoughness = std::clamp(material.clearCoatRoughness, 0.0f, 1.0f);
             draw.sheenColor = glm::clamp(material.sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
@@ -656,6 +661,7 @@ namespace PlutoGE::render
                         (metallic ? metallic->raw[std::min<std::size_t>(draw.metallicChannel, 3)] : 1.0f);
                     draw.meanDiffuse = glm::vec3(material.color) * (albedo ? glm::vec3(albedo->srgb) : glm::vec3(1.0f)) *
                                        (1.0f - std::clamp(metalness, 0.0f, 1.0f));
+                    draw.meanCoverage = material.color.a * (albedo ? albedo->srgb.a : 1.0f);
                 }
                 const auto *emission = mean(material.emissionTexture);
                 if (!material.emissionChannelMask && (!material.emissionTexture || emission))

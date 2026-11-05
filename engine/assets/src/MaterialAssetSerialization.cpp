@@ -47,6 +47,12 @@ namespace PlutoGE::assets
         output << "Subsurface=" << config.subsurface << "\n";
         output << "SubsurfaceColor=" << config.subsurfaceColor.r << "," << config.subsurfaceColor.g << "," << config.subsurfaceColor.b << "\n";
         output << "SubsurfaceRadius=" << config.subsurfaceRadius << "\n";
+        if (config.diffuseTransmission > 0.0f)
+        {
+            output << "DiffuseTransmission=" << config.diffuseTransmission << "\n";
+            output << "DiffuseTransmissionColor=" << config.diffuseTransmissionColor.r << "," << config.diffuseTransmissionColor.g << "," << config.diffuseTransmissionColor.b << "\n";
+            output << "DiffuseTransmissionAlbedoTint=" << config.diffuseTransmissionAlbedoTint << "\n";
+        }
         output << "Transmission=" << config.transmission << "\n";
         output << "Ior=" << config.ior << "\n";
         output << "Thickness=" << config.thickness << "\n";

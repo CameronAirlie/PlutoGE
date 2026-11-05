@@ -106,8 +106,11 @@ DiffuseGridSample gridAt(ResolveSurface surface)
 float3 diffuseResponseAt(int2 texel, ResolveSurface surface)
 {
     const float4 material = materialTexture.Load(int3(texel, 0));
-    return ambientDiffuseResponse(albedoTexture.Load(int3(texel, 0)).rgb, material.x, material.y, surface.normal,
-                                  normalize(cameraPositionAmbient.xyz - surface.position), material.a);
+    const float4 albedo = albedoTexture.Load(int3(texel, 0));
+    // The reduced trace evaluates the grid for the near side only: on a thin surface it stands for both.
+    return ambientDiffuseResponse(albedo.rgb, material.x, material.y, surface.normal,
+                                  normalize(cameraPositionAmbient.xyz - surface.position), material.a) +
+           foliageFarResponse(albedo, material.a);
 }
 
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }

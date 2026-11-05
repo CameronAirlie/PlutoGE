@@ -20,15 +20,17 @@ namespace PlutoGE::render
     {
         glm::vec4 albedo{0.0f};   // rgb diffuse reflectance
         glm::vec4 emission{0.0f}; // rgb emitted radiance
+        glm::vec4 foliage{0.0f, 0.0f, 0.0f, 1.0f}; // rgb diffuse transmittance, a chance a ray stops at a triangle
     };
-    static_assert(sizeof(RayTracedInstance) == 32);
+    static_assert(sizeof(RayTracedInstance) == 48);
 
     // The triangles hardware ray queries trace: a bottom-level acceleration structure per mesh range (built once per
     // geometry revision, released when unused for a while) and a top-level structure over the draws given, with a
     // record per draw. The top level is rebuilt only when the traced draws change: retained draw packets
     // (BasicDraw::preparationRevision) identify unchanged ones, so a static scene builds it once. Like GI, it leaves
     // out GPU-skinned and transparent geometry; surfaces are their material's mean diffuse reflectance and emission
-    // over its textures (BasicDraw::meanDiffuse), as textures are not sampled at hits.
+    // over its textures (BasicDraw::meanDiffuse), as textures are not sampled at hits. Draws with diffuse transmission
+    // are foliage: non-opaque instances under their own mask that stop a ray by chance (docs/FOLIAGE_TRANSMISSION.md).
     class RayTracingScene
     {
     public:
@@ -76,8 +78,8 @@ namespace PlutoGE::render
         [[nodiscard]] static bool Traceable(const BasicDraw &draw) noexcept;
 
     private:
-        // Geometry identity: buffers (with generations), the range and the mesh revision.
-        using Key = std::tuple<std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t>;
+        // Geometry identity: buffers (with generations), the range and the mesh revision; and whether it is opaque.
+        using Key = std::tuple<std::uint64_t, std::uint64_t, std::uint32_t, std::uint32_t, std::uint32_t, std::uint64_t, bool>;
         struct BottomLevel
         {
             rhi::AccelerationStructure structure;

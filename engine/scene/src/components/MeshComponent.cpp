@@ -231,6 +231,8 @@ namespace PlutoGE::scene
             std::optional<glm::vec3> sheenColor;
             std::optional<glm::vec3> subsurfaceColor;
             std::optional<float> subsurfaceRadius;
+            std::optional<float> diffuseTransmission, diffuseTransmissionAlbedoTint;
+            std::optional<glm::vec3> diffuseTransmissionColor;
             std::optional<float> transmission;
             std::optional<float> ior;
             std::optional<float> thickness;
@@ -318,6 +320,9 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "Subsurface", PropertyType::Float, std::to_string(config.subsurface)});
             properties.push_back({prefix + "SubsurfaceColor", PropertyType::String, SerializeVec3(config.subsurfaceColor)});
             properties.push_back({prefix + "SubsurfaceRadius", PropertyType::Float, std::to_string(config.subsurfaceRadius)});
+            properties.push_back({prefix + "DiffuseTransmission", PropertyType::Float, std::to_string(config.diffuseTransmission)});
+            properties.push_back({prefix + "DiffuseTransmissionColor", PropertyType::String, SerializeVec3(config.diffuseTransmissionColor)});
+            properties.push_back({prefix + "DiffuseTransmissionAlbedoTint", PropertyType::Float, std::to_string(config.diffuseTransmissionAlbedoTint)});
             properties.push_back({prefix + "Transmission", PropertyType::Float, std::to_string(config.transmission)});
             properties.push_back({prefix + "Ior", PropertyType::Float, std::to_string(config.ior)});
             properties.push_back({prefix + "Thickness", PropertyType::Float, std::to_string(config.thickness)});
@@ -461,6 +466,18 @@ namespace PlutoGE::scene
             {
                 serializedMaterial.subsurfaceRadius = std::stof(value);
             }
+            else if (fieldName == "DiffuseTransmission")
+            {
+                serializedMaterial.diffuseTransmission = std::stof(value);
+            }
+            else if (fieldName == "DiffuseTransmissionColor")
+            {
+                serializedMaterial.diffuseTransmissionColor = ParseVec3(value);
+            }
+            else if (fieldName == "DiffuseTransmissionAlbedoTint")
+            {
+                serializedMaterial.diffuseTransmissionAlbedoTint = std::stof(value);
+            }
             else if (fieldName == "Transmission")
             {
                 serializedMaterial.transmission = std::stof(value);
@@ -580,6 +597,9 @@ namespace PlutoGE::scene
             {
                 material.SetSubsurfaceRadius(*serializedMaterial.subsurfaceRadius);
             }
+            if (serializedMaterial.diffuseTransmission) material.SetDiffuseTransmission(*serializedMaterial.diffuseTransmission);
+            if (serializedMaterial.diffuseTransmissionColor) material.SetDiffuseTransmissionColor(*serializedMaterial.diffuseTransmissionColor);
+            if (serializedMaterial.diffuseTransmissionAlbedoTint) material.SetDiffuseTransmissionAlbedoTint(*serializedMaterial.diffuseTransmissionAlbedoTint);
             if (serializedMaterial.transmission.has_value())
             {
                 material.SetTransmission(*serializedMaterial.transmission);

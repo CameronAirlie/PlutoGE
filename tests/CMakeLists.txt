@@ -160,6 +160,8 @@ target_compile_definitions(PlutoGEVulkanRhiTests PRIVATE
     PLUTO_RHI_TEST_SHADER_DIR="${CMAKE_BINARY_DIR}/engine/render/shaders")
 target_include_directories(PlutoGEVulkanRhiTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGEVulkanRhiTests COMMAND PlutoGEVulkanRhiTests)
+add_test(NAME PlutoGEVulkanFoliageTransmissionTests COMMAND PlutoGEVulkanRhiTests --foliage-transmission)
+add_test(NAME PlutoGEOpenGLFoliageTransmissionTests COMMAND PlutoGEOpenGLRhiTests --foliage-transmission)
 add_test(NAME PlutoGEVulkanOpaqueShadowBatchingTests COMMAND PlutoGEVulkanRhiTests --opaque-shadow-batching)
 add_test(NAME PlutoGEOpenGLOpaqueShadowBatchingTests COMMAND PlutoGEOpenGLRhiTests --opaque-shadow-batching)
 add_test(NAME PlutoGEVulkanCloudTransformTests COMMAND PlutoGEVulkanRhiTests --cloud-transforms)

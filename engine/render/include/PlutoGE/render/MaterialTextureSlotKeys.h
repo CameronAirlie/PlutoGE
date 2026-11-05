@@ -23,6 +23,7 @@ namespace PlutoGE::render
         ClearCoatRoughness,
         SheenColor,
         SheenRoughness,
+        DiffuseTransmission,
         Count,
     };
 
@@ -31,7 +32,8 @@ namespace PlutoGE::render
     // The .plutomaterial key holding each slot's texture path, in slot order.
     inline constexpr std::array<std::string_view, MaterialTextureSlotCount> MaterialTextureAssetKeys{
         "AlbedoTexture", "NormalTexture", "MetallicTexture", "RoughnessTexture", "EmissionTexture", "OcclusionTexture",
-        "ClearCoatTexture", "ClearCoatRoughnessTexture", "SheenColorTexture", "SheenRoughnessTexture"};
+        "ClearCoatTexture", "ClearCoatRoughnessTexture", "SheenColorTexture", "SheenRoughnessTexture",
+        "DiffuseTransmissionTexture"};
 
     constexpr bool IsMaterialTextureAssetKey(std::string_view key)
     {

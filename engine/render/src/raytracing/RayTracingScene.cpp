@@ -1,5 +1,7 @@
 #include "RayTracingScene.h"
 
+#include "PlutoGE/render/RayTracingConfig.h"
+
 #include <algorithm>
 #include <bit>
 
@@ -28,8 +30,20 @@ namespace PlutoGE::render
             const glm::vec3 diffuse = draw.meanDiffuse.x >= 0.0f
                 ? draw.meanDiffuse : glm::vec3(draw.baseColor) * (1.0f - std::clamp(draw.metallic, 0.0f, 1.0f));
             const glm::vec3 emission = draw.meanEmission.x >= 0.0f ? draw.meanEmission : draw.emission;
-            return {glm::vec4(glm::clamp(diffuse, glm::vec3(0.0f), glm::vec3(1.0f)), 1.0f),
-                    glm::vec4(glm::max(emission, glm::vec3(0.0f)), 0.0f)};
+            const glm::vec3 clamped = glm::clamp(diffuse, glm::vec3(0.0f), glm::vec3(1.0f));
+            const float factor = std::clamp(draw.diffuseTransmission, 0.0f, 1.0f);
+            // A leaf stops a ray where it covers a triangle (the mean alpha, for cards) and passes on what it does not
+            // absorb by transmission. Stops are bounded below so that a canopy always shades what lies under it.
+            const glm::vec3 tint = glm::mix(glm::vec3(1.0f), glm::clamp(clamped * 2.5f, glm::vec3(0.0f), glm::vec3(1.0f)),
+                                            std::clamp(draw.diffuseTransmissionAlbedoTint, 0.0f, 1.0f));
+            const glm::vec3 transmittance = factor * glm::clamp(draw.diffuseTransmissionColor, glm::vec3(0.0f), glm::vec3(1.0f)) * tint;
+            const float coverage = draw.alphaMode == 1 && draw.meanCoverage >= 0.0f ? std::clamp(draw.meanCoverage, 0.05f, 1.0f) :
+                                   draw.alphaMode == 1 ? 0.5f : 1.0f;
+            const float stopChance = factor > 0.0f
+                ? std::clamp(coverage * (1.0f - glm::dot(transmittance, glm::vec3(0.2126f, 0.7152f, 0.0722f))), 0.05f, 0.95f)
+                : 1.0f;
+            return {glm::vec4(clamped * (1.0f - factor), 1.0f), glm::vec4(glm::max(emission, glm::vec3(0.0f)), 0.0f),
+                    glm::vec4(transmittance, stopChance)};
         }
 
         // The draw's index range, as the geometry pass draws it.
@@ -114,7 +128,9 @@ namespace PlutoGE::render
             {
                 mix(std::bit_cast<std::uint32_t>(surface.albedo[channel]));
                 mix(std::bit_cast<std::uint32_t>(surface.emission[channel]));
+                mix(std::bit_cast<std::uint32_t>(surface.foliage[channel]));
             }
+            mix(std::bit_cast<std::uint32_t>(surface.foliage.a));
         }
         return hash;
     }
@@ -150,8 +166,9 @@ namespace PlutoGE::render
             if (indexCount < 3)
                 continue;
             const auto &mesh = *draw.mesh;
+            const bool foliage = draw.diffuseTransmission > 0.0f;
             const Key key{Pack(mesh.VertexBuffer()), Pack(mesh.IndexBuffer()), mesh.BaseVertex(),
-                          mesh.BaseIndex() + firstIndex, indexCount, mesh.GetRevision()};
+                          mesh.BaseIndex() + firstIndex, indexCount, mesh.GetRevision(), foliage};
             auto found = m_bottomLevels.find(key);
             if (found == m_bottomLevels.end())
             {
@@ -173,6 +190,7 @@ namespace PlutoGE::render
                     .indices = mesh.IndexBuffer(),
                     .indexOffset = std::size_t(mesh.BaseIndex() + firstIndex) * sizeof(std::uint32_t),
                     .indexCount = indexCount - indexCount % 3,
+                    .opaque = !foliage,
                 });
                 descriptor.debugName = "Ray-traced mesh";
                 const auto handle = m_device->CreateBottomLevelAccelerationStructure(descriptor);
@@ -189,11 +207,12 @@ namespace PlutoGE::render
             const auto recordIndex = static_cast<std::uint32_t>(m_records.size());
             m_records.push_back(SurfaceOf(draw));
             const auto bottomLevel = found->second.structure.Get();
+            const std::uint8_t mask = foliage ? PLUTO_RT_MASK_FOLIAGE : PLUTO_RT_MASK_SOLID;
             if (draw.instanceModels && !draw.instanceModels->empty())
                 for (const auto &model : *draw.instanceModels)
-                    m_instances.push_back({bottomLevel, RowMajorTransform(model), recordIndex, 0xFF});
+                    m_instances.push_back({bottomLevel, RowMajorTransform(model), recordIndex, mask});
             else
-                m_instances.push_back({bottomLevel, RowMajorTransform(draw.model), recordIndex, 0xFF});
+                m_instances.push_back({bottomLevel, RowMajorTransform(draw.model), recordIndex, mask});
         }
         std::erase_if(m_bottomLevels, [&](const auto &entry) { return entry.second.lastUsed + RetainFrames < m_frame; });
         m_instanceCount = m_instances.size();

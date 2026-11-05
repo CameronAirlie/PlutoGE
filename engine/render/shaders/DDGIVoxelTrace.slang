@@ -3,7 +3,7 @@
 //
 // One thread per ray: dispatch (ceil(traced rays / group), probes listed). Output texel (ray, list slot):
 //   rgb  radiance arriving along the ray
-//   a    distance to the first surface (accumulated opacity reaches one half), PLUTO_DDGI_MISS_DISTANCE for a miss,
+//   a    distance to the first solid surface (foliage does not count: see traceRay), PLUTO_DDGI_MISS_DISTANCE for a miss,
 //        or minus the distance needed to leave geometry when the probe starts inside it (a backface hit).
 // Inactive probes trace only the fixed rays, which classification and relocation read.
 //
@@ -24,6 +24,7 @@
 #define PLUTO_DDGI_SAMPLING
 #include "DDGICommon.slang"
 #include "PhysicalSkyEnvironment.slang"
+#include "VCTVoxelOpacity.slang"
 
 // The voxel scene: up to three nested cascades sharing six directional radiance atlases (VCT's layout: premultiplied
 // radiance in rgb, opacity in a, cascades stacked along z, directional mips).
@@ -106,10 +107,11 @@ float4 sampleScene(float3 position, float3 direction, float diameter, out float 
 }
 
 // The representative surface of the finest cascade's voxel at `position`: diffuse reflectance and normal.
-bool voxelSurface(float3 position, out float3 reflectance, out float3 normal)
+bool voxelSurface(float3 position, out float3 reflectance, out float3 normal, out bool hitIsFoliage)
 {
     reflectance = 0.0;
     normal = float3(0, 1, 0);
+    hitIsFoliage = false;
     for (uint cascade = 0; cascade < min(voxelCounts.x, 3u); ++cascade)
     {
         float3 coordinate;
@@ -121,6 +123,7 @@ bool voxelSurface(float3 position, out float3 reflectance, out float3 normal)
             return false;
         normal = normalize(float3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 31.0 * 2.0 - 1.0);
         reflectance = float3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 31.0;
+        hitIsFoliage = vctRecordIsFoliage(packed);
         return true;
     }
     return false;
@@ -130,16 +133,25 @@ bool voxelSurface(float3 position, out float3 reflectance, out float3 normal)
 float3 reflectedProbeLight(float3 hitPoint, float3 direction, float voxelSize)
 {
     float3 reflectance, normal;
+    bool hitIsFoliage;
     // The crossing lies on the surface's near side; its voxel is just beyond.
-    if (!voxelSurface(hitPoint + direction * (voxelSize * 0.5), reflectance, normal) &&
-        !voxelSurface(hitPoint + direction * voxelSize, reflectance, normal))
+    if (!voxelSurface(hitPoint + direction * (voxelSize * 0.5), reflectance, normal, hitIsFoliage) &&
+        !voxelSurface(hitPoint + direction * voxelSize, reflectance, normal, hitIsFoliage))
         return 0.0;
     // One normal stands for both sides of a thin surface: use the side the ray arrives at.
     if (dot(normal, direction) > 0.0)
         normal = -normal;
     float coverage;
-    const float3 irradiance = ddgiIrradiance(hitPoint, normal, -direction, coverage);
-    return reflectance * irradiance * coverage;
+    float3 irradiance = ddgiIrradiance(hitPoint, normal, -direction, coverage);
+    irradiance *= coverage;
+    // Foliage passes on half of what either side receives (VCTVoxelize.slang's record holds both sides' reflectance).
+    if (hitIsFoliage)
+    {
+        float farCoverage;
+        const float3 farIrradiance = ddgiIrradiance(hitPoint + direction * voxelSize, -normal, direction, farCoverage);
+        irradiance = (irradiance + farIrradiance * farCoverage) * 0.5;
+    }
+    return reflectance * irradiance;
 }
 
 float3 missRadiance(float3 origin, float3 direction)
@@ -188,9 +200,14 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     }
     float distance = voxelSize, previousDistance = 0.0;
     float transmission = 1.0;
+    // Foliage voxels (VCTVoxelOpacity.slang, below one half at the finest footprint) dim the ray's radiance but are not
+    // surfaces to probes: counted as hits, they would pull a probe's visibility in to the nearest leaves and move it out
+    // of the canopy, so everything below the canopy lost the probes above it. Reported distances follow solid surfaces.
+    float solidTransmission = 1.0;
+    float solidDistance = -1.0;
     float hitDistance = -1.0, hitVoxel = voxelSize;
     float3 radiance = 0.0;
-    for (uint step = 0; step < 96 && transmission > 0.02 && distance < voxelTrace.y && previousDistance < reach; ++step)
+    for (uint step = 0; step < 96 && solidTransmission > 0.02 && distance < voxelTrace.y && previousDistance < reach; ++step)
     {
         const float diameter = max(voxelSize, distance * voxelTrace.x);
         float sampleCovered, sampleVoxel;
@@ -201,12 +218,20 @@ float4 traceRay(float3 origin, float3 direction, float reach)
         // one reads at least half opaque, but both together still pass a quarter of the light behind it (sky into
         // rooms, strongest along edges and corners). Doubling opacity while the footprint is a single voxel makes
         // that sample opaque; wider footprints are filtered mips whose partial coverage is real.
-        const float solidify = 1.0 + saturate(2.0 - diameter / sampleVoxel);
-        const float solidOpacity = saturate(sample.a * solidify);
+        // Below one half nothing is doubled: that is foliage's range, and a wall always has a sample above it.
+        const float narrow = saturate(2.0 - diameter / sampleVoxel);
+        const float rawOpacity = sample.a;
+        const float solidOpacity = lerp(rawOpacity, rawOpacity >= 0.5 ? 1.0 : rawOpacity, narrow);
         sample.rgb *= sample.a > 0.0001 ? solidOpacity / sample.a : 1.0;
         sample.a = solidOpacity;
         radiance += transmission * sample.rgb;
         const float next = transmission * (1.0 - saturate(sample.a));
+        // Wider footprints are mips that cannot tell foliage from part of a wall, and count as they read.
+        const float solidNext = solidTransmission * (1.0 - lerp(rawOpacity, rawOpacity >= 0.5 ? 1.0 : 0.0, narrow));
+        if (solidDistance < 0.0 && solidNext < 0.5)
+            solidDistance = lerp(previousDistance, distance,
+                                 saturate((solidTransmission - 0.5) / max(solidTransmission - solidNext, 0.0001)));
+        solidTransmission = solidNext;
         // Place the surface where transmission crosses one half between the two samples, not at the step: visibility
         // compares these distances with sub-voxel offsets.
         if (hitDistance < 0.0 && next < 0.5)
@@ -241,7 +266,7 @@ float4 traceRay(float3 origin, float3 direction, float reach)
         }
     }
     if (fixedRay)
-        return float4(0.0, 0.0, 0.0, hitDistance >= 0.0 ? hitDistance : escapeDistance(direction, distance));
+        return float4(0.0, 0.0, 0.0, solidDistance >= 0.0 ? solidDistance : escapeDistance(direction, distance));
     if (ddgiState.w > 0.0 && hitDistance >= 0.0)
         radiance += (1.0 - transmission) * ddgiState.w * reflectedProbeLight(origin + direction * hitDistance, direction, hitVoxel);
     // Bright, small sources make single rays dominate a probe update: limit the luminance a ray gathers from the
@@ -250,7 +275,10 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     if (luminance > ddgiBlend.y)
         radiance *= ddgiBlend.y / luminance;
     radiance += transmission * missRadiance(origin, direction);
-    return float4(radiance, hitDistance >= 0.0 ? hitDistance : escapeDistance(direction, distance));
+    // Foliage hid the sky from this ray though nothing solid stopped it: far away, but not sky to reflections.
+    const float reported = solidDistance >= 0.0 ? solidDistance
+        : hitDistance >= 0.0 ? distance : escapeDistance(direction, distance);
+    return float4(radiance, reported);
 }
 
 // The clear share of the segment from `from` to `to`, marched through the finest voxels holding each point at a

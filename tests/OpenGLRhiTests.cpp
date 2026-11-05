@@ -4,6 +4,7 @@
 #include "AreaLightRenderingChecks.h"
 #include "MaterialOcclusionRenderingChecks.h"
 #include "TwoSidedShadingChecks.h"
+#include "FoliageTransmissionChecks.h"
 #include "SurfaceLayerRenderingChecks.h"
 #include "RectLightRenderingChecks.h"
 #include "RayTracingChecks.h"
@@ -364,6 +365,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         if (argc > 1 && std::string_view(argv[1]) == "--ssgi-only")
         {
             CheckSsgiRendering(basicRenderer, device);
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--ddgi-leakage")
+        {
+            CheckDdgiLeakage(basicRenderer, device, true);
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--foliage-transmission")
+        {
+            CheckFoliageDirectTransmission(basicRenderer, device);
+            CheckFoliageCanopyGi(basicRenderer, device, PlutoGE::render::DdgiRaySource::Voxels);
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")

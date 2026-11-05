@@ -35,6 +35,10 @@ namespace PlutoGE::render
     class Texture;
     struct CameraData;
     class Material;
+    // Diffuse transmission for leaves without an authored value: vegetation imports (MeshImportOptions::vegetationLods)
+    // and impostors. About what Poly Haven's leaf scans publish (0.2 to 0.45).
+    inline constexpr float VegetationDiffuseTransmission = 0.35f;
+
     struct MaterialConfig
     {
         glm::vec4 color{1.0f, 1.0f, 1.0f, 1.0f}; // Base color (default to white)
@@ -90,6 +94,17 @@ namespace PlutoGE::render
         float subsurface = 0.0f;                         // Approximate diffuse subsurface scattering strength
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};    // Color of light scattered through the surface
         float subsurfaceRadius = 1.0f;                   // Relative scattering distance/profile width
+
+        // Thin translucent surfaces such as leaves (KHR_materials_diffuse_transmission, docs/FOLIAGE_TRANSMISSION.md):
+        // the share of the diffuse light that leaves the far side, tinted by the colour. Global illumination also
+        // treats these surfaces as partly see-through.
+        float diffuseTransmission = 0.0f;
+        glm::vec3 diffuseTransmissionColor{1.0f};
+        // How far the colour follows the surface's albedo instead of being a constant, for materials without an
+        // authored one: 1 uses a brightened albedo, which keeps a leaf's veins and autumn colours.
+        float diffuseTransmissionAlbedoTint = 0.0f;
+        Texture *diffuseTransmissionTexture = nullptr; // Multiplies diffuseTransmission
+        TextureChannel diffuseTransmissionTextureChannel = TextureChannel::Alpha;
 
         float transmission = 0.0f;                        // Transmitted light amount for glass-like materials
         float ior = 1.45f;                                // Index of refraction; common window glass is around 1.45-1.52
@@ -157,6 +172,10 @@ namespace PlutoGE::render
         void SetSubsurface(float subsurface) { if (m_config.subsurface != (subsurface)) { m_config.subsurface = subsurface; Touch(); } }
         void SetSubsurfaceColor(const glm::vec3 &color) { if (m_config.subsurfaceColor != (color)) { m_config.subsurfaceColor = color; Touch(); } }
         void SetSubsurfaceRadius(float radius) { if (m_config.subsurfaceRadius != (radius)) { m_config.subsurfaceRadius = radius; Touch(); } }
+        void SetDiffuseTransmission(float value) { if (m_config.diffuseTransmission != (value)) { m_config.diffuseTransmission = value; Touch(); } }
+        void SetDiffuseTransmissionColor(const glm::vec3 &color) { if (m_config.diffuseTransmissionColor != (color)) { m_config.diffuseTransmissionColor = color; Touch(); } }
+        void SetDiffuseTransmissionAlbedoTint(float value) { if (m_config.diffuseTransmissionAlbedoTint != (value)) { m_config.diffuseTransmissionAlbedoTint = value; Touch(); } }
+        void SetDiffuseTransmissionTexture(Texture *texture) { if (m_config.diffuseTransmissionTexture != (texture)) { m_config.diffuseTransmissionTexture = texture; Touch(); } }
         void SetTransmission(float transmission) { if (m_config.transmission != (transmission)) { m_config.transmission = transmission; Touch(); } }
         void SetIor(float ior) { if (m_config.ior != (ior)) { m_config.ior = ior; Touch(); } }
         void SetThickness(float thickness) { if (m_config.thickness != (thickness)) { m_config.thickness = thickness; Touch(); } }

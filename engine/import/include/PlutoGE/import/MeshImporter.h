@@ -47,6 +47,10 @@ namespace PlutoGE::assetimport
         float subsurface = 0.0f;
         glm::vec3 subsurfaceColor{1.0f, 0.35f, 0.2f};
         float subsurfaceRadius = 1.0f;
+        float diffuseTransmission = 0.0f;
+        glm::vec3 diffuseTransmissionColor{1.0f};
+        float diffuseTransmissionAlbedoTint = 0.0f;
+        int diffuseTransmissionTextureIndex = -1; // factor in alpha, as glTF
         float transmission = 0.0f;
         float ior = 1.45f;
         float thickness = 0.01f;

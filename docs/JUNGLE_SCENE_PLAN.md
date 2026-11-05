@@ -188,6 +188,9 @@ The list is ordered by priority. P0 packages block the target and P1 packages ar
 
 ### E5 Foliage translucency (P0)
 
+**Done, with E11's purpose:** see [Foliage transmission](FOLIAGE_TRANSMISSION.md). It goes further than this outline, into both GI ray
+sources. Hardware rays pass leaves by chance rather than sampling alpha, so E11's texture any-hit is no longer needed for them to let light through.
+
 - **What:**
   - An optional thickness/translucency map (a new `BasicSurfaceTexture` entry, so no new sampler budget on
     GL).

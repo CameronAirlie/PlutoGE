@@ -23,6 +23,7 @@ struct BindlessMaterial
     float4 occlusionParameters;
     float4 clearCoatParameters;
     float4 sheenParameters;
+    float4 diffuseTransmissionParameters;
 };
 
 struct BindlessInstance
@@ -85,8 +86,9 @@ static uint4 surfaceTextureParameters;
 static float4 occlusionParameters;
 static float4 clearCoatParameters;
 static float4 sheenParameters;
+static float4 diffuseTransmissionParameters;
 static BindlessTexture baseColorTexture, normalTexture, metallicTexture, roughnessTexture, emissionTexture;
-static BindlessTexture occlusionTexture, clearCoatTexture, clearCoatRoughnessTexture, sheenColorTexture, sheenRoughnessTexture;
+static BindlessTexture occlusionTexture, clearCoatTexture, clearCoatRoughnessTexture, sheenColorTexture, sheenRoughnessTexture, diffuseTransmissionTexture;
 
 void loadBindlessMaterial(uint index)
 {
@@ -128,9 +130,11 @@ void loadBindlessMaterial(uint index)
     occlusionParameters = material.occlusionParameters;
     clearCoatParameters = material.clearCoatParameters;
     sheenParameters = material.sheenParameters;
+    diffuseTransmissionParameters = material.diffuseTransmissionParameters;
     occlusionTexture.index = material.extraTextures[0].y;
     clearCoatTexture.index = material.extraTextures[0].z;
     clearCoatRoughnessTexture.index = material.extraTextures[0].w;
     sheenColorTexture.index = material.extraTextures[1].x;
     sheenRoughnessTexture.index = material.extraTextures[1].y;
+    diffuseTransmissionTexture.index = material.extraTextures[1].z;
 }

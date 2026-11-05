@@ -71,7 +71,8 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
     const float3 position = worldAt(pixel, depth);
     const float3 normal = decodeNormal(normalTexture.Load(int3(pixel, 0)).xyz);
     const float3 viewDirection = normalize(pass.cameraPosition.xyz - position);
-    const float3 albedo = albedoTexture.Load(int3(pixel, 0)).rgb;
+    const float4 albedoTexel = albedoTexture.Load(int3(pixel, 0));
+    const float3 albedo = albedoTexel.rgb;
     const float4 material = saturate(materialTexture.Load(int3(pixel, 0)));
     const float2 metallicRoughness = material.xy;
     float coverage;
@@ -85,7 +86,16 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
 
     const float3 response = ambientDiffuseResponse(albedo, metallicRoughness.x, metallicRoughness.y, normal,
                                                    viewDirection, material.a);
-    const float3 replaced = lerp(output.indirect.rgb, probes.irradiance * response * ddgiApply.x, coverage);
+    float3 probeLight = probes.irradiance * response;
+    // A thin translucent surface also passes on the light its far side receives (docs/FOLIAGE_TRANSMISSION.md).
+    const float3 farResponse = foliageFarResponse(albedoTexel, material.a);
+    if (any(farResponse > 0.0))
+    {
+        float farCoverage;
+        const float3 farIrradiance = ddgiIrradiance(position, -normal, -viewDirection, farCoverage);
+        probeLight += farIrradiance * farCoverage * farResponse;
+    }
+    const float3 replaced = lerp(output.indirect.rgb, probeLight * ddgiApply.x, coverage);
     float3 specular = output.environmentSpecular.rgb;
     float occlusion = 0.0;
     if (ddgiReflectionOcclusionEnabled())

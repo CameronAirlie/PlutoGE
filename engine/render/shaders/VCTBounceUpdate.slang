@@ -3,6 +3,7 @@ struct BounceParameters { uint resolution; uint cascade; uint cascadeCount; uint
 [[vk::binding(1, 0)]] RWTexture3D<uint> surfaceRecord : register(u1, space0);
 [[vk::binding(2, 0)]] RWTexture3D<uint> accumulationWeight : register(u2, space0);
 [[vk::binding(3, 0)]] RWTexture3D<float4> secondaryVolume : register(u3, space0);
+#include "VCTVoxelOpacity.slang"
 [[vk::binding(7, 0)]] Sampler3D bounce0 : register(t7, space0);
 [[vk::binding(8, 0)]] Sampler3D bounce1 : register(t8, space0);
 [[vk::binding(9, 0)]] Sampler3D bounce2 : register(t9, space0);
@@ -36,7 +37,7 @@ void computeMain(uint3 id : SV_DispatchThreadID)
         if (any(diffuse > 0.0))
         {
             float3 normal = normalize(float3(packed & 31u, (packed >> 5) & 31u, (packed >> 10) & 31u) / 31.0 * 2.0 - 1.0);
-            float coverage = saturate(float(accumulationWeight[int3(id)]) / 4095.0);
+            float coverage = vctVoxelOpacity(accumulationWeight[int3(id)], packed);
             bounced = diffuse * coverage * vctSecondaryBounce((float3(id) + 0.5) / float(pass.resolution), normal, float(pass.resolution));
         }
     }

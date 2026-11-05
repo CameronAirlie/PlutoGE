@@ -176,7 +176,7 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 43;
+        constexpr uint32_t kCookedMeshCacheVersion = 44;
 
         bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
         {
@@ -186,7 +186,10 @@ namespace PlutoGE::assetimport
                    a.metallic == b.metallic && a.roughness == b.roughness && a.emission == b.emission &&
                    a.emissionTextureIndex == b.emissionTextureIndex && a.emissionTexCoord == b.emissionTexCoord &&
                    a.subsurface == b.subsurface && a.subsurfaceColor == b.subsurfaceColor &&
-                   a.subsurfaceRadius == b.subsurfaceRadius && a.transmission == b.transmission &&
+                   a.subsurfaceRadius == b.subsurfaceRadius && a.diffuseTransmission == b.diffuseTransmission &&
+                   a.diffuseTransmissionColor == b.diffuseTransmissionColor &&
+                   a.diffuseTransmissionAlbedoTint == b.diffuseTransmissionAlbedoTint &&
+                   a.diffuseTransmissionTextureIndex == b.diffuseTransmissionTextureIndex && a.transmission == b.transmission &&
                    a.ior == b.ior && a.thickness == b.thickness &&
                    a.attenuationColor == b.attenuationColor && a.attenuationDistance == b.attenuationDistance &&
                    a.albedoTextureIndex == b.albedoTextureIndex && a.normalTextureIndex == b.normalTextureIndex &&
@@ -274,6 +277,19 @@ namespace PlutoGE::assetimport
                 return std::to_string(ToFlags()) + (triangleBudget != 0 ? "-b" + std::to_string(triangleBudget) : std::string());
             }
         };
+
+        // The vegetation profile's leaves: masked two-sided surfaces let light through unless the source says otherwise.
+        // Few sources author a transmission colour, so it follows each texel's albedo (docs/FOLIAGE_TRANSMISSION.md).
+        void ApplyVegetationMaterialDefaults(std::vector<ImportedMaterialData> &materials)
+        {
+            for (auto &material : materials)
+                if (material.alphaMode == render::AlphaMode::Mask && material.twoSided && material.diffuseTransmission <= 0.0f)
+                {
+                    material.diffuseTransmission = render::VegetationDiffuseTransmission;
+                    material.diffuseTransmissionColor = glm::vec3(1.0f);
+                    material.diffuseTransmissionAlbedoTint = 1.0f;
+                }
+        }
 
         MeshCookOptions ResolveMeshCookOptions(const MeshImportOptions &requested = {})
         {
@@ -537,6 +553,12 @@ namespace PlutoGE::assetimport
             WritePod(output, material.subsurfaceColor.g);
             WritePod(output, material.subsurfaceColor.b);
             WritePod(output, material.subsurfaceRadius);
+            WritePod(output, material.diffuseTransmission);
+            WritePod(output, material.diffuseTransmissionColor.r);
+            WritePod(output, material.diffuseTransmissionColor.g);
+            WritePod(output, material.diffuseTransmissionColor.b);
+            WritePod(output, material.diffuseTransmissionAlbedoTint);
+            WritePod(output, material.diffuseTransmissionTextureIndex);
             WritePod(output, material.transmission);
             WritePod(output, material.ior);
             WritePod(output, material.thickness);
@@ -584,6 +606,12 @@ namespace PlutoGE::assetimport
             material.subsurfaceColor.g = ReadPod<float>(input);
             material.subsurfaceColor.b = ReadPod<float>(input);
             material.subsurfaceRadius = ReadPod<float>(input);
+            material.diffuseTransmission = ReadPod<float>(input);
+            material.diffuseTransmissionColor.r = ReadPod<float>(input);
+            material.diffuseTransmissionColor.g = ReadPod<float>(input);
+            material.diffuseTransmissionColor.b = ReadPod<float>(input);
+            material.diffuseTransmissionAlbedoTint = ReadPod<float>(input);
+            material.diffuseTransmissionTextureIndex = ReadPod<int>(input);
             material.transmission = ReadPod<float>(input);
             material.ior = ReadPod<float>(input);
             material.thickness = ReadPod<float>(input);
@@ -1338,6 +1366,9 @@ namespace PlutoGE::assetimport
             parsedMaterial.sheenRoughnessTextureIndex = readExtensionTexture("KHR_materials_sheen", "sheenRoughnessTexture",
                                                                              ImportedTextureColorSpace::Linear);
 
+            parsedMaterial.diffuseTransmissionTextureIndex = readExtensionTexture(
+                "KHR_materials_diffuse_transmission", "diffuseTransmissionTexture", ImportedTextureColorSpace::Linear);
+
             const bool hasExplicitMetallicFactor = material.values.find("metallicFactor") != material.values.end();
             parsedMaterial.metallic = static_cast<float>(material.pbrMetallicRoughness.metallicFactor);
             if (!hasExplicitMetallicFactor &&
@@ -1357,17 +1388,19 @@ namespace PlutoGE::assetimport
             }
 
             parsedMaterial.transmission = std::clamp(readExtensionNumber("KHR_materials_transmission", "transmissionFactor", 0.0f), 0.0f, 1.0f);
-            // KHR_materials_diffuse_transmission is the standard glTF representation closest to
-            // diffuse subsurface transport. Also accept the names used by existing exporter drafts.
+            parsedMaterial.diffuseTransmission = std::clamp(
+                readExtensionNumber("KHR_materials_diffuse_transmission", "diffuseTransmissionFactor", 0.0f), 0.0f, 1.0f);
+            parsedMaterial.diffuseTransmissionColor = glm::clamp(
+                readExtensionVec3("KHR_materials_diffuse_transmission", "diffuseTransmissionColorFactor", glm::vec3(1.0f)),
+                glm::vec3(0.0f), glm::vec3(1.0f));
+            // Names used by exporter drafts of diffuse subsurface transport.
             parsedMaterial.subsurface = std::clamp(
-                readExtensionNumber("KHR_materials_diffuse_transmission", "diffuseTransmissionFactor",
-                    readExtensionNumber("KHR_materials_subsurface", "subsurfaceFactor",
-                        readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceFactor", 0.0f))),
+                readExtensionNumber("KHR_materials_subsurface", "subsurfaceFactor",
+                    readExtensionNumber("EXT_materials_subsurface_scattering", "subsurfaceFactor", 0.0f)),
                 0.0f, 1.0f);
             parsedMaterial.subsurfaceColor = glm::max(
-                readExtensionVec3("KHR_materials_diffuse_transmission", "diffuseTransmissionColorFactor",
-                    readExtensionVec3("KHR_materials_subsurface", "subsurfaceColorFactor",
-                        readExtensionVec3("EXT_materials_subsurface_scattering", "subsurfaceColorFactor", parsedMaterial.color))),
+                readExtensionVec3("KHR_materials_subsurface", "subsurfaceColorFactor",
+                    readExtensionVec3("EXT_materials_subsurface_scattering", "subsurfaceColorFactor", parsedMaterial.color)),
                 glm::vec3(0.0f));
             parsedMaterial.subsurfaceRadius = std::max(
                 readExtensionNumber("KHR_materials_subsurface", "subsurfaceRadius",
@@ -4819,6 +4852,7 @@ namespace PlutoGE::assetimport
                 profile->sceneTraversalMs = profile->assimpMeshAssemblyMs;
             }
 
+            if (cookOptions.vegetationLods) ApplyVegetationMaterialDefaults(asset.materials);
             if (asset.meshData.vertices.empty() || asset.meshData.indices.empty())
             {
                 return asset;
@@ -5065,6 +5099,7 @@ namespace PlutoGE::assetimport
 
             profile.sceneTraversalMs = ElapsedMilliseconds(sceneTraversalStart);
 
+            if (cookOptions.vegetationLods) ApplyVegetationMaterialDefaults(parsedMeshAsset.materials);
             if (parsedMeshAsset.meshData.vertices.empty() || parsedMeshAsset.meshData.indices.empty())
             {
                 throw std::runtime_error("No triangle mesh data was found in the glTF file.");

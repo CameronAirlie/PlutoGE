@@ -21,6 +21,9 @@ namespace PlutoGE::assetimport
         config.subsurface = material.subsurface;
         config.subsurfaceColor = material.subsurfaceColor;
         config.subsurfaceRadius = material.subsurfaceRadius;
+        config.diffuseTransmission = material.diffuseTransmission;
+        config.diffuseTransmissionColor = material.diffuseTransmissionColor;
+        config.diffuseTransmissionAlbedoTint = material.diffuseTransmissionAlbedoTint;
         config.transmission = material.transmission;
         config.ior = material.ior;
         config.thickness = material.thickness;
@@ -58,6 +61,9 @@ namespace PlutoGE::assetimport
         config.clearCoatRoughnessTextureChannel = render::TextureChannel::Green;
         setTexture(MaterialTextureSlot::SheenColor, material.sheenColorTextureIndex);
         setTexture(MaterialTextureSlot::SheenRoughness, material.sheenRoughnessTextureIndex);
+        // KHR_materials_diffuse_transmission keeps its factor in alpha.
+        setTexture(MaterialTextureSlot::DiffuseTransmission, material.diffuseTransmissionTextureIndex);
+        config.diffuseTransmissionTextureChannel = render::TextureChannel::Alpha;
         config.sheenRoughnessTextureChannel = render::TextureChannel::Alpha;
         return definition;
     }

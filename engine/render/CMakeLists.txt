@@ -109,7 +109,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
     set(PLUTO_VCT_SHARED_SHADERS
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTLightingParameters.slang"
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTLighting.slang"
-        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTHistory.slang")
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTHistory.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VCTVoxelOpacity.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang")
     function(pluto_add_slang_graphics_shader MODULE SOURCE VERTEX_ENTRY FRAGMENT_ENTRY)
         set(vct_dependencies)
         if (MODULE MATCHES "^VCT")

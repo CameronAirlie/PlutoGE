@@ -26,7 +26,7 @@ namespace PlutoGE::render
         using ShaderCode = rhi::GraphicsPipelineDescriptor::ShaderCode;
         // Command slots of what only this pass binds (BasicLit.slang directionalShadowMask is set 0 binding 5,
         // DirectionalShadowMask.slang's depth and parameters bindings 6 and 9).
-        static constexpr std::uint32_t MaskSlot = 38, DepthSlot = 39, ParametersSlot = 40;
+        static constexpr std::uint32_t MaskSlot = 41, DepthSlot = 39, ParametersSlot = 40;
         static constexpr std::uint32_t MaskBinding = 5, DepthBinding = 6, ParametersBinding = 9;
         static constexpr auto MaskFormat = rhi::Format::R32Float;
 

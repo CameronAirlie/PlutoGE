@@ -1,6 +1,7 @@
 #include "VCTHistory.slang"
 #include "Fullscreen.slang"
 #include "ScreenSpaceCommon.slang"
+#include "DiffuseResponse.slang"
 struct TemporalParameters
 {
     column_major float4x4 inverseViewProjection;
@@ -166,7 +167,11 @@ TemporalOutput fragmentMain(FullscreenVertexOutput input)
     const float4 scene = sceneTexture.Sample(uv);
     float3 indirect = output.history.rgb;
     if (pass.modulateIndirect != 0)
-        indirect *= albedoTexture.Sample(uv).rgb * (1.0 - saturate(materialTexture.Sample(uv).r));
+    {
+        // Cones leave the near side only: on a thin surface their light stands for both sides.
+        const float4 albedo = albedoTexture.Sample(uv);
+        indirect *= (albedo.rgb + foliageFarAlbedo(albedo)) * (1.0 - saturate(materialTexture.Sample(uv).r));
+    }
     output.composite = pass.indirectOnly != 0
         ? float4(indirect, 1.0)
         : float4(scene.rgb + indirect, scene.a);

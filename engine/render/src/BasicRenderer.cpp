@@ -366,6 +366,7 @@ namespace PlutoGE::render
             glm::vec4 graphCameraTime{0}, graphFactors{0};
             glm::uvec4 emissionParameters{0};
             std::array<glm::vec4, 3> emissionChannels{};
+            glm::vec4 diffuseTransmission{0.0f}; // rgb colour, a factor
         };
         struct alignas(16) VctResolveParameters
         {
@@ -400,7 +401,7 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(VctVoxelParameters) == 1536);
         static_assert(sizeof(VctObjectParameters) == 64);
-        static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+96);
+        static_assert(sizeof(VctMaterialParameters) == 64+sizeof(ShaderGraphProgramData)+112);
         static_assert(sizeof(VctResolveParameters) == 48);
         static_assert(sizeof(VctMipParameters) == 64);
         static_assert(offsetof(VctMipParameters, region) == 32);
@@ -644,6 +645,9 @@ namespace PlutoGE::render
                     HashVctValue(hash, draw.uvScale);
                     HashVctValue(hash, draw.metallic);
                     HashVctValue(hash, draw.alphaCutoff);
+                    HashVctValue(hash, draw.diffuseTransmission);
+                    HashVctValue(hash, draw.diffuseTransmissionColor);
+                    HashVctValue(hash, draw.diffuseTransmissionAlbedoTint);
                     HashVctValue(hash, draw.emission);
                     HashVctValue(hash, draw.emissionTexture);
                     HashVctValue(hash, draw.emissionTexCoord);
@@ -714,6 +718,9 @@ namespace PlutoGE::render
             HashVctValue(hash, draw.mesh->GetRevision());
             HashVctValue(hash, draw.alphaMode);
             HashVctValue(hash, draw.alphaCutoff);
+            HashVctValue(hash, draw.diffuseTransmission);
+            HashVctValue(hash, draw.diffuseTransmissionColor);
+            HashVctValue(hash, draw.diffuseTransmissionAlbedoTint);
             HashVctValue(hash, draw.baseColor);
             HashVctValue(hash, draw.baseColorTexture);
             HashVctValue(hash, draw.uvScale);
@@ -1353,6 +1360,7 @@ namespace PlutoGE::render
                     {5, 0, 5, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute}};
                 compute.resourceBindings.push_back({6, 0, 6, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute});
                 compute.resourceBindings.push_back({7, 0, 7, rhi::ResourceBindingType::StorageImage, rhi::ShaderStageMask::Compute});
+                compute.resourceBindings.push_back({8, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Compute});
                 compute.debugName = "VCT accumulation resolve";
                 m_vctResolvePipeline = rhi::GraphicsPipeline(device, device.CreateComputePipeline(compute));
             }
@@ -5632,6 +5640,7 @@ namespace PlutoGE::render
             commands.BindStorageImage(5, atlas.Get());
             commands.BindStorageImage(6, cascade.secondaryVolume.Get());
             commands.BindStorageImage(7, cascade.directVolume.Get());
+            commands.BindTexture(8, cascade.surfaceRecord.Get(), m_shadowSampler.Get());
             commands.Dispatch((region.extent.x + 3) / 4, (region.extent.y + 3) / 4, (region.extent.z + 3) / 4);
         }
         commands.ComputeImageBarrier(destinations);
@@ -6058,6 +6067,8 @@ namespace PlutoGE::render
                         if(draw.shaderGraphProgram) material.graph=draw.shaderGraphProgram->data;
                         material.graphCameraTime={cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime};
                         material.graphFactors.x=draw.roughness;
+                        material.graphFactors.y=draw.diffuseTransmissionAlbedoTint;
+                        material.diffuseTransmission=glm::vec4(draw.diffuseTransmissionColor,draw.diffuseTransmission);
                         material.emissionParameters={draw.emissionTexture ? 1u : 0u, draw.emissionTexCoord == 1 ? 1u : 0u, draw.emissionChannelMask ? 1u : 0u, 0u};
                         material.emissionChannels = draw.emissionChannels;
                         commands.BindTexture(20,draw.emissionTexture ? draw.emissionTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());

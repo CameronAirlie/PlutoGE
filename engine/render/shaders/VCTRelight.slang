@@ -9,6 +9,7 @@
 [[vk::binding(12, 0)]] Sampler2D shadowTexture2 : register(t12, space0);
 [[vk::binding(13, 0)]] Sampler2D shadowTexture3 : register(t13, space0);
 #include "VCTLighting.slang"
+#include "VCTVoxelOpacity.slang"
 
 [shader("compute")]
 [numthreads(4, 4, 4)]
@@ -24,8 +25,10 @@ void computeMain(uint3 thread : SV_DispatchThreadID)
         float3 diffuse = float3((packed >> 15) & 31u, (packed >> 20) & 31u, (packed >> 25) & 31u) / 31.0;
         float3 world = voxel.volumeOrigin + (float3(cell) + 0.5) * (voxel.volumeSize / voxel.resolution);
         float3 direct = evaluateDirectLighting(world, normal);
-        radiance = clamp(diffuse * direct / 3.14159265, 0.0, 16.0) *
-            saturate(float(accumulationWeight[cell]) / 4095.0);
+        // Foliage records hold what both sides pass on (VCTVoxelize.slang): half of it for each side's light.
+        if (vctRecordIsFoliage(packed))
+            direct = (direct + evaluateDirectLighting(world, -normal)) * 0.5;
+        radiance = clamp(diffuse * direct / 3.14159265, 0.0, 16.0) * vctVoxelOpacity(accumulationWeight[cell], packed);
     }
     directVolume[cell] = float4(radiance, 0);
 }

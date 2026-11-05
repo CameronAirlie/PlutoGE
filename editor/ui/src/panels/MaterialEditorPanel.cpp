@@ -274,6 +274,9 @@ namespace PlutoGE::ui
             m_subsurface = 0.0f;
             m_subsurfaceColor = glm::vec3(1.0f, 0.35f, 0.2f);
             m_subsurfaceRadius = 1.0f;
+            m_diffuseTransmission = 0.0f;
+            m_diffuseTransmissionColor = glm::vec3(1.0f);
+            m_diffuseTransmissionAlbedoTint = 0.0f;
             m_uvScale = glm::vec2(1.0f, 1.0f);
             m_flipNormalY = false;
             return;
@@ -326,6 +329,9 @@ namespace PlutoGE::ui
         m_subsurface = config.subsurface;
         m_subsurfaceColor = config.subsurfaceColor;
         m_subsurfaceRadius = config.subsurfaceRadius;
+        m_diffuseTransmission = config.diffuseTransmission;
+        m_diffuseTransmissionColor = config.diffuseTransmissionColor;
+        m_diffuseTransmissionAlbedoTint = config.diffuseTransmissionAlbedoTint;
         m_uvScale = config.uvScale;
         m_flipNormalY = config.flipNormalY;
     }
@@ -374,6 +380,9 @@ namespace PlutoGE::ui
         previewConfig.subsurface = m_subsurface;
         previewConfig.subsurfaceColor = m_subsurfaceColor;
         previewConfig.subsurfaceRadius = m_subsurfaceRadius;
+        previewConfig.diffuseTransmission = m_diffuseTransmission;
+        previewConfig.diffuseTransmissionColor = m_diffuseTransmissionColor;
+        previewConfig.diffuseTransmissionAlbedoTint = m_diffuseTransmissionAlbedoTint;
         previewConfig.ior = m_ior;
         previewConfig.attenuationColor = m_attenuationColor;
         previewConfig.uvScale = m_uvScale;
@@ -632,6 +641,26 @@ namespace PlutoGE::ui
             }
         }
 
+        ImGui::SeparatorText("Diffuse Transmission");
+        ImGui::TextWrapped("For thin surfaces such as leaves: the share of diffuse light that leaves the far side. GI also treats these surfaces as partly see-through.");
+        if (ImGui::SliderFloat("Diffuse Transmission", &m_diffuseTransmission, 0.0f, 1.0f, "%.2f"))
+        {
+            m_dirty = true;
+        }
+        if (m_diffuseTransmission > 0.001f)
+        {
+            float transmissionColor[3] = {m_diffuseTransmissionColor.r, m_diffuseTransmissionColor.g, m_diffuseTransmissionColor.b};
+            if (ImGui::ColorEdit3("Transmission Color", transmissionColor))
+            {
+                m_diffuseTransmissionColor = glm::vec3(transmissionColor[0], transmissionColor[1], transmissionColor[2]);
+                m_dirty = true;
+            }
+            if (ImGui::SliderFloat("Follow Albedo", &m_diffuseTransmissionAlbedoTint, 0.0f, 1.0f, "%.2f"))
+            {
+                m_dirty = true;
+            }
+        }
+
         if (m_surfaceType == render::MaterialSurfaceType::Glass)
         {
             ImGui::SeparatorText("Glass");
@@ -705,6 +734,9 @@ namespace PlutoGE::ui
             config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
             config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
             config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);
+            config.diffuseTransmission = std::clamp(m_diffuseTransmission, 0.0f, 1.0f);
+            config.diffuseTransmissionColor = m_diffuseTransmissionColor;
+            config.diffuseTransmissionAlbedoTint = std::clamp(m_diffuseTransmissionAlbedoTint, 0.0f, 1.0f);
             config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);
             config.ior = (std::clamp)(m_ior, 1.0f, 2.5f);
             config.thickness = (std::max)(m_thickness, 0.0f);

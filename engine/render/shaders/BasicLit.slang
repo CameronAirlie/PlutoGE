@@ -751,7 +751,7 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
         // Page crossings and diagnostic reference mode retain scalar addressing.
         const int pageBoundaryX = (lowPage.x + 1) * PLUTO_VSM_PAGE_SIZE;
         const int pageBoundaryY = (lowPage.y + 1) * PLUTO_VSM_PAGE_SIZE;
-        normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
+        normalizedLevel = float(level) / virtualRootLevel(vsm);
         if (pointParameters.w != 3.0)
         {
             // The footprint is the union of up to four single-page rectangles
@@ -793,7 +793,7 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
                 if (all(texel == nearestTexel)) rawVisibility = comparison;
             }
         }
-        normalizedLevel = float(level) / PLUTO_VSM_ROOT_LEVEL;
+        normalizedLevel = float(level) / virtualRootLevel(vsm);
         return visibility / max(weightSum, 0.000001);
     }
     return -1.0;
@@ -818,13 +818,13 @@ float evaluateVirtualShadow(float3 world, float3 normal, float3 worldDx, float3 
     const int ditheredLevel = dithered && blend > interleavedGradientNoise(pixel, temporalClipOffset.w)
         ? firstLevel + 1 : firstLevel;
     float visibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
-        slope, ditheredLevel, PLUTO_VSM_DIRECTIONAL_LEVELS, rawVisibility, normalizedLevel);
+        slope, ditheredLevel, virtualRootLevel(vsm) + 1, rawVisibility, normalizedLevel);
     // A non-resident neighbour falls back to the requested level, as the blend does.
-    if (ditheredLevel != firstLevel && normalizedLevel != float(ditheredLevel) / PLUTO_VSM_ROOT_LEVEL)
+    if (ditheredLevel != firstLevel && normalizedLevel != float(ditheredLevel) / virtualRootLevel(vsm))
         visibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
-            slope, firstLevel, PLUTO_VSM_DIRECTIONAL_LEVELS, rawVisibility, normalizedLevel);
+            slope, firstLevel, virtualRootLevel(vsm) + 1, rawVisibility, normalizedLevel);
     if (dithered || visibility < 0.0 || blend <= 0.0 ||
-        normalizedLevel != float(firstLevel) / PLUTO_VSM_ROOT_LEVEL) return visibility;
+        normalizedLevel != float(firstLevel) / virtualRootLevel(vsm)) return visibility;
     float nextRaw, nextLevel;
     const float nextVisibility = evaluateVirtualShadowLevels(world, normal, worldDx, worldDy,
         slope, firstLevel + 1, firstLevel + 2, nextRaw, nextLevel);

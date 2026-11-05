@@ -123,6 +123,10 @@ namespace
             const float time = unit(random) * 1000.0f;
             const auto packed = render::PackFoliageWind(wind, response, time, time - 0.016f);
             const float bound = render::FoliageWindMaxDisplacement(response) * scale;
+            // The bound under this wind, for geometry at most `top` high, holds below the general one.
+            const float top = unit(random) * response.bendHeight * 2.5f;
+            const float windBound = render::FoliageWindMaxDisplacement(wind, response, top) * scale;
+            Require(windBound <= bound * 1.0001f + 1.0e-6f, "The bound under one wind exceeded the general bound");
             for (int sample = 0; sample < 16; ++sample)
             {
                 const glm::vec3 local((unit(random) - 0.5f) * 2.0f, unit(random) * response.bendHeight * 2.5f,
@@ -130,8 +134,21 @@ namespace
                 const float offset = glm::length(render::FoliageWindOffset(packed, model, local, time));
                 Require(std::isfinite(offset) && offset <= bound * 1.0001f + 1.0e-6f,
                         "A vertex moved beyond FoliageWindMaxDisplacement");
+                const glm::vec3 below(local.x, unit(random) * top, local.z);
+                const float belowOffset = glm::length(render::FoliageWindOffset(packed, model, below, time));
+                Require(belowOffset <= windBound * 1.0001f + 1.0e-6f,
+                        "A vertex moved beyond FoliageWindMaxDisplacement under its wind and height");
             }
         }
+        // Calm wind and bending geometry below the pivot do not move.
+        render::FoliageWindResponse tree;
+        tree.enabled = true;
+        tree.bendHeight = 10.0f;
+        tree.pivotHeight = 2.0f;
+        Require(render::FoliageWindMaxDisplacement(render::SceneWindSettings{}, tree, 10.0f) == 0.0f,
+                "Calm wind should not pad bounds");
+        Require(render::FoliageWindMaxDisplacement(Breeze(10.0f), tree, 1.0f) == 0.0f,
+                "Geometry below the pivot should not sway");
     }
 
     // Plants lean downwind on average, softer plants further; gusts stay in range and roll downwind.

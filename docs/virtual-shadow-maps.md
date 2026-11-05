@@ -26,7 +26,7 @@ See [default behavior](VSM_DEFAULT.md).
 `VirtualShadowMaps` owns clipmap policy, GPU resources and VSM pass recording. `BasicRenderer` supplies immutable mesh revisions, draw signatures and a mesh-submission callback. Scene properties are translated separately from renderer implementation. Shared constants and data layouts live in `VirtualShadowConfig.h` and `VirtualShadowCommon.slang`.
 
 1. Render current-frame receiver depth, including alpha-masked receivers. With the depth prepass, `BasicRenderer` renders its coverage depth first and passes it to `Prepare` instead whenever it contains every receiver (graphs reading scene textures are excluded from it), so receivers are rasterized once per frame; the result is identical. Reconstruct visible world positions in compute and select levels using pixel footprints. Atomically mark and compact unique page requests, including the shadow filter guard.
-2. Use four world-stable fine clipmaps, each representing a 16,384-square virtual map with 128-square pages, plus a coarse root level covering the outer fine level's extent. Absolute light-space coordinates preserve cached content while the camera scrolls. Projection changes invalidate affected content; depth recentering uses hysteresis.
+2. Use world-stable fine clipmaps (four up to a 256 m shadow distance, more beyond it; see [VSM in dense foliage](vsm-dense-foliage.md)), each representing a 16,384-square virtual map with 128-square pages, plus a coarse root level covering the outer fine level's extent. Absolute light-space coordinates preserve cached content while the camera scrolls. Projection changes invalidate affected content; depth recentering uses hysteresis.
 3. Retain requested resident pages in a runtime-sized pool (256, 576, or 1024 pages). Directional root coverage reserves 64 pages when enabled; each active spotlight reserves four coarse pages. Directional and local fine requests share the remaining capacity. Allocation stays GPU-driven.
 4. Compute page content signatures from intersecting caster chunks. Signatures cover mesh revisions, transforms/instances, submesh ranges, bounds and alpha material inputs. Caster movement, removal and changed materials invalidate affected content. Unknown bounds conservatively intersect every page.
 5. Select dirty updates using an age-aware GPU sort. Overdue pages precede new coarse coverage, dirty resident content, and new fine coverage. Page and triangle budgets normally bound work; the configurable oversized-page escape admits one aged expensive page to guarantee progress. Generate caster/page lists and indexed-indirect arguments on the GPU. Clear only dirty physical tiles with a generated depth-clear draw, then instance each caster chunk across its selected pages. Hardware clip distances confine geometry to each physical tile.
@@ -201,6 +201,12 @@ fully lit and fades to zero at the outer cone. The outer angle is clamped to
 1–179 degrees; the inner angle is clamped to 0–outer. Settings survive scene and
 prefab serialization. Older scenes retain the original cone width. Changing the
 outer angle also changes the VSM projection and invalidates its cached pages.
+
+## Dense foliage and dynamic casters
+
+Instanced chunks plan, cost and sway each model separately. Fine clipmap levels follow the shadow distance (4 up to
+256 m, at most 8), so the root is `VirtualShadowParameters::levels.x` rather than a constant. Dynamic (unrevised)
+casters draw over a cached static layer. See [VSM in dense foliage](vsm-dense-foliage.md).
 
 ## Quality and freshness controls
 

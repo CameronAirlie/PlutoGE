@@ -10,6 +10,8 @@
 [[vk::binding(8, 0)]] RWTexture2D<uint> requestMask : register(u8, space0);
 [[vk::binding(9, 0)]] RWTexture2D<float> pageTable : register(u9, space0);
 [[vk::binding(10, 0)]] RWStructuredBuffer<uint4> membership : register(u10, space0);
+// Masked chunks' per-model world spheres, PLUTO_VSM_MASKED_INSTANCES per caster; negative radius = unknown.
+[[vk::binding(11, 0)]] StructuredBuffer<float4> instanceBounds : register(t11, space0);
 
 // Diagnostics must not wrap when very expensive pages share a level.
 void addDirtyTriangleCost(uint level, uint cost)
@@ -35,14 +37,14 @@ void resetMain(uint3 id : SV_DispatchThreadID)
         uint2 at = virtualPageCoordinate(index);
         const uint level = index / PLUTO_VSM_LEVEL_PAGES;
         const uint2 local = virtualPageCoordinate(index % PLUTO_VSM_LEVEL_PAGES);
-        const bool root = ((level == PLUTO_VSM_ROOT_LEVEL && vsm.camera.w > 0.5) || (level >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[level].w != 0)) && all(local < virtualGrid(vsm, level));
+        const bool root = ((level == virtualRootLevel(vsm) && vsm.camera.w > 0.5) || (level >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[level].w != 0)) && all(local < virtualGrid(vsm, level));
         requestMask[at] = root ? 1u : 0u;
         pageTable[at] = 0;
         if (root)
             requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + local.y * virtualGrid(vsm, level) + local.x] =
                 local.y * PLUTO_VSM_GRID + local.x;
     }
-    if (index < PLUTO_VSM_LEVELS) requests[index] = ((index == PLUTO_VSM_ROOT_LEVEL && vsm.camera.w > 0.5) || (index >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[index].w != 0)) ? virtualGrid(vsm, index) * virtualGrid(vsm, index) : 0;
+    if (index < PLUTO_VSM_LEVELS) requests[index] = ((index == virtualRootLevel(vsm) && vsm.camera.w > 0.5) || (index >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[index].w != 0)) ? virtualGrid(vsm, index) * virtualGrid(vsm, index) : 0;
     if (index < PLUTO_VSM_COUNTER_COUNT) stats[index] = 0;
     if (index < vsm.pool.x && vsm.settings.z > 0.5)
         pages[index] = (VirtualShadowPage)0;
@@ -162,14 +164,14 @@ void allocateMain(uint lane : SV_GroupIndex)
         for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
             requested[level] = requests[level];
-            if (virtualCoarseLevel(level)) reserved += requested[level];
+            if (virtualCoarseLevel(vsm, level)) reserved += requested[level];
             else if (requested[level] != 0) ++fineLevels;
         }
         uint fineCapacity = vsm.pool.x - min(vsm.pool.x, reserved);
         uint spare = vsm.pool.x;
         for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            planQuotas[level] = min(requested[level], virtualCoarseLevel(level) ? requested[level] : fineCapacity / max(1u, fineLevels));
+            planQuotas[level] = min(requested[level], virtualCoarseLevel(vsm, level) ? requested[level] : fineCapacity / max(1u, fineLevels));
             spare -= planQuotas[level];
         }
         // Round-robin the spare pages; stop once a round grants nothing
@@ -271,19 +273,20 @@ void allocateMain(uint lane : SV_GroupIndex)
         {
             stats[0] += requests[level];
             stats[1] += planCounts[level];
-            if (level < PLUTO_VSM_FINE_LEVELS) { stats[11] += requests[level]; stats[12] += planCounts[level]; }
-            else if (!virtualCoarseLevel(level)) { stats[14] += requests[level]; localResident += planCounts[level]; }
+            if (level < virtualRootLevel(vsm)) { stats[11] += requests[level]; stats[12] += planCounts[level]; }
+            else if (!virtualCoarseLevel(vsm, level)) { stats[14] += requests[level]; localResident += planCounts[level]; }
         }
         stats[5] = stats[0] - stats[1];
         stats[13] -= localResident;
     }
 }
 
-bool intersects(VirtualShadowCaster caster, VirtualShadowPage page)
+// Conservative bounds/page test. `extents` is a world AABB around sphere.xyz, or negative to test the sphere alone.
+bool intersects(float4 sphere, float4 extents, VirtualShadowPage page)
 {
-    if (caster.bounds.w < 0) return true;
+    if (sphere.w < 0) return true;
     uint level = page.address.z;
-    if (level == PLUTO_VSM_ROOT_LEVEL && caster.bounds.w < vsm.metrics[level].x * vsm.culling.x) return false;
+    if (level == virtualRootLevel(vsm) && sphere.w < vsm.metrics[level].x * vsm.culling.x) return false;
     // Homogeneous page planes support both orthographic and perspective
     // projections. The AABB support function is tighter than a sphere for
     // architectural surfaces, while remaining conservative under clipping.
@@ -294,13 +297,31 @@ bool intersects(VirtualShadowCaster caster, VirtualShadowPage page)
     for (int i = 0; i < 6; ++i)
     {
         float4 plane = mul(planes[i], vsm.matrices[level]);
-        float radius = caster.extents.x >= 0 ? dot(abs(plane.xyz), caster.extents.xyz)
-            : caster.bounds.w * length(plane.xyz);
-        float distance = dot(plane, float4(caster.bounds.xyz, 1));
+        float radius = extents.x >= 0 ? dot(abs(plane.xyz), extents.xyz) : sphere.w * length(plane.xyz);
+        float distance = dot(plane, float4(sphere.xyz, 1));
         float tolerance = 1.e-5 * (1.0 + abs(distance) + radius);
         if (distance < -radius - tolerance) return false;
     }
     return true;
+}
+// Which of a caster's models reach the page: a bit per chunk-local model for masked chunks of several models, otherwise
+// 1 when the chunk does (its page entry then draws every model). Zero when none does.
+uint intersectionMask(uint index, VirtualShadowCaster caster, VirtualShadowPage page)
+{
+    if (!intersects(caster.bounds, caster.extents, page)) return 0;
+    if (caster.draw.z <= 1 || !virtualMaskedCaster(caster)) return 1;
+    uint mask = 0;
+    for (uint model = 0; model < caster.draw.z; ++model)
+        if (intersects(instanceBounds[index * PLUTO_VSM_MASKED_INSTANCES + model], float4(-1, -1, -1, 0), page))
+            mask |= 1u << model;
+    return mask;
+}
+// The models of `mask` that cast their swaying pose on this page. Coarse levels are low-resolution fallbacks: they cast
+// the rest pose, so a swaying caster does not redraw their large, expensive pages every frame.
+uint swayingMask(VirtualShadowCaster caster, VirtualShadowPage page, uint mask)
+{
+    if (virtualCoarseLevel(vsm, page.address.z)) return 0;
+    return virtualMaskedCaster(caster) ? mask & caster.still.z : (caster.still.z != 0 ? mask : 0);
 }
 uint mixHash(uint hash, uint value) { return (hash ^ value) * 16777619u; }
 groupshared uint4 signatureItems[64];
@@ -309,8 +330,8 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 {
     VirtualShadowPage p = pages[group.x];
     if (p.state.y != vsm.limits.y) return;
-    uint2 hash = uint2(2166136261u, 3339675911u);
-    uint cost = 0;
+    uint2 hash = uint2(2166136261u, 3339675911u), staticHash = hash;
+    uint staticCost = 0, dynamicCost = 0;
     for (uint first = 0; first < vsm.limits.x; first += 64)
     {
         uint index = first + lane;
@@ -322,10 +343,20 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             uint4 cached = membership[at];
             if (cached.x != caster.identity.z || cached.y != p.pending.w)
             {
-                cached = uint4(caster.identity.z, p.pending.w, intersects(caster, p) ? 1u : 0u, 0);
+                cached = uint4(caster.identity.z, p.pending.w, intersectionMask(index, caster, p), 0);
                 membership[at] = cached;
             }
-            item = uint4(caster.identity.xy, (caster.draw.x / 3) * caster.draw.z, cached.z);
+            if (cached.z != 0)
+            {
+                // The page's content is the rest pose unless one of the models reaching it sways here; the masks
+                // distinguish which models (and which of them sway) the page holds.
+                const uint sways = swayingMask(caster, p, cached.z);
+                const uint2 identity = sways != 0 ? caster.identity.xy : caster.still.xy;
+                const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(cached.z) : caster.draw.z;
+                // w: 1 for a static caster, 2 for a dynamic one.
+                item = uint4(mixHash(identity.x, cached.z), mixHash(identity.y, sways), (caster.draw.x / 3) * models,
+                             caster.still.w != 0 ? 2u : 1u);
+            }
         }
         signatureItems[lane] = item;
         GroupMemoryBarrierWithGroupSync();
@@ -337,13 +368,25 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             if (next.w == 0) continue;
             hash.x = mixHash(mixHash(hash.x, next.x), next.y);
             hash.y = mixHash(mixHash(hash.y, next.y), next.x);
-            cost += min(next.z, 0xffffffffu - cost);
+            if (next.w == 1)
+            {
+                staticHash.x = mixHash(mixHash(staticHash.x, next.x), next.y);
+                staticHash.y = mixHash(mixHash(staticHash.y, next.y), next.x);
+                staticCost += min(next.z, 0xffffffffu - staticCost);
+            }
+            else dynamicCost += min(next.z, 0xffffffffu - dynamicCost);
         }
         GroupMemoryBarrierWithGroupSync();
     }
     if (lane == 0)
     {
+        // An update redraws the static layer when its casters changed, the page has no depth yet, or the layer was
+        // (re)created since; otherwise it restores the layer and costs only the dynamic casters.
+        const bool redrawStatic = !virtualStaticLayer(vsm) || p.state.z == 0 || p.layer.z != vsm.levels.y ||
+            any(p.layer.xy != staticHash);
+        const uint cost = redrawStatic ? staticCost + min(dynamicCost, 0xffffffffu - staticCost) : dynamicCost;
         p.pending = uint4(hash, cost, p.pending.w);
+        p.freshness.yzw = uint3(staticHash, redrawStatic ? 1u : 0u);
         pages[group.x] = p;
     }
 }
@@ -383,9 +426,11 @@ void budgetMain(uint lane : SV_GroupIndex)
                     addDirtyTriangleCost(p.address.z, p.pending.z);
                     InterlockedMax(stats[PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES], p.pending.z);
                     uint priority = age >= vsm.scheduling.x ? 4u :
-                        (p.state.z == 0 && virtualCoarseLevel(p.address.z) ? 3u : p.state.z != 0 ? 2u : 1u);
+                        (p.state.z == 0 && virtualCoarseLevel(vsm, p.address.z) ? 3u : p.state.z != 0 ? 2u : 1u);
                     candidate = uint4(priority, age, p.pending.z, index);
                     InterlockedAdd(stats[2], 1);
+                    InterlockedAdd(stats[p.state.z != 0 ? PLUTO_VSM_STATS_CHANGED_DIRTY : PLUTO_VSM_STATS_NEW_DIRTY], 1);
+                    if (p.freshness.w != 0) InterlockedAdd(stats[PLUTO_VSM_STATS_STATIC_DIRTY], 1);
                     InterlockedMax(stats[16], age);
                 }
                 pages[slot] = p;
@@ -446,16 +491,30 @@ void binMain(uint3 id : SV_DispatchThreadID)
     uint index = id.x;
     if (index >= vsm.limits.x) return;
     VirtualShadowCaster caster = casters[index];
+    const bool masked = virtualMaskedCaster(caster);
+    // With a static layer, static casters draw into it only where it is redrawn; dynamic casters draw every update.
+    const bool layered = virtualStaticLayer(vsm) && caster.still.w == 0;
+    // Updates never exceed the page budget (limits.z), and a masked chunk lists each page at most once per model.
+    const uint list = index * virtualListStride(vsm.limits);
     uint count = 0;
     for (uint update = 0; update < stats[9]; ++update)
     {
         uint slot = requests[PLUTO_VSM_UPDATE_LIST_OFFSET + update];
-        if (membership[index * vsm.pool.x + slot].z != 0)
-            pageLists[index * vsm.pool.x + count++] = slot;
+        if (layered && pages[slot].freshness.w == 0) continue;
+        uint mask = membership[index * vsm.pool.x + slot].z;
+        if (mask == 0) continue;
+        const uint sways = swayingMask(caster, pages[slot], mask);
+        if (!masked) pageLists[list + count++] = virtualPageEntry(slot, 0, sways != 0);
+        else for (; mask != 0; mask &= mask - 1)
+        {
+            const uint model = firstbitlow(mask);
+            pageLists[list + count++] = virtualPageEntry(slot, model, ((sways >> model) & 1u) != 0);
+        }
     }
     uint command = index * 5;
     indirectCommands[command] = caster.draw.x;
-    indirectCommands[command + 1] = count * caster.draw.z;
+    // Masked entries name their model; other entries draw every model of the chunk.
+    indirectCommands[command + 1] = masked ? count : count * caster.draw.z;
     indirectCommands[command + 2] = caster.draw.y;
     indirectCommands[command + 3] = 0;
     indirectCommands[command + 4] = vsm.scheduling.z != 0 ? index * PLUTO_VSM_INSTANCE_STRIDE : 0;
@@ -468,7 +527,11 @@ void publishMain(uint3 id : SV_DispatchThreadID)
     if (id.x >= vsm.pool.x) return;
     VirtualShadowPage p = pages[id.x];
     if (p.state.y != vsm.limits.y) return;
-    if (p.state.w != 0) { p.signature = uint4(p.pending.xy, 0, vsm.limits.y); p.state.z = 1; p.freshness.x = 0; }
+    if (p.state.w != 0)
+    {
+        p.signature = uint4(p.pending.xy, 0, vsm.limits.y); p.state.z = 1; p.freshness.x = 0;
+        if (virtualStaticLayer(vsm) && p.freshness.w != 0) p.layer = uint4(p.freshness.yz, vsm.levels.y, 0);
+    }
     if (p.state.z != 0)
         pageTable[virtualPageCoordinate(p.state.x) + uint2(0, p.address.z * PLUTO_VSM_GRID)] = float(id.x + 1);
     pages[id.x] = p;

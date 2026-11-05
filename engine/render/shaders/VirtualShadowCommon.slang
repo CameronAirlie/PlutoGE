@@ -13,6 +13,7 @@ struct VirtualShadowParameters
     uint4 pool; // capacity, atlas tiles per axis, atlas pixels per axis, spot fine grid
     uint4 scheduling; // maximum preferred dirty age, allow oversized page, unused
     float4 culling; // minimum coarse caster radius in texels, unused
+    uint4 levels; // directional root level (= active fine levels), static layer generation (0 = none), unused
     uint4 membershipEpochs[(PLUTO_VSM_LEVELS + 3) / 4];
 };
 struct VirtualShadowPage
@@ -21,23 +22,47 @@ struct VirtualShadowPage
     uint4 state; // current virtual key, selected frame, valid depth, scheduled dirty
     uint4 signature; // cached hash low/high, historical dirty start, last publish
     uint4 pending; // candidate hash low/high, triangle cost, membership generation
-    uint4 freshness; // continuously requested dirty start, reserved
+    // Continuously requested dirty start; this frame's static-layer hash low/high; 1 when this update redraws the static
+    // layer (always without one).
+    uint4 freshness;
+    uint4 layer; // static layer: hash low/high and static layer generation it was drawn under, unused
 };
+// With a static layer (levels.y, its generation, nonzero) each page keeps the static casters' depth apart: an update
+// whose static casters are unchanged restores it and draws the dynamic casters only.
+bool virtualStaticLayer(VirtualShadowParameters p) { return p.levels.y != 0; }
+bool virtualRedrawsStatic(VirtualShadowParameters p, VirtualShadowPage page) { return !virtualStaticLayer(p) || page.freshness.w != 0; }
 struct VirtualShadowCaster
 {
     float4 bounds;
     uint4 draw; // index count, first index, model count, original draw index
-    uint4 identity;
+    uint4 identity; // swaying signature low/high, membership generation, unused
     float4 extents; // conservative world AABB around bounds.xyz; negative = unknown
+    uint4 still; // rest-pose signature low/high, swaying instance mask (bit per chunk-local model), 1 if dynamic
 };
+// Masked chunks list one entry per (page, instance); others one entry per page, drawn for every model.
+bool virtualMaskedCaster(VirtualShadowCaster caster) { return caster.draw.z <= PLUTO_VSM_MASKED_INSTANCES; }
+bool virtualMaskedModelCount(uint models) { return models <= PLUTO_VSM_MASKED_INSTANCES; }
+uint virtualListStride(uint4 limits) { return limits.z * PLUTO_VSM_MASKED_INSTANCES; }
+uint virtualPageEntry(uint slot, uint instance, bool sways)
+{
+    return slot | (instance << PLUTO_VSM_ENTRY_INSTANCE_SHIFT) | (sways ? PLUTO_VSM_ENTRY_SWAY : 0u);
+}
+uint virtualEntrySlot(uint entry) { return entry & PLUTO_VSM_ENTRY_SLOT_MASK; }
+uint virtualEntryInstance(uint entry) { return (entry >> PLUTO_VSM_ENTRY_INSTANCE_SHIFT) & PLUTO_VSM_ENTRY_INSTANCE_MASK; }
+bool virtualEntrySways(uint entry) { return (entry & PLUTO_VSM_ENTRY_SWAY) != 0; }
 uint2 virtualPageCoordinate(uint key) { return uint2(key % PLUTO_VSM_GRID, key / PLUTO_VSM_GRID); }
+// Directional levels are 0..virtualRootLevel: the fine levels, then the coarse root.
+uint virtualRootLevel(VirtualShadowParameters p) { return p.levels.x; }
 uint virtualGrid(VirtualShadowParameters p, uint level)
 {
     return level >= PLUTO_VSM_DIRECTIONAL_LEVELS && level < PLUTO_VSM_SPOT_ROOT_BASE
-        ? p.pool.w : PLUTO_VSM_LEVEL_GRID(level);
+        ? p.pool.w : PLUTO_VSM_LEVEL_GRID(level, virtualRootLevel(p));
 }
 uint virtualResolution(VirtualShadowParameters p, uint level) { return virtualGrid(p, level) * PLUTO_VSM_PAGE_SIZE; }
-bool virtualCoarseLevel(uint level) { return level == PLUTO_VSM_ROOT_LEVEL || level >= PLUTO_VSM_SPOT_ROOT_BASE; }
+bool virtualCoarseLevel(VirtualShadowParameters p, uint level)
+{
+    return level == virtualRootLevel(p) || level >= PLUTO_VSM_SPOT_ROOT_BASE;
+}
 float3 virtualCoordinate(VirtualShadowParameters p, uint level, float3 world)
 {
     float4 projected = mul(p.matrices[level], float4(world, 1));
@@ -58,12 +83,14 @@ float virtualReceiverFootprint(VirtualShadowParameters p, float3 world)
 int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
 {
     footprint *= max(p.settings.w, 1.0);
-    for (int level = 0; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
+    const int root = int(virtualRootLevel(p));
+    for (int level = 0; level <= root; ++level)
     {
         float3 uv = virtualCoordinate(p, level, world);
         float guard = 7.0 / virtualResolution(p, level);
+        // The outermost fine level and the root accept any footprint.
         if (all(uv.xy > guard) && all(uv.xy < 1.0 - guard) && uv.z >= 0 && uv.z <= 1 &&
-            (p.metrics[level].x * 2.0 >= footprint || level >= PLUTO_VSM_FINE_LEVELS - 1)) return level;
+            (p.metrics[level].x * 2.0 >= footprint || level >= root - 1)) return level;
     }
     return -1;
 }
@@ -72,12 +99,13 @@ int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
 // before the level selector advances, ending at exactly the selector boundary.
 float virtualLevelBlend(VirtualShadowParameters p, int level, float3 world, float footprint)
 {
-    if (level < 0 || level >= PLUTO_VSM_ROOT_LEVEL) return 0.0;
+    const int root = int(virtualRootLevel(p));
+    if (level < 0 || level >= root) return 0.0;
     float3 uv = virtualCoordinate(p, level, world);
     float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     float guard = 7.0 / virtualResolution(p, level);
     float spatial = 1.0 - smoothstep(guard, 0.1, edge);
-    float resolutionBlend = level < PLUTO_VSM_FINE_LEVELS - 1
+    float resolutionBlend = level < root - 1
         ? smoothstep(1.5, 2.0, footprint * max(p.settings.w, 1.0) / p.metrics[level].x)
         : 0.0;
     return max(spatial, resolutionBlend);

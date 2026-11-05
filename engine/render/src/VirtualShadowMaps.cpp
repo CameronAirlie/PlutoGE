@@ -36,31 +36,85 @@ namespace PlutoGE::render
             FoliageWindParameters foliageWind{};
         };
         static_assert(sizeof(BatchedDraw) == 32 + sizeof(FoliageWindParameters));
-        struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; glm::vec4 extents; };
-        static_assert(sizeof(Caster) == 64 && sizeof(DrawParameters) == 4128 + sizeof(FoliageWindParameters));
+        // VirtualShadowCommon's VirtualShadowCaster.
+        struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; glm::vec4 extents; glm::uvec4 still; };
+        static_assert(sizeof(Caster) == 80 && sizeof(DrawParameters) == 4128 + sizeof(FoliageWindParameters));
+        using InstanceBoundsRecord = std::array<glm::vec4, PLUTO_VSM_MASKED_INSTANCES>;
+        static_assert(PLUTO_VSM_MASKED_INSTANCES <= 32, "masks hold one bit per model");
+
+        // How far `range` (mesh space) of a model sways from its rest pose under this frame's wind: the reach at the
+        // range's height, scaled by the model's vertical scale. Valid while the wind's settings stay the same, which
+        // preparation guarantees by rebuilding the chunks whenever they change.
+        float WindPad(const FoliageWindFrame &wind, const BasicDraw &draw, const ShadowGeometryCluster &range,
+                      const glm::mat4 &model)
+        {
+            const float top = range.extents.x < 0.0f ? std::numeric_limits<float>::infinity() : range.center.y + range.extents.y;
+            const float reach = wind.MaxDisplacement(draw.foliageWind, top);
+            return reach > 0.0f ? reach * glm::length(glm::vec3(model[1])) : 0.0f;
+        }
+        // Grows known world bounds of `range` under `models` by their largest wind reach, so swaying geometry stays
+        // inside them.
+        void PadForWind(ShadowWorldBounds &bounds, const FoliageWindFrame &wind, const BasicDraw &draw,
+                        const ShadowGeometryCluster &range, std::span<const glm::mat4> models)
+        {
+            if (bounds.sphere.w < 0.0f) return;
+            float pad = 0.0f;
+            for (const auto &model : models) pad = std::max(pad, WindPad(wind, draw, range, model));
+            bounds.sphere.w += pad;
+            bounds.extents += glm::vec4(pad, pad, pad, 0.0f);
+        }
+        // Casters whose draws have no preparation revision may change behind the same packet every frame (skinned and
+        // other transient draws). With a static layer, their pages restore the other casters' cached depth and redraw
+        // only these.
+        bool IsDynamicCaster(const BasicDraw &draw) noexcept { return draw.preparationRevision == 0; }
+        // Pages updated per frame at most (parameters.limits.z); caster page lists are sized by it.
+        std::uint32_t PageUpdateBudget(const BasicLighting &lighting, std::uint32_t poolCapacity) noexcept
+        {
+            return std::clamp(lighting.virtualShadowPageBudget, 1u, poolCapacity);
+        }
+        // The models of a chunk that cast their swaying pose: a bit per model of a masked chunk (`models` holds their
+        // spheres), otherwise every bit when the chunk as a whole is within the wind's shadow sway distance.
+        std::uint32_t ShadowSwayMask(const FoliageWindFrame &wind, const FoliageWindResponse &response,
+                                     const glm::vec4 &chunkBounds, std::span<const glm::vec4> models, const glm::vec3 &camera)
+        {
+            if (!wind.ShadowSways(response, chunkBounds, camera)) return 0;
+            if (models.empty()) return ~0u;
+            std::uint32_t mask = 0;
+            for (std::size_t model = 0; model < models.size(); ++model)
+                if (wind.ShadowSways(response, models[model], camera)) mask |= 1u << model;
+            return mask;
+        }
+        // Whether a chunk of `models` models plans and sways each model separately (VirtualShadowCommon's masked casters).
+        constexpr bool MaskedModels(std::size_t models) noexcept { return models > 1 && models <= PLUTO_VSM_MASKED_INSTANCES; }
         // Subdivision buys little when the entire mesh fits within one page's
         // width. Coalesce those ranges to avoid multiplying CPU submissions.
         // The world bound of an instanced draw's chunk of `count` instances from `first`: its geometry (`range`, mesh
-        // space) under each instance's model, padded by the wind's reach at the chunk's largest vertical scale.
-        // Without it a chunk took the whole draw's bound: one of a foliage cell's thousands of instances was planned
-        // into, and as it swayed dirtied, every page the cell touched. Unknown when the draw is not instanced or the
-        // range has no bound.
-        ShadowWorldBounds InstanceChunkBounds(const BasicDraw &draw, const ShadowGeometryCluster &range,
-                                              std::size_t first, std::size_t count)
+        // space) under each instance's model, padded by the wind's reach. Without it a chunk took the whole draw's
+        // bound: one of a foliage cell's thousands of instances was planned into, and as it swayed dirtied, every page
+        // the cell touched. Unknown when the draw is not instanced or the range has no bound.
+        ShadowWorldBounds InstanceChunkBounds(const FoliageWindFrame &wind, const BasicDraw &draw,
+                                              const ShadowGeometryCluster &range, std::size_t first, std::size_t count)
         {
             if (!draw.instanceModels || draw.instanceModels->size() <= 1 || range.extents.x < 0.0f) return {};
             const auto models = std::span<const glm::mat4>(*draw.instanceModels).subspan(first, count);
             auto bounds = ShadowClusterWorldBounds(range, models);
-            if (bounds.sphere.w < 0.0f) return bounds;
-            if (const float reach = FoliageWindMaxDisplacement(draw.foliageWind); reach > 0.0f)
-            {
-                float scale = 0.0f;
-                for (const auto &model : models) scale = std::max(scale, glm::length(glm::vec3(model[1])));
-                const float pad = reach * scale;
-                bounds.sphere.w += pad;
-                bounds.extents += glm::vec4(pad, pad, pad, 0.0f);
-            }
+            PadForWind(bounds, wind, draw, range, models);
             return bounds;
+        }
+        // The world spheres of a masked chunk's models (`range` under each, padded by its wind reach); unused entries
+        // and unknown bounds are negative, which pages treat as reaching everywhere.
+        InstanceBoundsRecord ModelBounds(const FoliageWindFrame &wind, const BasicDraw &draw,
+                                         const ShadowGeometryCluster &range, std::span<const glm::mat4> models)
+        {
+            InstanceBoundsRecord result;
+            result.fill(glm::vec4(0, 0, 0, -1));
+            for (std::size_t index = 0; index < std::min(models.size(), result.size()); ++index)
+            {
+                auto sphere = ShadowClusterWorldSphere(range, models.subspan(index, 1));
+                if (sphere.w >= 0.0f) sphere.w += WindPad(wind, draw, range, models[index]);
+                result[index] = sphere;
+            }
+            return result;
         }
 
         bool FitsShadowPage(const VirtualShadowParameters &parameters, glm::vec4 sphere)
@@ -122,24 +176,28 @@ namespace PlutoGE::render
         const float depthRange = std::max(4.0f * (distance + casterDistance), 64.0f);
         const float depthStep = depthRange / 8.0f;
         float depthCentre = std::round(centre.z / depthStep) * depthStep;
-        if (previous && previous->metrics[PLUTO_VSM_ROOT_LEVEL].y == depthRange)
+        // The root's projection carries the depth centre (any level would; the root always exists).
+        if (previous && previous->metrics[previous->levels.x].y == depthRange)
         {
             // A round-to-nearest centre avoids a global invalidation at world
             // zero. Hysteresis keeps the old projection across quantisation
             // boundaries while receivers/casters still have ample depth room.
-            const float oldCentre = (previous->matrices[PLUTO_VSM_ROOT_LEVEL][3][2] - 0.5f) * depthRange;
+            const float oldCentre = (previous->matrices[previous->levels.x][3][2] - 0.5f) * depthRange;
             if (std::abs(centre.z - oldCentre) < depthRange * 0.25f)
                 depthCentre = oldCentre;
         }
         // Projection epochs hash float bits; -0 and +0 are the same centre.
         if (depthCentre == 0.0f) depthCentre = 0.0f;
-        for (int level = 0; level < PLUTO_VSM_DIRECTIONAL_LEVELS; ++level)
+        // Fine levels 0..root-1 double in span up to twice the distance; the root covers the outermost one coarsely.
+        const int root = static_cast<int>(VirtualShadowFineLevels(distance));
+        result.levels = {static_cast<std::uint32_t>(root), 0, 0, 0};
+        for (int level = 0; level <= root; ++level)
         {
             // Keep the resident root projection unchanged while fine coverage
             // adapts, so refinement changes never discard the safety coverage.
-            const float scale = level == PLUTO_VSM_ROOT_LEVEL ? 1.0f : resolutionScale;
-            const float span = std::ldexp(2.0f * distance * scale, std::min(level, PLUTO_VSM_FINE_LEVELS - 1) - (PLUTO_VSM_FINE_LEVELS - 1));
-            const int grid = PLUTO_VSM_LEVEL_GRID(level);
+            const float scale = level == root ? 1.0f : resolutionScale;
+            const float span = std::ldexp(2.0f * distance * scale, std::min(level, root - 1) - (root - 1));
+            const int grid = PLUTO_VSM_LEVEL_GRID(level, root);
             const float page = span / grid;
             const glm::ivec2 origin = glm::ivec2(glm::floor(glm::vec2(centre) / page)) - grid / 2;
             glm::mat4 projection(1);
@@ -196,6 +254,8 @@ namespace PlutoGE::render
         for (std::uint32_t slot = 8; slot <= 9; ++slot)
             bindings.push_back({slot - 8, 0, slot, ResourceBindingType::StorageImage, ShaderStageMask::Compute});
         bindings.push_back({0, 0, 10, ResourceBindingType::StorageBuffer, ShaderStageMask::Compute});
+        // OpenGL storage slot 1 (NormalizeOpenGLShader's VSM bindings); Vulkan binding 11.
+        bindings.push_back({1, 0, 11, ResourceBindingType::StorageBuffer, ShaderStageMask::Compute});
         constexpr std::array<const char *, 7> names{"VSM reset", "VSM depth requests", "VSM residency", "VSM signatures", "VSM update budget", "VSM caster binning", "VSM publish"};
         for (std::size_t index = 0; index < m_compute.size(); ++index)
             m_compute[index] = GraphicsPipeline(device, device.CreateComputePipeline({shaders.compute[index], bindings, names[index]}));
@@ -205,20 +265,22 @@ namespace PlutoGE::render
             {0, Format::R32G32B32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, position))},
             {1, Format::R32G32Float, static_cast<std::uint32_t>(offsetof(BasicVertex, uv))}}};
         const auto meshLayout = descriptor.vertexLayout;
-        // Pipeline roles in RasterModules order: 0 receiver depth, 1 caster pages, 2 tile clears.
-        constexpr std::array<std::size_t, VirtualShadowShaders::RasterModules.size()> roles{0, 1, 2, 0, 1, 1, 0, 0};
+        // Pipeline roles in RasterModules order: 0 receiver depth, 1 caster pages, 2 tile clears, 3 static layer restores.
+        constexpr std::array<std::size_t, VirtualShadowShaders::RasterModules.size()> roles{0, 1, 2, 0, 1, 1, 0, 0, 3};
         for (std::size_t index = 0; index < m_raster.size(); ++index)
         {
             const auto role = roles[index];
+            // Tile clears and restores draw generated quads over whole tiles.
+            const bool tiles = role == 2 || role == 3;
             // Receivers only produce depth for page requests.
             descriptor.colorFormat = role == 0 ? Format::Undefined : Format::R32Float;
-            descriptor.vertexLayout = role == 2 ? decltype(meshLayout){} : meshLayout;
+            descriptor.vertexLayout = tiles ? decltype(meshLayout){} : meshLayout;
             descriptor.vertexShader = shaders.raster[index * 2];
             descriptor.fragmentShader = shaders.raster[index * 2 + 1];
             descriptor.depthCompare = role == 0 ? CompareOperation::Greater : role == 1 ? CompareOperation::Less : CompareOperation::Always;
             descriptor.clipDistanceCount = role == 1 ? 4 : 0;
             descriptor.resourceBindings = {{0, 0, 0, ResourceBindingType::UniformBuffer, ShaderStageMask::AllGraphics}};
-            if (role != 2)
+            if (!tiles)
             {
                 if (index == 5)
                 {
@@ -230,8 +292,9 @@ namespace PlutoGE::render
             }
             if (role != 0) descriptor.resourceBindings.push_back({2, 0, 2, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
             if (role == 1) descriptor.resourceBindings.push_back({4, 0, 4, ResourceBindingType::StorageBuffer, ShaderStageMask::Vertex});
-            if (role == 2) descriptor.vertexLayout = {};
-            descriptor.debugName = role == 0 ? "VSM receiver depth" : role == 1 ? "VSM indirect pages" : "VSM tile clears";
+            if (role == 3) descriptor.resourceBindings.push_back({3, 0, 3, ResourceBindingType::SampledTexture, ShaderStageMask::Fragment});
+            descriptor.debugName = role == 0 ? "VSM receiver depth" : role == 1 ? "VSM indirect pages"
+                                 : role == 2 ? "VSM tile clears" : "VSM static layer restores";
             m_raster[index] = GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
         }
         m_table = Texture(device, device.CreateTexture({PLUTO_VSM_GRID, PLUTO_VSM_GRID * PLUTO_VSM_LEVELS, Format::R32Float,
@@ -259,12 +322,22 @@ namespace PlutoGE::render
             TextureUsage::ColorAttachment, "VSM physical color", false}));
         Buffer pages(device, device.CreateBuffer({tiles * tiles * PLUTO_VSM_PAGE_METADATA_BYTES, BufferUsage::Storage, "VSM persistent physical metadata"}));
         m_depth = std::move(depth); m_color = std::move(color); m_pages = std::move(pages);
+        // The static layer shares the pool's layout; the next frame with dynamic casters creates it at the new size.
+        m_staticDepth.Reset();
         m_poolTiles = tiles;
         m_frame = 0; m_capacity = 0;
         m_uploadedCasters.clear();
         m_stats = std::make_shared<VirtualShadowStats>();
         m_resolutionPolicy = {};
         m_budgetPolicy = {};
+    }
+    void VirtualShadowMaps::CreateStaticLayer(rhi::IRenderDevice &device)
+    {
+        const auto pixels = m_poolTiles * PLUTO_VSM_PAGE_SIZE;
+        m_staticDepth = rhi::Texture(device, device.CreateTexture({pixels, pixels, rhi::Format::D32Float,
+            rhi::TextureUsage::DepthStencilAttachment, "VSM static layer depth", true}));
+        // Generation zero means no layer; pages drawn under an older one redraw their static casters.
+        if (++m_staticGeneration == 0) ++m_staticGeneration;
     }
     bool VirtualShadowMaps::CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters)
     {
@@ -334,6 +407,8 @@ namespace PlutoGE::render
         m_preparationScratch.clear();
         m_preparationScratch.push_back(lighting.virtualShadowClusterCulling);
         m_preparationScratch.push_back(m_batchPages);
+        // Sizes the caster page lists, which preparation allocates.
+        m_preparationScratch.push_back(PageUpdateBudget(lighting, poolCapacity));
         bool immutable = m_frame != 0 && m_cacheMembership && !changed;
         const auto appendKey = [&](std::span<const BasicDraw> draws, bool shadow)
         {
@@ -430,6 +505,13 @@ namespace PlutoGE::render
                 clusteredCount += draw.firstIndex % 3 == 0 ? rangeCount * ((models + 15) / 16) : (models + 63) / 64;
             }
             const bool useClusters = lighting.virtualShadowClusterCulling && clusteredCount <= PLUTO_VSM_MAX_DRAW_CHUNKS;
+            m_stats->clusteredChunks = useClusters;
+            // Chunk bounds are padded for this wind only (WindPad); other settings may sway geometry further.
+            if (!(wind.wind == m_chunkWind))
+            {
+                for (auto &entry : m_casterPackets) entry.second.chunksValid = false;
+                m_chunkWind = wind.wind;
+            }
             // Uploads a chunk's own parameters, for page draws that are not batched and for receivers.
             const auto uploadChunk = [&](Chunk &chunk, std::size_t cursor, const BasicDraw &draw, std::size_t first, std::uint32_t models,
                                          const FoliageWindParameters &chunkWind)
@@ -526,21 +608,31 @@ namespace PlutoGE::render
             // lists and indirect commands they address) are rewritten.
             std::vector<Caster> inputs;
             inputs.reserve(m_casterCount);
+            std::vector<InstanceBoundsRecord> instanceBounds;
+            instanceBounds.reserve(m_casterCount);
             std::vector<BatchedDraw> batched;
             if (m_batchPages) batched.reserve(m_casterCount);
-            std::size_t casterCursor = 0;
-            for (std::size_t index = 0; index < casters.size(); ++index)
+            // Static casters' chunks come first and dynamic ones after them, so the static layer and the main atlas
+            // each draw one contiguous range of chunks (RecordPages).
+            m_casterOrder.clear();
+            for (const bool dynamic : {false, true})
+                for (std::size_t index = 0; index < casters.size(); ++index)
+                    if (m_casterPacketSlots[index] && IsDynamicCaster(casters[index]) == dynamic) m_casterOrder.push_back(index);
+            std::size_t casterCursor = 0, staticCasterCount = 0;
+            bool hasDynamic = false;
+            for (const auto index : m_casterOrder)
             {
                 auto *packet = m_casterPacketSlots[index];
-                if (!packet) continue;
                 const auto &draw = casters[index];
+                const bool dynamic = IsDynamicCaster(draw);
+                hasDynamic |= dynamic;
                 const bool coalesced = useClusters && packet->coalesce;
                 if (packet->chunksValid && packet->clustered == useClusters && packet->coalesced == coalesced)
                     ++m_stats->reusedPackets;
                 else
                 {
                     ++m_stats->rebuiltPackets;
-                    BuildCasterChunks(*packet, draw, useClusters, coalesced);
+                    BuildCasterChunks(*packet, draw, useClusters, coalesced, wind);
                 }
                 if (m_batchPages && !packet->chunks.empty())
                 {
@@ -561,10 +653,12 @@ namespace PlutoGE::render
                 const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
                 for (const auto &part : packet->chunks)
                 {
-                    // A swaying chunk beyond the shadow sway distance casts its rest pose (zero wind constants) under
-                    // the draw's still signature, so its pages stay cached until it comes within the distance.
-                    const bool sways = wind.ShadowSways(draw.foliageWind, part.bounds, lighting.cameraPosition);
-                    const FoliageWindParameters chunkWind = sways ? wind.Parameters(draw.foliageWind) : FoliageWindParameters{};
+                    // Models beyond the shadow sway distance cast their rest pose under the draw's still signature, so
+                    // their pages stay cached until they come within the distance. Masked chunks decide per model.
+                    const auto swaying = ShadowSwayMask(wind, draw.foliageWind, part.bounds,
+                        MaskedModels(part.instances) ? std::span(part.instanceBounds).first(part.instances)
+                                                     : std::span<const glm::vec4>{}, lighting.cameraPosition);
+                    const FoliageWindParameters chunkWind = swaying ? wind.Parameters(draw.foliageWind) : FoliageWindParameters{};
                     if (casterCursor == m_casterChunks.size()) m_casterChunks.emplace_back();
                     auto &chunk = m_casterChunks[casterCursor];
                     const auto firstIndex = baseIndex + part.indexOffset;
@@ -588,13 +682,17 @@ namespace PlutoGE::render
                                            chunkWind});
                     }
                     else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances, chunkWind);
-                    // One identity per chunk geometry, whether its packet was rebuilt or reused this frame.
-                    const auto signature = (sways ? signatures[index] : stillSignatures[index]) ^
-                                           (std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull);
+                    // One identity per chunk geometry, whether its packet was rebuilt or reused this frame. Pages choose
+                    // the swaying or the rest-pose one by the models that reach them (VirtualShadowCompute's swayingMask).
+                    const auto geometry = std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull;
+                    const auto signature = signatures[index] ^ geometry, still = stillSignatures[index] ^ geometry;
                     inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
-                        {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, 0}, part.extents});
+                        {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, 0}, part.extents,
+                        {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, swaying, dynamic ? 1u : 0u}});
+                    instanceBounds.push_back(part.instanceBounds);
                     ++casterCursor;
                 }
+                if (!dynamic) staticCasterCount = casterCursor;
             }
             if (packetFrame % PacketSweepInterval == 0)
                 std::erase_if(m_casterPackets, [&](auto &item)
@@ -606,13 +704,30 @@ namespace PlutoGE::render
                 });
             changed |= receiverCursor != m_receiverCount || casterCursor != m_casterCount;
             m_receiverCount = receiverCursor; m_casterCount = casterCursor;
-            if (m_capacity < std::max(m_casterCount, std::size_t{1}))
+            m_staticCasterCount = staticCasterCount;
+            // The static layer exists from the first frame with both static and dynamic casters until the pool is
+            // replaced; with only one kind it would hold nothing worth restoring.
+            if (hasDynamic && m_staticCasterCount != 0 && !m_staticDepth) CreateStaticLayer(device);
+            // A caster lists at most one entry per updated page and model (VirtualShadowCommon's virtualListStride).
+            const auto listEntries = PageUpdateBudget(lighting, poolCapacity) * PLUTO_VSM_MASKED_INSTANCES;
+            const bool grow = m_capacity < std::max(m_casterCount, std::size_t{1});
+            if (grow)
             {
                 m_capacity = 1;
                 while (m_capacity < m_casterCount) m_capacity *= 2;
                 m_casters = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(Caster), rhi::BufferUsage::Storage, "VSM caster bounds/signatures"}));
                 m_uploadedCasters.clear();
-                m_lists = rhi::Buffer(device, device.CreateBuffer({m_capacity * poolCapacity * 4, rhi::BufferUsage::Storage, "VSM compact caster page lists"}));
+                m_instanceBounds = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(InstanceBoundsRecord),
+                    rhi::BufferUsage::Storage, "VSM masked chunk model bounds"}));
+                m_uploadedInstanceBounds.clear();
+            }
+            if (grow || m_listEntries != listEntries)
+            {
+                m_listEntries = listEntries;
+                m_lists = rhi::Buffer(device, device.CreateBuffer({m_capacity * listEntries * 4, rhi::BufferUsage::Storage, "VSM compact caster page lists"}));
+            }
+            if (grow)
+            {
                 m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
                 // Zero epochs make every pair invalid until evaluated. Each record
                 // stores exact caster/page generations and conservative membership.
@@ -628,13 +743,20 @@ namespace PlutoGE::render
                 {
                     Caster previous;
                     std::memcpy(&previous, m_uploadedCasters.data() + index * sizeof(Caster), sizeof(Caster));
-                    // Membership depends only on conservative bounds, not mesh
-                    // identity. Reordering equal bounds is therefore safe as well.
-                    if (m_cacheMembership && input.bounds == previous.bounds && input.extents == previous.extents) input.identity.z = previous.identity.z;
+                    // Membership depends only on conservative bounds (and, for masked chunks, their models' bounds), not
+                    // mesh identity. Reordering equal bounds is therefore safe as well.
+                    const bool sameModels = previous.draw.z == input.draw.z &&
+                        ((index + 1) * sizeof(InstanceBoundsRecord) <= m_uploadedInstanceBounds.size()) &&
+                        std::memcmp(m_uploadedInstanceBounds.data() + index * sizeof(InstanceBoundsRecord),
+                                    instanceBounds[index].data(), sizeof(InstanceBoundsRecord)) == 0;
+                    if (m_cacheMembership && input.bounds == previous.bounds && input.extents == previous.extents && sameModels)
+                        input.identity.z = previous.identity.z;
                 }
             }
             const auto inputBytes = std::as_bytes(std::span(inputs));
             changed |= UploadChangedRecords(device, m_casters.Get(), inputBytes, sizeof(Caster), m_uploadedCasters);
+            changed |= UploadChangedRecords(device, m_instanceBounds.Get(), std::as_bytes(std::span(instanceBounds)),
+                                            sizeof(InstanceBoundsRecord), m_uploadedInstanceBounds);
             for (std::size_t index = 0; index < m_casterCount; ++index) m_casterChunks[index].submission.indirect = m_indirect.Get();
             if (m_batchPages)
             {
@@ -678,9 +800,10 @@ namespace PlutoGE::render
                         m_budgetPolicy.Observe(timing.gpuObservationId, scope.milliseconds, timing.frameGpuMs);
         }
         else m_budgetPolicy = {};
+        m_stats->rootLevel = parameters.levels.x;
         m_stats->effectiveTriangleBudget = m_budgetPolicy.Budget(std::clamp(lighting.virtualShadowTriangleBudget, 1u, 16000000u));
-        parameters.limits = {m_casterCount, m_frame, std::clamp(lighting.virtualShadowPageBudget, 1u, poolCapacity),
-                             m_stats->effectiveTriangleBudget};
+        parameters.limits = {m_casterCount, m_frame, PageUpdateBudget(lighting, poolCapacity), m_stats->effectiveTriangleBudget};
+        parameters.levels.y = m_staticDepth ? m_staticGeneration : 0u;
         parameters.settings = {lighting.shadowSoftness, 1, m_frame == 1 ? 1 : 0, m_resolutionPolicy.Scale()};
         auto inputKey = parameters;
         inputKey.limits.y = 0; inputKey.settings.z = 0;
@@ -702,7 +825,8 @@ namespace PlutoGE::render
         packet.models = GpuRecordHeap::Invalid;
         packet.modelCount = 0;
     }
-    void VirtualShadowMaps::BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced) const
+    void VirtualShadowMaps::BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced,
+                                              const FoliageWindFrame &wind) const
     {
         packet.chunks.clear();
         packet.chunksValid = true;
@@ -734,17 +858,21 @@ namespace PlutoGE::render
                 {
                     const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
                         ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
-                    const auto bounds = ShadowClusterWorldBounds(clusters[range], transforms);
+                    auto bounds = ShadowClusterWorldBounds(clusters[range], transforms);
+                    PadForWind(bounds, wind, draw, clusters[range], transforms);
                     chunk.bounds = bounds.sphere;
                     chunk.extents = bounds.extents;
                 }
-                else if (const auto bounds = InstanceChunkBounds(draw, whole, first, models); bounds.sphere.w >= 0.0f)
+                else if (const auto bounds = InstanceChunkBounds(wind, draw, whole, first, models); bounds.sphere.w >= 0.0f)
                 {
                     chunk.bounds = bounds.sphere;
                     chunk.extents = bounds.extents;
                 }
                 else
                     chunk.bounds = glm::vec4(draw.shadowBoundsCenter, radius);
+                if (MaskedModels(models))
+                    chunk.instanceBounds = ModelBounds(wind, draw, subdivide ? clusters[range] : whole,
+                                                       std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models));
                 packet.chunks.push_back(chunk);
             }
         }
@@ -757,11 +885,12 @@ namespace PlutoGE::render
         const std::array buffers{m_pages.Get(), m_casters.Get(), m_lists.Get(), m_indirect.Get(), m_requestList.Get(), m_counters.Get()};
         for (std::uint32_t index = 0; index < buffers.size(); ++index) commands.BindStorageBuffer(index + 2, buffers[index]);
         commands.BindStorageBuffer(0, m_membership.Get());
+        commands.BindStorageBuffer(1, m_instanceBounds.Get());
         commands.BindStorageImage(0, m_requests.Get());
         commands.BindStorageImage(1, m_table.Get());
     }
     std::uint32_t VirtualShadowMaps::RecordChunks(rhi::ICommandContext &commands, const SubmitMesh &submit,
-                                                  const std::vector<Chunk> &chunks, std::size_t count,
+                                                  const std::vector<Chunk> &chunks, std::size_t first, std::size_t end,
                                                   ChunkPipelines pipelines)
     {
         // Submission callbacks only bind mesh buffers and issue the draw.
@@ -770,7 +899,7 @@ namespace PlutoGE::render
         std::uint32_t submissions = 0;
         std::size_t boundPipeline = m_raster.size();
         rhi::TextureHandle boundTexture;
-        for (std::size_t index = 0; index < count; ++index)
+        for (std::size_t index = first; index < end; ++index)
         {
             const auto &chunk = chunks[index];
             // Batching covers every caster page chunk; receivers draw one chunk at a time.
@@ -798,7 +927,7 @@ namespace PlutoGE::render
             auto submission = chunk.submission;
             if (batch)
             {
-                const auto limit = std::min(count - index, std::size_t(commands.MaxIndexedIndirectBatchSize()));
+                const auto limit = std::min(end - index, std::size_t(commands.MaxIndexedIndirectBatchSize()));
                 while (submission.commandCount < limit)
                 {
                     const auto &next = chunks[index + submission.commandCount];
@@ -826,7 +955,7 @@ namespace PlutoGE::render
             commands.BeginRendering(depth);
             commands.BindPipeline(m_raster[0].Get());
             commands.BindUniformBuffer(0, m_parameters.Get());
-            RecordChunks(commands, submit, m_receiverChunks, m_receiverCount, {0, 3, 6, 7});
+            RecordChunks(commands, submit, m_receiverChunks, 0, m_receiverCount, {0, 3, 6, 7});
             commands.EndRendering(); commands.EndGpuScope();
         }
         commands.BeginGpuScope("RHI VSM GPU Planning");
@@ -858,18 +987,38 @@ namespace PlutoGE::render
         m_stats->pageDrawBatches = 0;
         if (m_reuseFrame) return;
         commands.BeginGpuScope("RHI Virtual Shadow Pages");
-        rhi::RenderingInfo atlas;
-        atlas.colorAttachments = {m_color.Get()}; atlas.depthAttachment = m_depth.Get();
-        atlas.width = atlas.height = m_poolTiles * PLUTO_VSM_PAGE_SIZE;
-        atlas.clearDepth = atlas.clearColor = false;
-        commands.BeginRendering(atlas);
-        commands.BindPipeline(m_raster[2].Get());
-        commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
-        commands.Draw(m_poolTiles * m_poolTiles * 6);
-        commands.BindPipeline(m_raster[1].Get());
-        commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
-        commands.BindStorageBuffer(4, m_lists.Get());
-        m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, m_casterCount, {1, 4, 1, 4});
+        // One pass per depth target: the cleared tiles' casters, then (with a static layer) the restored tiles'
+        // dynamic casters over the static casters' depth. Binning lists each caster only for the pages it draws.
+        const auto tileDraws = m_poolTiles * m_poolTiles * 6;
+        const auto beginAtlas = [&](rhi::TextureHandle depth, std::size_t tilePipeline)
+        {
+            rhi::RenderingInfo atlas;
+            atlas.colorAttachments = {m_color.Get()}; atlas.depthAttachment = depth;
+            atlas.width = atlas.height = m_poolTiles * PLUTO_VSM_PAGE_SIZE;
+            atlas.clearDepth = atlas.clearColor = false;
+            commands.BeginRendering(atlas);
+            commands.BindPipeline(m_raster[tilePipeline].Get());
+            commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
+            if (tilePipeline == RestorePipeline) commands.BindTexture(3, m_staticDepth.Get(), m_sampler.Get());
+            commands.Draw(tileDraws);
+            commands.BindPipeline(m_raster[1].Get());
+            commands.BindUniformBuffer(0, m_parameters.Get()); commands.BindStorageBuffer(2, m_pages.Get());
+            commands.BindStorageBuffer(4, m_lists.Get());
+        };
+        constexpr ChunkPipelines pagePipelines{1, 4, 1, 4};
+        if (m_staticDepth)
+        {
+            beginAtlas(m_staticDepth.Get(), ClearPipeline);
+            m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, 0, m_staticCasterCount, pagePipelines);
+            commands.EndRendering();
+            beginAtlas(m_depth.Get(), RestorePipeline);
+            m_stats->pageDrawBatches += RecordChunks(commands, submit, m_casterChunks, m_staticCasterCount, m_casterCount, pagePipelines);
+        }
+        else
+        {
+            beginAtlas(m_depth.Get(), ClearPipeline);
+            m_stats->pageDrawBatches = RecordChunks(commands, submit, m_casterChunks, 0, m_casterCount, pagePipelines);
+        }
         commands.EndRendering(); commands.EndGpuScope();
         using rhi::BarrierAccess;
         commands.PipelineBarrier(BarrierAccess::Graphics, BarrierAccess::Compute);
@@ -900,6 +1049,8 @@ namespace PlutoGE::render
                 }
                 stats->maxDirtyPageTriangles = values[PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES];
                 stats->triangleBudgetDeferred = values[PLUTO_VSM_STATS_TRIANGLE_DEFERRED]; stats->pageBudgetDeferred = values[PLUTO_VSM_STATS_PAGE_DEFERRED];
+                stats->newDirty = values[PLUTO_VSM_STATS_NEW_DIRTY]; stats->changedDirty = values[PLUTO_VSM_STATS_CHANGED_DIRTY];
+                stats->staticDirty = values[PLUTO_VSM_STATS_STATIC_DIRTY];
                 stats->gpuFrame = frame; stats->gpuCountersAvailable = true;
             }
         });
@@ -912,11 +1063,15 @@ namespace PlutoGE::render
         stats.resolutionScale = m_resolutionPolicy.Scale();
         stats.reusedFrame = m_reuseFrame;
         stats.submittedIndirectCommands = m_reuseFrame ? 0 : static_cast<std::uint32_t>(m_casterCount);
+        stats.dynamicCasterChunks = static_cast<std::uint32_t>(m_casterCount - m_staticCasterCount);
+        stats.staticLayer = static_cast<bool>(m_staticDepth);
         stats.receiverDraws = m_reuseFrame || m_sceneDepth ? 0 : static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 8 +
             PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + poolCapacity * PLUTO_VSM_PAGE_METADATA_BYTES + sizeof(VirtualShadowParameters) + PLUTO_VSM_COUNTER_COUNT * 4 + 16 +
-            m_capacity * (sizeof(Caster) + poolCapacity * (4 + sizeof(glm::uvec4)) + 20) + PLUTO_VSM_CAPACITY * 4 +
-            std::uint64_t(m_width) * m_height * 8 + m_batchedDraws->MemoryBytes() + m_batchedModels->MemoryBytes();
+            m_capacity * (sizeof(Caster) + sizeof(InstanceBoundsRecord) + m_listEntries * 4 + poolCapacity * sizeof(glm::uvec4) + 20) +
+            PLUTO_VSM_CAPACITY * 4 +
+            std::uint64_t(m_width) * m_height * 8 + m_batchedDraws->MemoryBytes() + m_batchedModels->MemoryBytes() +
+            (m_staticDepth ? std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 4 : 0);
         for (const auto &chunk : m_receiverChunks) stats.memoryBytes += chunk.uploaded.size();
         for (const auto &chunk : m_casterChunks) stats.memoryBytes += chunk.uploaded.size();
         return stats;

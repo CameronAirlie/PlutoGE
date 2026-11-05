@@ -52,6 +52,9 @@ namespace PlutoGE::render
     // Upper bound of a vertex's displacement per world unit of the instance's vertical scale, for any wind the
     // model accepts (it clamps strength), so bounds padded with it stay valid while the wind changes.
     float FoliageWindMaxDisplacement(const FoliageWindResponse &response);
+    // The same bound under one wind, for vertices at most `localTop` (mesh space) high: far tighter, but valid only
+    // while the wind's settings stay the same. Zero when the response does not animate in that wind.
+    float FoliageWindMaxDisplacement(const SceneWindSettings &wind, const FoliageWindResponse &response, float localTop);
     // One frame's wind as the renderer's passes see it: what each draw's FoliageWindParameters are packed from.
     struct FoliageWindFrame
     {
@@ -64,6 +67,11 @@ namespace PlutoGE::render
         FoliageWindParameters Parameters(const FoliageWindResponse &response) const
         {
             return PackFoliageWind(wind, response, time, previousTime);
+        }
+        // FoliageWindMaxDisplacement under this frame's wind: how far geometry at most `localTop` high can sway.
+        float MaxDisplacement(const FoliageWindResponse &response, float localTop) const
+        {
+            return FoliageWindMaxDisplacement(wind, response, localTop);
         }
         // Whether a swaying caster whose bounding sphere is `bounds` (centre, radius) animates its virtual shadow
         // seen from `camera`: within SceneWindSettings::shadowSwayDistance of it, or everywhere when that is 0. A

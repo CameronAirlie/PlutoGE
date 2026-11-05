@@ -60,6 +60,7 @@
 #include "GlobalIlluminationRenderingChecks.h"
 #include "VctPublicationChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
+#include "VirtualShadowStaticLayerChecks.h"
 #include "VsmOnlyRenderingChecks.h"
 #include "DisabledEffectRenderingChecks.h"
 #include "VsmMembershipChecks.h"
@@ -532,6 +533,11 @@ int main(int argc, char **argv)
             const auto readPixels = [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); };
             CheckVsmReceiverReuse(renderer, device, shaders, readPixels);
             CheckVsmCoverageDepthPlanning(renderer, readPixels);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--vsm-static-layer")
+        {
+            CheckVirtualShadowStaticLayer(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--vsm-performance")

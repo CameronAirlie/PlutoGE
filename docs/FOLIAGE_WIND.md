@@ -105,11 +105,17 @@ is swaying:
   shader graphs do. Shadow material blocks do the same.
 - **Shadow signatures.** These hash the packed parameters, which include time, for the cascaded, point and VSM paths.
   Swaying casters therefore redraw their cascades and VSM pages every frame. Wind-free casters stay cached.
-- **Shadow sway distance.** VSM chunks farther than the wind's **Shadow Sway Distance** from the camera (default
+- **Shadow sway distance.** VSM models farther than the wind's **Shadow Sway Distance** from the camera (default
   30 m, `SceneWindSettings::shadowSwayDistance`, 0 sways everywhere) cast their rest pose, under the draw's signature
   without the wind parameters (`FoliageWindFrame::ShadowSways`), so their pages stay cached. Beyond a few dozen metres
-  a shadow's sway moves less than a screen pixel but redraws every page it touches. A chunk crossing the distance
-  redraws its pages once. Cascades sway at every distance.
+  a shadow's sway moves less than a screen pixel but redraws every page it touches. A model crossing the distance
+  redraws its pages once. Instanced chunks of up to 16 models decide per model, and a page sways only if a model
+  reaching it does; the coarse root level always casts the rest pose. Cascades sway at every distance. See
+  [VSM in dense foliage](vsm-dense-foliage.md).
+- **Shadow bounds.** VSM pads caster bounds with `FoliageWindMaxDisplacement(wind, response, localTop)`: the bound
+  under the current wind's strength and gustiness, for the geometry's actual height. It is far tighter than the
+  any-wind bound that culling uses (about 3 m against 30 m for Verdant's canopy at 6 m/s), and VSM rebuilds its chunk
+  bounds whenever the wind settings change.
 - **Draw preparation.** `RenderCommand::foliageWind` is part of the draw-preparation cache key
   (`RhiDrawPreparationCache`), the retained-scene change check and surface equality (`SameBasicDrawSurface`), so
   editing a type's wind rebuilds its draws.

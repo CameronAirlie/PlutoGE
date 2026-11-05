@@ -137,23 +137,44 @@ namespace PlutoGE::render
         return parameters;
     }
 
+    namespace
+    {
+        // foliageWindOffset's largest displacement per world unit of vertical scale, for a wind of at most `strength`
+        // whose gust factor peaks at `maxGust`, at vertices at most `relative` bend heights above the pivot.
+        float WindDisplacementBound(const FoliageWindResponse &plant, float strength, float maxGust, float relative)
+        {
+            const float softness = 1.0f - plant.stiffness;
+            const float sway = float(PLUTO_WIND_MAX_BEND) * softness * std::sqrt(softness) * strength *
+                               (maxGust * float(PLUTO_WIND_LEAN_SHARE) + float(PLUTO_WIND_OSCILLATION_SHARE)) *
+                               relative * relative;
+            // The flutter direction's length is at most sqrt(1 + 0.25 + 1) = 1.5.
+            const float flutter = plant.flutter * float(PLUTO_WIND_FLUTTER_AMPLITUDE) * strength * maxGust * relative * 1.5f;
+            // Horizontally at most sway + flutter; vertically flutter plus the drop that keeps stems from stretching,
+            // which never exceeds the horizontal offset.
+            return std::sqrt(2.0f) * (sway + 2.0f * flutter) * plant.bendHeight;
+        }
+    }
+
     float FoliageWindMaxDisplacement(const FoliageWindResponse &response)
     {
         if (!response.enabled)
             return 0.0f;
+        // Gustiness 1 peaks at twice the mean strength.
+        return WindDisplacementBound(response.Sanitized(), float(PLUTO_WIND_MAX_STRENGTH), 2.0f,
+                                     float(PLUTO_WIND_MAX_RELATIVE_HEIGHT));
+    }
+
+    float FoliageWindMaxDisplacement(const SceneWindSettings &wind, const FoliageWindResponse &response, float localTop)
+    {
+        if (!FoliageWindAnimates(wind, response))
+            return 0.0f;
         const auto plant = response.Sanitized();
-        const float softness = 1.0f - plant.stiffness;
-        constexpr float maxStrength = float(PLUTO_WIND_MAX_STRENGTH);
-        constexpr float maxGust = 2.0f; // gustiness 1
-        constexpr float relative = float(PLUTO_WIND_MAX_RELATIVE_HEIGHT);
-        const float sway = float(PLUTO_WIND_MAX_BEND) * softness * std::sqrt(softness) * maxStrength *
-                           (maxGust * float(PLUTO_WIND_LEAN_SHARE) + float(PLUTO_WIND_OSCILLATION_SHARE)) *
-                           relative * relative;
-        // The flutter direction's length is at most sqrt(1 + 0.25 + 1) = 1.5.
-        const float flutter = plant.flutter * float(PLUTO_WIND_FLUTTER_AMPLITUDE) * maxStrength * maxGust * relative * 1.5f;
-        // Horizontally at most sway + flutter; vertically flutter plus the drop that keeps stems from stretching,
-        // which never exceeds the horizontal offset.
-        return std::sqrt(2.0f) * (sway + 2.0f * flutter) * plant.bendHeight;
+        // foliageWindGust lies in [0, 1], so the gust factor peaks at 1 + gustiness.
+        const float maxGust = 1.0f + std::clamp(wind.gustiness, 0.0f, 1.0f);
+        const float relative = std::isfinite(localTop)
+            ? std::clamp((localTop - plant.pivotHeight) / plant.bendHeight, 0.0f, float(PLUTO_WIND_MAX_RELATIVE_HEIGHT))
+            : float(PLUTO_WIND_MAX_RELATIVE_HEIGHT);
+        return WindDisplacementBound(plant, SceneWindStrength(wind), maxGust, relative);
     }
 
     glm::vec3 FoliageWindOffset(const FoliageWindParameters &wind, const glm::mat4 &model,

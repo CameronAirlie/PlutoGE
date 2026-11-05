@@ -20,9 +20,9 @@ namespace PlutoGE::render
     struct VirtualShadowShaders
     {
         // Shader modules of the raster vertex/fragment pairs, in `raster` order.
-        static constexpr std::array<std::string_view, 8> RasterModules{
+        static constexpr std::array<std::string_view, 9> RasterModules{
             "VSMReceiver", "VSMPage", "VSMClear", "VSMReceiverRigid", "VSMPageRigid", "VSMPageBatch",
-            "VSMReceiverOpaque", "VSMReceiverRigidOpaque"};
+            "VSMReceiverOpaque", "VSMReceiverRigidOpaque", "VSMRestore"};
         std::array<rhi::ComputePipelineDescriptor::ShaderCode, 7> compute;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, RasterModules.size() * 2> raster;
         [[nodiscard]] bool Complete() const;
@@ -37,9 +37,11 @@ namespace PlutoGE::render
         glm::vec4 settings{}, camera{};
         glm::uvec4 pool{}, scheduling{};
         glm::vec4 culling{};
+        // x: the directional root level, which is the number of active fine levels (VirtualShadowFineLevels).
+        glm::uvec4 levels{};
         std::array<glm::uvec4, (PLUTO_VSM_LEVELS + 3) / 4> membershipEpochs{};
     };
-    static_assert(sizeof(VirtualShadowParameters) == 240 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
+    static_assert(sizeof(VirtualShadowParameters) == 256 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
 
     // Read-only receiver bindings of one recorded VSM frame. A secondary view of
     // the same scene from the same viewpoint (a camera-stack overlay) samples
@@ -137,25 +139,43 @@ namespace PlutoGE::render
           bool clustered = false;
       };
         void ResizePool(rhi::IRenderDevice &device, std::uint32_t tiles);
+        // Allocates the static layer (m_staticDepth) and starts a new generation, so every page redraws into it once.
+        void CreateStaticLayer(rhi::IRenderDevice &device);
         void BindCompute(rhi::ICommandContext &commands, std::size_t pipeline);
         // Records `count` chunks with pass-local binding state; returns the number of submissions issued.
         // Opaque (non alpha-tested) chunks use the opaque pipeline pair.
         struct ChunkPipelines { std::size_t instanced, rigid, opaqueInstanced, opaqueRigid; };
         std::uint32_t RecordChunks(rhi::ICommandContext &commands, const SubmitMesh &submit, const std::vector<Chunk> &chunks,
-                                   std::size_t count, ChunkPipelines pipelines);
+                                   std::size_t first, std::size_t end, ChunkPipelines pipelines);
         std::array<rhi::GraphicsPipeline, 7> m_compute;
         std::array<rhi::GraphicsPipeline, VirtualShadowShaders::RasterModules.size()> m_raster;
+        // m_raster's tile pipelines (RasterModules order).
+        static constexpr std::size_t ClearPipeline = 2, RestorePipeline = 8;
+        static_assert(VirtualShadowShaders::RasterModules[ClearPipeline] == "VSMClear" &&
+                      VirtualShadowShaders::RasterModules[RestorePipeline] == "VSMRestore");
         // Batched page draws' records (see RecordChunks), and their models: each caster packet's held where it was
         // first uploaded while the packet stays prepared.
         std::unique_ptr<GpuRecordTable> m_batchedDraws;
         std::unique_ptr<GpuRecordHeap> m_batchedModels;
         bool m_batchPages = false;
         rhi::Texture m_depth, m_color, m_table, m_requests, m_receiverDepth, m_white;
+        // Static layer: the static casters' depth of each physical page, in m_depth's layout. Present once a frame has
+        // dynamic casters; updates whose static casters are unchanged then restore it and redraw only the dynamic ones.
+        rhi::Texture m_staticDepth;
+        std::uint32_t m_staticGeneration = 0;
+        // Caster chunks [0, m_staticCasterCount) are static, the rest dynamic; m_casterOrder lists casters so.
+        std::size_t m_staticCasterCount = 0;
+        std::vector<std::size_t> m_casterOrder;
         // m_receiverDepth, or the scene depth Prepare was given (then no receiver depth pass is recorded).
         rhi::TextureHandle m_planningDepth;
         bool m_sceneDepth = false;
         rhi::Buffer m_parameters, m_pages, m_casters, m_lists, m_indirect, m_requestList, m_counters;
         rhi::Buffer m_membership;
+        // Masked chunks' model spheres (PLUTO_VSM_MASKED_INSTANCES per caster), and the CPU copy they upload from.
+        rhi::Buffer m_instanceBounds;
+        std::vector<std::byte> m_uploadedInstanceBounds;
+        // Page list entries per caster (page budget x PLUTO_VSM_MASKED_INSTANCES) m_lists was allocated for.
+        std::uint32_t m_listEntries = 0;
         rhi::Sampler m_sampler, m_materialSampler;
         // A caster packet's page chunks, held by its preparation revision rather than its place in the caster list,
         // so a packet keeps them as casters enter, leave or change LOD around it while the camera moves.
@@ -165,6 +185,9 @@ namespace PlutoGE::render
             std::uint32_t indexCount = 0, indexOffset = 0, instances = 0, firstInstance = 0;
             glm::vec4 bounds{0, 0, 0, -1};
             glm::vec4 extents{-1, -1, -1, 0};
+            // World sphere of each model of a masked chunk (several models, at most PLUTO_VSM_MASKED_INSTANCES), padded
+            // by its wind reach. Pages plan, cost and sway these models individually.
+            std::array<glm::vec4, PLUTO_VSM_MASKED_INSTANCES> instanceBounds{};
         };
         struct CasterPacket
         {
@@ -187,11 +210,15 @@ namespace PlutoGE::render
             std::uint32_t models = ~0u, modelCount = 0;
             std::uint64_t lastFrame = 0;
         };
-        void BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced) const;
+        // `wind` pads swaying chunks' bounds; chunks are rebuilt when its settings change (m_chunkWind).
+        void BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced,
+                               const FoliageWindFrame &wind) const;
         void ReleaseCasterModels(CasterPacket &packet);
         std::unordered_map<std::uint64_t, CasterPacket> m_casterPackets;
         std::vector<CasterPacket *> m_casterPacketSlots;
         std::vector<glm::mat4> m_modelScratch;
+        // The wind settings the cached caster chunks' sway padding was computed for.
+        SceneWindSettings m_chunkWind{};
         std::uint64_t m_packetFrame = 0, m_projectionRevision = 0;
         struct PreparedPacket
         {

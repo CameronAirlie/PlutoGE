@@ -88,6 +88,8 @@ if (VSM_IMAGE_BINDINGS)
     # Persistent membership uses an unused SSBO slot; stay within the eight
     # guaranteed OpenGL storage-buffer bindings (buffers 2..7 are existing).
     string(REPLACE "binding = 10)" "binding = 0)" shader_source "${shader_source}")
+    # Masked chunks' instance bounds take the last free one.
+    string(REPLACE "binding = 11)" "binding = 1)" shader_source "${shader_source}")
 endif()
 if (INPUT MATCHES "VCTVoxelize")
     string(REPLACE "binding = 8)" "binding = 0)" shader_source "${shader_source}")

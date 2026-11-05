@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include "PlutoGE/render/VirtualShadowConfig.h"
 
 namespace PlutoGE::render
 {
@@ -45,6 +46,22 @@ namespace PlutoGE::render
     constexpr std::uint32_t VirtualShadowSpotGrid(std::uint32_t resolution) noexcept
     {
         return resolution <= 512 ? 4 : resolution <= 1024 ? 8 : 16;
+    }
+
+    // Directional fine clipmap levels for a shadow distance (metres). The outermost level spans twice the distance
+    // and each finer level half the next. Levels are added, up to PLUTO_VSM_MAX_FINE_LEVELS, while the finest would
+    // span more than PLUTO_VSM_MAX_FINEST_SPAN, so a longer distance extends coverage instead of coarsening the
+    // shadows near the camera. Distances up to four times that span (256 m) keep the minimum count and layout.
+    constexpr std::uint32_t VirtualShadowFineLevels(float distance) noexcept
+    {
+        std::uint32_t levels = PLUTO_VSM_MIN_FINE_LEVELS;
+        float finest = 2.0f * distance / float(1u << (levels - 1));
+        while (levels < PLUTO_VSM_MAX_FINE_LEVELS && finest > float(PLUTO_VSM_MAX_FINEST_SPAN))
+        {
+            ++levels;
+            finest *= 0.5f;
+        }
+        return levels;
     }
 
     // Consumes completed GPU observations, never waits for them. Independent

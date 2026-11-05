@@ -203,6 +203,8 @@ add_test(NAME PlutoGEVulkanVsmOnlyTests COMMAND PlutoGEVulkanRhiTests --vsm-only
 add_test(NAME PlutoGEVulkanVsmMembershipTests COMMAND PlutoGEVulkanRhiTests --vsm-membership)
 add_test(NAME PlutoGEOpenGLVsmMembershipTests COMMAND PlutoGEOpenGLRhiTests --vsm-membership)
 add_test(NAME PlutoGEVulkanVsmReceiverReuseTests COMMAND PlutoGEVulkanRhiTests --vsm-reuse)
+add_test(NAME PlutoGEVulkanVsmStaticLayerTests COMMAND PlutoGEVulkanRhiTests --vsm-static-layer)
+add_test(NAME PlutoGEOpenGLVsmStaticLayerTests COMMAND PlutoGEOpenGLRhiTests --vsm-static-layer)
 add_test(NAME PlutoGEOpenGLVsmReceiverReuseTests COMMAND PlutoGEOpenGLRhiTests --vsm-reuse)
 add_test(NAME PlutoGEVulkanDisabledEffectTests COMMAND PlutoGEVulkanRhiTests --disabled-effects)
 add_test(NAME PlutoGEOpenGLDisabledEffectTests COMMAND PlutoGEOpenGLRhiTests --disabled-effects)

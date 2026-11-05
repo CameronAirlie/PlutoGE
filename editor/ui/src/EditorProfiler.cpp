@@ -521,6 +521,9 @@ namespace PlutoGE::ui
             report << "VSM historical dirty age: " << pages.historicalDirtyAge << " frames (includes unrequested intervals); max dirty page "
                    << pages.maxDirtyPageTriangles << " triangles; budget deferrals " << pages.triangleBudgetDeferred
                    << " triangle / " << pages.pageBudgetDeferred << " page\n";
+            report << "VSM dirty pages by cause: " << pages.newDirty << " new, " << pages.changedDirty << " changed, "
+                   << pages.staticDirty << " redrawing static casters; " << pages.rootLevel << " fine levels; static layer "
+                   << (pages.staticLayer ? "on" : "off") << " with " << pages.dynamicCasterChunks << " dynamic chunks\n";
             for (std::size_t level = 0; level < pages.updatedTrianglesByLevel.size(); ++level)
                 if (pages.dirtyTrianglesByLevel[level] || pages.updatedTrianglesByLevel[level])
                     report << "VSM level " << level << ": " << pages.dirtyTrianglesByLevel[level] << " dirty triangles / "

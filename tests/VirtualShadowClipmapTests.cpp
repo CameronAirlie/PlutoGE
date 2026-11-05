@@ -59,14 +59,15 @@ int main()
         BasicLighting lighting;
         lighting.directionalDirection = {0, 0, 1}; lighting.cameraPosition = {.1f, .1f, .1f};
         const auto original = VirtualShadowMaps::BuildClipmaps(lighting);
+        const int root = static_cast<int>(original.levels.x);
         const auto reduced = VirtualShadowMaps::BuildClipmaps(lighting, &original, 4.0f);
         Require(reduced.metrics[0].x == original.metrics[0].x * 4.0f &&
                 reduced.origins[0].z != original.origins[0].z,
                 "Resolution adaptation did not change fine-page identity");
-        Require(std::memcmp(&reduced.matrices[PLUTO_VSM_ROOT_LEVEL], &original.matrices[PLUTO_VSM_ROOT_LEVEL], sizeof(glm::mat4)) == 0 &&
-                reduced.origins[PLUTO_VSM_ROOT_LEVEL] == original.origins[PLUTO_VSM_ROOT_LEVEL],
+        Require(std::memcmp(&reduced.matrices[root], &original.matrices[root], sizeof(glm::mat4)) == 0 &&
+                reduced.origins[root] == original.origins[root],
                 "Resolution adaptation discarded resident coarse coverage");
-        Require(original.metrics[PLUTO_VSM_ROOT_LEVEL].x > original.metrics[PLUTO_VSM_FINE_LEVELS - 1].x,
+        Require(original.metrics[root].x > original.metrics[root - 1].x,
                 "Coarse VSM coverage must have a bounded low-resolution footprint");
         auto depthLighting = lighting;
         depthLighting.cameraPosition.z = 80.0f;
@@ -88,9 +89,30 @@ int main()
         {
             Require(original.origins[level].z == scrolled.origins[level].z, "XY scroll changed projection epoch");
             const glm::vec4 point(.7f, .2f, .5f, 1);
-            const auto before = (glm::vec2(original.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_LEVEL_GRID(level)) + glm::vec2(original.origins[level]);
-            const auto after = (glm::vec2(scrolled.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_LEVEL_GRID(level)) + glm::vec2(scrolled.origins[level]);
+            const auto before = (glm::vec2(original.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_LEVEL_GRID(level, root)) + glm::vec2(original.origins[level]);
+            const auto after = (glm::vec2(scrolled.matrices[level] * point) * .5f + .5f) * float(PLUTO_VSM_LEVEL_GRID(level, root)) + glm::vec2(scrolled.origins[level]);
             Require(glm::length(before - after) < .0001f, "Clipmap scroll changed absolute page addressing");
+        }
+        // Longer shadow distances add fine levels instead of coarsening the finest; up to 256 m keep four.
+        Require(VirtualShadowFineLevels(8.0f) == PLUTO_VSM_MIN_FINE_LEVELS && VirtualShadowFineLevels(142.0f) == 4 &&
+                VirtualShadowFineLevels(256.0f) == 4 && VirtualShadowFineLevels(300.0f) == 5 &&
+                VirtualShadowFineLevels(1000.0f) == 6 && VirtualShadowFineLevels(1.0e6f) == PLUTO_VSM_MAX_FINE_LEVELS,
+                "Fine clipmap level count did not follow the shadow distance");
+        {
+            auto farLighting = lighting;
+            farLighting.shadowDistance = 600.0f;
+            const auto far = VirtualShadowMaps::BuildClipmaps(farLighting);
+            const int farRoot = static_cast<int>(far.levels.x);
+            Require(farRoot == 6 && far.metrics[farRoot - 1].w == 1200.0f && far.metrics[0].w <= PLUTO_VSM_MAX_FINEST_SPAN &&
+                    far.metrics[farRoot].w == far.metrics[farRoot - 1].w,
+                    "A long shadow distance must span it with the outer fine level and keep the finest one small");
+            for (int level = 1; level < farRoot; ++level)
+                Require(far.metrics[level].w == 2.0f * far.metrics[level - 1].w, "Fine clipmap levels must double in span");
+            auto nearLighting = lighting;
+            nearLighting.shadowDistance = 142.0f;
+            const auto near = VirtualShadowMaps::BuildClipmaps(nearLighting);
+            Require(near.levels.x == 4 && near.metrics[0].w == 35.5f && near.metrics[3].w == 284.0f,
+                    "Distances up to 256 m must keep the four-level layout");
         }
         lighting.directionalDirection.x += .1f;
         const auto sun = VirtualShadowMaps::BuildClipmaps(lighting);

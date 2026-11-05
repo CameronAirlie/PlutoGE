@@ -64,17 +64,26 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 #ifdef VSM_BATCHED
     uint chunk = instance / PLUTO_VSM_INSTANCE_STRIDE;
     uint4 parameters = batchedDraws[chunk].parameters;
-    const FoliageWindParameters wind = batchedDraws[chunk].foliageWind;
-    const float4x4 model = batchedModels[parameters.w + localInstance % parameters.y].value;
+    FoliageWindParameters wind = batchedDraws[chunk].foliageWind;
 #else
     uint chunk = drawParameters.x;
     uint4 parameters = drawParameters;
-    const FoliageWindParameters wind = foliageWind;
-    const float4x4 model = models[localInstance % parameters.y];
+    FoliageWindParameters wind = foliageWind;
+#endif
+    // Masked chunks list one entry per (page, model); other chunks one entry per page, drawn for each model.
+    const bool masked = virtualMaskedModelCount(parameters.y);
+    const uint entry = pageLists[chunk * virtualListStride(vsm.limits) + (masked ? localInstance : localInstance / parameters.y)];
+    const uint modelIndex = masked ? virtualEntryInstance(entry) : localInstance % parameters.y;
+    // Binning decided whether this model sways on this page; elsewhere it casts its rest pose.
+    if (!virtualEntrySways(entry)) wind = (FoliageWindParameters)0;
+#ifdef VSM_BATCHED
+    const float4x4 model = batchedModels[parameters.w + modelIndex].value;
+#else
+    const float4x4 model = models[modelIndex];
 #endif
     const float3 world = foliageWindPosition(wind, model, input.position, mul(model, float4(input.position, 1)).xyz,
                                              wind.timing.x);
-    uint slot = pageLists[chunk * vsm.pool.x + localInstance / parameters.y];
+    uint slot = virtualEntrySlot(entry);
     VirtualShadowPage page = pages[slot];
     float4 projected = mul(vsm.matrices[page.address.z], float4(world, 1));
     // Keep the page transform homogeneous: vertices on/behind the light
@@ -103,18 +112,43 @@ float pageFragment(PageOutput input) : SV_Target
     if (drawParameters.z == 1 && baseTexture.Sample(input.uv * alpha.xy).a * alpha.w < alpha.z) discard;
     return input.position.z;
 }
-[shader("vertex")]
-ReceiverOutput clearVertex(uint vertex : SV_VertexID)
+// One quad per physical tile (six vertices each) covering it at the far plane; tiles not drawn collapse outside clip.
+ReceiverOutput tileQuad(uint vertex, bool drawn)
 {
     uint slot = vertex / 6;
     const float2 corners[6] = {float2(0,0),float2(1,0),float2(1,1),float2(0,0),float2(1,1),float2(0,1)};
     float2 uv = (float2(slot % vsm.pool.y, slot / vsm.pool.y) + corners[vertex % 6]) / vsm.pool.y;
     ReceiverOutput output;
-    output.position = float4(uv * 2.0 - 1.0, 1, 1);
+    output.position = drawn ? float4(uv * 2.0 - 1.0, 1, 1) : float4(2, 2, 2, 1);
     if (vsm.viewport.z != 0) output.position.y = -output.position.y;
-    if (pages[slot].state.y != vsm.limits.y || pages[slot].state.w == 0) output.position = float4(2, 2, 2, 1);
     output.uv = 0;
     return output;
 }
+bool virtualTileUpdated(VirtualShadowPage page) { return page.state.y == vsm.limits.y && page.state.w != 0; }
+[shader("vertex")]
+ReceiverOutput clearVertex(uint vertex : SV_VertexID)
+{
+    // Updated tiles whose (static layer's) casters are redrawn start empty.
+    const VirtualShadowPage page = pages[vertex / 6];
+    return tileQuad(vertex, virtualTileUpdated(page) && virtualRedrawsStatic(vsm, page));
+}
 [shader("fragment")]
 float clearFragment(ReceiverOutput input) : SV_Target { return 1.0; }
+
+// With a static layer, every updated tile starts from the static casters' depth, onto which the dynamic casters draw.
+[[vk::binding(3, 0)]] Sampler2D staticLayer : register(t3, space0);
+[shader("vertex")]
+ReceiverOutput restoreVertex(uint vertex : SV_VertexID)
+{
+    return tileQuad(vertex, virtualTileUpdated(pages[vertex / 6]));
+}
+struct RestoreOutput { float color : SV_Target0; float depth : SV_Depth; };
+[shader("fragment")]
+RestoreOutput restoreFragment(ReceiverOutput input)
+{
+    // An exact texel copy: both atlases share the physical page layout.
+    RestoreOutput output;
+    output.depth = staticLayer.Load(int3(int2(input.position.xy), 0)).r;
+    output.color = output.depth;
+    return output;
+}

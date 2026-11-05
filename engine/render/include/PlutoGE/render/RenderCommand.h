@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/MeshImpostor.h"
 #include <glm/glm.hpp>
@@ -36,6 +37,8 @@ namespace PlutoGE::render
         bool isStatic = false;
         bool castsShadow = true;
         bool terrainGeomorph = false;
+        // How the geometry bends in the scene's wind (foliage types); disabled for everything else.
+        FoliageWindResponse foliageWind{};
         // Editor lighting preview: mode (0 off, 1 SH, 2 reflection, 3 rejected), source index.
         glm::vec2 probeDebug{0};
         // Optional producer-owned identity/revision for immutable rigid object

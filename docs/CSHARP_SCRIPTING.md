@@ -345,6 +345,34 @@ Properties: `IsMainCamera`, `Fov`.
 
 Properties: `Intensity`, `Color`.
 
+### WindComponent
+
+The scene's wind ([foliage wind](FOLIAGE_WIND.md)), reached through the generic property bridge. Foliage types with
+wind enabled bend with it every frame, shadows included.
+
+Properties: `Direction` (degrees the wind blows toward: 0 is +X, 90 is +Z), `Speed` (m/s, 0 to 40), `Gustiness`
+(0 to 1) and `GustSize` (metres between gust fronts). Values are clamped as in the inspector.
+
+```csharp
+public sealed class Gale : ScriptBehaviour
+{
+    private WindComponent? _wind;
+    private float _time;
+
+    public override void OnCreate() => _wind = GameObject.Find("Wind")?.GetComponent<WindComponent>();
+
+    public override void OnUpdate(float deltaTime)
+    {
+        if (_wind is null) return;
+        _time += deltaTime;
+        // A storm that builds and fades over a minute.
+        var storm = 0.5f - 0.5f * System.MathF.Cos(_time * System.MathF.Tau / 60.0f);
+        _wind.Speed = 4.0f + 16.0f * storm;
+        _wind.Gustiness = 0.3f + 0.6f * storm;
+    }
+}
+```
+
 ### VolumetricCloudComponent
 
 A cloud volume, reached through the generic property bridge (`RegisteredComponent`). Cloud shadows and overcast

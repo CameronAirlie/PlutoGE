@@ -132,6 +132,14 @@ The list is ordered by priority. P0 packages block the target and P1 packages ar
 
 ### E1 Foliage wind (P0)
 
+**Status: done (2026-11-05).** See [Foliage wind](FOLIAGE_WIND.md). Differences from the design below:
+- The wind constants travel in each pass's material or draw block, not the instance-storage block. Instance storage
+  needs no change.
+- VSM receives wind; graph vertex deformation still disables VSM.
+- Voxel GI and hardware-ray DDGI light the rest pose, so swaying never forces a re-voxelization.
+- Clouds, particles, cloth and fog keep their own wind settings for now. `BuildSceneWind` and `SceneWindVelocity` give
+  them the shared field when they adopt it.
+
 - **What:** a scene-wide wind field and per-type bending. There are three motions: trunk sway from height,
   branch flutter from a per-instance phase, and leaf flutter driven by UV or vertex colour.
 - **Design:**

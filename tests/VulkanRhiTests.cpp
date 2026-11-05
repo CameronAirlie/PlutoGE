@@ -14,6 +14,7 @@
 #include "CloudShadowChecks.h"
 #include "CloudTemporalChecks.h"
 #include "InstanceLodChecks.h"
+#include "FoliageWindRenderingChecks.h"
 #include "ImpostorChecks.h"
 #include "EditorFoliageChecks.h"
 #include "GpuInstanceCullingChecks.h"
@@ -545,6 +546,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--instance-lods")
         {
             CheckInstanceLods(renderer);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--foliage-wind")
+        {
+            CheckFoliageWind(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-culling")

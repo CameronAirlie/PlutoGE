@@ -28,6 +28,8 @@ namespace PlutoGE::render
         draw.sheenColor = glm::vec3(0.0f);
         draw.shaderGraphProgram = nullptr;
         draw.terrainLayers = nullptr;
+        // Cards are distant stand-ins, smaller than the sway: they stay still (docs/FOLIAGE_WIND.md).
+        draw.foliageWind = {};
         // The atlas alpha is the baked coverage.
         draw.alphaMode = 1;
         draw.alphaCutoff = 0.5f;

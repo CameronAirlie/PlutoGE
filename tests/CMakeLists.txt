@@ -183,6 +183,8 @@ add_test(NAME PlutoGEVulkanCloudTemporalTests COMMAND PlutoGEVulkanRhiTests --cl
 add_test(NAME PlutoGEOpenGLCloudTemporalTests COMMAND PlutoGEOpenGLRhiTests --cloud-temporal)
 add_test(NAME PlutoGEVulkanInstanceLodTests COMMAND PlutoGEVulkanRhiTests --instance-lods)
 add_test(NAME PlutoGEOpenGLInstanceLodTests COMMAND PlutoGEOpenGLRhiTests --instance-lods)
+add_test(NAME PlutoGEVulkanFoliageWindTests COMMAND PlutoGEVulkanRhiTests --foliage-wind)
+add_test(NAME PlutoGEOpenGLFoliageWindTests COMMAND PlutoGEOpenGLRhiTests --foliage-wind)
 add_test(NAME PlutoGEVulkanImpostorTests COMMAND PlutoGEVulkanRhiTests --impostors)
 add_test(NAME PlutoGEOpenGLImpostorTests COMMAND PlutoGEOpenGLRhiTests --impostors)
 add_test(NAME PlutoGEVulkanGpuInstanceCullingTests COMMAND PlutoGEVulkanRhiTests --gpu-instance-culling)
@@ -341,6 +343,10 @@ add_executable(PlutoGEFoliageCollisionTests
 pluto_link_engine(PlutoGEFoliageCollisionTests)
 
 add_test(NAME PlutoGEFoliageCollisionTests COMMAND PlutoGEFoliageCollisionTests)
+
+add_executable(PlutoGEFoliageWindTests FoliageWindTests.cpp)
+pluto_link_engine(PlutoGEFoliageWindTests)
+add_test(NAME PlutoGEFoliageWindTests COMMAND PlutoGEFoliageWindTests)
 
 add_executable(PlutoGEPrefabMeshExporterTests
     PrefabMeshExporterTests.cpp

@@ -3,7 +3,8 @@
 PlutoGE foliage renders many copies of a mesh without creating one entity per
 copy. Foliage types can optionally add simple static collision, making the same
 system suitable for both non-colliding details such as grass and colliding
-environment objects such as trees.
+environment objects such as trees. Types can also sway in the scene's wind; see
+[Foliage wind](FOLIAGE_WIND.md).
 
 ## Quick guide: paint colliding trees
 
@@ -408,7 +409,14 @@ Type.N.CollisionEnabled
 Type.N.CollisionCenter
 Type.N.CollisionRadius
 Type.N.CollisionHeight
+Type.N.WindEnabled
+Type.N.WindStiffness
+Type.N.WindFlutter
+Type.N.WindBendHeight
+Type.N.WindPivotHeight
 ```
+
+The wind fields ([Foliage wind](FOLIAGE_WIND.md)) default to disabled, so older scenes keep still foliage.
 
 Instance records now begin with their ID:
 

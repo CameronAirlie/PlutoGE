@@ -78,6 +78,7 @@ add_library(PlutoGEScene
     src/ui/UISelectable.cpp
     src/ui/UILayoutAdapter.cpp
     src/components/VolumetricCloudComponent.cpp
+    src/components/WindComponent.cpp
 )
 
 # Scene baking performs millions of BVH, spatial-hash, and image-filter

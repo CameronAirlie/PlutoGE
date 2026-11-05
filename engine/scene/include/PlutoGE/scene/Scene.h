@@ -39,6 +39,7 @@ namespace PlutoGE::scene
     class LightComponent;
     class PhysicalSkyComponent;
     class VolumetricCloudComponent;
+    class WindComponent;
     class CanvasComponent;
     class RmlWidgetComponent;
     class ParticleSystemComponent;
@@ -251,6 +252,8 @@ namespace PlutoGE::scene
         [[nodiscard]] bool IsPreviewLightingEnabled() const { return m_previewLight != nullptr; }
         const std::vector<PhysicalSkyComponent *> &GetPhysicalSkyComponents() const;
         const std::vector<VolumetricCloudComponent *> &GetVolumetricCloudComponents() const;
+        // Every WindComponent in hierarchy order; the renderer takes the first enabled one on an active entity.
+        const std::vector<WindComponent *> &GetWindComponents() const;
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
         void SubmitRenderCommands();
@@ -291,6 +294,7 @@ namespace PlutoGE::scene
         mutable std::vector<LightComponent *> m_environmentLights;
         mutable std::vector<PhysicalSkyComponent *> m_physicalSkies;
         mutable std::vector<VolumetricCloudComponent *> m_volumetricClouds;
+        mutable std::vector<WindComponent *> m_winds;
         void AddLight(Light *light) { m_lights.push_back(light); }
         void RemoveLight(Light *light)
         {

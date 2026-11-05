@@ -6,6 +6,7 @@
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
+#include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/ImpostorLayout.h"
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShaderGraph.h"
@@ -721,6 +722,9 @@ namespace PlutoGE::render
         std::size_t preparedMaterialHash = 0;
         // Set for terrains with material layers: drawn with the BasicLitTerrain variant.
         std::shared_ptr<const BasicTerrainLayers> terrainLayers;
+        // Wind response (RenderCommand::foliageWind). Every pass deforms enabled draws the same way, with the
+        // scene's wind from BasicLighting::wind (FoliageWindDraws.h).
+        FoliageWindResponse foliageWind{};
     };
 
     struct BasicParticleVertex
@@ -835,6 +839,9 @@ namespace PlutoGE::render
         // foliage detail: below 1, instances take coarser LODs, and hand over to their impostors, from nearer. Clamped
         // to [MinFoliageDetail, MaxFoliageDetail]. GraphicsQuality caps it per player tier.
         float foliageDetail = 1.0f;
+        // The scene's wind (WindComponent, SceneEnvironment.cpp). Calm by default: draws with a foliage wind response
+        // then render exactly as rigid geometry.
+        SceneWindSettings wind{};
         std::vector<BasicPointLight> pointLights;
         // Spot sources for voxel GI; direct surface lighting has its own light path.
         struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; SpotCone cone; };
@@ -1650,6 +1657,8 @@ namespace PlutoGE::render
         std::vector<glm::mat4> m_previousModels;
         bool m_hasPreviousFrame = false;
         float m_previousGraphTime = 0.0f;
+        // This frame's wind (BasicLighting::wind at the shader-graph clock), set before any pass records.
+        FoliageWindFrame m_foliageWind{};
         rhi::TextureHandle m_outputColor;
         std::string m_submissionLabel = "Scene";
         BasicRendererFrameStats m_frameStats;

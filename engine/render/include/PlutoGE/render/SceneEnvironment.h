@@ -21,6 +21,9 @@ namespace PlutoGE::render
     // The scene still supplies sky and atmosphere.
     BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene,
                                      std::span<scene::Light *const> lights);
+    // The scene's wind: the first enabled WindComponent on an active entity, or calm. BuildSceneLighting carries it
+    // in BasicLighting::wind; other consumers (particles, cloth, audio) can read it directly.
+    SceneWindSettings BuildSceneWind(const scene::Scene *scene);
     std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene,
                                                            const BasicLighting &lighting,
                                                            const scene::CameraTagFilter *filter = nullptr);

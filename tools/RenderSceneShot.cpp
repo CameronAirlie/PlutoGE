@@ -10,6 +10,7 @@
 #include "PlutoGE/render/RhiSceneRenderer.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/ShaderArtifacts.h"
+#include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/scene/Entity.h"
@@ -34,16 +35,18 @@
 // Headless scene capture for content review: like PlutoGERenderVisualLab, with a configurable
 // size, optional particle pre-simulation, and it can bake ambient light volumes into a scene
 // copy. Managed scripts, physics, UI and audio do not run.
-//   PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--size WxH]
+//   PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--time seconds] [--size WxH]
 //   PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>
 //   PlutoGERenderSceneShot <project-root> <scene> <output.tga|ppm> --top-down <layout.plutomap> [--size N]
 // --top-down renders a north-up orthographic view of exactly the square a baked .plutomap covers,
 // for a photographic map image that lines up with the outline bake and MapLayout projection.
+// --time poses time-driven vertex animation (foliage wind, shader graphs) at that shader-clock time; shots at
+// different times show the motion.
 int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
     if (argc < 5)
-        throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--size WxH]\n"
+        throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--time seconds] [--size WxH]\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> <output.tga|ppm> --top-down <layout.plutomap> [--size N]");
     auto &assets = core::Engine::GetInstance().GetAssetManager();
@@ -88,7 +91,7 @@ int main(int argc, char **argv) try
         return 0;
     }
 
-    float simulateSeconds = 0;
+    float simulateSeconds = 0, shaderTime = 0;
     unsigned width = 1280, height = 800;
     const bool topDown = std::string_view(argv[4]) == "--top-down";
     assets::JsonValue layout;
@@ -105,6 +108,7 @@ int main(int argc, char **argv) try
     {
         const std::string_view option(argv[argument]);
         if (option == "--simulate" && argument + 1 < argc) simulateSeconds = std::stof(argv[++argument]);
+        else if (option == "--time" && argument + 1 < argc) shaderTime = std::stof(argv[++argument]);
         else if (option == "--size" && argument + 1 < argc)
         {
             const std::string size(argv[++argument]);
@@ -290,6 +294,8 @@ int main(int argc, char **argv) try
         if (topDown || within(draw, draw.maxDrawDistance)) visible.push_back(draw);
         if (topDown || (draw.castsShadow && within(draw, draw.maxShadowDistance))) casters.push_back(draw);
     }
+    // A frozen clock: every frame shows the same pose, so temporal filters settle on it.
+    render::SetShaderGraphTimeSeconds(shaderTime);
     for (int frame = 0; frame < 16; ++frame)
     {
         if (simulateSeconds > 0)

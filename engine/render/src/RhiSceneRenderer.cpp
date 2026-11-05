@@ -132,7 +132,8 @@ namespace PlutoGE::render
                     scale = std::max(scale, MaxAxisScale(model));
             else
                 scale = MaxAxisScale(command.model);
-            return local * scale;
+            // Swaying geometry reaches beyond its rest bounds by at most the wind's bound (FoliageWind.h).
+            return (local + FoliageWindMaxDisplacement(command.foliageWind)) * scale;
         }
 
         // RenderCommand::maxShadowDistance: whether any of the command's casters lies within its producer's shadow
@@ -1191,6 +1192,7 @@ namespace PlutoGE::render
                 draw.probeDebug = command.probeDebug;
                 if (command.probeDebug.x > 0) draw.contributesToGi = false;
                 draw.castsShadow = draw.castsShadow && command.castsShadow;
+                draw.foliageWind = command.foliageWind;
                 draw.shadowBoundsCenter = command.worldBounds.center;
                 draw.shadowBoundsRadius = command.worldBounds.radius;
                 draw.firstIndex = firstIndex;

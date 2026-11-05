@@ -40,6 +40,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/scene/components/WindComponent.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <btBulletDynamicsCommon.h>
@@ -2648,6 +2649,7 @@ namespace PlutoGE::scene
         m_environmentLights.clear();
         m_physicalSkies.clear();
         m_volumetricClouds.clear();
+        m_winds.clear();
         const auto collect = [&](auto &&self, Entity *entity) -> void
         {
             if (!entity)
@@ -2658,6 +2660,8 @@ namespace PlutoGE::scene
                 m_physicalSkies.push_back(sky);
             for (auto *cloud : entity->GetComponents<VolumetricCloudComponent>())
                 m_volumetricClouds.push_back(cloud);
+            for (auto *wind : entity->GetComponents<WindComponent>())
+                m_winds.push_back(wind);
             for (auto *child : entity->GetChildren())
                 self(self, child);
         };
@@ -2676,6 +2680,12 @@ namespace PlutoGE::scene
     {
         RefreshEnvironmentComponents();
         return m_volumetricClouds;
+    }
+
+    const std::vector<WindComponent *> &Scene::GetWindComponents() const
+    {
+        RefreshEnvironmentComponents();
+        return m_winds;
     }
 
     std::vector<Light *> Scene::GetLights() const

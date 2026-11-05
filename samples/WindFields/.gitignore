@@ -1,0 +1,5 @@
+Captures/
+__pycache__/
+.pluto-import.lock
+Library/
+.plutoge-cache/

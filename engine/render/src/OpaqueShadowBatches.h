@@ -1,4 +1,5 @@
 #pragma once
+#include "FoliageWindDraws.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include <algorithm>
 #include <functional>
@@ -8,7 +9,7 @@ namespace PlutoGE::render
 {
     // Batch after cascade culling: merging never expands caster visibility.
     // Opaque coverage depends on geometry, not surface material. Masks and
-    // shader-graph vertex offsets retain the general shadow pipeline.
+    // vertex deformations (graph offsets, foliage wind) retain the general shadow pipeline.
     class OpaqueShadowBatches
     {
       public:
@@ -21,8 +22,7 @@ namespace PlutoGE::render
         };
         static bool Eligible(const BasicDraw &draw)
         {
-            return draw.alphaMode == 0 && draw.surfaceType == 0 &&
-                (!draw.shaderGraphProgram || draw.shaderGraphProgram->data.header.z == 0);
+            return draw.alphaMode == 0 && draw.surfaceType == 0 && !DeformsVertices(draw);
         }
         void Build(std::span<const BasicDraw> draws, std::span<const std::size_t> visible)
         {

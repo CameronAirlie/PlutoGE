@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/scene/components/WindComponent.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
 #include <unordered_map>
 
@@ -32,6 +33,14 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        // Components the scene caches for per-frame environment lookups (Scene::RefreshEnvironmentComponents).
+        bool IsEnvironmentComponentType(ComponentTypeID typeID)
+        {
+            return typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
+                   typeID == GetComponentTypeID<VolumetricCloudComponent>() ||
+                   typeID == GetComponentTypeID<WindComponent>();
+        }
+
         const std::string &ComponentTraceName(const Component &component)
         {
             thread_local std::unordered_map<ComponentTypeID, std::string> names;
@@ -402,9 +411,7 @@ namespace PlutoGE::scene
 
         component->m_entity = this;
         m_componentBuckets[typeID].push_back(component);
-        if (m_scene &&
-            (typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
-             typeID == GetComponentTypeID<VolumetricCloudComponent>()))
+        if (m_scene && IsEnvironmentComponentType(typeID))
             m_scene->InvalidateEnvironmentComponents();
         ++m_componentRevision;
         if (m_scene && typeID == GetComponentTypeID<AnimationComponent>())
@@ -420,9 +427,7 @@ namespace PlutoGE::scene
         }
 
         auto &bucket = m_componentBuckets[typeID];
-        if (m_scene &&
-            (typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
-             typeID == GetComponentTypeID<VolumetricCloudComponent>()))
+        if (m_scene && IsEnvironmentComponentType(typeID))
             m_scene->InvalidateEnvironmentComponents();
         bucket.erase(std::remove(bucket.begin(), bucket.end(), component), bucket.end());
         component->m_entity = nullptr;

@@ -3,6 +3,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <algorithm>
 #include <cmath>
+#include "FoliageWindDraws.h"
 
 namespace PlutoGE::render
 {
@@ -19,7 +20,7 @@ namespace PlutoGE::render
         const rhi::Scissor full{0, 0, width, height};
         const auto fallback = [&](GlassBoundsReason why) { if (reason) *reason = why; return full; };
         if (reason) *reason = GlassBoundsReason::Bounded;
-        if (draw.outlinePass || (draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z != 0))
+        if (draw.outlinePass || DeformsVertices(draw))
             return fallback(GlassBoundsReason::Deformed);
         if (draw.shadowBoundsRadius < 0) return fallback(GlassBoundsReason::Unknown);
         if (!std::isfinite(draw.shadowBoundsRadius) || !std::isfinite(draw.thickness) || !std::isfinite(draw.ior))

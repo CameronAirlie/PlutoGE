@@ -6,6 +6,7 @@ float4 shaderGraphTexture(int slot, float2 uv);
 #else
 #include "ShaderGraphEvaluation.slang"
 #endif
+#include "FoliageWind.slang"
 #include "VirtualShadowCommon.slang"
 [[vk::binding(1, 0)]]
 cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; };
@@ -235,6 +236,16 @@ bool lodDitherDiscards(float lodFade, float2 pixel)
 
 #ifdef PLUTO_BINDLESS_MATERIAL
 #include "BindlessMaterials.slang"
+// Draws carrying wind never take the bindless path (GpuDrivenOpaque::Eligible).
+FoliageWindParameters materialFoliageWind()
+{
+    FoliageWindParameters none;
+    none.field = float4(0.0);
+    none.timing = float4(0.0);
+    none.response = float4(0.0);
+    none.shape = float4(0.0);
+    return none;
+}
 #else
 [[vk::binding(0, 1)]]
 cbuffer MaterialParameters : register(b0, space1)
@@ -267,7 +278,12 @@ cbuffer MaterialParameters : register(b0, space1)
     float4 occlusionParameters;     // x strength
     float4 clearCoatParameters;     // x factor, y roughness
     float4 sheenParameters;         // rgb colour, a roughness
+    FoliageWindParameters foliageWind; // FoliageWind.slang; zero unless the draw sways
 };
+FoliageWindParameters materialFoliageWind()
+{
+    return foliageWind;
+}
 
 [[vk::binding(18, 1)]] Sampler2D emissionTexture : register(t18, space1);
 // Optional surface textures (BasicSurfaceTexture), from set 1 binding 26 (BasicRenderer::SurfaceTextureBinding).
@@ -1083,7 +1099,9 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
                                     float4 debugParameters)
 {
     VertexOutput output;
-    const float4 worldPosition = graphWorldPosition(objectModel,input.position,input.normal,input.uv,shaderGraphFrame.x,debugParameters.y);
+    const FoliageWindParameters wind = materialFoliageWind();
+    float4 worldPosition = graphWorldPosition(objectModel,input.position,input.normal,input.uv,shaderGraphFrame.x,debugParameters.y);
+    worldPosition.xyz = foliageWindPosition(wind, objectModel, input.position, worldPosition.xyz, wind.timing.x);
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -1094,7 +1112,10 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
-    output.previousClip = mul(previousViewProjection, graphWorldPosition(objectPreviousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,debugParameters.y));
+    float4 previousWorld = graphWorldPosition(objectPreviousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,debugParameters.y);
+    // Wind at the previous frame's time, so motion vectors carry the sway and temporal filters do not smear it.
+    previousWorld.xyz = foliageWindPosition(wind, objectPreviousModel, previousPosition, previousWorld.xyz, wind.timing.y);
+    output.previousClip = mul(previousViewProjection, previousWorld);
     output.objectDebug = debugParameters.x;
     output.probeDebug = debugParameters.zw;
     output.outlineWidth = debugParameters.y;

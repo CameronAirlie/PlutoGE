@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/scene/components/WindComponent.h"
 
 #include <algorithm>
 #include <cmath>
@@ -159,7 +160,17 @@ namespace PlutoGE::render
             }
         }
 
+        lighting.wind = BuildSceneWind(scene);
         return lighting;
+    }
+
+    SceneWindSettings BuildSceneWind(const scene::Scene *scene)
+    {
+        if (scene)
+            for (const auto *wind : scene->GetWindComponents())
+                if (wind->IsEnabled() && wind->GetOwner() && wind->GetOwner()->IsActiveInHierarchy())
+                    return wind->GetSettings();
+        return {};
     }
 
     std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene, const BasicLighting &lighting,

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <tuple>
+#include "FoliageWindDraws.h"
 
 namespace PlutoGE::render
 {
@@ -240,7 +241,8 @@ namespace PlutoGE::render
 
     bool GpuDrivenOpaque::Eligible(const BasicDraw &draw) noexcept
     {
-        return draw.mesh && draw.mesh->IsValid() && !draw.shaderGraphProgram && !draw.terrainLayers &&
+        // Bindless materials carry no wind constants (BasicLit.slang materialFoliageWind).
+        return draw.mesh && draw.mesh->IsValid() && !draw.shaderGraphProgram && !draw.terrainLayers && !HasFoliageWind(draw) &&
                draw.surfaceType == 0 && draw.alphaMode == 0 && !draw.outlinePass &&
                (!draw.instanceModels || draw.instanceModels->size() == 1);
     }

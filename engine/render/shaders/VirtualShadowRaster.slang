@@ -1,4 +1,5 @@
 #include "VirtualShadowCommon.slang"
+#include "FoliageWind.slang"
 #ifndef VSM_MODEL_CAPACITY
 #define VSM_MODEL_CAPACITY 64
 #endif
@@ -8,6 +9,7 @@
     column_major float4x4 models[VSM_MODEL_CAPACITY];
     uint4 drawParameters; // chunk index, model count, alpha mode, unused
     float4 alpha; // UV scale, cutoff, base colour alpha
+    FoliageWindParameters foliageWind; // zero unless the caster sways
 };
 [[vk::binding(2, 0)]] StructuredBuffer<VirtualShadowPage> pages : register(t2, space0);
 [[vk::binding(4, 0)]] StructuredBuffer<uint> pageLists : register(t4, space0);
@@ -19,6 +21,7 @@ struct BatchedDraw
 {
     uint4 parameters; // chunk index, model count, alpha mode, first model
     float4 alpha;     // UV scale, cutoff, base colour alpha
+    FoliageWindParameters foliageWind;
 };
 struct BatchedModel { column_major float4x4 value; };
 [[vk::binding(5, 0)]] StructuredBuffer<BatchedDraw> batchedDraws : register(t5, space0);
@@ -37,7 +40,9 @@ struct PageOutput
 ReceiverOutput receiverVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 {
     ReceiverOutput output;
-    output.position = mul(vsm.viewProjection, mul(models[instance], float4(input.position, 1)));
+    const float3 world = foliageWindPosition(foliageWind, models[instance], input.position,
+        mul(models[instance], float4(input.position, 1)).xyz, foliageWind.timing.x);
+    output.position = mul(vsm.viewProjection, float4(world, 1));
     output.uv = input.uv;
     return output;
 }
@@ -59,12 +64,16 @@ PageOutput pageVertex(VertexInput input, uint instance : SV_VulkanInstanceID)
 #ifdef VSM_BATCHED
     uint chunk = instance / PLUTO_VSM_INSTANCE_STRIDE;
     uint4 parameters = batchedDraws[chunk].parameters;
-    float3 world = mul(batchedModels[parameters.w + localInstance % parameters.y].value, float4(input.position, 1)).xyz;
+    const FoliageWindParameters wind = batchedDraws[chunk].foliageWind;
+    const float4x4 model = batchedModels[parameters.w + localInstance % parameters.y].value;
 #else
     uint chunk = drawParameters.x;
     uint4 parameters = drawParameters;
-    float3 world = mul(models[localInstance % parameters.y], float4(input.position, 1)).xyz;
+    const FoliageWindParameters wind = foliageWind;
+    const float4x4 model = models[localInstance % parameters.y];
 #endif
+    const float3 world = foliageWindPosition(wind, model, input.position, mul(model, float4(input.position, 1)).xyz,
+                                             wind.timing.x);
     uint slot = pageLists[chunk * vsm.pool.x + localInstance / parameters.y];
     VirtualShadowPage page = pages[slot];
     float4 projected = mul(vsm.matrices[page.address.z], float4(world, 1));

@@ -260,12 +260,11 @@ need no manual registration.
      - Drop the editor's redundant scratch-array instance culling (§3.9).
      - Bin shadows by instance.
    - Exit at under 33 ms at High at the trailhead.
-4. **E1 wind**, the biggest visual gap. Design notes:
-   - Apply wind in the instanced vertex path (`BasicLit.slang instanceObject` / `transformSurfaceVertex`) and the
-     shadow instanced shaders, from a scene `WindComponent` plus per-layer stiffness carried in the instance-storage
-     block.
-   - Static VSM pages will not move with wind; restrict wind to layers whose shadows are cascaded or contact-only,
-     or invalidate their pages.
+4. **E1 wind**: done ([Foliage wind](FOLIAGE_WIND.md)).
+   - To enable it in Verdant, add a `WindComponent`, then turn on each vegetation type's wind with the presets.
+     `levelkit.vegetation` can write the `Type.N.Wind*` keys.
+   - Swaying casters redraw their VSM pages every frame. Keep ground cover on contact shadows, as Wind Fields does,
+     and measure the canopy's page cost on the Vega 8.
 5. **E3** coverage-preserving alpha mips. Leaves thin out at distance; visible in the aerial and lookout renders.
 6. **Assets:** tropical hero trees, palms and vines (Fab or ambientCG; check licences, see the plan §2). Retune the
    per-layer `max_triangles` budgets in `verdant.py`.

@@ -1,0 +1,12 @@
+Color=0.8,0.9,0.75,1
+SurfaceType=Standard
+AlphaMode=Mask
+AlphaCutoff=0.5
+CastsShadow=true
+TwoSided=true
+Metallic=0
+Roughness=0.75
+Subsurface=0.35
+SubsurfaceColor=0.4,0.55,0.12
+AlbedoTexture=project://Textures/Leaves.png
+ShaderGraph=engine://builtin/shadergraph/default-lit

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/VirtualShadowConfig.h"
 #include "PlutoGE/render/VirtualShadowStats.h"
 #include "PlutoGE/render/VirtualShadowPolicy.h"
@@ -86,10 +87,12 @@ namespace PlutoGE::render
         // `sceneDepth`, when given, is the view's depth from `viewProjection` (reverse depth, width x height) with
         // every receiver in it, written on the GPU before RecordPlanning: planning reads it instead of rendering the
         // receivers itself.
+        // `wind` deforms casters with a foliage wind response, as every other pass does; their `signatures` must
+        // then change with it, so their pages are redrawn.
         bool Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                      std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
                      std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height,
-                     rhi::TextureHandle sceneDepth = {});
+                     rhi::TextureHandle sceneDepth = {}, const FoliageWindFrame &wind = {});
         // Recording has two phases that execute on the GPU in this order and share no CPU state, so they may record
         // concurrently into separate contexts: receiver depth (unless Prepare was given the scene's) and GPU
         // planning, then the caster pages (which read the planning results) and the final residency pass. Record

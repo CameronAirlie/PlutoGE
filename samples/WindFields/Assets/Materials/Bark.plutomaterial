@@ -1,0 +1,12 @@
+Color=1.0,1.0,1.0,1
+SurfaceType=Standard
+AlphaMode=Opaque
+AlphaCutoff=0.5
+CastsShadow=true
+TwoSided=false
+Metallic=0
+Roughness=0.9
+Subsurface=0.0
+SubsurfaceColor=0.5,0.65,0.2
+AlbedoTexture=project://Textures/Bark.png
+ShaderGraph=engine://builtin/shadergraph/default-lit

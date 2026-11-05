@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/ComponentInspectors.h"
+#include "PlutoGE/ui/WindInspectors.h"
 
 #include <imgui.h>
 
@@ -24,7 +25,8 @@ namespace PlutoGE::ui
         // Storage() because registration itself writes to the storage.
         void EnsureBuiltins()
         {
-            static const bool registered = (RegisterUIComponentInspectors(), RegisterUIStyleInspectors(), true);
+            static const bool registered =
+                (RegisterUIComponentInspectors(), RegisterUIStyleInspectors(), RegisterWindInspectors(), true);
             (void)registered;
         }
     }

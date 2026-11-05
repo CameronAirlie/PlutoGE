@@ -99,6 +99,7 @@ add_library(PlutoGEEditorUI
     src/hierarchy/HierarchyEntityPresets.cpp
     src/hierarchy/UIWidgetPresets.cpp
     src/inspectors/ComponentInspectors.cpp
+    src/inspectors/WindInspectors.cpp
     src/inspectors/UIComponentInspectors.cpp
     src/inspectors/UIStyleInspectors.cpp
     src/theme/UIThemeDocument.cpp

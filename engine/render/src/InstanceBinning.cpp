@@ -1,6 +1,7 @@
 #include "InstanceBinning.h"
 
 #include "PlutoGE/core/TaskPool.h"
+#include "PlutoGE/render/FoliageWind.h"
 
 #include <algorithm>
 #include <cmath>
@@ -53,12 +54,17 @@ namespace PlutoGE::render
                 bins.resize(chain.lods.size());
                 for (auto &bin : bins) bin.clear();
                 const auto &models = *draw.instanceModels;
+                // Swaying instances reach past their rest bounds (mesh units, scaled with each instance). Only
+                // visibility widens; LOD selection keeps the rest radius, so wind never changes detail.
+                const float windReach = chain.boundsRadius > 0.0f
+                    ? FoliageWindMaxDisplacement(draw.foliageWind) / chain.boundsRadius : 0.0f;
                 for (std::uint32_t instance = 0; instance < models.size(); ++instance)
                 {
                     const auto sphere = InstanceBounds(chain, models[instance]);
+                    const float visibleRadius = sphere.radius * (1.0f + windReach);
                     const glm::vec3 offset = sphere.center - view.camera;
-                    const float reach = draw.instanceDrawDistance + sphere.radius;
-                    if (glm::dot(offset, offset) > reach * reach || !view.frustum.SidesIntersect(sphere.center, sphere.radius))
+                    const float reach = draw.instanceDrawDistance + visibleRadius;
+                    if (glm::dot(offset, offset) > reach * reach || !view.frustum.SidesIntersect(sphere.center, visibleRadius))
                     {
                         ++m_culled[item];
                         continue;

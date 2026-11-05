@@ -1,0 +1,76 @@
+PLUTOPROJECT	3
+NAME	Wind Fields
+ASSET_DIR	Assets
+STARTUP_SCENE	project://Scenes/WindFields.plutoscene
+BUILD_USED_ASSETS_ONLY	0
+SERVER_SCENE	
+SERVER_OUTPUT	Build/Server/GameServer.exe
+SERVER_TICK_RATE	60
+SCRIPT_ASSEMBLY	project://Managed/Wind_Fields.Scripts.dll
+LOADING_ACCENT	0.55	0.7	0.35
+QUALITY_PRESET	0	1	512	1	40	1	0	0	0	0	0	0	0	0.600000024
+QUALITY_PRESET	1	1	1024	2	80	1	1	0	0	0	1	0	0	0.75
+QUALITY_PRESET	2	1	2048	4	150	0	1	1	1	1	1	0	0	1
+QUALITY_PRESET	3	1	4096	4	300	0	1	1	1	1	1	1	1	1
+WINDOW_TITLE	PlutoGE Wind Fields
+WINDOW_SIZE	1600	900
+VSYNC	1
+GRAPHICS_API	Vulkan
+RUNTIME_UPSCALER	None
+RUNTIME_UPSCALER_QUALITY	Quality
+OCCLUSION_CULLING	Off
+RETAIN_SHADOW_CASCADES	1
+SHADOW_CASTER_MIN_TEXELS	1
+RAY_TRACED_MIN_INSTANCE_RADIUS	0.5
+RUNTIME_RENDER_SCALE	1
+RUNTIME_UPSCALE_SHARPNESS	0.25
+EDITOR_FONT_SIZE	15
+EDITOR_FONT	Roboto
+EDITOR_CAMERA_POSITION	22.3909	14.7978	17.5147
+EDITOR_CAMERA_SPEED	12
+EDITOR_CAMERA_RUNTIME_UI	0
+EDITOR_CAMERA_ROTATION	256.48	-2.20001
+EDITOR_CAMERA_LENS	55	0.1	1200
+EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/Meadow.plutopostprocess
+ASSET	engine://builtin/material/default	0	Material
+ASSET	engine://builtin/material/default-shaded	0	Material
+ASSET	engine://builtin/mesh/cube	0	Mesh
+ASSET	engine://builtin/mesh/cylinder	0	Mesh
+ASSET	engine://builtin/mesh/plane	0	Mesh
+ASSET	engine://builtin/mesh/quad	0	Mesh
+ASSET	engine://builtin/mesh/sphere	0	Mesh
+ASSET	engine://builtin/shadergraph/default-lit	0	Shader Graph
+ASSET	engine://builtin/shadergraph/default-unlit	0	Shader Graph
+ASSET	project://Materials/Bark.plutomaterial	270	Material
+ASSET	project://Materials/DryGrass.plutomaterial	277	Material
+ASSET	project://Materials/Grass.plutomaterial	280	Material
+ASSET	project://Materials/Ground.plutomaterial	244	Material
+ASSET	project://Materials/Leaves.plutomaterial	270	Material
+ASSET	project://Materials/Rock.plutomaterial	247	Material
+ASSET	project://Materials/ShrubLeaves.plutomaterial	273	Material
+ASSET	project://Materials/Wildflowers.plutomaterial	278	Material
+ASSET	project://Models/.plutoge-cache/meshes/11452281979492375193-0.pmesh	12519	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/12168358616587928305-0.pmesh	77214	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/12726570442429797080-0.pmesh	12110	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/13019137309409312162-0.pmesh	12522	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/18118522578001629306-0.pmesh	13282	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/18120265445006786627-0.pmesh	8606	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/2387387560401677317-0.pmesh	14922	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/3516111524011556269-0.pmesh	13095	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/8159931513120666328-0.pmesh	13761	Unknown
+ASSET	project://Models/FlowersViolet.glb	8336	Model
+ASSET	project://Models/FlowersWhite.glb	7108	Model
+ASSET	project://Models/FlowersYellow.glb	7112	Model
+ASSET	project://Models/GrassShort.glb	7180	Model
+ASSET	project://Models/GrassTall.glb	4760	Model
+ASSET	project://Models/Rock.glb	7032	Model
+ASSET	project://Models/Shrub.glb	6156	Model
+ASSET	project://Models/TreeCrown.glb	32004	Model
+ASSET	project://Models/TreeTrunk.glb	6252	Model
+ASSET	project://PostProcessing/Meadow.plutopostprocess	858	Post Process Preset
+ASSET	project://Scenes/WindFields.plutoscene	5127326	Scene
+ASSET	project://Textures/Bark.png	4466	Texture
+ASSET	project://Textures/FlowerAtlas.png	135	Texture
+ASSET	project://Textures/GrassBlade.png	1904	Texture
+ASSET	project://Textures/Leaves.png	3837	Texture
+ASSET	project://Textures/MeadowAlbedo.png	255342	Texture

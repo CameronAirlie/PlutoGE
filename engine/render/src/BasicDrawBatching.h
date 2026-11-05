@@ -60,7 +60,8 @@ namespace PlutoGE::render
             && a.castsShadow == b.castsShadow
             && a.contributesToGi == b.contributesToGi
             && (a.terrainLayers == b.terrainLayers ||
-                (a.terrainLayers && b.terrainLayers && *a.terrainLayers == *b.terrainLayers));
+                (a.terrainLayers && b.terrainLayers && *a.terrainLayers == *b.terrainLayers))
+            && a.foliageWind == b.foliageWind;
     }
 
     inline bool SameBasicDrawMaterial(const BasicDraw &a, const BasicDraw &b)
@@ -171,6 +172,13 @@ namespace PlutoGE::render
         HashBatchValue(hash, draw.attenuationColor);
         HashBatchValue(hash, draw.attenuationDistance);
         HashBatchValue(hash, draw.shaderGraphProgram ? draw.shaderGraphProgram->hash : 0ull);
+        if (draw.foliageWind.enabled) // by field: the struct has padding after its flag
+        {
+            HashBatchValue(hash, draw.foliageWind.stiffness);
+            HashBatchValue(hash, draw.foliageWind.flutter);
+            HashBatchValue(hash, draw.foliageWind.bendHeight);
+            HashBatchValue(hash, draw.foliageWind.pivotHeight);
+        }
         HashBatchValue(hash, draw.outlineWidth);
         HashBatchValue(hash, draw.outlineColor);
         HashBatchValue(hash, draw.twoSided);

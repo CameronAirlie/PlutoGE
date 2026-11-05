@@ -29,6 +29,12 @@ namespace PlutoGE::scene
     {
         constexpr const char *kTypePrefix = "Type.";
 
+        // Wind values tolerate malformed text by keeping the current value.
+        float ParseWindValue(const std::string &text, float fallback)
+        {
+            try { return std::stof(text); } catch (...) { return fallback; }
+        }
+
         std::string SerializeInstances(const std::vector<FoliageInstance> &instances)
         {
             std::ostringstream output;
@@ -650,6 +656,14 @@ namespace PlutoGE::scene
                 }
 
                 cluster.bounds = ComputeClusterBounds(*cluster.models, clusterSourceBounds);
+                // Swaying instances reach beyond their rest bounds; grow the cluster so culling stays conservative.
+                if (const float sway = render::FoliageWindMaxDisplacement(type.asset.wind); sway > 0.0f)
+                {
+                    float upScale = 0.0f;
+                    for (const auto &model : *cluster.models)
+                        upScale = (std::max)(upScale, glm::length(glm::vec3(model[1])));
+                    cluster.bounds.radius += sway * upScale;
+                }
                 for (const std::size_t submeshIndex : selectedSubmeshes)
                 {
                     auto *material = GetMaterialForTypeSubmesh(type, submeshIndex);
@@ -679,6 +693,7 @@ namespace PlutoGE::scene
                     command.impostorOwner = type.impostor && submeshIndex == impostorOwner;
                     command.isStatic = m_isStatic;
                     command.castsShadow = m_castShadows;
+                    command.foliageWind = type.asset.wind;
                     // The instance array is rebuilt (a new identity) whenever it changes, so the renderer may reuse
                     // its prepared packet, batches and shadow signatures for as long as this command lives.
                     command.sourceObject = render::RenderObjectIdentity().Value();
@@ -736,6 +751,11 @@ namespace PlutoGE::scene
                                   std::to_string(type.asset.collisionCenter.z)});
             properties.push_back({prefix + "CollisionRadius", PropertyType::Float, std::to_string(type.asset.collisionRadius)});
             properties.push_back({prefix + "CollisionHeight", PropertyType::Float, std::to_string(type.asset.collisionHeight)});
+            properties.push_back({prefix + "WindEnabled", PropertyType::Bool, type.asset.wind.enabled ? "true" : "false"});
+            properties.push_back({prefix + "WindStiffness", PropertyType::Float, std::to_string(type.asset.wind.stiffness)});
+            properties.push_back({prefix + "WindFlutter", PropertyType::Float, std::to_string(type.asset.wind.flutter)});
+            properties.push_back({prefix + "WindBendHeight", PropertyType::Float, std::to_string(type.asset.wind.bendHeight)});
+            properties.push_back({prefix + "WindPivotHeight", PropertyType::Float, std::to_string(type.asset.wind.pivotHeight)});
             properties.push_back({prefix + "Instances", PropertyType::String, SerializeInstances(type.instances)});
         }
 
@@ -842,6 +862,16 @@ namespace PlutoGE::scene
                     type.asset.collisionRadius = (std::max)(0.01f, std::stof(property.value));
                 else if (fieldName == "CollisionHeight")
                     type.asset.collisionHeight = (std::max)(type.asset.collisionRadius * 2.0f, std::stof(property.value));
+                else if (fieldName == "WindEnabled")
+                    type.asset.wind.enabled = property.value == "true" || property.value == "1";
+                else if (fieldName == "WindStiffness")
+                    type.asset.wind.stiffness = ParseWindValue(property.value, type.asset.wind.stiffness);
+                else if (fieldName == "WindFlutter")
+                    type.asset.wind.flutter = ParseWindValue(property.value, type.asset.wind.flutter);
+                else if (fieldName == "WindBendHeight")
+                    type.asset.wind.bendHeight = ParseWindValue(property.value, type.asset.wind.bendHeight);
+                else if (fieldName == "WindPivotHeight")
+                    type.asset.wind.pivotHeight = ParseWindValue(property.value, type.asset.wind.pivotHeight);
                 else if (fieldName == "Instances")
                     type.instances = DeserializeInstances(property.value);
             }
@@ -902,6 +932,7 @@ namespace PlutoGE::scene
                     type.modelAssetId, type.modelObjectId);
                 if (!resolved.empty()) type.sourceMeshPath = resolved;
             }
+            type.asset.wind = type.asset.wind.Sanitized();
             if (!type.asset.assetReference.empty())
             {
                 const std::string reference = type.asset.assetReference;
@@ -1618,6 +1649,18 @@ namespace PlutoGE::scene
         if (auto *type = GetType(index))
         {
             type->asset.maxDrawDistance = (std::max)(distance, 0.0f);
+            MarkRenderCommandsDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeWind(std::size_t index, const render::FoliageWindResponse &wind)
+    {
+        if (auto *type = GetType(index))
+        {
+            const auto sanitized = wind.Sanitized();
+            if (type->asset.wind == sanitized)
+                return;
+            type->asset.wind = sanitized;
             MarkRenderCommandsDirty();
         }
     }

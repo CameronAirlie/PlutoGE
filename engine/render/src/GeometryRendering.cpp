@@ -4,6 +4,7 @@
 #include "GpuDrivenOpaque.h"
 #include <cmath>
 #include <algorithm>
+#include "FoliageWindDraws.h"
 
 namespace PlutoGE::render
 {
@@ -90,10 +91,14 @@ namespace PlutoGE::render
         // Opaque fragment graphs cannot change depth or coverage, so without
         // vertex deformation they rasterize exactly like a standard surface.
         // Graph alpha and vertex offsets need the graph-aware coverage shader.
-        if (draw.shaderGraphProgram && (draw.alphaMode != 0 || draw.shaderGraphProgram->data.header.z != 0))
+        // Graph coverage needs the full layout (its fragment evaluation can use lighting), so graph draws that
+        // cannot use material-free depth take it.
+        if (draw.shaderGraphProgram && (draw.alphaMode != 0 || DeformsVertices(draw)))
             return DepthResources::Full;
+        // Material-free depth has no material constants, so it cannot apply wind; the standard coverage shaders
+        // share the shaded pass's vertex transform (BasicLit transformSurfaceVertex) and so match its depth.
         const auto &opaque = m_opaqueDepth[instanced ? 1 : 0];
-        if (draw.alphaMode == 0 && available(opaque.vertex) && available(opaque.fragment))
+        if (draw.alphaMode == 0 && !HasFoliageWind(draw) && available(opaque.vertex) && available(opaque.fragment))
             return DepthResources::Opaque;
         return available(m_standardFragment) && available(m_standardColorVertices[instanced ? 1 : 0])
             ? DepthResources::Alpha : DepthResources::Full;
@@ -109,7 +114,7 @@ namespace PlutoGE::render
             // Decided by the draw's own instances, not the vertex input: one object read through the instanced
             // input (an object-stream entry) keeps its culling.
             const bool multipleInstances = draw.instanceModels && draw.instanceModels->size() > 1;
-            if (!multipleInstances && !(draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z != 0))
+            if (!multipleInstances && !GraphDeformsVertices(draw))
             {
                 const auto &model = draw.instanceModels && draw.instanceModels->size() == 1
                     ? draw.instanceModels->front() : draw.model;

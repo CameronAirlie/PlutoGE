@@ -1,6 +1,7 @@
 float2 shaderGraphScreenUV(float3 p){return float2(0);}
 float4 shaderGraphTexture(int slot, float2 uv);
 #include "ShaderGraphEvaluation.slang"
+#include "FoliageWind.slang"
 [[vk::binding(0, 1)]]
 cbuffer ShadowMaterial : register(b0, space1)
 {
@@ -10,6 +11,7 @@ cbuffer ShadowMaterial : register(b0, space1)
     float4 graphEmission;
     float4 graphCameraTime;
     ShaderGraphData graph;
+    FoliageWindParameters foliageWind; // FoliageWind.slang; zero unless the caster sways
 };
 [[vk::binding(1, 1)]] Sampler2D shadowBaseColor : register(t1, space1);
 [[vk::binding(2, 1)]] Sampler2D graphNormalTexture : register(t2, space1);
@@ -85,6 +87,7 @@ VertexOutput vertexMain(VertexInput input)
 {
     VertexOutput output;
     float3 world = mul(model, float4(input.position,1.0)).xyz;
+    world = foliageWindPosition(foliageWind, model, input.position, world, foliageWind.timing.x);
     float3 normal = normalize(mul((float3x3)model,input.normal));
     world += shaderGraphVertexOffset(graph,world,normal,normalize(graphCameraTime.xyz-world),
         graphCameraTime.w,input.uv*shadowAlpha.xy,graphColor,graphFactors.x,graphFactors.y,graphEmission.xyz);
@@ -102,6 +105,7 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
     VertexOutput output;
     const float4x4 instanceModel = shadowInstanceModel(instanceId);
     float3 world = mul(instanceModel, float4(input.position,1.0)).xyz;
+    world = foliageWindPosition(foliageWind, instanceModel, input.position, world, foliageWind.timing.x);
     float3 normal = normalize(mul((float3x3)instanceModel,input.normal));
     world += shaderGraphVertexOffset(graph,world,normal,normalize(graphCameraTime.xyz-world),
         graphCameraTime.w,input.uv*shadowAlpha.xy,graphColor,graphFactors.x,graphFactors.y,graphEmission.xyz);

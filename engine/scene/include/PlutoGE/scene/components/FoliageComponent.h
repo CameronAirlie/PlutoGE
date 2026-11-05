@@ -203,6 +203,8 @@ namespace PlutoGE::scene
         void SetTypeCollisionCapsule(std::size_t index, const glm::vec3 &center, float radius, float height);
         void SetTypeCellSize(std::size_t index, float cellSize);
         void SetTypeMaxDrawDistance(std::size_t index, float distance);
+        // How the type bends in the scene's wind (sanitized); changes rebuild the type's render commands.
+        void SetTypeWind(std::size_t index, const render::FoliageWindResponse &wind);
         void SetTypeMeshAndMaterials(std::size_t index,
                                      render::Mesh *mesh,
                                      const std::vector<render::Material *> &materials,

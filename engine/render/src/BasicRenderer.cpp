@@ -6,6 +6,7 @@
 #include "GeometryArena.h"
 #include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
+#include "FoliageWindDraws.h"
 #include "CascadedShadowLayers.h"
 #include "PointShadowLayers.h"
 #include "LightClusterGrid.h"
@@ -115,8 +116,10 @@ namespace PlutoGE::render
             glm::uvec4 emissionParameters{0};
             std::array<glm::vec4, 3> emissionChannels{};
             BasicSurfaceParameters surface; // BasicSurfaceParameters.h
+            FoliageWindParameters foliageWind; // BasicLit.slang foliageWind
         };
-        static_assert(sizeof(BasicMaterialParameters) == 224 + sizeof(ShaderGraphProgramData) + 80 + sizeof(BasicSurfaceParameters));
+        static_assert(sizeof(BasicMaterialParameters) ==
+                      224 + sizeof(ShaderGraphProgramData) + 80 + sizeof(BasicSurfaceParameters) + sizeof(FoliageWindParameters));
 
         struct alignas(16) GlassReflectionParameters
         {
@@ -129,6 +132,7 @@ namespace PlutoGE::render
         {
             glm::vec4 alpha, color, factors, emission, cameraTime;
             ShaderGraphProgramData graph;
+            FoliageWindParameters foliageWind; // DirectionalShadow.slang foliageWind
         };
         // Fog density noise drifts with the shader-graph clock. Lane 6.xyz is
         // the wind velocity and lane 4.z the noise frequency. Wrapping to the
@@ -157,11 +161,12 @@ namespace PlutoGE::render
             return chain.Select(largest);
         }
 
-        GraphShadowMaterial ShadowMaterial(const BasicDraw &draw, glm::vec3 camera, float time)
+        GraphShadowMaterial ShadowMaterial(const BasicDraw &draw, glm::vec3 camera, float time,
+                                           const FoliageWindFrame &wind)
         {
             GraphShadowMaterial data{glm::vec4(draw.uvScale,draw.alphaCutoff,draw.baseColor.a),
                 draw.baseColor,glm::vec4(draw.metallic,draw.roughness,float(draw.alphaMode),0),
-                glm::vec4(draw.emission,0),glm::vec4(camera,time),{}};
+                glm::vec4(draw.emission,0),glm::vec4(camera,time),{},wind.Parameters(draw.foliageWind)};
             if(draw.shaderGraphProgram) data.graph=draw.shaderGraphProgram->data;
             return data;
         }
@@ -672,13 +677,16 @@ namespace PlutoGE::render
         }
 
         std::uint64_t PointShadowCasterSignature(const BasicDraw &draw, std::uint64_t signature,
-                                                  glm::vec3 camera, float graphTime)
+                                                  glm::vec3 camera, float graphTime, const FoliageWindFrame &wind)
         {
+            // Swaying casters change every frame; their shape is a function of the wind's time.
+            if (wind.Animates(draw.foliageWind))
+                HashVctValue(signature, wind.Parameters(draw.foliageWind));
             if (draw.shaderGraphProgram)
             {
                 const auto &graph = *draw.shaderGraphProgram;
                 HashVctValue(signature, ShadowMaterial(draw,
-                    graph.usesViewDirection ? camera : glm::vec3(0), graph.usesTime ? graphTime : 0));
+                    graph.usesViewDirection ? camera : glm::vec3(0), graph.usesTime ? graphTime : 0, wind));
                 HashVctValue(signature, draw.normalTexture);
                 HashVctValue(signature, draw.metallicTexture);
                 HashVctValue(signature, draw.roughnessTexture);
@@ -2150,6 +2158,8 @@ namespace PlutoGE::render
 
         auto &commands = m_device->GetImmediateContext();
         const float graphTime = ShaderGraphTimeSeconds();
+        // Every pass packs its wind-animated draws' constants from this, at the shader-graph clock.
+        m_foliageWind = {lighting.wind, graphTime, m_hasPreviousFrame ? m_previousGraphTime : graphTime};
         // A borrowed directional VSM replaces this view's own shadow work for
         // one frame; its atlas has no slots for this view's local lights.
         const auto reusedShadowReceivers = std::exchange(m_reusedShadowReceivers, {});
@@ -2294,6 +2304,10 @@ namespace PlutoGE::render
                         }
                         else
                             m_shadowDrawSignatures[index] = ShadowDrawSignature(draw);
+                        // Swaying casters change shape every frame, in every shadow method (VSM pages included):
+                        // their cached pages and cascades are redrawn, while wind-free casters stay cached.
+                        if (m_foliageWind.Animates(draw.foliageWind))
+                            HashVctValue(m_shadowDrawSignatures[index], m_foliageWind.Parameters(draw.foliageWind));
                         if (draw.shaderGraphProgram && !virtualShadowsActive)
                         {
                             HashVctValue(m_shadowDrawSignatures[index], draw.shaderGraphProgram->hash);
@@ -2316,7 +2330,7 @@ namespace PlutoGE::render
             core::CpuScope prepareScope("VSM preparation", core::CpuCategory::Rendering);
             virtualShadowsActive = m_virtualShadows->Prepare(*m_device, lighting, viewProjection, draws, shadowDraws,
                 m_shadowDrawSignatures, m_width, m_height,
-                coverageDepthPlansShadows ? m_depthTarget.Get() : rhi::TextureHandle{});
+                coverageDepthPlansShadows ? m_depthTarget.Get() : rhi::TextureHandle{}, m_foliageWind);
         }
         m_frameStats.virtualShadowsActive = virtualShadowsActive;
         if (virtualShadowsRequested && !virtualShadowIssue && !virtualShadowsActive)
@@ -2861,6 +2875,7 @@ namespace PlutoGE::render
                 {
                     std::array<glm::vec4, 5> lanes;
                     const ShaderGraphProgram *program;
+                    FoliageWindParameters foliageWind;
                     bool operator==(const ShadowMaterialIdentity &) const = default;
                 };
                 std::unordered_map<std::size_t, std::vector<std::pair<ShadowMaterialIdentity, rhi::BufferHandle>>> shadowMaterialsByKey;
@@ -2869,17 +2884,20 @@ namespace PlutoGE::render
                 {
                     const auto *program = draw.shaderGraphProgram.get();
                     auto material = ShadowMaterial(draw, program && program->usesViewDirection ? lighting.cameraPosition : glm::vec3(0.0f),
-                                                   program && program->usesTime ? graphTime : 0.0f);
+                                                   program && program->usesTime ? graphTime : 0.0f, m_foliageWind);
                     const ShadowMaterialIdentity identity{{material.alpha, material.color, material.factors, material.emission,
-                                                           material.cameraTime}, program};
+                                                           material.cameraTime}, program, material.foliageWind};
                     std::size_t key = 0x510e527fade682d1ull;
                     HashBatchValue(key, program);
                     for (const auto &lane : identity.lanes) HashBatchValue(key, lane);
+                    for (const auto &lane : {identity.foliageWind.field, identity.foliageWind.timing,
+                                             identity.foliageWind.response, identity.foliageWind.shape})
+                        HashBatchValue(key, lane);
                     auto &bucket = shadowMaterialsByKey[key];
                     for (const auto &[known, handle] : bucket)
                         if (known == identity) return handle;
                     rhi::BufferHandle handle;
-                    if (program && (program->usesTime || program->usesViewDirection))
+                    if ((program && (program->usesTime || program->usesViewDirection)) || material.foliageWind.Active())
                     {
                         if (animatedShadowMaterials == m_shadowMaterialBuffers.size())
                             m_shadowMaterialBuffers.emplace_back(*m_device, m_device->CreateBuffer(
@@ -3109,7 +3127,7 @@ namespace PlutoGE::render
                 {
                     const auto &draw = shadowDraws[index];
                     if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2) continue;
-                    pointCasterSignatures[index] = PointShadowCasterSignature(draw, m_shadowDrawSignatures[index], lighting.cameraPosition, graphTime);
+                    pointCasterSignatures[index] = PointShadowCasterSignature(draw, m_shadowDrawSignatures[index], lighting.cameraPosition, graphTime, m_foliageWind);
                     pointSignature += MixShadowMember(pointCasterSignatures[index]);
                 }
                 // Every frame, so casters that stop moving become stationary.
@@ -3226,7 +3244,7 @@ namespace PlutoGE::render
                             prepared[drawIndex] = true;
                             const auto material = ShadowMaterial(draw,
                                 draw.shaderGraphProgram && draw.shaderGraphProgram->usesViewDirection ? lighting.cameraPosition : glm::vec3(0),
-                                draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime ? graphTime : 0);
+                                draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime ? graphTime : 0, m_foliageWind);
                             const auto bytes = Bytes(material);
                             if (!resources.material)
                                 resources.material = rhi::Buffer(*m_device, m_device->CreateBuffer(
@@ -3631,6 +3649,9 @@ namespace PlutoGE::render
                 {
                     std::size_t key = draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw);
                     HashBatchValue(key, transparent);
+                    // Swaying draws take this frame's wind constants; calm frames reuse the persistent block.
+                    const bool windAnimated = m_foliageWind.Animates(draw.foliageWind);
+                    HashBatchValue(key, windAnimated);
                     if (const auto cached = m_materialPreparation->Find(key, draw, transparent))
                     {
                         ++m_frameStats.materialPreparationHits;
@@ -3668,7 +3689,8 @@ namespace PlutoGE::render
                         materialParameters.shaderGraphFrame.z = draw.shaderGraphProgram->requiresSceneTextures ? 1.0f : 0.0f;
                     }
                     if (transparent) materialParameters.glassFog = glassFog;
-                    const bool animated = draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime;
+                    materialParameters.foliageWind = m_foliageWind.Parameters(draw.foliageWind);
+                    const bool animated = (draw.shaderGraphProgram && draw.shaderGraphProgram->usesTime) || windAnimated;
                     const auto handle = animated
                         ? m_geometryParameters->AcquireTransient(*m_device, Bytes(materialParameters))
                         : m_materialPreparation->Insert(*m_device, key, draw, transparent, Bytes(materialParameters));
@@ -5799,7 +5821,9 @@ namespace PlutoGE::render
                     m_device->UpdateBuffer(objectBuffer.Get(), 0, Bytes(BasicObjectParameters{draw.model, draw.model}));
                     commands.BindUniformBuffer(16, objectBuffer.Get());
                     auto &graphBuffer = AcquireVctBuffer(m_vctBufferCursor++);
-                    m_device->UpdateBuffer(graphBuffer.Get(),0,Bytes(ShadowMaterial(draw,cascade.pendingLighting.cameraPosition,cascade.pendingGraphTime)));
+                    // Voxel GI lights the rest pose (docs/FOLIAGE_WIND.md), so its cascades draw foliage without wind.
+                    m_device->UpdateBuffer(graphBuffer.Get(),0,Bytes(ShadowMaterial(draw,cascade.pendingLighting.cameraPosition,
+                                                                                    cascade.pendingGraphTime,FoliageWindFrame{})));
                     commands.BindPipeline(draw.alphaMode==1 ? m_maskedShadowPipeline.Get() : m_shadowPipeline.Get());
                     commands.BindUniformBuffer(8,graphBuffer.Get());
                     commands.BindTexture(9,draw.baseColorTexture ? draw.baseColorTexture : m_fallbackTexture.Get(),m_fallbackSampler.Get());

@@ -9,6 +9,7 @@
 #include "PlutoGE/ui/panels/InspectorPanel.h"
 #include "PlutoGE/scene/ComponentRegistry.h"
 #include "PlutoGE/ui/ComponentInspectors.h"
+#include "PlutoGE/ui/WindInspectors.h"
 #include "PlutoGE/ui/PropertyEditor.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/ScriptAssetFieldPicker.h"
@@ -35,6 +36,7 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/render/Camera.h"
+#include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/RenderTexture.h"
@@ -3751,6 +3753,21 @@ namespace PlutoGE::ui
                                     editorShell.MarkSceneDirty();
                                 }
                                 ImGui::EndDisabled();
+                                ImGui::TreePop();
+                            }
+
+                            if (selectedType && ImGui::TreeNode("Wind"))
+                            {
+                                auto wind = selectedType->asset.wind;
+                                const bool sceneHasWind = !render::BuildSceneWind(entity->GetScene()).Calm();
+                                if (DrawFoliageWindSettings(wind, selectedType->mesh, sceneHasWind))
+                                {
+                                    foliageComponent->SetTypeWind(selectedTypeIndex, wind);
+                                    const std::string prefix = "Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".";
+                                    for (const char *field : {"WindEnabled", "WindStiffness", "WindFlutter", "WindBendHeight", "WindPivotHeight"})
+                                        entity->AddPrefabOverride(prefix + field);
+                                    editorShell.MarkSceneDirty();
+                                }
                                 ImGui::TreePop();
                             }
 

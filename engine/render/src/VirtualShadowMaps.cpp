@@ -18,23 +18,26 @@ namespace PlutoGE::render
             std::array<glm::mat4, 64> models{};
             glm::uvec4 draw{};
             glm::vec4 alpha{};
+            FoliageWindParameters foliageWind{};
         };
         struct alignas(16) RigidDrawParameters
         {
             glm::mat4 model{};
             glm::uvec4 draw{};
             glm::vec4 alpha{};
+            FoliageWindParameters foliageWind{};
         };
-        static_assert(sizeof(RigidDrawParameters) == 96);
+        static_assert(sizeof(RigidDrawParameters) == 96 + sizeof(FoliageWindParameters));
         // One batched page draw's record (VirtualShadowRaster's BatchedDraw); parameters.w is its first model.
         struct alignas(16) BatchedDraw
         {
             glm::uvec4 parameters{};
             glm::vec4 alpha{};
+            FoliageWindParameters foliageWind{};
         };
-        static_assert(sizeof(BatchedDraw) == 32);
+        static_assert(sizeof(BatchedDraw) == 32 + sizeof(FoliageWindParameters));
         struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; glm::vec4 extents; };
-        static_assert(sizeof(Caster) == 64 && sizeof(DrawParameters) == 4128);
+        static_assert(sizeof(Caster) == 64 && sizeof(DrawParameters) == 4128 + sizeof(FoliageWindParameters));
         // Subdivision buys little when the entire mesh fits within one page's
         // width. Coalesce those ranges to avoid multiplying CPU submissions.
         bool FitsShadowPage(const VirtualShadowParameters &parameters, glm::vec4 sphere)
@@ -258,7 +261,7 @@ namespace PlutoGE::render
     bool VirtualShadowMaps::Prepare(rhi::IRenderDevice &device, const BasicLighting &lighting, const glm::mat4 &viewProjection,
                                    std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters,
                                    std::span<const std::uint64_t> signatures, std::uint32_t width, std::uint32_t height,
-                                   rhi::TextureHandle sceneDepth)
+                                   rhi::TextureHandle sceneDepth, const FoliageWindFrame &wind)
     {
         if (signatures.size() != casters.size()) throw std::invalid_argument("VSM signature count mismatch");
         const auto planningReceivers = sceneDepth ? std::span<const BasicDraw>{} : receivers;
@@ -422,13 +425,14 @@ namespace PlutoGE::render
                 if (models == 1)
                 {
                     const auto &model = draw.instanceModels && !draw.instanceModels->empty() ? (*draw.instanceModels)[first] : draw.model;
-                    upload(RigidDrawParameters{model, drawParameters, alpha});
+                    upload(RigidDrawParameters{model, drawParameters, alpha, wind.Parameters(draw.foliageWind)});
                 }
                 else
                 {
                     DrawParameters values;
                     std::copy_n(draw.instanceModels->begin() + first, models, values.models.begin());
                     values.draw = drawParameters; values.alpha = alpha;
+                    values.foliageWind = wind.Parameters(draw.foliageWind);
                     upload(values);
                 }
             };
@@ -550,7 +554,8 @@ namespace PlutoGE::render
                     {
                         // Batched draws read the shared tables; drop parameters left from unbatched recording.
                         if (chunk.uniform) { chunk.uniform.Reset(); chunk.uploaded = {}; }
-                        batched.push_back({glm::uvec4(casterCursor, part.instances, draw.alphaMode, packet->models + part.firstInstance), alpha});
+                        batched.push_back({glm::uvec4(casterCursor, part.instances, draw.alphaMode, packet->models + part.firstInstance), alpha,
+                                           wind.Parameters(draw.foliageWind)});
                     }
                     else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances);
                     // One identity per chunk geometry, whether its packet was rebuilt or reused this frame.

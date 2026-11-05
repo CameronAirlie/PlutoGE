@@ -35,6 +35,7 @@
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
+#include "PlutoGE/scene/components/WindComponent.h"
 
 namespace PlutoGE::scene
 {
@@ -219,11 +220,13 @@ namespace PlutoGE::scene
             registry.Register<IblCaptureComponent>("IblCaptureComponent", "IBL Capture Component");
             registry.Register<PhysicalSkyComponent>("PhysicalSkyComponent", "Physical Sky Component");
             registry.Register<VolumetricCloudComponent>("VolumetricCloudComponent", "Volumetric Cloud Component");
+            registry.Register<WindComponent>("WindComponent", "Wind Component");
 
             registry.AddMenuItem<AmbientLightVolumeComponent>("Environment/Ambient Light Volume");
             registry.AddMenuItem<IblCaptureComponent>("Environment/IBL Capture");
             registry.AddMenuItem<PhysicalSkyComponent>("Environment/Physical Sky");
             registry.AddMenuItem<VolumetricCloudComponent>("Environment/Volumetric Cloud");
+            registry.AddMenuItem<WindComponent>("Environment/Wind");
         }
 
         void RegisterScriptingAndAudio(ComponentRegistry &registry)

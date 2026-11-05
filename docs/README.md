@@ -43,6 +43,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
+| Wind and swaying vegetation | [Foliage wind](FOLIAGE_WIND.md) |
 | Surface marks | [Decals](decals.md) |
 | Directional shadows | [Virtual shadow maps](virtual-shadow-maps.md), [defaults and compatibility](VSM_DEFAULT.md), [cascade caching and caster culling](cascaded-shadow-caching.md) |
 | Clouds and weather | [Cloud shadows, overcast light and cloud rendering](CLOUD_SHADOWS.md) |

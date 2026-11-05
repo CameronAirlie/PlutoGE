@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include "FoliageWindDraws.h"
 
 namespace PlutoGE::render
 {
@@ -111,7 +112,7 @@ namespace PlutoGE::render
             const auto indices = std::min(draw.indexCount ? draw.indexCount : available, available);
             // Fragment-only graphs can be occludees even though their coverage
             // is unsuitable for the simplified occluder depth shader.
-            const bool deformedGraph = draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z != 0;
+            const bool deformedGraph = DeformsVertices(draw);
             const bool eligible = draw.mesh && draw.mesh->IsValid() && indices != 0 && Single(draw) && !deformedGraph && !draw.outlinePass && draw.surfaceType == 0 && draw.alphaMode != 2;
             const bool tight = eligible && glm::all(glm::greaterThanEqual(draw.occlusionBoundsExtents, glm::vec3(0)));
             candidates.push_back({glm::vec4(tight ? draw.occlusionBoundsCenter : draw.shadowBoundsCenter,

@@ -73,6 +73,36 @@ local cache updates are planned in [environment milestone E06](ENVIRONMENT_DESIG
 Existing scenes and serialized density values remain compatible. Old scenes are
 not repainted or moved automatically.
 
+## Rescaling existing instances
+
+The brush's **Scale** range only affects new instances. To change foliage that is
+already placed, open **Scale Existing Instances** in the foliage inspector, choose a
+mode, and apply it:
+
+- **Multiply** multiplies current scales, keeping each instance's size variation and
+  proportions. Use this to make everything, say, 20% larger.
+- **Set** gives every instance the same uniform scale.
+- **Randomize In Range** gives each instance a uniform scale in the range; **Use Brush
+  Range** copies the brush's. The result depends only on the range and the instance's
+  ID, so the same range always gives an instance the same scale.
+
+**Selected Type** applies it to the selected foliage type, **All Types** to every type
+on the entity, and **Whole Scene** to every foliage type on every entity in the scene.
+Instances scale around their own pivots, so they stay where they are. Each application
+is one undo step. Collision capsules are in world units and do not change; resize them
+under **Spatial Cells & Collision**. From C++, use
+`FoliageComponent::ApplyInstanceScaleEdit`.
+
+## Meshes for foliage
+
+Each instance draws its whole mesh, so a foliage mesh should hold one plant. Scanned
+sets (Poly Haven's grass, shrubs and ferns, for example) usually ship several plants
+laid out in a row in one file; imported as they are, every instance is a row of plants,
+and its pivot is nowhere near most of them. Split such a set into one model per plant
+before painting it. The submesh picker is not a substitute: it
+keeps a submesh's offset from the original pivot. ThirdPersonProject's level tools do
+the split with `"split": "spatial"` in an asset manifest (its `docs/LEVELS.md`).
+
 ## Data model
 
 `FoliageComponent` owns the placed instances and a collection of foliage types.

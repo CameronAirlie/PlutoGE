@@ -301,6 +301,151 @@ namespace PlutoGE::ui
             return choices;
         }
 
+        void CollectFoliageEntities(scene::Entity *entity, std::vector<scene::Entity *> &entities)
+        {
+            if (!entity)
+            {
+                return;
+            }
+            if (entity->GetComponent<scene::FoliageComponent>())
+            {
+                entities.push_back(entity);
+            }
+            for (auto *child : entity->GetChildren())
+            {
+                CollectFoliageEntities(child, entities);
+            }
+        }
+
+        // Rescales foliage that is already placed: the brush's scale range only affects new instances.
+        void DrawFoliageScaleTools(EditorShell &editorShell, scene::Entity &entity, scene::FoliageComponent &foliage)
+        {
+            if (!ImGui::TreeNode("Scale Existing Instances"))
+            {
+                return;
+            }
+
+            static scene::FoliageScaleEdit edit;
+            int mode = static_cast<int>(edit.mode);
+            if (ImGui::Combo("Mode##FoliageRescale", &mode, "Multiply\0Set\0Randomize In Range\0"))
+            {
+                edit.mode = static_cast<scene::FoliageScaleMode>(mode);
+            }
+            switch (edit.mode)
+            {
+            case scene::FoliageScaleMode::Multiply:
+                ImGui::DragFloat("Factor##FoliageRescale", &edit.factor, 0.01f, 0.01f, 100.0f, "%.3f");
+                ImGui::SetItemTooltip("Multiplies current scales, keeping each instance's size variation.");
+                break;
+            case scene::FoliageScaleMode::Set:
+                ImGui::DragFloat("Scale##FoliageRescale", &edit.scale, 0.01f, 0.01f, 100.0f, "%.3f");
+                ImGui::SetItemTooltip("Gives every instance this uniform scale.");
+                break;
+            case scene::FoliageScaleMode::Randomize:
+                ImGui::DragFloatRange2("Range##FoliageRescale", &edit.minScale, &edit.maxScale, 0.01f, 0.01f, 100.0f, "%.3f", "%.3f");
+                ImGui::SetItemTooltip("Gives each instance a uniform scale in this range. The same range always gives an instance the same scale.");
+                if (ImGui::SmallButton("Use Brush Range"))
+                {
+                    edit.minScale = foliage.GetMinScale();
+                    edit.maxScale = foliage.GetMaxScale();
+                }
+                break;
+            }
+
+            const auto apply = [&](const std::vector<scene::Entity *> &targets, std::optional<std::size_t> typeIndex, const char *scopeLabel)
+            {
+                using Snapshots = std::vector<std::pair<scene::EntityID, scene::FoliageInstanceSnapshot>>;
+                editorShell.FlushPendingSceneEdits();
+                Snapshots before;
+                Snapshots after;
+                std::size_t changedCount = 0;
+                std::size_t retainedBytes = 0;
+                for (auto *target : targets)
+                {
+                    auto *component = target->GetComponent<scene::FoliageComponent>();
+                    auto snapshot = component->CaptureInstanceSnapshot();
+                    const std::size_t changed = component->ApplyInstanceScaleEdit(edit, typeIndex);
+                    if (changed == 0)
+                    {
+                        continue;
+                    }
+                    changedCount += changed;
+                    if (typeIndex)
+                    {
+                        target->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(*typeIndex) + ".Instances");
+                    }
+                    target->AddPrefabOverride("Component:FoliageComponent:Instances");
+                    for (const auto &instances : snapshot)
+                    {
+                        retainedBytes += 2 * instances.size() * sizeof(scene::FoliageInstance);
+                    }
+                    before.emplace_back(target->GetID(), std::move(snapshot));
+                    after.emplace_back(target->GetID(), component->CaptureInstanceSnapshot());
+                }
+                if (changedCount == 0)
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Foliage scales already match; nothing changed.");
+                    return;
+                }
+                const auto restore = [](const Snapshots &snapshots)
+                {
+                    auto *scene = EditorShell::GetInstance().GetScene();
+                    if (!scene)
+                    {
+                        return false;
+                    }
+                    for (const auto &[entityId, snapshot] : snapshots)
+                    {
+                        auto *target = scene->FindEntityByID(entityId);
+                        if (auto *component = target ? target->GetComponent<scene::FoliageComponent>() : nullptr)
+                        {
+                            component->RestoreInstanceSnapshot(snapshot);
+                        }
+                    }
+                    EditorShell::GetInstance().MarkSceneDirty();
+                    return true;
+                };
+                editorShell.MarkSceneDirty();
+                editorShell.PushSceneEditCommand(
+                    "Scale Foliage",
+                    [restore, snapshots = std::move(before)]() { return restore(snapshots); },
+                    [restore, snapshots = std::move(after)]() { return restore(snapshots); },
+                    retainedBytes);
+                editorShell.Log(EditorShell::ConsoleSeverity::Info,
+                                "Rescaled " + std::to_string(changedCount) + " foliage instances (" + scopeLabel + ").");
+            };
+
+            ImGui::TextDisabled("Apply to");
+            ImGui::BeginDisabled(foliage.GetSelectedTypeInstanceCount() == 0);
+            if (ImGui::Button("Selected Type##FoliageRescale"))
+            {
+                apply({&entity}, static_cast<std::size_t>(foliage.GetSelectedTypeIndex()), "selected type");
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(foliage.GetTotalInstanceCount() == 0);
+            if (ImGui::Button("All Types##FoliageRescale"))
+            {
+                apply({&entity}, std::nullopt, "all types on this entity");
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            if (ImGui::Button("Whole Scene##FoliageRescale"))
+            {
+                std::vector<scene::Entity *> targets;
+                if (auto *scene = editorShell.GetScene())
+                {
+                    for (auto *root : scene->GetRootEntities())
+                    {
+                        CollectFoliageEntities(root, targets);
+                    }
+                }
+                apply(targets, std::nullopt, "whole scene");
+            }
+            ImGui::SetItemTooltip("Every foliage type on every entity in the scene.");
+            ImGui::TreePop();
+        }
+
         std::string_view TrimWhitespace(std::string_view text)
         {
             while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0)
@@ -3781,6 +3926,8 @@ namespace PlutoGE::ui
                                 }
                                 ImGui::TreePop();
                             }
+
+                            DrawFoliageScaleTools(editorShell, *entity, *foliageComponent);
 
                             ImGui::BeginDisabled(foliageComponent->GetSelectedTypeInstanceCount() == 0);
                             if (ImGui::Button("Set Selected Type Scale To 1"))

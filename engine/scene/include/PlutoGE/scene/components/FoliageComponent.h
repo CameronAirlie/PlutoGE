@@ -95,6 +95,22 @@ namespace PlutoGE::scene
         Remove,
     };
 
+    enum class FoliageScaleMode
+    {
+        Multiply,  // Keeps each instance's variation and proportions.
+        Set,       // Every instance gets the same uniform scale.
+        Randomize, // Uniform scale in [minScale, maxScale], stable per instance.
+    };
+
+    struct FoliageScaleEdit
+    {
+        FoliageScaleMode mode = FoliageScaleMode::Multiply;
+        float factor = 1.0f;
+        float scale = 1.0f;
+        float minScale = 0.8f;
+        float maxScale = 1.2f;
+    };
+
     class FoliageComponent : public TypedComponent<FoliageComponent>
     {
     public:
@@ -171,6 +187,10 @@ namespace PlutoGE::scene
                                               const glm::vec3 &rotationDegrees,
                                               const glm::vec3 &scale);
         std::size_t SetSelectedTypeInstancesScale(const glm::vec3 &scale);
+        // Rescales placed instances of one type, or of every type when `typeIndex` is empty, around their own pivots
+        // (positions stay). Returns how many instances changed.
+        std::size_t ApplyInstanceScaleEdit(const FoliageScaleEdit &edit,
+                                           std::optional<std::size_t> typeIndex = std::nullopt);
         std::size_t SnapSelectedTypeInstancesToSurface(const std::function<float(float, float)> &sampleTerrainHeight);
         std::size_t SnapAllInstancesToSurface(const std::function<float(float, float)> &sampleTerrainHeight);
         bool RemoveSelectedTypeInstance(std::size_t instanceIndex);

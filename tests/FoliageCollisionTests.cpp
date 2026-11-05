@@ -104,6 +104,69 @@ int main()
         std::cerr << "All foliage types did not snap to the sampled surface.\n";
         return 1;
     }
+    {
+        // Rescaling placed instances: scope, modes, unchanged positions, undo through snapshots.
+        auto *scaleOwner = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Foliage Rescale"}));
+        auto *scaling = scaleOwner->CreateComponent<FoliageComponent>();
+        scaling->AddType("First").instances = {FoliageInstance{.id = 1, .position = {1, 2, 3}, .scale = {2, 2, 2}},
+                                               FoliageInstance{.id = 2, .scale = {1, 3, 1}}};
+        scaling->AddType("Second").instances = {FoliageInstance{.id = 3, .scale = {4, 4, 4}}};
+        const std::size_t firstIndex = scaling->GetTypeCount() - 2;
+        const auto &firstType = *scaling->GetType(firstIndex);
+        const auto &secondType = *scaling->GetType(firstIndex + 1);
+        const auto original = scaling->CaptureInstanceSnapshot();
+
+        const auto revision = scaling->GetRevision();
+        FoliageScaleEdit edit;
+        edit.factor = 0.5f;
+        if (scaling->ApplyInstanceScaleEdit(edit, firstIndex) != 2 ||
+            firstType.instances[0].scale != glm::vec3(1.0f) || firstType.instances[1].scale != glm::vec3(0.5f, 1.5f, 0.5f) ||
+            firstType.instances[0].position != glm::vec3(1, 2, 3) || secondType.instances[0].scale != glm::vec3(4.0f) ||
+            scaling->GetRevision() == revision)
+        {
+            std::cerr << "Multiplying one foliage type's scales did not keep its variation or its scope.\n";
+            return 1;
+        }
+        if (scaling->ApplyInstanceScaleEdit(FoliageScaleEdit{}) != 0)
+        {
+            std::cerr << "A factor of 1 reported changed foliage instances.\n";
+            return 1;
+        }
+        edit.mode = FoliageScaleMode::Set;
+        edit.scale = 3.0f;
+        if (scaling->ApplyInstanceScaleEdit(edit) != 3 || firstType.instances[1].scale != glm::vec3(3.0f) ||
+            secondType.instances[0].scale != glm::vec3(3.0f))
+        {
+            std::cerr << "Setting every foliage type's scale did not reach all instances.\n";
+            return 1;
+        }
+        edit.mode = FoliageScaleMode::Randomize;
+        edit.minScale = 2.0f; // Reversed on purpose: a dragged range may arrive either way round.
+        edit.maxScale = 1.0f;
+        scaling->ApplyInstanceScaleEdit(edit);
+        const glm::vec3 randomized = firstType.instances[0].scale;
+        if (randomized.x < 1.0f || randomized.x > 2.0f || randomized.x != randomized.y || randomized.x != randomized.z ||
+            firstType.instances[0].scale == firstType.instances[1].scale ||
+            scaling->ApplyInstanceScaleEdit(edit) != 0)
+        {
+            std::cerr << "Randomized foliage scales were not uniform, in range, varied and repeatable.\n";
+            return 1;
+        }
+        edit.mode = FoliageScaleMode::Multiply;
+        edit.factor = std::numeric_limits<float>::quiet_NaN();
+        if (scaling->ApplyInstanceScaleEdit(edit) != 0 || scaling->ApplyInstanceScaleEdit(edit, 1000u) != 0)
+        {
+            std::cerr << "An invalid factor or type index changed foliage scales.\n";
+            return 1;
+        }
+        scaling->RestoreInstanceSnapshot(original);
+        if (scaling->CaptureInstanceSnapshot() != original)
+        {
+            std::cerr << "Restoring the snapshot did not undo the rescale.\n";
+            return 1;
+        }
+    }
+
     // Paint candidates are independently sampled and rejected. Exercise this
     // without a graphics device using an uninitialized mesh prototype.
     PlutoGE::render::Mesh prototype(PlutoGE::render::MeshConfig{});

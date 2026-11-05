@@ -1285,6 +1285,66 @@ namespace PlutoGE::scene
         return changedCount;
     }
 
+    std::size_t FoliageComponent::ApplyInstanceScaleEdit(const FoliageScaleEdit &edit,
+                                                         std::optional<std::size_t> typeIndex)
+    {
+        constexpr float kMinimumScale = 0.0001f;
+        const auto sanitize = [](float value, float fallback)
+        {
+            return std::isfinite(value) ? (std::max)(value, kMinimumScale) : fallback;
+        };
+        const float minScale = sanitize((std::min)(edit.minScale, edit.maxScale), 1.0f);
+        const float maxScale = sanitize((std::max)(edit.minScale, edit.maxScale), minScale);
+        // SplitMix64 over the instance and type: the same range always gives an instance the same scale, and types
+        // sharing instance IDs do not vary in step.
+        const auto unitRandom = [](std::uint64_t instanceId, std::size_t type)
+        {
+            std::uint64_t z = instanceId + (static_cast<std::uint64_t>(type) + 1) * 0x9E3779B97F4A7C15ull;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+            z ^= z >> 31;
+            return static_cast<float>(static_cast<double>(z) / 18446744073709551616.0);
+        };
+
+        std::size_t changedCount = 0;
+        const std::size_t first = typeIndex.value_or(0);
+        const std::size_t end = typeIndex ? (std::min)(first + 1, m_types.size()) : m_types.size();
+        for (std::size_t index = first; index < end; ++index)
+        {
+            for (auto &instance : m_types[index].instances)
+            {
+                glm::vec3 scale = instance.scale;
+                switch (edit.mode)
+                {
+                case FoliageScaleMode::Multiply:
+                {
+                    const float factor = sanitize(edit.factor, 1.0f);
+                    scale = glm::vec3(sanitize(scale.x * factor, scale.x),
+                                      sanitize(scale.y * factor, scale.y),
+                                      sanitize(scale.z * factor, scale.z));
+                    break;
+                }
+                case FoliageScaleMode::Set:
+                    scale = glm::vec3(sanitize(edit.scale, 1.0f));
+                    break;
+                case FoliageScaleMode::Randomize:
+                    scale = glm::vec3(minScale + (maxScale - minScale) * unitRandom(instance.id, index));
+                    break;
+                }
+                if (scale != instance.scale)
+                {
+                    instance.scale = scale;
+                    ++changedCount;
+                }
+            }
+        }
+        if (changedCount > 0)
+        {
+            MarkInstancesDirty();
+        }
+        return changedCount;
+    }
+
     std::size_t FoliageComponent::SnapSelectedTypeInstancesToSurface(
         const std::function<float(float, float)> &sampleTerrainHeight)
     {

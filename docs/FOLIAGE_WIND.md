@@ -146,6 +146,26 @@ and out-of-range values are clamped.
   cover should use contact shadows instead: turn off **Cast Shadows** on the grass component. Wind Fields does this for
   its 70,000 grass clumps on the Vega 8 target, and keeps shadow-map shadows for trees and shrubs.
 
+### Measured on Wind Fields (2026-11-05, Vega 8, 1080p)
+
+The content fixes below were measured with the editor open, which inflates GPU timings (see "Contention" in
+[rendering-performance.md](rendering-performance.md)); their direction holds, but compare absolute numbers only with
+runs made alone.
+
+| Change | Effect |
+| --- | --- |
+| Grass blades single-faced with a one-sided material, instead of duplicated back faces | Coincident front and back triangles both pass the shaded pass's depth-equal test, so every grass pixel was lit twice. Removing them took about a third off the frame. |
+| LOD chains for foliage meshes (`MODEL_OPTIONS 15`: generated and vegetation LODs) | Opaque triangles 4.3 M → 0.2 M. Without a chain every clump draws all its blades at any distance. |
+
+Foliage that references a source model directly (`project://…glb`) now imports it with the model's own import settings
+from its `.plutometa`; before, it used the importer's defaults, so Content Browser settings such as **Vegetation LODs**
+had no effect.
+
+Measured alone, after the renderer's surface specialisation and cascade caster LODs (rendering-performance.md, "Fourth
+pass"), the GPU frame is 12.4 ms at Low, 17.7 ms at Medium and 27.7 ms at the default preset (39.6 ms with SSAO and
+SSGI). At the default preset, VSM filtering in the geometry pass, the volumetric clouds and swaying casters' page
+updates are the largest remaining costs; that section lists a candidate for each.
+
 ## Limitations and next steps
 
 - **Normals do not bend.** Lighting uses the rest normal, which is invisible at grass and leaf scales but slightly flat

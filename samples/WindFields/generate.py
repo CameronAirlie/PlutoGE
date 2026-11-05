@@ -36,17 +36,36 @@ WIND = {"Direction": 35.0, "Speed": 7.5, "Gustiness": 0.55, "Gust Size": 28.0}
 
 # ---- files ------------------------------------------------------------------------------------------------------
 
-def write(relative: str, content: str | bytes) -> Path:
-    """Writes a file below the sample, with a stable .plutometa identity for assets."""
+def write(relative: str, content: str | bytes, meta_records: tuple[str, ...] = ()) -> Path:
+    """Writes a file below the sample, with a stable .plutometa identity for assets (plus any extra records)."""
     path = ROOT / relative
     path.parent.mkdir(parents=True, exist_ok=True)
     data = content.encode("utf-8") if isinstance(content, str) else content
     path.write_bytes(data)
     if path.is_relative_to(ASSETS):
-        identity = uuid.uuid5(uuid.NAMESPACE_URL, "plutoge:wind-fields:" + relative).hex
         meta = path.with_name(path.name + ".plutometa")
-        meta.write_bytes(f"PLUTOASSET\t1\nID\t{identity}\nIMPORTER_VERSION\t1\n".encode("utf-8"))
+        if meta.exists():
+            # The editor adds import records (packages, object identities) to sidecars: keep them and set only the
+            # records this script owns. A changed MODEL_OPTIONS makes the editor reimport the model.
+            lines = meta.read_text(encoding="utf-8").splitlines()
+            for record in meta_records:
+                key = record.split("\t", 1)[0]
+                index = next((i for i, line in enumerate(lines) if line.split("\t", 1)[0] == key), None)
+                if index is None:
+                    lines.append(record)
+                elif key != "MODEL_IMPORT":  # never downgrade the editor's settings codec version
+                    lines[index] = record
+        else:
+            identity = uuid.uuid5(uuid.NAMESPACE_URL, "plutoge:wind-fields:" + relative).hex
+            lines = ["PLUTOASSET\t1", f"ID\t{identity}", "IMPORTER_VERSION\t1", *meta_records]
+        meta.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
     return path
+
+
+# Model import settings (MeshImportOptions flags): generated LODs, vertex-cache and overdraw optimization, and
+# vegetation LODs, whose coarser levels keep fewer, larger blades. Ground cover is most of the scene's triangles, and
+# without a LOD chain every distant clump draws at full detail.
+VEGETATION_IMPORT = ("MODEL_IMPORT\t1", "MODEL_OPTIONS\t15")
 
 
 def png(relative: str, width: int, height: int, pixel) -> None:
@@ -162,24 +181,13 @@ class Mesh:
     def height(self) -> float:
         return max(p[1] for p in self.positions)
 
-    def with_back_faces(self) -> "Mesh":
-        """Adds each triangle again with reversed winding, sharing its vertices and normals. Thin foliage then
-        shades the same from both sides with a one-sided material; a two-sided one would shade the far side of a
-        blade seen from below (on a slope above the camera) with its normal reversed, which is dark."""
-        reversed_triangles = []
-        for i in range(0, len(self.indices), 3):
-            a, b, c = self.indices[i:i + 3]
-            reversed_triangles += [a, c, b]
-        self.indices += reversed_triangles
-        return self
-
 
 def normalize(v):
     length = math.sqrt(sum(c * c for c in v)) or 1.0
     return tuple(c / length for c in v)
 
 
-def glb(relative: str, mesh: Mesh) -> None:
+def glb(relative: str, mesh: Mesh, meta_records: tuple[str, ...] = ()) -> None:
     """One primitive (positions, normals, UVs, uint32 triangles) as a binary glTF."""
     positions = b"".join(struct.pack("<3f", *p) for p in mesh.positions)
     normals = b"".join(struct.pack("<3f", *n) for n in mesh.normals)
@@ -212,7 +220,7 @@ def glb(relative: str, mesh: Mesh) -> None:
     data = struct.pack("<III", 0x46546C67, 2, 28 + len(metadata) + len(binary))
     data += struct.pack("<II", len(metadata), 0x4E4F534A) + metadata
     data += struct.pack("<II", len(binary), 0x004E4942) + binary
-    write(relative, data)
+    write(relative, data, meta_records)
 
 
 def blade(mesh: Mesh, root, yaw: float, height: float, width: float, lean: float, segments: int,
@@ -220,7 +228,10 @@ def blade(mesh: Mesh, root, yaw: float, height: float, width: float, lean: float
     """A tapered, curving blade from root: `lean` is how far (m) its tip arcs away along its facing."""
     facing = (math.sin(yaw), 0.0, math.cos(yaw))
     side = (math.cos(yaw), 0.0, -math.sin(yaw))
-    # Normals point straight up, so blades shade like the ground they grow from (see Mesh.with_back_faces).
+    # Normals point straight up, so blades shade like the ground they grow from. Grass materials are one-sided:
+    # instanced foliage draws without back-face culling, and a two-sided material would shade a blade's far side with
+    # its normal reversed (dark) wherever the blade is above the camera, as on rising ground. Back faces must not be
+    # added as extra triangles either: coincident copies pass the depth-equal test together and double the shading.
     normal = (0.0, 1.0, 0.0)
     rows = []
     for s in range(segments + 1):
@@ -727,8 +738,8 @@ def build_scene() -> str:
 
 # ---- assets -----------------------------------------------------------------------------------------------------
 
-GRASS_SHORT = grass_clump(11, 18, (0.32, 0.62), 0.05, 0.26).with_back_faces()
-GRASS_TALL = grass_clump(12, 11, (0.7, 1.15), 0.04, 0.22).with_back_faces()
+GRASS_SHORT = grass_clump(11, 18, (0.32, 0.62), 0.05, 0.26)
+GRASS_TALL = grass_clump(12, 11, (0.7, 1.15), 0.04, 0.22)
 GRASS_SHORT_HEIGHT = round(GRASS_SHORT.height(), 3)
 GRASS_TALL_HEIGHT = round(GRASS_TALL.height(), 3)
 TREE = tree(21, 8.5, 3.7)
@@ -753,18 +764,14 @@ def build_assets() -> None:
         "rock": material("Rock", (0.42, 0.41, 0.38), 0.85),
     })
     material("Ground", (1.0, 1.0, 1.0), 0.95)
-    glb("Assets/Models/GrassShort.glb", GRASS_SHORT)
-    glb("Assets/Models/GrassTall.glb", GRASS_TALL)
-    for i, colour in enumerate(("yellow", "white", "violet")):
-        glb(f"Assets/Models/Flowers{colour.title()}.glb", flower_clump(40 + i, colour).with_back_faces())
-    glb("Assets/Models/TreeTrunk.glb", TREE.trunk)
-    glb("Assets/Models/TreeCrown.glb", TREE.canopy)
-    glb("Assets/Models/Shrub.glb", shrub(31))
-    glb("Assets/Models/Rock.glb", rock(51))
+    build_models()
 
+    # SSAO is present but off. It needs the full G-buffer (normals, material and indirect light), which more than
+    # doubles the geometry pass on integrated GPUs (31 -> 13 ms at 1080p Medium on a Vega 8); contact shadows already
+    # ground the grass. Enable it in the Post Process editor on faster GPUs.
     write("Assets/PostProcessing/Meadow.plutopostprocess", "\n".join([
         "PostProcessPresetVersion 1 5",
-        'Effect "SSAO" 1 8', 'Parameter 0 "Radius" "0.8" 0', 'Parameter 0 "Bias" "0.03" 0',
+        'Effect "SSAO" 0 8', 'Parameter 0 "Radius" "0.8" 0', 'Parameter 0 "Bias" "0.03" 0',
         'Parameter 0 "Intensity" "0.8" 0', 'Parameter 0 "Power" "1" 0', 'Parameter 1 "Samples" "16" 0',
         'Parameter 1 "Blur Radius" "2" 0', 'Parameter 3 "Half Resolution" "true" 0', 'Parameter 3 "AO Only" "false" 0',
         'Effect "Bloom" 1 4', 'Parameter 0 "Intensity" "0.05" 0', 'Parameter 0 "Threshold" "2" 0',
@@ -777,12 +784,26 @@ def build_assets() -> None:
         'Effect "FXAA" 1 0', ""]))
 
 
-PROJECT = "".join(line + "\n" for line in [
+def build_models() -> None:
+    """The procedural meshes and their import settings: safe to re-run on an edited project (`--models`)."""
+    glb("Assets/Models/GrassShort.glb", GRASS_SHORT, VEGETATION_IMPORT)
+    glb("Assets/Models/GrassTall.glb", GRASS_TALL, VEGETATION_IMPORT)
+    for i, colour in enumerate(("yellow", "white", "violet")):
+        glb(f"Assets/Models/Flowers{colour.title()}.glb", flower_clump(40 + i, colour), VEGETATION_IMPORT)
+    glb("Assets/Models/TreeTrunk.glb", TREE.trunk, VEGETATION_IMPORT)
+    glb("Assets/Models/TreeCrown.glb", TREE.canopy, VEGETATION_IMPORT)
+    glb("Assets/Models/Shrub.glb", shrub(31), VEGETATION_IMPORT)
+    glb("Assets/Models/Rock.glb", rock(51), VEGETATION_IMPORT)
+
+
+PROJECT ="".join(line + "\n" for line in [
     "PLUTOPROJECT\t3",
     "NAME\tWind Fields",
     "ASSET_DIR\tAssets",
     "STARTUP_SCENE\tproject://Scenes/WindFields.plutoscene",
     "BUILD_USED_ASSETS_ONLY\t0",
+    # No scripts: an empty assembly lets the runtime start without one.
+    "SCRIPT_ASSEMBLY\t",
     "LOADING_ACCENT\t0.55\t0.7\t0.35",
     "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0",
     "QUALITY_PRESET\t1\t1\t1024\t2\t80\t1\t1\t0\t0\t0\t1\t0\t0",
@@ -804,9 +825,16 @@ PROJECT = "".join(line + "\n" for line in [
 
 
 def main() -> None:
+    import sys
+    if "--models" in sys.argv[1:]:
+        # Only the meshes and their import settings: keeps scene, material and post-process edits made in the editor.
+        build_models()
+        return
     build_assets()
     write("Assets/Scenes/WindFields.plutoscene", build_scene())
-    write("WindFields.plutoproject", PROJECT)
+    # The editor rewrites the project file (asset catalogue, editor camera), so it is only created once.
+    if not (ROOT / "WindFields.plutoproject").exists():
+        write("WindFields.plutoproject", PROJECT)
     write(".gitignore", "Captures/\n__pycache__/\n.pluto-import.lock\nLibrary/\n.plutoge-cache/\n")
     print(f"Grass {GRASS_SHORT_HEIGHT} m / {GRASS_TALL_HEIGHT} m tall; tree {TREE_HEIGHT} m")
 

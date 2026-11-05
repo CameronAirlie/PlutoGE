@@ -33,6 +33,9 @@ endif()
 # matrices nested in uniform structs. Declare it on each block so their layout
 # matches the generated row-vector operations and our column-major CPU data.
 string(REPLACE "layout(std140) uniform" "layout(std140, row_major) uniform" shader_source "${shader_source}")
+# Specialisation constants (SurfaceFeatures.slang) are a SPIR-V feature: desktop GLSL rejects constant_id. Without
+# the qualifier they are ordinary constants holding their defaults, the general shader OpenGL draws with.
+string(REGEX REPLACE "layout\\(constant_id = [0-9]+\\)" "" shader_source "${shader_source}")
 # Slang emits Vulkan descriptor-set qualifiers for resources carrying
 # [[vk::binding]]. OpenGL has one namespace per resource class, so the source
 # uses deliberately flattened register indices and this removes only `set`.

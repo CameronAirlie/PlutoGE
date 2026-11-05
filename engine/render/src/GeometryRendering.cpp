@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include "FoliageWindDraws.h"
+#include "SurfaceFeatures.h"
 
 namespace PlutoGE::render
 {
@@ -142,10 +143,12 @@ namespace PlutoGE::render
         const auto graphFragment = standard || (depthOnly && depthResources != DepthResources::Full)
             ? ShaderGraphVariantCache::Code{}
             : GraphFragmentVariant(m_graphVariants.get(), m_device->GetApi(), draw, layout, depthOnly);
+        // Shading pipelines specialise to the lighting paths in use; depth-only ones keep the general shader.
+        const std::uint32_t features = depthOnly ? AllSurfaceFeatures : DrawSurfaceFeatures(m_surfaceFeatures, draw);
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
                 (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
-                (unsigned(terrain) << 11) | (unsigned(impostor) << 12),
+                (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (features << 13),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -216,6 +219,7 @@ namespace PlutoGE::render
             descriptor.vertexLayout = {};
         }
         if (graphFragment) descriptor.fragmentShader = {.glsl = {}, .spirv = *graphFragment};
+        ApplySurfaceFeatures(descriptor, features);
         descriptor.debugName = impostor ? (depthOnly ? "Impostor coverage" : "Impostor cards")
             : terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
             : depthOnly ? "Geometry coverage" : "Geometry required outputs";
@@ -246,7 +250,8 @@ namespace PlutoGE::render
                                                                 bool prepassed)
     {
         const auto cull = GeometryCullMode(draw);
-        const unsigned key = static_cast<unsigned>(layout) | (unsigned(cull) << 3) | (unsigned(prepassed) << 5);
+        const std::uint32_t features = DrawSurfaceFeatures(m_surfaceFeatures, draw);
+        const unsigned key = static_cast<unsigned>(layout) | (unsigned(cull) << 3) | (unsigned(prepassed) << 5) | (features << 6);
         if (const auto found = m_bindlessGeometryPipelines.find(key); found != m_bindlessGeometryPipelines.end())
             return found->second.Get();
         // The standard opaque surface with object and material inputs from GpuDrivenOpaque's tables: no material
@@ -270,6 +275,7 @@ namespace PlutoGE::render
         descriptor.fragmentShader = layout == GeometryOutputLayout::Color ? shaders.fragments[1]
             : layout == GeometryOutputLayout::ColorMotion ? shaders.fragments[2]
             : layout == GeometryOutputLayout::SurfaceIndirect ? shaders.fragments[3] : shaders.fragments[0];
+        ApplySurfaceFeatures(descriptor, features);
         descriptor.debugName = "GPU-driven opaque geometry";
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();

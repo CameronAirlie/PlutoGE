@@ -1,5 +1,5 @@
 PostProcessPresetVersion 1 6
-Effect "SSGI" 1 11
+Effect "SSGI" 0 11
 Parameter 0 "Intensity" "1.000000" 0
 Parameter 0 "Ray Distance" "4.000000" 0
 Parameter 0 "Thickness" "0.450000" 0
@@ -11,7 +11,7 @@ Parameter 0 "History Depth Threshold" "0.030000" 0
 Parameter 0 "History Normal Threshold" "0.900000" 0
 Parameter 3 "Half Resolution" "true" 0
 Parameter 3 "Indirect Only" "false" 0
-Effect "SSAO" 1 12
+Effect "SSAO" 0 12
 Parameter 0 "Radius" "0.800000" 0
 Parameter 0 "Bias" "0.030000" 0
 Parameter 0 "Intensity" "1.200000" 0

@@ -51,6 +51,20 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
   Frozen renders are deterministic, so two captures of one mode match exactly
   and any difference between modes is real.
 
+### Shader registers (Vulkan, AMD)
+
+`PLUTO_VULKAN_SHADER_STATS=1` enables `VK_AMD_shader_info` where the driver offers it and prints, for each graphics
+pipeline as it is created, the vertex and fragment stages' VGPRs, SGPRs and scratch bytes. On GCN a SIMD runs
+floor(256 / VGPRs) waves, so a shader above 128 VGPRs runs one wave and cannot hide texture latency. Scratch is
+register spill or a dynamically indexed local array; every fragment that reaches it reads and writes memory.
+
+### Contention
+
+GPU timestamps include other processes' work that the scheduler interleaves. Close the editor, and any other GPU
+client, before benchmarking: with two editor windows open, Wind Fields measured 87.6 ms where the same build and
+settings take 45.7 ms alone. When frame time is far above `scene_gpu_ms`, or a scope is inexplicably large, suspect
+contention before the renderer.
+
 ### Geometry diagnostics
 
 Modes live in one table, `PlutoGE/render/GeometryDiagnostics.h`: the enum
@@ -200,6 +214,66 @@ discrete GPUs, where host-visible vertex data crosses PCIe.
 
 A third pass, aimed at integrated GPUs, is in
 [igpu-lighting-performance-pass.md](igpu-lighting-performance-pass.md).
+
+## Fourth pass: surface specialisation and caster LODs (Wind Fields, Vega 8)
+
+Measured on `samples/WindFields` at 1920×1080, live (wind animating, no `--frozen-render`), Vulkan, Ryzen 7 5700G
+(Vega 8), nothing else using the GPU. Medians of 180 frames after 90 warm-up frames; "before" is the same build with
+each change switched off.
+
+### Surface specialisation (BasicLit)
+
+BasicLit is one uber shader: every local light type, reflection captures, probe volumes, both directional shadow
+methods, and clear coat and sheen. Branches on frame data skip unused paths at run time, but the driver allocates
+registers for the heaviest path. Every lit geometry fragment shader used 192–208 VGPRs (one wave per SIMD) and spilled
+about 12.7 KB to scratch, so an ordinary grass pixel stalled on every shadow and sky fetch.
+
+Vulkan geometry pipelines now specialise those paths away (`src/SurfaceFeatures.h`, `shaders/SurfaceFeatures.slang`).
+The frame's features come from the same values its uniforms carry (local light count, capture and probe-volume
+presence, shadow method); clear coat and sheen come from the draw's material. A path is removed only where its data
+would skip it anyway, so images are identical (`CheckSurfaceSpecialization` in `PlutoGEVulkanRhiTests`). OpenGL
+compiles the defaults, the general shader, and keeps one pipeline per state as before.
+`BasicFrameStats::surfaceFeatures` reports the frame's set; `BasicRenderer::SetSurfaceSpecialization(false)` turns it off
+for comparisons.
+
+The specialised Wind Fields pipelines use 122–126 VGPRs (two waves) and no scratch. A pipeline compiles on first use
+of a new feature set, for example when the first local light appears, so expect one compile hitch per feature set.
+
+`atlasOffsets` in the directional VSM filter was indexed by loop counters, so it lived in scratch memory. The corner
+loops now unroll and the reference path selects with constant indices; the image is unchanged.
+
+### Cascade caster LODs
+
+Instanced shadow-cascade casters with a LOD chain (foliage) drew every instance at the draw's single LOD, so a foliage
+cell beside the camera cast all of its clumps at full detail into every cascade. Cascades now draw each 64-instance
+chunk at the LOD the camera passes give it, merging adjacent chunks at the same LOD; instances the camera hands to an
+impostor cast at the coarsest mesh LOD. The runs join the draw's shadow signature, so retained cascades redraw when a
+run changes LOD. This needs `SupportsFirstInstance` (Vulkan); elsewhere draws cast at their own LOD as before.
+Selecting the runs costs about 1 ms of render-thread CPU on Wind Fields (some 80,000 shadow instances).
+`BasicRenderer::SetShadowCasterLods(false)` restores whole-draw casting. VSM caster chunks are unchanged: forcing the
+coarsest LOD there saved under 0.6 ms on this scene, where trees dominate the page triangles.
+
+### Results
+
+| Preset (GPU ms) | Before | Specialised | + scratch fix | + caster LODs |
+| --- | --- | --- | --- | --- |
+| Low (cascades) | 15.6 | 14.6 | 14.6 | **12.4** |
+| Medium (cascades) | 22.0 | 20.7 | 20.5 | **17.7** |
+| Default (VSM, SSAO/SSGI off) | 29.6 | 28.7 | **27.7** | 27.7 |
+| Default with SSAO and SSGI | 45.7 | **39.6** | | |
+
+Specialisation matters most with SSAO or SSGI. Their G-buffer layout keeps more values live through the shader, and
+at one wave per SIMD that cost about 25 ms of geometry pass on this view; specialised, the layouts differ by a few
+milliseconds.
+
+### What remains at the default preset (27.7 ms)
+
+| Cost | ms | Candidate |
+| --- | --- | --- |
+| Geometry pass | 12.3 | Directional VSM filtering is about 6 ms of it (bypass diagnostic). A screen-space shadow mask resolved from the coverage depth would filter each pixel once, without the thin-grass quad overdraw. |
+| Volumetric clouds | 5.4 | Half resolution, 24 steps. A checkerboard update (a quarter of the trace each frame, reconstructed by `CloudTemporalFilter`) would remove about three quarters of it. |
+| VSM pages and planning | about 4 | Swaying grass dirties about 280 pages a frame at every clipmap level. Coarse levels could cast the rest pose, where sway is below a texel. |
+| Bloom, contact shadows, sky, exposure, tone mapping | about 4.5 | |
 
 ## Next candidates
 

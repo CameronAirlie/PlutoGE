@@ -148,6 +148,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceBrdf.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceLayers.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceFeatures.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowTent.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")

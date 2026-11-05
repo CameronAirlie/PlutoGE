@@ -1017,6 +1017,8 @@ namespace PlutoGE::render
         std::size_t gpuBinnedDraws = 0;
         // Frame-graph sections run on the async compute queue (zero when its work ran inline or none was needed).
         std::uint32_t asyncComputeSections = 0;
+        // The lighting paths this frame's geometry pipelines kept (SurfaceFeature bits, src/SurfaceFeatures.h).
+        std::uint32_t surfaceFeatures = 0;
         bool virtualShadowsActive = false;
         std::string directionalShadowStatus = "Disabled";
         std::size_t shadowObjectUploads = 0;
@@ -1137,6 +1139,12 @@ namespace PlutoGE::render
         [[nodiscard]] bool GpuInstanceCullingAvailable() const noexcept { return static_cast<bool>(m_gpuInstanceCulling); }
         void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
         { m_compactGeometry = compactOutputs; m_depthPrepass = depthPrepass; m_materialCulling = materialCulling; }
+        // Specialises Vulkan geometry pipelines to the lighting paths the frame and material use (src/SurfaceFeatures.h).
+        // On by default; the images agree, so switching it off is for comparisons. OpenGL always draws the general shader.
+        void SetSurfaceSpecialization(bool enabled) noexcept { m_surfaceSpecialization = enabled; }
+        // Instanced shadow-cascade casters with a LOD chain draw each instance chunk at the camera passes' LOD (on by
+        // default; off casts whole draws at their own LOD, as virtual shadow maps still do).
+        void SetShadowCasterLods(bool enabled) noexcept { m_shadowLods = enabled; }
         // Records shadows and geometry on worker threads when the device supports it. The output is identical;
         // switching it off is for comparisons and debugging.
         void SetParallelRecordingEnabled(bool enabled) noexcept { m_parallelRecording = enabled; }
@@ -1238,6 +1246,10 @@ namespace PlutoGE::render
         void BindTerrainLayers(rhi::ICommandContext &commands, const BasicTerrainLayers &terrain);
         void EnsureGeometryTargets(GeometryOutputLayout layout);
         bool m_compactGeometry = true, m_depthPrepass = true, m_materialCulling = true;
+        bool m_surfaceSpecialization = true;
+        bool m_shadowLods = true;
+        // This frame's SurfaceFeature bits (src/SurfaceFeatures.h); all set is the general shader.
+        std::uint32_t m_surfaceFeatures = ~0u;
         std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
         std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> m_compactFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_coverageFragments;
@@ -1259,7 +1271,7 @@ namespace PlutoGE::render
         struct GeometryPipelineKeyHash
         {
             std::size_t operator()(const GeometryPipelineKey &key) const noexcept
-            { return std::hash<std::uint64_t>{}(key.graphStructure ^ (std::uint64_t(key.state) << 48)); }
+            { return std::hash<std::uint64_t>{}(key.graphStructure ^ (std::uint64_t(key.state) * 0x9E3779B97F4A7C15ull)); }
         };
         std::unordered_map<GeometryPipelineKey, rhi::GraphicsPipeline, GeometryPipelineKeyHash> m_geometryPipelines;
         BasicBindlessShaderPackage m_bindlessShaders;

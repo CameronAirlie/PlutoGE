@@ -36,6 +36,7 @@
 #include <span>
 #include <cmath>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
@@ -1090,8 +1091,31 @@ namespace PlutoGE::render::rhi::vulkan
         }
     }
 
+    namespace
+    {
+        // One line per stage of a new graphics pipeline: registers used, of those available, and scratch bytes. On GCN
+        // a SIMD runs floor(256 / VGPRs) waves of a shader; scratch is register spill or a dynamically indexed array.
+        void LogShaderStatistics(VkDevice device, VkPipeline pipeline, const GraphicsPipelineDescriptor &descriptor)
+        {
+            const auto get = reinterpret_cast<PFN_vkGetShaderInfoAMD>(vkGetDeviceProcAddr(device, "vkGetShaderInfoAMD"));
+            if (!get) return;
+            for (const auto stage : {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT})
+            {
+                VkShaderStatisticsInfoAMD statistics{};
+                std::size_t size = sizeof(statistics);
+                if (get(device, pipeline, stage, VK_SHADER_INFO_TYPE_STATISTICS_AMD, &size, &statistics) != VK_SUCCESS) continue;
+                std::cerr << "Shader statistics: " << descriptor.debugName << (stage == VK_SHADER_STAGE_VERTEX_BIT ? " vertex" : " fragment")
+                          << ": " << statistics.resourceUsage.numUsedVgprs << '/' << statistics.numAvailableVgprs << " VGPRs, "
+                          << statistics.resourceUsage.numUsedSgprs << " SGPRs, " << statistics.resourceUsage.scratchMemUsageInBytes
+                          << " scratch bytes, " << descriptor.specializationConstants.size() << " specialisation constants\n";
+            }
+        }
+    }
+
     struct VulkanDevice::Impl
     {
+        // VK_AMD_shader_info is enabled for PLUTO_VULKAN_SHADER_STATS (LogShaderStatistics).
+        bool shaderStatistics = false;
         // PLUTO_VULKAN_CONSERVATIVE_BARRIERS=1 orders every barrier after all earlier commands, as before
         // access tracking, for comparisons.
         const bool conservativeBarriers = []
@@ -4446,6 +4470,19 @@ namespace PlutoGE::render::rhi::vulkan
         std::vector<const char *> enabledDeviceExtensions;
         if (m_impl->surface)
             enabledDeviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        // PLUTO_VULKAN_SHADER_STATS=1 logs each graphics pipeline's register and scratch use where the driver reports
+        // it (VK_AMD_shader_info). Registers set how many waves a SIMD runs, so they explain latency-bound shaders.
+        if (const char *setting = std::getenv("PLUTO_VULKAN_SHADER_STATS"); setting && std::string_view(setting) == "1")
+        {
+            std::uint32_t count = 0;
+            vkEnumerateDeviceExtensionProperties(m_impl->physicalDevice, nullptr, &count, nullptr);
+            std::vector<VkExtensionProperties> extensions(count);
+            vkEnumerateDeviceExtensionProperties(m_impl->physicalDevice, nullptr, &count, extensions.data());
+            m_impl->shaderStatistics = std::ranges::any_of(extensions, [](const VkExtensionProperties &extension)
+                { return std::strcmp(extension.extensionName, VK_AMD_SHADER_INFO_EXTENSION_NAME) == 0; });
+            if (m_impl->shaderStatistics) enabledDeviceExtensions.push_back(VK_AMD_SHADER_INFO_EXTENSION_NAME);
+            std::cerr << "Vulkan shader statistics: " << (m_impl->shaderStatistics ? "on" : "unavailable (needs VK_AMD_shader_info)") << '\n';
+        }
 #if PLUTO_HAS_STREAMLINE
         if (enableStreamlineForAdapter)
             for (const auto *extension : m_impl->streamline->DeviceExtensions())
@@ -5241,6 +5278,16 @@ namespace PlutoGE::render::rhi::vulkan
                               VK_SHADER_STAGE_GEOMETRY_BIT, geometry, "main"});
         stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                           VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"});
+        std::vector<VkSpecializationMapEntry> specializationEntries;
+        for (std::size_t index = 0; index < descriptor.specializationConstants.size(); ++index)
+            specializationEntries.push_back({descriptor.specializationConstants[index].id,
+                static_cast<std::uint32_t>(index * sizeof(GraphicsPipelineDescriptor::SpecializationConstant) +
+                    offsetof(GraphicsPipelineDescriptor::SpecializationConstant, value)), sizeof(std::uint32_t)});
+        const VkSpecializationInfo specialization{static_cast<std::uint32_t>(specializationEntries.size()),
+            specializationEntries.data(), descriptor.specializationConstants.size() * sizeof(GraphicsPipelineDescriptor::SpecializationConstant),
+            descriptor.specializationConstants.data()};
+        if (!specializationEntries.empty())
+            for (auto &stage : stages) stage.pSpecializationInfo = &specialization;
         std::vector<VkVertexInputAttributeDescription> attributes;
         for (const auto &a : descriptor.vertexLayout.attributes)
             attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});
@@ -5313,6 +5360,8 @@ namespace PlutoGE::render::rhi::vulkan
         info.pDynamicState = &dynamicState;
         info.layout = resource.layout;
         const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline);
+        if (m_impl->shaderStatistics && result == VK_SUCCESS)
+            LogShaderStatistics(m_impl->device, resource.pipeline, descriptor);
         vkDestroyShaderModule(m_impl->device, vertex, nullptr);
         vkDestroyShaderModule(m_impl->device, fragment, nullptr);
         if (geometry)

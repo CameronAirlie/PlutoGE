@@ -335,6 +335,14 @@ namespace PlutoGE::render::rhi
         // Also binds the device's bindless texture table at BindlessTextureSet. Requires
         // IRenderDevice::BindlessTextureCapacity() != 0.
         bool bindlessTextures = false;
+        // Values for the shaders' specialisation constants (SPIR-V SpecId), applied to every stage. Vulkan only:
+        // OpenGL compiles each constant's default, so a shader must be correct with its defaults.
+        struct SpecializationConstant
+        {
+            std::uint32_t id = 0;
+            std::uint32_t value = 0; // a bool is 0 or 1
+        };
+        std::vector<SpecializationConstant> specializationConstants;
     };
 
     struct ComputePipelineDescriptor

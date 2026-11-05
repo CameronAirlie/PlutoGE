@@ -7,6 +7,7 @@ float4 shaderGraphTexture(int slot, float2 uv);
 #include "ShaderGraphEvaluation.slang"
 #endif
 #include "FoliageWind.slang"
+#include "SurfaceFeatures.slang"
 #include "VirtualShadowCommon.slang"
 [[vk::binding(1, 0)]]
 cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; };
@@ -705,9 +706,11 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
         int2 lowPage = first / PLUTO_VSM_PAGE_SIZE, highPage = last / PLUTO_VSM_PAGE_SIZE;
         // Decode each resident page once into an integer virtual-to-atlas
         // offset. The tent spans at most two pages per axis (support <= 5).
+        // Every access below uses a constant index once the corner loops unroll, so the offsets stay in registers;
+        // a dynamically indexed array lives in scratch memory, which every shadowed fragment would write and read.
         int2 atlasOffsets[4];
         bool complete = true;
-        for (int corner = 0; corner < 4; ++corner)
+        [ForceUnroll] for (int corner = 0; corner < 4; ++corner)
         {
             // Most filter footprints stay in one physical page. Reuse the
             // mapping along axes that do not cross a page boundary.
@@ -752,7 +755,7 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
             // (one unless it crosses a page edge). Gather each with its page's
             // offset; weights and comparisons match the per-texel loop below.
             // One path for every pixel keeps waves free of page-edge divergence.
-            for (int corner = 0; corner < 4; ++corner)
+            [ForceUnroll] for (int corner = 0; corner < 4; ++corner)
             {
                 const bool right = (corner & 1) != 0, top = (corner & 2) != 0;
                 if ((right && lowPage.x == highPage.x) || (top && lowPage.y == highPage.y)) continue;
@@ -769,9 +772,9 @@ float evaluateVirtualShadowLevels(float3 world, float3 normal, float3 worldDx, f
         // resolve the entire footprint; depth is sampled at texel centres.
         for (int y = first.y; y <= last.y; ++y)
         {
-            const int row = y >= pageBoundaryY ? 2 : 0;
-            const int2 leftOffset = atlasOffsets[row];
-            const int2 rightOffset = atlasOffsets[row + 1];
+            const bool upper = y >= pageBoundaryY;
+            const int2 leftOffset = upper ? atlasOffsets[2] : atlasOffsets[0];
+            const int2 rightOffset = upper ? atlasOffsets[3] : atlasOffsets[1];
             const float tentY = max(support - abs(float(y) - position.y), 0.0);
             for (int x = first.x; x <= last.x; ++x)
             {
@@ -1243,9 +1246,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         materialOcclusion = lerp(1.0, occlusionTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)
             [surfaceTextureChannel(SurfaceTextureOcclusion)], saturate(occlusionParameters.x));
     // Clear coat and sheen layers (SurfaceLayers.slang), each map scaling its factor. Glass has neither.
-    float layerClearCoat = glass ? 0.0 : clearCoatParameters.x;
+    float layerClearCoat = glass || !kSurfaceLayers ? 0.0 : clearCoatParameters.x;
     float layerClearCoatRoughness = clearCoatParameters.y;
-    float3 layerSheenColor = glass ? float3(0.0) : sheenParameters.rgb;
+    float3 layerSheenColor = glass || !kSurfaceLayers ? float3(0.0) : sheenParameters.rgb;
     float layerSheenRoughness = sheenParameters.a;
     if (!skipDetailTextures)
     {
@@ -1360,7 +1363,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
     LocalLightIterator localLightIterator = localLights(input.worldPosition);
     uint light;
-    while ((transparentPass || pointParameters.w != 6.0) && localLightIterator.next(light))
+    while (kSurfaceLocalLights && (transparentPass || pointParameters.w != 6.0) && localLightIterator.next(light))
     {
         const float3 offset = pointPositionRange[light].xyz - input.worldPosition;
         const float distance = length(offset);
@@ -1456,7 +1459,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             shadowNormal = -shadowNormal;
         const float shadowNdotl = saturate(dot(shadowNormal, lightDirection));
         const float slope = 1.0 - shadowNdotl;
-        if (shadowCascadeParameters.w > 0.5)
+        if (kSurfaceVirtualShadows && shadowCascadeParameters.w > 0.5)
         {
             float virtualRaw, virtualLevel;
             const float visibility = evaluateVirtualShadow(input.worldPosition, shadowNormal,
@@ -1467,7 +1470,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             rawShadowVisibility = virtualRaw;
             normalizedCascade = virtualLevel;
         }
-        else
+        else if (kSurfaceCascadedShadows)
         {
         const float receiverDistance = -(mul(view, float4(input.worldPosition, 1.0))).z;
         const int cascadeCount = clamp((int)shadowCascadeParameters.x, 1, 4);
@@ -1551,7 +1554,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // each claims only the coverage the earlier ones left.
     for (int i = 0; i < 4; ++i)
     {
-        captureWeights[i] = transparentPass || pointParameters.w != 11.0 ? iblWeight(i, input.worldPosition) * (1.0 - captureWeightSum) : 0.0;
+        captureWeights[i] = kSurfaceReflectionCaptures && (transparentPass || pointParameters.w != 11.0)
+            ? iblWeight(i, input.worldPosition) * (1.0 - captureWeightSum) : 0.0;
         captureWeightSum += captureWeights[i];
     }
     const float captureCoverage = saturate(captureWeightSum);
@@ -1566,7 +1570,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // irradiance * diffuse response where normal.a = 0 marks a pending pixel.
     // The resolve then also applies the grid's reflection terms (BakedEnvironment.slang);
     // here they apply only where ambientGrid.coverage > 0.
-    const int gridVolume = transparentPass || pointParameters.w != 12.0 ? selectDiffuseVolume(input.worldPosition) : -1;
+    const int gridVolume = kSurfaceDiffuseVolumes && (transparentPass || pointParameters.w != 12.0)
+        ? selectDiffuseVolume(input.worldPosition) : -1;
     const bool gridCovered = gridVolume >= 0;
     const bool gridDeferred = gridCovered && !transparentPass && probeAtlasParameters.w > 0.5;
     DiffuseGridSample ambientGrid = emptyDiffuseGridSample();

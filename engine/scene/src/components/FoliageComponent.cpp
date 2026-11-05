@@ -4,6 +4,8 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/assets/AssetMetadata.h"
+#include "PlutoGE/assets/ModelImportSettings.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/scene/Entity.h"
@@ -28,6 +30,20 @@ namespace PlutoGE::scene
     namespace
     {
         constexpr const char *kTypePrefix = "Type.";
+
+        // The import options a source model's sidecar asks for (Content Browser import settings: vegetation LODs,
+        // triangle budget), or the importer's defaults when it has none. Foliage that references a model directly
+        // imports it here, so without this it would ignore those settings and draw every instance at full detail.
+        assetimport::MeshImportOptions SourceModelImportOptions(const std::string &sourcePath)
+        {
+            assets::AssetMetadata metadata;
+            assets::ModelImportSettings settings;
+            if (assets::LoadAssetMetadata(assets::GetAssetMetadataPath(sourcePath), metadata) ==
+                    assets::AssetMetadataStatus::Success &&
+                assets::ReadModelImportSettings(metadata, settings) == assets::ModelImportSettingsStatus::Success)
+                return settings.meshOptions;
+            return {};
+        }
 
         // Wind values tolerate malformed text by keeping the current value.
         float ParseWindValue(const std::string &text, float fallback)
@@ -1832,7 +1848,9 @@ namespace PlutoGE::scene
         }
 
         const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(type.sourceMeshPath);
-        auto imported = type.useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedPath) : engine.ImportMeshAsset(resolvedPath);
+        const auto options = SourceModelImportOptions(resolvedPath);
+        auto imported = type.useGeneratedLods || options.generateLods ? engine.GenerateMeshAssetLods(resolvedPath, options)
+                                                                      : engine.ImportMeshAsset(resolvedPath, options);
         type.mesh = imported.mesh;
         AssignFoliageMaterials(type, imported.materials);
         SanitizeTypeSubmeshSelection(type);

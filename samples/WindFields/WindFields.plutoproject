@@ -14,7 +14,7 @@ QUALITY_PRESET	2	1	2048	4	150	0	1	1	1	1	1	0	0	1
 QUALITY_PRESET	3	1	4096	4	300	0	1	1	1	1	1	1	1	1
 WINDOW_TITLE	PlutoGE Wind Fields
 WINDOW_SIZE	1600	900
-VSYNC	1
+VSYNC	0
 GRAPHICS_API	Vulkan
 RUNTIME_UPSCALER	None
 RUNTIME_UPSCALER_QUALITY	Quality
@@ -49,25 +49,25 @@ ASSET	project://Materials/Leaves.plutomaterial	270	Material
 ASSET	project://Materials/Rock.plutomaterial	247	Material
 ASSET	project://Materials/ShrubLeaves.plutomaterial	273	Material
 ASSET	project://Materials/Wildflowers.plutomaterial	278	Material
-ASSET	project://Models/.plutoge-cache/meshes/11452281979492375193-0.pmesh	12519	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/12168358616587928305-0.pmesh	77214	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/12726570442429797080-0.pmesh	12110	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/13019137309409312162-0.pmesh	12522	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/18118522578001629306-0.pmesh	13282	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/18120265445006786627-0.pmesh	8606	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/2387387560401677317-0.pmesh	14922	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/3516111524011556269-0.pmesh	13095	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/8159931513120666328-0.pmesh	13761	Unknown
-ASSET	project://Models/FlowersViolet.glb	8336	Model
-ASSET	project://Models/FlowersWhite.glb	7108	Model
-ASSET	project://Models/FlowersYellow.glb	7112	Model
-ASSET	project://Models/GrassShort.glb	7180	Model
-ASSET	project://Models/GrassTall.glb	4760	Model
+ASSET	project://Models/.plutoge-cache/meshes/11452281979492375193-51.pmesh	14007	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/12168358616587928305-51.pmesh	82014	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/12726570442429797080-51.pmesh	13734	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/13019137309409312162-51.pmesh	14106	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/18118522578001629306-51.pmesh	13282	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/18120265445006786627-51.pmesh	8942	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/2387387560401677317-51.pmesh	17074	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/3516111524011556269-51.pmesh	18135	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/8159931513120666328-51.pmesh	13673	Unknown
+ASSET	project://Models/FlowersViolet.glb	6680	Model
+ASSET	project://Models/FlowersWhite.glb	5728	Model
+ASSET	project://Models/FlowersYellow.glb	5732	Model
+ASSET	project://Models/GrassShort.glb	6100	Model
+ASSET	project://Models/GrassTall.glb	4096	Model
 ASSET	project://Models/Rock.glb	7032	Model
 ASSET	project://Models/Shrub.glb	6156	Model
 ASSET	project://Models/TreeCrown.glb	32004	Model
 ASSET	project://Models/TreeTrunk.glb	6252	Model
-ASSET	project://PostProcessing/Meadow.plutopostprocess	858	Post Process Preset
+ASSET	project://PostProcessing/Meadow.plutopostprocess	1698	Post Process Preset
 ASSET	project://Scenes/WindFields.plutoscene	5127326	Scene
 ASSET	project://Textures/Bark.png	4466	Texture
 ASSET	project://Textures/FlowerAtlas.png	135	Texture

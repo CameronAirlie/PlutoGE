@@ -30,6 +30,7 @@
 #include "ParallelRecordingChecks.h"
 #include "RenderThreadChecks.h"
 #include "GeometryArenaChecks.h"
+#include "SurfaceSpecializationChecks.h"
 #include "OutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "DecalRenderingChecks.h"
@@ -258,6 +259,7 @@ int main(int argc, char **argv)
             CheckParallelRecording(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             CheckRenderThreadRecording(device, shaders);
             CheckGeometryArena(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            CheckSurfaceSpecialization(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
         }
 
         if (argc > 1 && std::string_view(argv[1]) == "--geometry-diagnostics")

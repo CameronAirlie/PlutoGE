@@ -6,6 +6,7 @@
 #include "GeometryArena.h"
 #include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
+#include "SurfaceFeatures.h"
 #include "FoliageWindDraws.h"
 #include "CascadedShadowLayers.h"
 #include "PointShadowLayers.h"
@@ -161,6 +162,37 @@ namespace PlutoGE::render
             return chain.Select(largest);
         }
 
+        // A run of consecutive instances a shadow cascade draws at one LOD (the records path's firstInstance).
+        struct ShadowLodRun
+        {
+            std::uint32_t firstInstance = 0, instanceCount = 0, firstIndex = 0, indexCount = 0;
+        };
+
+        // The instanced caster `draw` (with a LOD chain) as the camera passes' instance chunks, each at the LOD they
+        // give it (the coarsest where an impostor takes the chunk), adjacent chunks at one LOD merged. Empty when a
+        // LOD lies outside the mesh: the caller then draws the whole draw at its own LOD.
+        std::vector<ShadowLodRun> ShadowLodRuns(const BasicDraw &draw, std::size_t chunk, const glm::vec3 &camera, float lodProjection)
+        {
+            const auto &chain = *draw.instanceLods;
+            const auto &models = *draw.instanceModels;
+            const auto meshIndices = draw.mesh->GetIndexCount();
+            std::vector<ShadowLodRun> runs;
+            for (std::size_t first = 0; first < models.size(); first += chunk)
+            {
+                const auto count = std::min(chunk, models.size() - first);
+                const auto lodIndex = std::min<std::size_t>(InstanceChunkLod(chain, models, first, count, camera, lodProjection),
+                                                            chain.lods.size() - 1);
+                const auto &lod = chain.lods[lodIndex];
+                if (lod.firstIndex >= meshIndices) return {};
+                const auto indexCount = std::min(lod.indexCount, meshIndices - lod.firstIndex);
+                if (!runs.empty() && runs.back().firstIndex == lod.firstIndex && runs.back().indexCount == indexCount)
+                    runs.back().instanceCount += static_cast<std::uint32_t>(count);
+                else
+                    runs.push_back({static_cast<std::uint32_t>(first), static_cast<std::uint32_t>(count), lod.firstIndex, indexCount});
+            }
+            return runs;
+        }
+
         GraphShadowMaterial ShadowMaterial(const BasicDraw &draw, glm::vec3 camera, float time,
                                            const FoliageWindFrame &wind)
         {
@@ -217,6 +249,20 @@ namespace PlutoGE::render
         };
         static_assert(sizeof(BasicFrameParameters) == 6768 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
+
+        // The SurfaceFeature bits whose BasicLit paths this frame's parameters can reach (SurfaceFeatures.slang states
+        // the test each path makes). Layers depend on the material and are narrowed per draw (DrawSurfaceFeatures).
+        std::uint32_t FrameSurfaceFeatures(const BasicFrameParameters &frame)
+        {
+            std::uint32_t features = SurfaceLayers;
+            if (frame.pointParameters.x > 0.0f) features |= SurfaceLocalLights;
+            if (std::ranges::any_of(frame.iblSettings, [](const glm::vec4 &settings) { return settings.x >= 0.5f; }))
+                features |= SurfaceReflectionCaptures;
+            if (static_cast<int>(frame.probeOrigin.w) > 0) features |= SurfaceDiffuseVolumes;
+            if (frame.shadowsEnabled != 0)
+                features |= frame.shadowCascadeParameters.w > 0.5f ? SurfaceVirtualShadows : SurfaceCascadedShadows;
+            return features;
+        }
 
         struct alignas(16) SelectionOutlineParameters
         {
@@ -2591,6 +2637,10 @@ namespace PlutoGE::render
             m_frameStats.clusteredLocalLights = clusters.Enabled() ? localLightCount : 0;
         }
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
+        // OpenGL compiles the shaders' defaults (no specialisation constants), so its pipelines stay general.
+        m_surfaceFeatures = m_surfaceSpecialization && m_device->GetApi() == rhi::GraphicsApi::Vulkan
+            ? FrameSurfaceFeatures(frameParameters) : AllSurfaceFeatures;
+        m_frameStats.surfaceFeatures = m_surfaceFeatures;
         // Selected geometry is rasterized once more into its own depth mask,
         // without temporal jitter, and outlined over the final display output.
         const bool selectionOutlineActive = !m_selectionDraws.empty() && m_selectionOutlinePipeline &&
@@ -2738,6 +2788,23 @@ namespace PlutoGE::render
         instanceBinningScope.End();
         m_timingStats.instancePreparationMs = elapsedMs(instanceBinningStart, instancePreparationEnd);
         m_timingStats.instanceBinningMs = elapsedMs(instancePreparationEnd, std::chrono::steady_clock::now());
+        // Cascade casters with a LOD chain draw each run of instances at the LOD the camera passes give it, so a
+        // foliage cell beside the camera does not cast every clump at full detail, and distant instances' shadows
+        // match the detail they are seen at. Instances the camera hands to an impostor keep the mesh's coarsest LOD:
+        // every instance still casts. The runs join the draw's shadow signature, so retained cascades redraw when
+        // a run changes LOD. Without first-instance support the draw casts at its own LOD, as before.
+        std::vector<std::vector<ShadowLodRun>> shadowLodRuns(shadowDraws.size());
+        if (m_shadowLods && cascadedShadowsActive && commands.SupportsFirstInstance())
+            for (std::size_t index = 0; index < shadowDraws.size() && index < shadowInstanceRecords.size(); ++index)
+            {
+                const auto &draw = shadowDraws[index];
+                if (!shadowInstanceRecords[index] || !draw.instanceLods || draw.instanceLods->lods.empty()) continue;
+                shadowLodRuns[index] = ShadowLodRuns(draw, kMaxInstancesPerDraw, lighting.cameraPosition, instanceView.lodProjection);
+                if (index < m_shadowDrawSignatures.size())
+                    for (const auto &run : shadowLodRuns[index])
+                        HashVctValue(m_shadowDrawSignatures[index],
+                                     glm::uvec4(run.firstInstance, run.instanceCount, run.firstIndex, run.indexCount));
+            }
         // Shadows and geometry record into their own command contexts, on worker threads when the device allows,
         // and execute on the GPU in that order. Inside each job `commands` is the job's context. A job writes only
         // its own caches and statistics; everything both read is prepared before Run.
@@ -2984,9 +3051,19 @@ namespace PlutoGE::render
                             commands.BindStorageBuffer(InstanceRecordSlot, shadowRecords[drawIndex].buffer);
                             commands.BindUniformBuffer(InstanceStorageSlot, shadowRecordRanges[drawIndex]);
                             commands.BindUniformBuffer(17, shadowInstancePlaceholder);
-                            commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(draw.instanceModels->size()), draw.firstIndex);
-                            ++m_frameStats.shadowDrawsByCascade[cascade];
-                            m_frameStats.shadowInstances += draw.instanceModels->size();
+                            if (drawIndex < shadowLodRuns.size() && !shadowLodRuns[drawIndex].empty())
+                                for (const auto &run : shadowLodRuns[drawIndex])
+                                {
+                                    commands.DrawIndexedInstanced(run.indexCount, run.instanceCount, run.firstIndex, 0, run.firstInstance);
+                                    ++m_frameStats.shadowDrawsByCascade[cascade];
+                                    m_frameStats.shadowInstances += run.instanceCount;
+                                }
+                            else
+                            {
+                                commands.DrawIndexedInstanced(count, static_cast<std::uint32_t>(draw.instanceModels->size()), draw.firstIndex);
+                                ++m_frameStats.shadowDrawsByCascade[cascade];
+                                m_frameStats.shadowInstances += draw.instanceModels->size();
+                            }
                         }
                         else if (instanced)
                         {

@@ -73,4 +73,24 @@ void CheckEditorFoliage(Device &device, const PlutoGE::render::BasicRendererShad
     std::cout << "Editor foliage: " << lit << " lit pixels; editor path " << (viaEditor == runtime ? "matches" : "differs") << '\n';
     require(lit > 0, "Instanced foliage drew nothing");
     require(viaEditor == runtime, "Instanced foliage drew differently through the editor's visibility pass");
+
+    // Clusters of one mesh that differ only in their LOD distance scale need their own chains. The row is about 6.5 px
+    // in radius, below LOD0's density limit of about 8 px; at 3 it is about 19 px and keeps LOD0.
+    const auto triangles = [&](std::vector<RenderCommand> scene)
+    {
+        render(scene, scene);
+        const auto &drawn = renderer.GetTimingStats().geometryTriangles;
+        return drawn[0] + drawn[1];
+    };
+    auto scaled = cluster;
+    scaled.lodDistanceScale = 3.0f;
+    const auto unscaledTriangles = triangles({cluster});
+    // The same producer and revision with a new scale must not reuse the old packet.
+    const auto scaledTriangles = triangles({scaled});
+    scaled.sourceObject = RenderObjectIdentity().Value();
+    const auto bothTriangles = triangles({cluster, scaled});
+    std::cout << "Editor foliage LOD distance scale: " << unscaledTriangles << " triangles at 1, " << scaledTriangles
+              << " at 3, " << bothTriangles << " together\n";
+    require(scaledTriangles > unscaledTriangles, "A LOD distance scale must keep finer LODs at the same distance");
+    require(bothTriangles == unscaledTriangles + scaledTriangles, "Clusters of one mesh must keep their own LOD distance scales");
 }

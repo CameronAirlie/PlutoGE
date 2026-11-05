@@ -130,7 +130,7 @@ namespace PlutoGE::render
                 entry.items = {items, count, source->records.first, firstSlot};
                 entry.lodInfo = {lods, chain.minimumLod, 0u, 0u};
                 entry.bounds = glm::vec4(chain.boundsCenter, chain.boundsRadius);
-                entry.screenRange = {chain.minScreenRadiusPixels, Finite(chain.maxScreenRadiusPixels), Finite(draw.instanceDrawDistance), 0.0f};
+                entry.screenRange = {chain.minScreenRadiusPixels, Finite(chain.maxScreenRadiusPixels), Finite(draw.instanceDrawDistance), chain.distanceScale};
                 // Cards index their own buffer; meshes theirs, bound at zero, so their ranges start at the base index.
                 const std::uint32_t base = draw.impostor ? 0u : draw.mesh->BaseIndex();
                 for (std::uint32_t lod = 0; lod < lods; ++lod)

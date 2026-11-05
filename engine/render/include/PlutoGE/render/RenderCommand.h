@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/FoliageWind.h"
+#include "PlutoGE/render/LodDistanceScale.h"
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/MeshImpostor.h"
 #include <glm/glm.hpp>
@@ -29,6 +30,9 @@ namespace PlutoGE::render
         uint32_t minShadowLodIndex = 0;
         float maxDrawDistance = std::numeric_limits<float>::max();
         float maxShadowDistance = std::numeric_limits<float>::max();
+        // Moves this command's LOD switches nearer or farther (LodDistanceScale.h): its cluster LOD and, when
+        // instanced, its per-instance LODs.
+        float lodDistanceScale = DefaultLodDistanceScale;
         // Instanced commands of a mesh with an impostor: the camera passes draw instances smaller than the impostor's
         // screen radius as impostor cards instead of this submesh. Exactly one command per cluster, the owner, also
         // draws those cards (one card per instance represents every submesh); the others only hand them over.

@@ -9,8 +9,10 @@
 #include "PlutoGE/render/ShaderGraph.h"
 
 #include <algorithm>
+#include <compare>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <optional>
 #include <span>
@@ -325,8 +327,15 @@ namespace PlutoGE::render
           std::unordered_map<std::uint64_t, std::uint32_t> canonicalGeometry;
           std::unordered_map<std::uint64_t, ShadowGeometryCluster> localBounds;
           std::uint64_t contentRevision = 0;
-          // Instanced draws' LOD chains by submesh and minimum LOD (BasicDraw::instanceLods).
-          std::unordered_map<std::uint64_t, std::shared_ptr<const BasicInstanceLodChain>> instanceLods;
+          // Everything that distinguishes this mesh's instanced LOD chains (BasicDraw::instanceLods).
+          struct InstanceLodKey
+          {
+              std::uint32_t submesh = 0, minimumLod = 0;
+              bool handsOverToImpostor = false;
+              float distanceScale = DefaultLodDistanceScale;
+              auto operator<=>(const InstanceLodKey &) const = default;
+          };
+          std::map<InstanceLodKey, std::shared_ptr<const BasicInstanceLodChain>> instanceLods;
       };
       std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh

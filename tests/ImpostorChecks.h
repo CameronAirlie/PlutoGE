@@ -100,6 +100,16 @@ inline void CheckImpostors(PlutoGE::render::BasicRenderer &renderer, PlutoGE::re
     if (stats.geometryTriangles[0] != 200u || stats.geometryTriangles[1] != 2u)
         throw std::runtime_error("A near instance must draw its mesh and a far one its impostor card, each once");
 
+    // A LOD distance scale moves the hand-over for mesh and card alike: at 2 the far instance is 13 px, a mesh at its
+    // coarse LOD, and is not drawn twice or lost.
+    chain->distanceScale = 2.0f;
+    const auto scaled = render(mixed);
+    chain->distanceScale = 1.0f;
+    std::cout << "Impostors at LOD distance scale 2: " << scaled.geometryTriangles[0] << " mesh and "
+              << scaled.geometryTriangles[1] << " card triangles\n";
+    if (scaled.geometryTriangles[0] != 202u || scaled.geometryTriangles[1] != 0u)
+        throw std::runtime_error("A LOD distance scale must move the impostor hand-over with the mesh's LODs");
+
     // Cards alone cover the pixels where they stand.
     auto far = std::make_shared<std::vector<glm::mat4>>();
     far->push_back(glm::translate(glm::mat4(1), glm::vec3(-1.0f, 0.0f, -6.0f)));

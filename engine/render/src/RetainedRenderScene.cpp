@@ -178,6 +178,7 @@ namespace PlutoGE::render
             geometryChanged |= producer.meshRevisions[i] != (b.mesh ? b.mesh->GetContentRevision() : 0) || a.mesh != b.mesh || a.submeshIndex != b.submeshIndex || a.lodIndex != b.lodIndex || a.isStatic != b.isStatic ||
                 a.castsShadow != b.castsShadow || a.minLodIndex != b.minLodIndex || a.minShadowLodIndex != b.minShadowLodIndex ||
                 a.maxDrawDistance != b.maxDrawDistance || a.maxShadowDistance != b.maxShadowDistance ||
+                a.lodDistanceScale != b.lodDistanceScale ||
                 a.terrainGeomorph != b.terrainGeomorph || a.foliageWind != b.foliageWind ||
                 a.impostor != b.impostor || a.impostorOwner != b.impostorOwner;
             materialChanged |= a.material != b.material;

@@ -46,7 +46,7 @@ namespace PlutoGE::scene
         }
 
         // Wind values tolerate malformed text by keeping the current value.
-        float ParseWindValue(const std::string &text, float fallback)
+        float ParseFloatOr(const std::string &text, float fallback)
         {
             try { return std::stof(text); } catch (...) { return fallback; }
         }
@@ -705,6 +705,7 @@ namespace PlutoGE::scene
                                                   ? type.asset.maxDrawDistance
                                                   : m_maxDrawDistance;
                     command.maxShadowDistance = m_maxShadowDistance;
+                    command.lodDistanceScale = type.asset.lodDistanceScale;
                     command.impostor = type.impostor.get();
                     command.impostorOwner = type.impostor && submeshIndex == impostorOwner;
                     command.isStatic = m_isStatic;
@@ -760,6 +761,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
             properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
+            properties.push_back({prefix + "LodDistanceScale", PropertyType::Float, std::to_string(type.asset.lodDistanceScale)});
             properties.push_back({prefix + "CollisionEnabled", PropertyType::Bool, type.asset.collisionEnabled ? "true" : "false"});
             properties.push_back({prefix + "CollisionCenter", PropertyType::Vec3,
                                   std::to_string(type.asset.collisionCenter.x) + "," +
@@ -864,6 +866,9 @@ namespace PlutoGE::scene
                     type.asset.cellSize = (std::max)(1.0f, std::stof(property.value));
                 else if (fieldName == "MaxDrawDistance")
                     type.asset.maxDrawDistance = (std::max)(0.0f, std::stof(property.value));
+                else if (fieldName == "LodDistanceScale")
+                    type.asset.lodDistanceScale = render::SanitizeLodDistanceScale(
+                        ParseFloatOr(property.value, render::DefaultLodDistanceScale));
                 else if (fieldName == "CollisionEnabled")
                     type.asset.collisionEnabled = property.value == "true" || property.value == "1";
                 else if (fieldName == "CollisionCenter")
@@ -881,13 +886,13 @@ namespace PlutoGE::scene
                 else if (fieldName == "WindEnabled")
                     type.asset.wind.enabled = property.value == "true" || property.value == "1";
                 else if (fieldName == "WindStiffness")
-                    type.asset.wind.stiffness = ParseWindValue(property.value, type.asset.wind.stiffness);
+                    type.asset.wind.stiffness = ParseFloatOr(property.value, type.asset.wind.stiffness);
                 else if (fieldName == "WindFlutter")
-                    type.asset.wind.flutter = ParseWindValue(property.value, type.asset.wind.flutter);
+                    type.asset.wind.flutter = ParseFloatOr(property.value, type.asset.wind.flutter);
                 else if (fieldName == "WindBendHeight")
-                    type.asset.wind.bendHeight = ParseWindValue(property.value, type.asset.wind.bendHeight);
+                    type.asset.wind.bendHeight = ParseFloatOr(property.value, type.asset.wind.bendHeight);
                 else if (fieldName == "WindPivotHeight")
-                    type.asset.wind.pivotHeight = ParseWindValue(property.value, type.asset.wind.pivotHeight);
+                    type.asset.wind.pivotHeight = ParseFloatOr(property.value, type.asset.wind.pivotHeight);
                 else if (fieldName == "Instances")
                     type.instances = DeserializeInstances(property.value);
             }
@@ -1665,6 +1670,18 @@ namespace PlutoGE::scene
         if (auto *type = GetType(index))
         {
             type->asset.maxDrawDistance = (std::max)(distance, 0.0f);
+            MarkRenderCommandsDirty();
+        }
+    }
+
+    void FoliageComponent::SetTypeLodDistanceScale(std::size_t index, float scale)
+    {
+        if (auto *type = GetType(index))
+        {
+            const float sanitized = render::SanitizeLodDistanceScale(scale);
+            if (type->asset.lodDistanceScale == sanitized)
+                return;
+            type->asset.lodDistanceScale = sanitized;
             MarkRenderCommandsDirty();
         }
     }

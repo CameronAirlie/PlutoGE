@@ -3729,6 +3729,17 @@ namespace PlutoGE::ui
                                 }
                                 ImGui::SetItemTooltip("0 uses the component Max Draw Distance. Use a shorter range for grass and other small foliage.");
 
+                                float lodDistanceScale = selectedType->asset.lodDistanceScale;
+                                if (ImGui::DragFloat("LOD Distance Scale", &lodDistanceScale, 0.01f, render::MinLodDistanceScale,
+                                                     render::MaxLodDistanceScale, "%.2f", ImGuiSliderFlags_AlwaysClamp))
+                                {
+                                    foliageComponent->SetTypeLodDistanceScale(selectedTypeIndex, lodDistanceScale);
+                                    entity->AddPrefabOverride("Component:FoliageComponent:Type." + std::to_string(selectedTypeIndex) + ".LodDistanceScale");
+                                    editorShell.MarkSceneDirty();
+                                }
+                                ImGui::SetItemTooltip("Multiplies the distance of this type's LOD and impostor switches: 2 keeps detail twice as far away.\n"
+                                                      "Triangles grow with its square. Floors such as Min Render LOD still apply.");
+
                                 bool collisionEnabled = selectedType->asset.collisionEnabled;
                                 if (ImGui::Checkbox("Enable Capsule Collision", &collisionEnabled))
                                 {

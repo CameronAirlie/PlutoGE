@@ -20,6 +20,7 @@ namespace PlutoGE::scene
         output << kHeader << '\n'
                << "CELL_SIZE\t" << asset.cellSize << '\n'
                << "MAX_DRAW_DISTANCE\t" << asset.maxDrawDistance << '\n'
+               << "LOD_DISTANCE_SCALE\t" << asset.lodDistanceScale << '\n'
                << "COLLISION_ENABLED\t" << (asset.collisionEnabled ? 1 : 0) << '\n'
                << "COLLISION_CENTER\t" << asset.collisionCenter.x << '\t' << asset.collisionCenter.y << '\t' << asset.collisionCenter.z << '\n'
                << "COLLISION_CAPSULE\t" << asset.collisionRadius << '\t' << asset.collisionHeight << '\n'
@@ -46,6 +47,8 @@ namespace PlutoGE::scene
             std::getline(stream, key, '\t');
             if (key == "CELL_SIZE") stream >> loaded.cellSize;
             else if (key == "MAX_DRAW_DISTANCE") stream >> loaded.maxDrawDistance;
+            // Version 1 files written before LOD distance scales have no record and load with the default.
+            else if (key == "LOD_DISTANCE_SCALE") stream >> loaded.lodDistanceScale;
             else if (key == "COLLISION_ENABLED") { int enabled = 0; stream >> enabled; loaded.collisionEnabled = enabled != 0; }
             else if (key == "COLLISION_CENTER") stream >> loaded.collisionCenter.x >> loaded.collisionCenter.y >> loaded.collisionCenter.z;
             else if (key == "COLLISION_CAPSULE") stream >> loaded.collisionRadius >> loaded.collisionHeight;
@@ -57,6 +60,7 @@ namespace PlutoGE::scene
         loaded.assetReference = asset.assetReference;
         loaded.cellSize = (std::max)(loaded.cellSize, 1.0f);
         loaded.maxDrawDistance = (std::max)(loaded.maxDrawDistance, 0.0f);
+        loaded.lodDistanceScale = render::SanitizeLodDistanceScale(loaded.lodDistanceScale);
         loaded.collisionRadius = (std::max)(loaded.collisionRadius, 0.01f);
         loaded.collisionHeight = (std::max)(loaded.collisionHeight, loaded.collisionRadius * 2.0f);
         loaded.wind = loaded.wind.Sanitized();

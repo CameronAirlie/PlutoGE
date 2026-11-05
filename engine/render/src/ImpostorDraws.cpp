@@ -47,6 +47,7 @@ namespace PlutoGE::render
         chain->lods = {{0, 6, std::numeric_limits<float>::max()}};
         chain->boundsCenter = source.instanceLods->boundsCenter;
         chain->boundsRadius = source.instanceLods->boundsRadius;
+        chain->distanceScale = source.instanceLods->distanceScale;
         chain->maxScreenRadiusPixels = impostor.parameters.maxScreenRadiusPixels;
         draw.instanceLods = std::move(chain);
         draw.preparedMaterialHash = BasicMaterialBatchHash(draw);

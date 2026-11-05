@@ -32,7 +32,7 @@ struct CullDraw
     uint4 items;            // first item, item count, first record, first slot
     uint4 lodInfo;          // LOD count, minimum LOD
     float4 bounds;          // model-space sphere: centre, radius
-    float4 screenRange;     // drawn projected radii [x, y), draw distance
+    float4 screenRange;     // drawn projected radii [x, y), draw distance, LOD distance scale
     float4 thresholds[2];   // per LOD: largest projected radius it serves
     float4 triangles[2];    // per LOD: triangles
 };
@@ -133,7 +133,7 @@ uint itemSlot(uint item, out uint record)
     for (uint plane = 0; plane < 4; ++plane)
         if (dot(cullPlanes[plane].xyz, center) + cullPlanes[plane].w < -radius) return NotCounted;
 
-    const float pixels = radius / sqrt(max(distanceSquared, 0.000001)) * cameraLod.w;
+    const float pixels = radius / sqrt(max(distanceSquared, 0.000001)) * cameraLod.w * draw.screenRange.w;
     if (pixels < draw.screenRange.x || pixels >= draw.screenRange.y) return NotCounted;
     if (occluded(center, radius)) return NotCounted;
 

@@ -413,7 +413,8 @@ namespace PlutoGE::render
             {
                 const glm::vec3 cameraOffset = command.worldBounds.center - cameraPosition;
                 const float safeDistance = std::sqrt(std::max(glm::dot(cameraOffset, cameraOffset), 0.000001f));
-                const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight;
+                const float projectedRadiusPixels = (std::max(command.worldBounds.radius, 0.001f) / safeDistance) * projectionScaleY * halfViewportHeight *
+                                                    SanitizeLodDistanceScale(command.lodDistanceScale);
                 const auto selection = command.mesh->SelectSubmeshLodWithTransition(
                     command.submeshIndex, projectedRadiusPixels, command.GetMinLodIndex());
                 if (command.lodIndex != selection.index ||

@@ -1249,15 +1249,16 @@ namespace PlutoGE::render
                     // A mesh with an impostor hands instances below the impostor's size to it (ImpostorDraws.h).
                     const float impostorBelow = command.impostor && command.impostor->parameters.Valid()
                         ? command.impostor->parameters.maxScreenRadiusPixels : 0.0f;
-                    const std::uint64_t key = (std::uint64_t(command.submeshIndex) << 8) | command.GetMinLodIndex() |
-                                              (std::uint64_t(impostorBelow > 0.0f) << 40);
-                    auto &chain = rigidMesh->instanceLods[key];
+                    const float distanceScale = SanitizeLodDistanceScale(command.lodDistanceScale);
+                    auto &chain = rigidMesh->instanceLods[{command.submeshIndex, command.GetMinLodIndex(),
+                                                           impostorBelow > 0.0f, distanceScale}];
                     if (!chain)
                     {
                         auto built = std::make_shared<BasicInstanceLodChain>();
                         built->boundsCenter = command.mesh->GetBounds().center;
                         built->boundsRadius = command.mesh->GetBounds().radius;
                         built->minimumLod = command.GetMinLodIndex();
+                        built->distanceScale = distanceScale;
                         built->minScreenRadiusPixels = impostorBelow;
                         const auto &submesh = command.mesh->GetSubmesh(command.submeshIndex);
                         for (std::size_t lod = 0; lod < lodCount; ++lod)

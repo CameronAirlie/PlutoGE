@@ -9,6 +9,7 @@
 #include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/ImpostorLayout.h"
 #include "PlutoGE/render/LocalLight.h"
+#include "PlutoGE/render/LodDistanceScale.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/TerrainLayerLimits.h"
 #include "PlutoGE/render/OceanParameters.h"
@@ -503,6 +504,10 @@ namespace PlutoGE::render
         glm::vec3 boundsCenter{0.0f}; // the mesh's bounding sphere, in its own space
         float boundsRadius = 0.0f;
         std::uint32_t minimumLod = 0;
+        // Multiplies every projected radius before selection (LodDistanceScale.h). All of this chain's radii and its
+        // triangle budget are compared with the scaled radius, so they all move with it. A mesh chain and its impostor's
+        // must share it for their hand-over to meet (MakeImpostorDraw).
+        float distanceScale = DefaultLodDistanceScale;
         // The projected radii this draw covers, [minimum, maximum): a mesh with an impostor hands instances smaller
         // than the impostor's threshold to its impostor draw, whose chain covers just those.
         float minScreenRadiusPixels = 0.0f;
@@ -530,6 +535,7 @@ namespace PlutoGE::render
         [[nodiscard]] std::uint32_t NotDrawn() const { return static_cast<std::uint32_t>(lods.size()); }
         [[nodiscard]] std::uint32_t Select(float pixels) const
         {
+            pixels *= distanceScale;
             if (lods.empty() || pixels < minScreenRadiusPixels || pixels >= maxScreenRadiusPixels) return NotDrawn();
             const auto last = static_cast<std::uint32_t>(lods.size() - 1);
             std::uint32_t selected = 0;
@@ -561,6 +567,7 @@ namespace PlutoGE::render
         {
             Blend result;
             if (lods.empty() || !(pixels > 0.0f)) return result;
+            pixels *= distanceScale;
             // Levels run from -1 (above this draw's range) through the LODs to lods.size() (below it). Switch k sits
             // between levels k - 1 and k, at the radius below which level k is taken (Select's rules), clamped into
             // the draw's range and non-increasing. Equal switches enclose empty levels and act as one.

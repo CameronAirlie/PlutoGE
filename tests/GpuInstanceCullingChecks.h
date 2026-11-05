@@ -71,10 +71,14 @@ inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, Re
         renderer.Render(projection * lighting.view, lighting, std::span(&draw, 1));
         return std::pair(readPixels(renderer.GetColorTexture()), renderer.GetFrameStats().gpuBinnedDraws);
     };
-    // At reduced foliage detail too: both take the view's scaled projection.
-    for (const float detail : {1.0f, 0.5f})
+    // At reduced foliage detail too: both take the view's scaled projection. And with a LOD distance scale, which
+    // drops the far row below the covered size: both must honour it.
+    struct Variant { float detail, distanceScale; };
+    std::size_t litAtDefaultScale = 0;
+    for (const auto [detail, distanceScale] : {Variant{1.0f, 1.0f}, Variant{0.5f, 1.0f}, Variant{1.0f, 0.2f}})
     {
         lighting.foliageDetail = detail;
+        chain->distanceScale = distanceScale;
         const auto [cpu, cpuBinned] = render(false);
         const auto [gpu, gpuBinned] = render(true);
         std::size_t different = 0, drawn = 0;
@@ -83,7 +87,8 @@ inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, Re
             different += cpu[texel] != gpu[texel] || cpu[texel + 1] != gpu[texel + 1] || cpu[texel + 2] != gpu[texel + 2];
             drawn += static_cast<unsigned>(cpu[texel]) > 128u;
         }
-        std::cout << "GPU instance culling (foliage detail " << detail << "): " << gpuBinned << " draws binned on the GPU, "
+        std::cout << "GPU instance culling (foliage detail " << detail << ", LOD distance scale " << distanceScale << "): "
+                  << gpuBinned << " draws binned on the GPU, "
                   << different << " of " << cpu.size() / 4 << " pixels differ from CPU binning (" << drawn << " lit)\n";
         renderer.SetGpuInstanceCulling(false);
         if (cpuBinned != 0 || gpuBinned != 1)
@@ -92,5 +97,9 @@ inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, Re
             throw std::runtime_error("The instance culling scene drew nothing");
         if (different != 0)
             throw std::runtime_error("GPU instance culling must draw what CPU binning draws");
+        if (detail == 1.0f && distanceScale == 1.0f)
+            litAtDefaultScale = drawn;
+        else if (distanceScale != 1.0f && drawn >= litAtDefaultScale)
+            throw std::runtime_error("A LOD distance scale must move instances out of the covered size");
     }
 }

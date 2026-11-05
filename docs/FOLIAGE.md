@@ -112,6 +112,7 @@ MAX_DRAW_DISTANCE	60
 COLLISION_ENABLED	1
 COLLISION_CENTER	0	1.5	0
 COLLISION_CAPSULE	0.4	3
+LOD_DISTANCE_SCALE	1
 ```
 
 The public C++ functions are:
@@ -214,6 +215,12 @@ On Verdant at 1080p Low (Vega 8), 0.6 takes the opaque triangles from 2.27 M to 
 52 ms. Below 0.6 little more is saved (1.5 M at 0.35): the rest is instances already at their last LOD and
 non-foliage geometry. Leaf-card LODs lose coverage as they thin (handover E3), so mid-distance canopies look sparser
 at 0.5 and below. The benchmark's `--foliage-detail=<value>` replaces the selected tier's value for comparisons.
+
+**LOD Distance Scale** (`FoliageTypeAsset::lodDistanceScale`, in the Inspector per foliage type; `render/LodDistanceScale.h`)
+multiplies the same projected radius for one type, so at 2 its LOD switches and impostor hand-over all happen twice
+as far away, and its triangles grow with the square. `BasicInstanceLodChain::distanceScale` applies it in `Select` and
+`SelectBlend`, `InstanceCulling.slang` in GPU binning, and `RenderSceneFrontend` to the cluster LOD that shadow passes
+keep. It composes with foliage detail, and floors such as `MinRenderLod` still apply. The range is 0.1 to 10.
 
 Without a LOD chain, or before the bins exist, a cluster falls back to chunks of 64 in instance order, each at the LOD
 its nearest instance needs (`InstanceChunkLod`). Instances should therefore be stored in spatial order; the level
@@ -405,6 +412,7 @@ Current scene serialization adds the following per-type fields:
 Type.N.AssetReference
 Type.N.CellSize
 Type.N.MaxDrawDistance
+Type.N.LodDistanceScale
 Type.N.CollisionEnabled
 Type.N.CollisionCenter
 Type.N.CollisionRadius
@@ -417,6 +425,7 @@ Type.N.WindPivotHeight
 ```
 
 The wind fields ([Foliage wind](FOLIAGE_WIND.md)) default to disabled, so older scenes keep still foliage.
+`LodDistanceScale` defaults to 1, so older scenes keep their LOD distances.
 
 Instance records now begin with their ID:
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/FoliageWind.h"
+#include "PlutoGE/render/LodDistanceScale.h"
 
 #include <glm/glm.hpp>
 #include <string>
@@ -13,6 +14,8 @@ namespace PlutoGE::scene
         float cellSize = 32.0f;
         // Zero inherits the owning foliage component's draw distance.
         float maxDrawDistance = 0.0f;
+        // Moves the type's LOD and impostor switches nearer or farther (render/LodDistanceScale.h).
+        float lodDistanceScale = render::DefaultLodDistanceScale;
         bool collisionEnabled = false;
         glm::vec3 collisionCenter{0.0f, 1.0f, 0.0f};
         float collisionRadius = 0.35f;

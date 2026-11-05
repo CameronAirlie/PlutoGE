@@ -55,7 +55,7 @@ namespace PlutoGE::render
                        input.material == command.material && input.submeshIndex == command.submeshIndex &&
                        lod == listLod && input.minShadowLodIndex == command.minShadowLodIndex &&
                        input.castsShadow == command.castsShadow && input.probeDebug == command.probeDebug &&
-                       input.foliageWind == command.foliageWind;
+                       input.foliageWind == command.foliageWind && input.lodDistanceScale == command.lodDistanceScale;
                 if (!common) return false;
                 // A producer revision vouches for array contents, not for which array is attached.
                 if (command.sourceObject && command.sourceRevision)

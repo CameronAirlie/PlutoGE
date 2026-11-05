@@ -350,6 +350,10 @@ add_executable(PlutoGEFoliageWindTests FoliageWindTests.cpp)
 pluto_link_engine(PlutoGEFoliageWindTests)
 add_test(NAME PlutoGEFoliageWindTests COMMAND PlutoGEFoliageWindTests)
 
+add_executable(PlutoGELodDistanceScaleTests LodDistanceScaleTests.cpp)
+pluto_link_engine(PlutoGELodDistanceScaleTests)
+add_test(NAME PlutoGELodDistanceScaleTests COMMAND PlutoGELodDistanceScaleTests)
+
 add_executable(PlutoGEPrefabMeshExporterTests
     PrefabMeshExporterTests.cpp
 )

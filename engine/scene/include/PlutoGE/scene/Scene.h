@@ -133,6 +133,8 @@ namespace PlutoGE::scene
         // Rebind imported geometry while retaining explicit instance overrides.
         AssetReconciliationReport ApplyModelAssetGeneration(const std::string &sourceAssetId,
             const std::string &sourceReference, assets::AssetManager &manager, const ModelAssetSnapshot &previous);
+        // After a .plutofoliage file changed: rereads it into every foliage type linked to it. Returns how many.
+        std::size_t RefreshFoliageTypeAsset(const std::string &assetReference);
         std::size_t RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material);
         std::size_t RemapMaterialAsset(const std::string &oldMaterialAssetReference,
                                        const std::string &newMaterialAssetReference,

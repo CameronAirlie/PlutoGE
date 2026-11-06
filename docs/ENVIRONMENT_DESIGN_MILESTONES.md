@@ -20,7 +20,7 @@ Requested 2026-10-07. Work proceeds in the order below. This supplements, rather
 | E02 | Surface placement for meshes and prefabs | Implemented; focused checks passed; normal build and interactive acceptance pending |
 | E03 | Environment asset palettes | Planned |
 | E04 | Modular building assembly | Planned |
-| E05 | Foliage assets, mixed painting and filters | Planned |
+| E05 | Foliage assets, mixed painting and filters | Partly done: assets and their editor; mixed painting and filters planned |
 | E06 | Incremental foliage edits and compact undo | Planned |
 | E07 | Incremental terrain sculpting | Planned |
 | E08 | Regenerable spline dressing | Planned |

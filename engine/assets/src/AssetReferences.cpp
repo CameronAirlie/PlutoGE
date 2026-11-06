@@ -446,6 +446,14 @@ namespace PlutoGE::assets
                 QuotedValues(scan, line, number);
                 return;
             }
+            if (extension == ".plutofoliage")
+            {
+                // Tab-delimited records; only the prototype's mesh and material name other assets.
+                const auto tab = line.find('\t');
+                if (tab != std::string_view::npos && (line.substr(0, tab) == "MESH" || line.substr(0, tab) == "MATERIAL"))
+                    Add(scan, line.substr(tab + 1), number);
+                return;
+            }
             if (extension == ".cs" || extension == ".rml" || extension == ".rcss" || extension == ".gltf")
             {
                 QuotedValues(scan, line, number, path, extension == ".cs" ? std::filesystem::path{} : root);
@@ -588,7 +596,7 @@ namespace PlutoGE::assets
         return e == ".plutoscene" || e == ".plutoprefab" || e == ".plutomaterial" || e == ".mat" ||
                e == ".plutomesh" || e == ".plutoanim" || e == ".plutoclip" || e == ".plutomodel" ||
                e == ".plutoanimgraph" || e == ".plutoshadergraph" || e == ".plutoparticles" ||
-               e == ".plutoloading" || e == ".plutotheme" || e == ".plutosurface" || e == ".plutopostprocess" || e == ".plutoscriptable" || e == ".plutoinput" ||
+               e == ".plutoloading" || e == ".plutotheme" || e == ".plutosurface" || e == ".plutofoliage" || e == ".plutopostprocess" || e == ".plutoscriptable" || e == ".plutoinput" ||
                e == ".cs" || e == ".rml" || e == ".rcss" || e == ".gltf";
     }
 

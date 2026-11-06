@@ -3,6 +3,7 @@
 
 #include "PlutoGE/ui/EntityLocks.h"
 #include "PlutoGE/ui/EntitySelection.h"
+#include "PlutoGE/ui/FoliageEditTool.h"
 #include "PlutoGE/ui/AuthoringRegistry.h"
 #include "PlutoGE/ui/ScriptSourceWatch.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
@@ -165,8 +166,13 @@ namespace PlutoGE::ui
                          const std::vector<std::uint32_t> &visible = {});
         [[nodiscard]] std::vector<scene::Entity *> GetSelectedEntities(bool rootsOnly = false);
         [[nodiscard]] std::uint64_t GetSelectionRevision() const { return m_entitySelection.Revision(); }
-        // Moves the editor camera so the primary selected entity fills the view.
+        // Moves the editor camera so the primary selected entity, or the foliage instances selected in it, fill the view.
         void FrameSelectedEntity();
+        [[nodiscard]] FoliageEditTool &GetFoliageTool() { return m_foliageTool; }
+        // Selects an asset in the Content Browser and shows its details. Returns false if there is no browser.
+        bool RevealAsset(const std::string &reference);
+        // The Content Browser's cached preview of an asset, or 0 while there is none. An ImTextureID, drawn with V flipped.
+        [[nodiscard]] std::uint64_t GetAssetThumbnail(const std::string &reference);
         [[nodiscard]] EntityLocks &GetEntityLocks() { return m_entityLocks; }
         [[nodiscard]] const EntityLocks &GetEntityLocks() const { return m_entityLocks; }
         void SelectEditorCamera()
@@ -337,6 +343,9 @@ namespace PlutoGE::ui
         ~EditorShell();
 
         void InitializeEditorCamera();
+        void FrameWorldSphere(const glm::vec3 &center, float radius);
+        // Foliage instances take Escape and Delete while the tool is on. Returns whether they did.
+        bool HandleFoliageToolKeys();
         void ApplyProjectContext();
         void PollModelImport();
         void PollImportWatch();
@@ -430,6 +439,7 @@ namespace PlutoGE::ui
         EditorProfiler m_profiler;
 
         EntitySelection m_entitySelection;
+        FoliageEditTool m_foliageTool;
         EntityLocks m_entityLocks;
         scene::Entity *m_selectedEntity = nullptr;
         bool m_isEditorCameraSelected = false;

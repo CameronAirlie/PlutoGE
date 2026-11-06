@@ -348,6 +348,14 @@ pluto_link_engine(PlutoGEFoliageCollisionTests)
 
 add_test(NAME PlutoGEFoliageCollisionTests COMMAND PlutoGEFoliageCollisionTests)
 
+add_executable(PlutoGEFoliageEditingTests
+    FoliageEditingTests.cpp
+    ../editor/ui/src/foliage/FoliageDiagnostics.cpp
+    ../editor/ui/src/foliage/FoliageEditTool.cpp)
+target_include_directories(PlutoGEFoliageEditingTests PRIVATE ../editor/ui/include)
+pluto_link_engine(PlutoGEFoliageEditingTests)
+add_test(NAME PlutoGEFoliageEditingTests COMMAND PlutoGEFoliageEditingTests)
+
 add_executable(PlutoGEFoliageWindTests FoliageWindTests.cpp)
 pluto_link_engine(PlutoGEFoliageWindTests)
 add_test(NAME PlutoGEFoliageWindTests COMMAND PlutoGEFoliageWindTests)

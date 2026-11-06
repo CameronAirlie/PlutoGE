@@ -99,7 +99,14 @@ add_library(PlutoGEEditorUI
     src/hierarchy/HierarchyEntityPresets.cpp
     src/hierarchy/UIWidgetPresets.cpp
     src/inspectors/ComponentInspectors.cpp
+    src/inspectors/FoliageInspector.cpp
     src/inspectors/WindInspectors.cpp
+    src/foliage/FoliageDiagnostics.cpp
+    src/foliage/FoliageEditing.cpp
+    src/foliage/FoliageEditTool.cpp
+    src/foliage/FoliageTypeAssetEditor.cpp
+    src/foliage/FoliageTypeSections.cpp
+    src/foliage/FoliageViewportTool.cpp
     src/inspectors/UIComponentInspectors.cpp
     src/inspectors/UIStyleInspectors.cpp
     src/theme/UIThemeDocument.cpp

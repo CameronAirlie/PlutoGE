@@ -2,6 +2,8 @@
 #include "PlutoGE/asset_import/ModelSourcePackageCopy.h"
 #include "PlutoGE/asset_import/ModelObjectExtractionService.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include "PlutoGE/scene/FoliageTypeAsset.h"
+#include "PlutoGE/ui/FoliageEditing.h"
 #include "PlutoGE/scene/ui/UITheme.h"
 #include "PlutoGE/ui/theme/UIThemeDocument.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
@@ -447,6 +449,7 @@ namespace PlutoGE::ui
                 case Type::RmlDocument: return {icons::RmlDocumentAsset, IM_COL32(96, 150, 236, 255)};
                 case Type::InputMapping: return {icons::InputMappingAsset, IM_COL32(232, 116, 180, 255)};
                 case Type::SurfaceResponse: return {icons::SurfaceResponseAsset, IM_COL32(196, 160, 112, 255)};
+                case Type::FoliageType: return {icons::EntityFoliage, IM_COL32(120, 200, 110, 255)};
                 case Type::LoadingScreen: return {icons::LoadingScreenAsset, IM_COL32(214, 176, 92, 255)};
                 case Type::UITheme: return {icons::Palette, IM_COL32(232, 128, 196, 255)};
                 default: return {icons::File, IM_COL32(150, 156, 166, 255)};
@@ -1556,6 +1559,9 @@ namespace PlutoGE::ui
         case PendingMenuAction::CreateSurfaceResponse:
             ImGui::OpenPopup("Create Surface Response Asset");
             break;
+        case PendingMenuAction::CreateFoliageType:
+            ImGui::OpenPopup("Create Foliage Type Asset");
+            break;
         case PendingMenuAction::CreateParticleSystem:
             ImGui::OpenPopup("Create Particle System Asset");
             break;
@@ -1861,6 +1867,46 @@ namespace PlutoGE::ui
                 else
                 {
                     editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to create surface response." : errorMessage);
+                }
+            }
+            ImGui::EndDisabled();
+
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        if (ImGui::BeginPopupModal("Create Foliage Type Asset", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            ImGui::InputText("Name", m_newFoliageTypeNameBuffer.data(), m_newFoliageTypeNameBuffer.size());
+            const std::string sanitizedName = SanitizeAssetFileName(m_newFoliageTypeNameBuffer.data());
+            const auto createDirectory = GetCreateDirectory(*project, m_selectedFolder, "Foliage");
+            const std::string fileName = sanitizedName + ".plutofoliage";
+            if (!sanitizedName.empty())
+                ImGui::TextDisabled("Creates %s", DisplayCreatePath(*project, createDirectory, fileName).c_str());
+            else
+                ImGui::TextDisabled("Enter a foliage type name.");
+
+            ImGui::BeginDisabled(sanitizedName.empty() || std::filesystem::exists(createDirectory / fileName));
+            if (ImGui::Button("Create"))
+            {
+                std::string errorMessage;
+                std::error_code directoryError;
+                std::filesystem::create_directories(createDirectory, directoryError);
+                if (scene::SaveFoliageTypeAsset((createDirectory / fileName).string(), scene::FoliageTypeAsset{}, &errorMessage))
+                {
+                    EditorShell::GetInstance().RefreshProjectAssets();
+                    m_assetCacheDirty = true;
+                    editorShell.MarkProjectDirty();
+                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "Created foliage type: " + project->MakeAssetReference(createDirectory / fileName));
+                    ImGui::CloseCurrentPopup();
+                }
+                else
+                {
+                    editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage);
                 }
             }
             ImGui::EndDisabled();
@@ -2313,6 +2359,11 @@ namespace PlutoGE::ui
                 ImGui::SameLine();
                 if (ImGui::Button("Revert Unsaved Changes")) m_surfaceEditorReference.clear();
                 if (!m_surfaceError.empty()) ImGui::TextWrapped("%s", m_surfaceError.c_str());
+            }
+            else if (asset.type == assets::ProjectAssetType::FoliageType)
+            {
+                if (!m_foliageTypeEditor) m_foliageTypeEditor = std::make_unique<FoliageTypeAssetEditor>();
+                m_foliageTypeEditor->Render(asset.reference);
             }
             else if (asset.type == assets::ProjectAssetType::Material)
             {
@@ -3467,6 +3518,11 @@ namespace PlutoGE::ui
                 m_newSurfaceNameBuffer.fill(0);
                 m_pendingMenuAction = PendingMenuAction::CreateSurfaceResponse;
             }
+            if (ImGui::MenuItem("Foliage Type"))
+            {
+                m_newFoliageTypeNameBuffer.fill(0);
+                m_pendingMenuAction = PendingMenuAction::CreateFoliageType;
+            }
             if (ImGui::MenuItem("Particle System"))
             {
                 m_newParticleSystemNameBuffer.fill('\0');
@@ -3843,6 +3899,15 @@ namespace PlutoGE::ui
         }
     }
 
+    std::uint64_t ContentBrowserPanel::GetAssetThumbnail(const std::string &reference)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        const auto *project = editorShell.GetProject();
+        if (!project || !m_thumbnailCache) return 0;
+        const assets::ProjectAssetEntry asset{.reference = reference, .type = assets::Project::GetAssetTypeForReference(reference)};
+        return m_thumbnailCache->Get(*project, editorShell.GetEngine(), asset);
+    }
+
     void ContentBrowserPanel::HandleItemDragSource(const ContentItem &item)
     {
         if (!ImGui::BeginDragDropSource())
@@ -3900,6 +3965,23 @@ namespace PlutoGE::ui
             {
                 if (!m_referenceSearch) m_referenceSearch = std::make_unique<AssetReferenceSearchPanel>();
                 m_referenceSearch->Open(project.GetAssetDirectoryPath(), asset.reference);
+            }
+            if ((asset.type == assets::ProjectAssetType::Mesh || asset.type == assets::ProjectAssetType::Model) &&
+                ImGui::MenuItem("Create Foliage Type"))
+            {
+                const auto source = asset.reference;
+                Defer([this, source]()
+                      {
+                          auto &shell = EditorShell::GetInstance();
+                          const auto created = CreateFoliageTypeAssetFile(shell, std::filesystem::path(source).stem().string(),
+                                                                          MakeFoliageAssetForMesh(source));
+                          if (!created.empty())
+                          {
+                              m_assetCacheDirty = true;
+                              RevealAsset(created);
+                              shell.Log(EditorShell::ConsoleSeverity::Info, "Created foliage type: " + created);
+                          }
+                      });
             }
             if (asset.type == assets::ProjectAssetType::Prefab && ImGui::MenuItem("Export as Static Mesh"))
             {

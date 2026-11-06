@@ -14,6 +14,8 @@
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/FoliageEditing.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/ui/ProjectLauncher.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorFonts.h"
@@ -2156,7 +2158,8 @@ namespace PlutoGE::ui
         {
             return;
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        const bool foliageToolHandledKey = HandleFoliageToolKeys();
+        if (!foliageToolHandledKey && ImGui::IsKeyPressed(ImGuiKey_Escape))
         {
             SetSelectedEntity(nullptr);
         }
@@ -2181,7 +2184,7 @@ namespace PlutoGE::ui
         {
             DuplicateSelectedEntity();
         }
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace))
+        if (!foliageToolHandledKey && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)))
         {
             DeleteSelectedEntity();
         }
@@ -2306,6 +2309,51 @@ namespace PlutoGE::ui
         (void)GetSelectedEntity();
     }
 
+    bool EditorShell::HandleFoliageToolKeys()
+    {
+        auto *entity = GetSelectedEntity();
+        auto *foliage = entity ? entity->GetComponent<scene::FoliageComponent>() : nullptr;
+        if (!foliage || !m_foliageTool.IsActiveFor(entity->GetID()) || ImGui::GetIO().WantTextInput) return false;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            // One step at a time: the selection first, then the tool.
+            if (!m_foliageTool.selection.Empty()) m_foliageTool.selection.Clear();
+            else m_foliageTool.SetMode(FoliageToolMode::Off, entity->GetID());
+            return true;
+        }
+        const bool deletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace);
+        if (deletePressed)
+        {
+            // Never falls through to deleting the entity while the tool is on.
+            DeleteSelectedFoliageInstances(*this, m_foliageTool, *entity, *foliage);
+            return true;
+        }
+        return false;
+    }
+
+    bool EditorShell::RevealAsset(const std::string &reference)
+    {
+        if (!m_contentBrowser) return false;
+        m_contentBrowser->RevealAsset(reference);
+        return true;
+    }
+
+    std::uint64_t EditorShell::GetAssetThumbnail(const std::string &reference)
+    {
+        return m_contentBrowser ? m_contentBrowser->GetAssetThumbnail(reference) : 0;
+    }
+
+    void EditorShell::FrameWorldSphere(const glm::vec3 &center, float radius)
+    {
+        auto &camera = m_editorCamera;
+        glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), camera.position);
+        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 forward = glm::normalize(-glm::vec3(cameraTransform[2]));
+        camera.position = center - forward * (std::max)(radius * 2.5f, 2.0f);
+    }
+
     void EditorShell::FrameSelectedEntity()
     {
         auto *selectedEntity = GetSelectedEntity();
@@ -2314,11 +2362,24 @@ namespace PlutoGE::ui
             return;
         }
 
-        auto &camera = m_editorCamera;
-        glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), camera.position);
-        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
-        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
-        const glm::vec3 forward = glm::normalize(-glm::vec3(cameraTransform[2]));
+        if (auto *foliage = selectedEntity->GetComponent<scene::FoliageComponent>();
+            foliage && m_foliageTool.IsActiveFor(selectedEntity->GetID()))
+        {
+            const auto locations = m_foliageTool.selection.Resolve(*foliage);
+            if (!locations.empty())
+            {
+                glm::vec3 low((std::numeric_limits<float>::max)());
+                glm::vec3 high(-(std::numeric_limits<float>::max)());
+                for (const auto &location : locations)
+                    if (const auto bounds = foliage->GetInstanceBounds(location))
+                    {
+                        low = (glm::min)(low, bounds->worldCenter - glm::vec3(bounds->worldRadius));
+                        high = (glm::max)(high, bounds->worldCenter + glm::vec3(bounds->worldRadius));
+                    }
+                FrameWorldSphere((low + high) * 0.5f, (std::max)(glm::length(high - low) * 0.5f, 0.5f));
+                return;
+            }
+        }
 
         float radius = 2.5f;
         if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
@@ -2331,7 +2392,7 @@ namespace PlutoGE::ui
             }
         }
 
-        camera.position = selectedEntity->GetWorldPosition() - forward * (std::max)(radius * 2.5f, 2.0f);
+        FrameWorldSphere(selectedEntity->GetWorldPosition(), radius);
     }
 
     scene::Entity *EditorShell::GetSelectedEntity()

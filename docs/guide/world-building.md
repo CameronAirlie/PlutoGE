@@ -121,9 +121,11 @@ the ground keeps its detail however large the terrain. See
 ## Foliage
 
 FoliageComponent places many mesh instances without one entity per plant. Add it
-to the terrain entity, create a foliage type, assign a mesh/material, enable
-painting, and paint a small patch first. Tune size, density, and draw distance
-from the player camera before covering a map.
+to the terrain entity, drag a mesh or model from the Content Browser onto the
+inspector's type list, click **Paint**, and paint a small patch first. Tune size,
+density, and draw distance from the player camera before covering a map. To adjust a
+single plant, click **Select**, then click it in the viewport and use the usual gizmo.
+Save a type you want to reuse as a `.plutofoliage` asset with **Save as Asset**.
 
 **Example: a forest edge.** Use a grass type with collision disabled and a tree
 type with capsule collision enabled. Fit the tree capsule to the trunk, leaving

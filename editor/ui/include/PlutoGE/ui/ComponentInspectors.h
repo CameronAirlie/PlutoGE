@@ -69,4 +69,5 @@ namespace PlutoGE::ui
     // Registration entry points, one per module, run on first lookup.
     void RegisterUIComponentInspectors();
     void RegisterUIStyleInspectors();
+    void RegisterFoliageInspectors();
 }

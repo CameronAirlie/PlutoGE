@@ -4,6 +4,7 @@
 #include <vector>
 #include <type_traits>
 #include <string>
+#include <string_view>
 
 namespace PlutoGE::scene
 {
@@ -52,6 +53,9 @@ namespace PlutoGE::scene
 
         virtual std::vector<Property> Serialize() const { return {}; }
         virtual void Deserialize(const std::vector<Property> &properties) {}
+        // A property older files may name but Serialize no longer writes. Prefab overrides of one are dropped rather
+        // than treated as naming something that no longer exists.
+        virtual bool IsRetiredProperty(std::string_view name) const { (void)name; return false; }
 
         bool IsEnabled() const { return m_enabled; }
         void SetEnabled(bool enabled) { if (m_enabled != enabled) { m_enabled = enabled; OnEnabledChanged(); } }

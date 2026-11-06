@@ -32,6 +32,7 @@
 #include "PlutoGE/assets/ModelArtifactStorage.h"
 #include "PlutoGE/assets/ModelHierarchyAsset.h"
 
+#include <set>
 #include <filesystem>
 #include <algorithm>
 #include <fstream>
@@ -1729,6 +1730,126 @@ Connections: {
                 ++count;
             }
             Require(count >= 2, "Extract All did not cover mesh and material");
+        }
+        // Extract All as one transaction: every material remapped together, mesh copies bound to the material copies.
+        {
+            Scratch batchScratch;
+            auto batchProject = assets::Project::Create(batchScratch.root / "Batch.plutoproject", "Batch", &error);
+            Require(static_cast<bool>(batchProject), error);
+            Write(batchScratch.root / "Assets/Robot.fbx", fixture);
+            Write(batchScratch.root / "Assets/Other.fbx", fixture);
+            assetimport::ModelImportResult imported;
+            Require(service.Import(*batchProject, {.sourceReference="project://Other.fbx"}, imported, &error), error);
+            Require(service.Import(*batchProject, {.sourceReference="project://Robot.fbx"}, imported, &error), error);
+            const auto robotIdentity = imported.catalog->FindIdentityByLocation("project://Robot.fbx");
+            Require(robotIdentity.has_value(), "Batch fixture has no source identity");
+
+            std::set<std::string> reserved;
+            const auto first = assetimport::FindAvailableModelExtractionReference(*batchProject, *imported.catalog, batchScratch.root / "Assets/Same.plutomaterial", &reserved);
+            const auto second = assetimport::FindAvailableModelExtractionReference(*batchProject, *imported.catalog, batchScratch.root / "Assets/same.plutomaterial", &reserved);
+            Require(first == "project://Same.plutomaterial" && second == "project://same_1.plutomaterial", "A batch reused a chosen name: " + first + " " + second);
+
+            std::vector<assetimport::ModelObjectExtractionRequest> requests;
+            std::size_t materialCount = 0;
+            std::vector<std::string> importedMeshes;
+            std::vector<std::string> otherMeshes;
+            for (const auto &object : imported.catalog->GetObjects())
+            {
+                if (object.ownership != assets::AssetOwnership::Imported) continue;
+                if (object.identity.assetId != robotIdentity->assetId)
+                {
+                    if (object.type == assets::ProjectAssetType::Mesh) otherMeshes.push_back(object.location);
+                    continue;
+                }
+                const bool material = object.type == assets::ProjectAssetType::Material;
+                if (object.type == assets::ProjectAssetType::Mesh) importedMeshes.push_back(object.location);
+                else if (!material) continue;
+                if (material) ++materialCount;
+                const auto requested = batchScratch.root / "Assets/Copies" / (object.name + std::filesystem::path(object.location).extension().string());
+                requests.push_back({object.location, assetimport::FindAvailableModelExtractionReference(*batchProject, *imported.catalog, requested, &reserved), material});
+            }
+            Require(materialCount >= 1 && !importedMeshes.empty(), "Batch fixture needs a mesh and a material");
+            // Meshes listed first must still end up bound to the copies of materials listed after them.
+            std::stable_partition(requests.begin(), requests.end(), [](const auto &request) { return !request.useMaterialForModel; });
+            const auto badRequest = requests.size();
+            requests.push_back({"project://NoSuchObject.plutomesh", "project://Copies/Bad.plutomesh", false});
+
+            assetimport::ModelObjectBatchExtractionResult batch;
+            Require(assetimport::ModelObjectExtractionService{}.ExtractBatch(*batchProject, requests, batch, &error), "Batch extraction failed: " + error);
+            Require(batch.objects.size() == requests.size() && !batch.objects[badRequest].error.empty() && batch.objects[badRequest].projectReference.empty(),
+                    "A bad object should be reported on its own");
+            Require(!std::filesystem::exists(batchScratch.root / "Assets/Copies/Bad.plutomesh"), "A bad object should write nothing");
+            std::set<std::string> authoredMaterials;
+            std::vector<std::string> meshCopies;
+            for (std::size_t index = 0; index < badRequest; ++index)
+            {
+                Require(batch.objects[index].error.empty(), "A good object should not fail with a bad one: " + batch.objects[index].error);
+                Require(batch.objects[index].projectReference == requests[index].destinationReference &&
+                        std::filesystem::is_regular_file(batchProject->ResolveAssetReference(batch.objects[index].projectReference)), "Extracted object is not in Assets");
+                const auto *object = batch.catalog->Find(batch.objects[index].identity);
+                Require(object && object->ownership == assets::AssetOwnership::Authored, "Extracted object is not authored");
+                if (requests[index].useMaterialForModel)
+                {
+                    std::string logical;
+                    Require(assets::SerializeAssetReference(batch.objects[index].identity, logical), "Cannot encode material copy");
+                    authoredMaterials.insert(logical);
+                }
+                else meshCopies.push_back(batch.objects[index].projectReference);
+            }
+            for (const auto &entry : std::filesystem::directory_iterator(batchScratch.root / ".pluto-import-transactions"))
+                Require(false, "Batch staging leaked: " + entry.path().string());
+
+            assets::AssetManager reader;
+            reader.SetProjectContext(batchProject->GetRootDirectory().string(), batchProject->GetManifest().assetDirectory, 3);
+            reader.SetAssetSnapshot(batch.catalog, batch.storage);
+            const auto boundToCopies = [&](const std::string &location)
+            {
+                const auto bindings = reader.GetMeshAssetMaterialReferences(location);
+                return !bindings.empty() && std::all_of(bindings.begin(), bindings.end(), [&](const auto &binding) { return authoredMaterials.contains(binding); });
+            };
+            for (const auto &mesh : importedMeshes) Require(boundToCopies(mesh), "An imported mesh kept a replaced material: " + mesh);
+            for (const auto &mesh : meshCopies) Require(boundToCopies(mesh), "A mesh copy did not use the batch's material copies: " + mesh);
+            for (const auto &mesh : otherMeshes) Require(!boundToCopies(mesh), "Another model's mesh was remapped: " + mesh);
+
+            assets::AssetMetadata sourceMetadata;
+            assets::ModelImportSettings sourceSettings;
+            Require(assets::LoadAssetMetadata(assets::GetAssetMetadataPath(batchScratch.root / "Assets/Robot.fbx"), sourceMetadata, &error) == assets::AssetMetadataStatus::Success &&
+                    assets::ReadModelImportSettings(sourceMetadata, sourceSettings, &error) == assets::ModelImportSettingsStatus::Success, error);
+            Require(sourceSettings.materialRemaps.size() == materialCount, "Every extracted material should be remapped in the source settings");
+
+            // A model elsewhere whose Library output is gone, as after a cleared cache, must not block extraction.
+            assets::AssetMetadata otherMetadata;
+            content::ContentDigest otherGeneration;
+            Require(assets::LoadAssetMetadata(assets::GetAssetMetadataPath(batchScratch.root / "Assets/Other.fbx"), otherMetadata, &error) == assets::AssetMetadataStatus::Success &&
+                    assets::ReadModelArtifactGeneration(otherMetadata, otherGeneration, &error) == assets::ModelArtifactGenerationStatus::Success, error);
+            std::filesystem::remove_all(batchScratch.root / "Library/Artifacts" / content::DigestToHex(otherGeneration));
+            assetimport::ModelObjectExtractionResult afterStale;
+            Require(assetimport::ModelObjectExtractionService{}.Extract(*batchProject, importedMeshes.front(), "project://Copies/AfterStale.plutomesh", afterStale, &error),
+                    "A stale model elsewhere blocked extraction: " + error);
+        }
+        // Remembered file checks: a verified file is not hashed again until its size or time changes.
+        {
+            Scratch checks;
+            const auto file = checks.root / "Checked.bin";
+            Write(file, "first");
+            content::ContentDigest digest;
+            Require(content::HashFileContent(file, digest), "Cannot hash the check fixture");
+            content::ContentDigest wrong = digest;
+            wrong[0] ^= 0xFF;
+            assets::ImportedFileCheckCache cache;
+            Require(!cache.Verify(file, wrong), "A file should not match another digest");
+            Require(cache.Verify(file, digest), "A file should match its digest");
+            const auto verifiedTime = std::filesystem::last_write_time(file);
+            Write(file, "other");
+            std::filesystem::last_write_time(file, verifiedTime);
+            Require(cache.Verify(file, digest), "An unchanged size and time should not be hashed again");
+            std::filesystem::last_write_time(file, verifiedTime + std::chrono::seconds(5));
+            Require(!cache.Verify(file, digest), "A new time should be hashed again");
+            Write(file, "first and longer");
+            std::filesystem::last_write_time(file, verifiedTime);
+            Require(!cache.Verify(file, digest), "A new size should be hashed again");
+            std::filesystem::remove(file);
+            Require(!cache.Verify(file, digest), "A missing file should not verify");
         }
         // Recover sources independently after losing a multi-model Library.
         {

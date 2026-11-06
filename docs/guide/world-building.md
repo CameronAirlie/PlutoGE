@@ -53,7 +53,9 @@ use references such as `engine://builtin/mesh/cube`.
 To create editable copies of a model's mesh, materials, and textures, select the
 source model in the Content Browser and use **Extract All** in its inspector.
 The **Extract to** line identifies the destination folder under Assets; the result
-below the button reports the extracted count and any failure. Imported products
+below the button reports the extracted count and any failure. An object that cannot
+be extracted is reported without stopping the others, and mesh copies use the material
+copies made with them. Imported products
 can live only in Library, so they need not exist beside the source model before
 extraction. Individual objects also provide **Extract** or **Extract & Use**.
 Extraction names also avoid imported objects reserved in Library, even if no
@@ -125,7 +127,9 @@ to the terrain entity, drag a mesh or model from the Content Browser onto the
 inspector's type list, click **Paint**, and paint a small patch first. Tune size,
 density, and draw distance from the player camera before covering a map. To adjust a
 single plant, click **Select**, then click it in the viewport and use the usual gizmo.
-Save a type you want to reuse as a `.plutofoliage` asset with **Save as Asset**.
+Save a type you want to reuse as a `.plutofoliage` asset with **Save as Asset**, then
+double-click the asset to tune it in the **Foliage Editor**, previewing on the plants
+already in your scene.
 
 **Example: a forest edge.** Use a grass type with collision disabled and a tree
 type with capsule collision enabled. Fit the tree capsule to the trunk, leaving

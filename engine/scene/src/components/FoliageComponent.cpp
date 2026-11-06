@@ -2052,6 +2052,19 @@ namespace PlutoGE::scene
         return reloaded;
     }
 
+    std::size_t FoliageComponent::PreviewTypeAsset(const std::string &assetReference, const FoliageTypeAsset &asset)
+    {
+        if (assetReference.empty()) return 0;
+        std::size_t previewed = 0;
+        for (std::size_t index = 0; index < m_types.size(); ++index)
+        {
+            if (m_types[index].asset.assetReference != assetReference) continue;
+            ++previewed;
+            ApplyTypeAsset(index, asset);
+        }
+        return previewed;
+    }
+
     void FoliageComponent::SetTypeScaleRange(std::size_t index, float minScale, float maxScale)
     {
         if (auto *type = GetType(index))

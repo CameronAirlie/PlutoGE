@@ -22,6 +22,11 @@ namespace PlutoGE::ui
         std::string message;
     };
 
+    // What is wrong with a definition drawing `mesh` (null when it did not load). `expectsDetailCost` adds the note about
+    // meshes without LODs, which only matters once instances exist.
+    [[nodiscard]] std::vector<FoliageIssue> DiagnoseFoliageAsset(const scene::FoliageTypeAsset &asset, const render::Mesh *mesh,
+                                                                 bool hasImpostor, bool expectsDetailCost);
+
     // What is wrong with one type's definition.
     [[nodiscard]] std::vector<FoliageIssue> DiagnoseFoliageType(const scene::FoliageType &type);
 

@@ -4,34 +4,43 @@
 #include "PlutoGE/render/Mesh.h"
 
 #include <algorithm>
+#include <iterator>
 
 namespace PlutoGE::ui
 {
+    std::vector<FoliageIssue> DiagnoseFoliageAsset(const scene::FoliageTypeAsset &asset, const render::Mesh *mesh,
+                                                   bool hasImpostor, bool expectsDetailCost)
+    {
+        std::vector<FoliageIssue> issues;
+        if (asset.sourceMeshPath.empty() && !mesh)
+        {
+            issues.push_back({FoliageIssueSeverity::Warning, "No mesh assigned: this type draws nothing and cannot be painted."});
+        }
+        else if (!mesh)
+        {
+            issues.push_back({FoliageIssueSeverity::Error, "The mesh could not be loaded: " + asset.sourceMeshPath});
+        }
+        else if (expectsDetailCost)
+        {
+            std::size_t lodCount = 1;
+            for (std::size_t submesh = 0; submesh < mesh->GetSubmeshCount(); ++submesh)
+                lodCount = (std::max)(lodCount, mesh->GetSubmeshLodCount(submesh));
+            if (lodCount <= 1 && !hasImpostor)
+                issues.push_back({FoliageIssueSeverity::Info,
+                                  "This mesh has no LODs or impostor, so every instance draws at full detail. "
+                                  "Turn on Vegetation LODs in the model's import settings."});
+        }
+        return issues;
+    }
+
     std::vector<FoliageIssue> DiagnoseFoliageType(const scene::FoliageType &type)
     {
         std::vector<FoliageIssue> issues;
         if (!type.assetLoadError.empty())
             issues.push_back({FoliageIssueSeverity::Error,
                               "Could not read the linked asset, so this type uses the scene's copy of its settings. " + type.assetLoadError});
-
-        if (type.asset.sourceMeshPath.empty() && !type.mesh)
-        {
-            issues.push_back({FoliageIssueSeverity::Warning, "No mesh assigned: this type draws nothing and cannot be painted."});
-        }
-        else if (!type.mesh)
-        {
-            issues.push_back({FoliageIssueSeverity::Error, "The mesh could not be loaded: " + type.asset.sourceMeshPath});
-        }
-        else if (!type.instances.empty())
-        {
-            std::size_t lodCount = 1;
-            for (std::size_t submesh = 0; submesh < type.mesh->GetSubmeshCount(); ++submesh)
-                lodCount = (std::max)(lodCount, type.mesh->GetSubmeshLodCount(submesh));
-            if (lodCount <= 1 && !type.impostor)
-                issues.push_back({FoliageIssueSeverity::Info,
-                                  "This mesh has no LODs or impostor, so every instance draws at full detail. "
-                                  "Turn on Vegetation LODs in the model's import settings."});
-        }
+        auto definition = DiagnoseFoliageAsset(type.asset, type.mesh, type.impostor != nullptr, !type.instances.empty());
+        issues.insert(issues.end(), std::make_move_iterator(definition.begin()), std::make_move_iterator(definition.end()));
         return issues;
     }
 

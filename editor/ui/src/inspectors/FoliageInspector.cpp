@@ -39,27 +39,6 @@ namespace PlutoGE::ui
 {
     namespace
     {
-        ImVec4 IssueColor(FoliageIssueSeverity severity)
-        {
-            switch (severity)
-            {
-            case FoliageIssueSeverity::Error: return ImVec4(1.0f, 0.45f, 0.4f, 1.0f);
-            case FoliageIssueSeverity::Warning: return ImVec4(1.0f, 0.75f, 0.3f, 1.0f);
-            case FoliageIssueSeverity::Info: break;
-            }
-            return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
-        }
-
-        void DrawIssues(const std::vector<FoliageIssue> &issues)
-        {
-            for (const auto &issue : issues)
-            {
-                ImGui::PushStyleColor(ImGuiCol_Text, IssueColor(issue.severity));
-                ImGui::TextWrapped("%s", issue.message.c_str());
-                ImGui::PopStyleColor();
-            }
-        }
-
         // A button whose action waits for a second click in a small popup; for what discards painted work.
         bool ConfirmedButton(const char *label, const std::string &question)
         {
@@ -100,7 +79,7 @@ namespace PlutoGE::ui
             if (tool.IsActiveFor(entityId) && tool.GetMode() != FoliageToolMode::Select)
             {
                 const auto *terrain = context.entity.GetComponent<scene::TerrainComponent>();
-                DrawIssues(DiagnoseFoliagePainting(terrain && terrain->IsEnabled(), foliage.GetSelectedType()));
+                DrawFoliageIssues(DiagnoseFoliagePainting(terrain && terrain->IsEnabled(), foliage.GetSelectedType()));
             }
         }
 
@@ -140,7 +119,7 @@ namespace PlutoGE::ui
             if (flagged)
             {
                 right -= 16.0f;
-                drawList->AddText(ImVec2(right, textY), ImGui::ColorConvertFloat4ToU32(IssueColor(WorstFoliageIssue(issues))), "!");
+                drawList->AddText(ImVec2(right, textY), ImGui::ColorConvertFloat4ToU32(FoliageIssueColor(WorstFoliageIssue(issues))), "!");
             }
 
             const float nameX = min.x + iconSize + 8.0f;
@@ -219,8 +198,8 @@ namespace PlutoGE::ui
                 ImGui::TextDisabled("Linked to %s", std::filesystem::path(reference).filename().string().c_str());
                 ImGui::SetItemTooltip("%s\nThese settings come from the asset, shared by every type linked to it.", reference.c_str());
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Edit Asset")) shell.RevealAsset(reference);
-                ImGui::SetItemTooltip("Shows the asset in the Content Browser, where its settings are edited and saved.");
+                if (ImGui::SmallButton("Edit Asset")) shell.OpenFoliageTypeAsset(reference);
+                ImGui::SetItemTooltip("Opens the asset in the Foliage Editor, with a live preview on this type.");
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Make Local")) MakeFoliageTypeLocal(shell, context.entity, foliage, typeIndex);
                 ImGui::SetItemTooltip("Keeps the current settings in this scene and drops the link.");
@@ -262,7 +241,7 @@ namespace PlutoGE::ui
                 context.shell.MarkSceneDirty();
             }
             DrawAssetLink(context, foliage, typeIndex);
-            DrawIssues(DiagnoseFoliageType(*foliage.GetType(typeIndex)));
+            DrawFoliageIssues(DiagnoseFoliageType(*foliage.GetType(typeIndex)));
             type = foliage.GetType(typeIndex);
 
             FoliageTypeSectionContext sections;

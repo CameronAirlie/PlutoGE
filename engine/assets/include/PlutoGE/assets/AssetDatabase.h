@@ -3,15 +3,19 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/AssetCatalog.h"
 #include "PlutoGE/assets/AssetStorageMap.h"
+#include "PlutoGE/platform/ContentDigest.h"
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <set>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+#include <mutex>
 
 namespace PlutoGE::assets
 {
@@ -30,6 +34,28 @@ namespace PlutoGE::assets
         std::vector<std::string> dependencyScanErrors;
     };
 
+    // Remembers which Library files have been verified, by path, size and modification time, so a scan need not hash
+    // them again. Library generations are immutable, so in practice a file only changes by being replaced. Thread-safe.
+    class ImportedFileCheckCache
+    {
+    public:
+        // Whether the file has `expected` content, hashing it unless it was verified unchanged since.
+        [[nodiscard]] bool Verify(const std::filesystem::path &path, const content::ContentDigest &expected);
+
+    private:
+        struct Entry
+        {
+            std::uintmax_t size = 0;
+            std::filesystem::file_time_type modified{};
+            content::ContentDigest digest{};
+        };
+        std::mutex m_mutex;
+        std::unordered_map<std::string, Entry> m_entries;
+    };
+
+    // The cache interactive scans share for the life of the process. Cooking and validation scan without it.
+    [[nodiscard]] std::shared_ptr<ImportedFileCheckCache> SharedImportedFileChecks();
+
     struct AssetScanOptions
     {
         // Read-only scans retain unidentified records with an empty id. They
@@ -39,6 +65,8 @@ namespace PlutoGE::assets
         // A skipped content hash is zero; skipped dependencies remain empty.
         bool hashContent = true;
         bool collectDependencies = true;
+        // Trusts files this cache verified earlier. Without it every imported file is hashed, as cooking needs.
+        std::shared_ptr<ImportedFileCheckCache> importedFileChecks;
         std::shared_ptr<const AssetStorageMap> importedStorage;
         // Editor/import recovery can retain unavailable generated identities.
         // Cooking remains strict. Missing/corrupt payloads are never loadable.

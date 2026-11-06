@@ -11,7 +11,6 @@
 #include "PlutoGE/assets/ModelAsset.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
-#include "PlutoGE/ui/FoliageTypeAssetEditor.h"
 
 #include <array>
 #include <cstdint>
@@ -196,7 +195,6 @@ namespace PlutoGE::ui
         assets::SurfaceResponseAsset m_surfaceDraft;
         std::string m_surfaceError;
         std::array<char, 96> m_newFoliageTypeNameBuffer{};
-        std::unique_ptr<FoliageTypeAssetEditor> m_foliageTypeEditor;
         std::array<char, 96> m_newParticleSystemNameBuffer{};
         std::array<char, 96> m_newPostProcessPresetNameBuffer{};
         std::array<char, 96> m_newRenderTextureNameBuffer{};

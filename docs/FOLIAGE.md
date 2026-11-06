@@ -190,9 +190,24 @@ its mesh and material cook with it.
   inspector, which writes to the project's `Foliage` folder and links the type.
 - **Use one:** drop it on the inspector's type list, or choose it under **Link to
   existing asset**.
-- **Edit one:** select it in the Content Browser, where **Edit Asset** in the inspector
-  also leads, and press **Save**. Every linked type in the open scene updates. The
-  editor shows the same sections as the inspector.
+- **Edit one:** double-click it in the Content Browser, or click **Edit Asset** on a
+  linked type in the inspector. Both open the **Foliage Editor** (also under **Window >
+  Asset Editors**).
+
+The Foliage Editor shows the mesh's thumbnail, the types in the open scene that use the
+asset, any setup problems, and the same settings sections as the inspector. It has undo
+and redo (Ctrl+Z, Ctrl+Y) and asks before discarding unsaved changes.
+
+- **Live** shows unsaved changes on every linked type in the open scene, without touching
+  the file. Turn it off if a slider feels slow on a very large scene: each change rebuilds
+  the render commands of the components involved. The preview pauses while the game runs.
+- **Save** (Ctrl+S) writes the file and updates every linked type. Revert, closing without
+  saving, or turning Live off puts them back to the saved settings.
+- **Used In This Scene** lists the linked types. Click one to show it in the inspector, or
+  its brush to start painting it. **Add to \<entity\>** adds a linked type to the selected
+  entity's Foliage component.
+
+The thumbnail shows the mesh's own materials, so it does not reflect a Material Override.
 
 A linked type's settings are read-only in the inspector, so the file is the single
 source of truth. **Make Local** drops the link and keeps the current settings in the
@@ -574,7 +589,9 @@ command cache. Physics collision cells themselves are cached and revisioned.
 - `engine/scene/src/Scene.cpp`
 - `editor/ui/src/inspectors/FoliageInspector.cpp` (the inspector, top to bottom)
 - `editor/ui/src/foliage/FoliageTypeSections.cpp` (settings UI shared with the asset editor; add new settings here)
-- `editor/ui/src/foliage/FoliageTypeAssetEditor.cpp` (the Content Browser's asset details)
+- `editor/ui/src/panels/FoliageEditorPanel.cpp` (the Foliage Editor)
+- `editor/ui/src/foliage/FoliageTypeSession.cpp` (the open asset: undo, saving and live preview, no UI)
+- `editor/ui/src/foliage/FoliageTypeUsage.cpp` (which types use an asset)
 - `editor/ui/src/foliage/FoliageViewportTool.cpp` (tool bar, brush strokes, picking, instance gizmo)
 - `editor/ui/src/foliage/FoliageEditTool.cpp` (session state and selection, no UI)
 - `editor/ui/src/foliage/FoliageEditing.cpp` (undoable edits, dirty state and prefab overrides)

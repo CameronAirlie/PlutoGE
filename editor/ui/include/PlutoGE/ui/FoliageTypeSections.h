@@ -1,8 +1,12 @@
 #pragma once
 
 #include "PlutoGE/scene/FoliageTypeAsset.h"
+#include "PlutoGE/ui/FoliageDiagnostics.h"
+
+#include <imgui.h>
 
 #include <functional>
+#include <vector>
 
 namespace PlutoGE::assets
 {
@@ -31,6 +35,9 @@ namespace PlutoGE::ui
         // Draws actions only the host can perform at the end of the Source section; optional.
         std::function<void()> drawSourceActions;
     };
+
+    [[nodiscard]] ImVec4 FoliageIssueColor(FoliageIssueSeverity severity);
+    void DrawFoliageIssues(const std::vector<FoliageIssue> &issues);
 
     // Each returns true when `asset` changed.
     bool DrawFoliageSourceSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context);

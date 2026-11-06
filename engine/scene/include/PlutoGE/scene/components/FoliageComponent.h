@@ -286,6 +286,9 @@ namespace PlutoGE::scene
         void ApplyTypeAsset(std::size_t index, FoliageTypeAsset asset);
         // After a .plutofoliage file changed: rereads it into the types linked to it. Returns how many there are.
         std::size_t ReloadTypeAssets(const std::string &assetReference);
+        // Shows unsaved settings on the types linked to a file, which stays as it is; ReloadTypeAssets goes back to it.
+        // Returns how many there are.
+        std::size_t PreviewTypeAsset(const std::string &assetReference, const FoliageTypeAsset &asset);
         void SetTypeScaleRange(std::size_t index, float minScale, float maxScale);
         void SetTypeCollisionEnabled(std::size_t index, bool enabled);
         void SetTypeCollisionCapsule(std::size_t index, const glm::vec3 &center, float radius, float height);

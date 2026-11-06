@@ -68,6 +68,7 @@ namespace PlutoGE::ui
     class UIThemeEditorPanel;
     class InputMappingEditorPanel;
     class PostProcessEditorPanel;
+    class FoliageEditorPanel;
     struct UIThemeTarget;
     class ContentBrowserPanel;
     class ProfilerPanel;
@@ -214,6 +215,8 @@ namespace PlutoGE::ui
         void OpenInputMappingAsset(std::string inputMappingAssetReference);
         // Shows a .plutopostprocess preset in the Post Process Editor.
         void OpenPostProcessPresetAsset(std::string postProcessPresetAssetReference);
+        // Shows a .plutofoliage foliage type in the Foliage Editor.
+        void OpenFoliageTypeAsset(const std::string &reference);
         // Re-applies post process presets that were saved or previewed to the editor camera and scene cameras.
         // Runs every frame, so edits show even while the scene is not updating.
         void RefreshPostProcessPresets();
@@ -505,6 +508,7 @@ namespace PlutoGE::ui
         UIThemeEditorPanel *m_uiThemeEditor = nullptr;
         InputMappingEditorPanel *m_inputMappingEditor = nullptr;
         PostProcessEditorPanel *m_postProcessEditor = nullptr;
+        FoliageEditorPanel *m_foliageEditor = nullptr;
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
         TimelinePreview m_timelinePreview;

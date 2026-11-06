@@ -151,6 +151,27 @@ namespace PlutoGE::ui
         }
     }
 
+    ImVec4 FoliageIssueColor(FoliageIssueSeverity severity)
+    {
+        switch (severity)
+        {
+        case FoliageIssueSeverity::Error: return ImVec4(1.0f, 0.45f, 0.4f, 1.0f);
+        case FoliageIssueSeverity::Warning: return ImVec4(1.0f, 0.75f, 0.3f, 1.0f);
+        case FoliageIssueSeverity::Info: break;
+        }
+        return ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+    }
+
+    void DrawFoliageIssues(const std::vector<FoliageIssue> &issues)
+    {
+        for (const auto &issue : issues)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Text, FoliageIssueColor(issue.severity));
+            ImGui::TextWrapped("%s", issue.message.c_str());
+            ImGui::PopStyleColor();
+        }
+    }
+
     bool FoliageSubmeshSelectionMatches(const scene::FoliageTypeAsset &asset, const std::vector<int> &indices)
     {
         if (indices.empty()) return asset.submeshIndex < 0 && asset.submeshIndices.empty();

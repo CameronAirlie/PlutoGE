@@ -153,6 +153,7 @@ namespace PlutoGE::scene
             m_resolution = clampedResolution;
             m_captureTexture.reset();
             m_capturePixels.clear();
+            ++m_captureRevision;
             MarkDirty();
         }
     }
@@ -171,6 +172,7 @@ namespace PlutoGE::scene
     {
         m_captureTexture.reset();
         m_capturePixels.clear();
+        ++m_captureRevision;
         MarkDirty();
     }
 
@@ -181,6 +183,7 @@ namespace PlutoGE::scene
         std::vector<float> retained(pixels.begin(), pixels.end());
         m_capturePixels = std::move(retained);
         m_captureTexture = std::move(texture);
+        ++m_captureRevision;
         m_dirty = false;
         return true;
     }
@@ -252,6 +255,11 @@ namespace PlutoGE::scene
 
     std::vector<Property> IblCaptureComponent::Serialize() const
     {
+        return MaterializeSharedProperties(SerializeShared());
+    }
+
+    std::vector<Property> IblCaptureComponent::SerializeForInspector() const
+    {
         auto properties = SerializeEditableProperties();
         properties.push_back({"Automatically Placed", PropertyType::Bool, m_automaticallyPlaced ? "true" : "false"});
         properties.push_back({"Keep Placement", PropertyType::Bool, m_keepPlacement ? "true" : "false"});
@@ -260,10 +268,20 @@ namespace PlutoGE::scene
             properties.push_back({"Automatic Position", PropertyType::Vec3, SerializeVec3(m_automaticPosition)});
             properties.push_back({"Automatic Size", PropertyType::Vec3, SerializeVec3(m_automaticSize)});
         }
-        properties.push_back({"Capture Pixels", PropertyType::String, m_capturePixels.empty()
-                                                               ? std::string{}
-                                                               : Base64Encode(reinterpret_cast<const unsigned char *>(m_capturePixels.data()),
-                                                                              m_capturePixels.size() * sizeof(float))});
+        return properties;
+    }
+
+    std::vector<Property> IblCaptureComponent::SerializeShared() const
+    {
+        auto properties = SerializeForInspector();
+        Property capture{"Capture Pixels", PropertyType::String};
+        capture.sharedValue = m_captureText.Get(m_captureRevision, [this]
+        {
+            return m_capturePixels.empty() ? std::string{}
+                                           : Base64Encode(reinterpret_cast<const unsigned char *>(m_capturePixels.data()),
+                                                          m_capturePixels.size() * sizeof(float));
+        });
+        properties.push_back(std::move(capture));
         return properties;
     }
 
@@ -331,7 +349,7 @@ namespace PlutoGE::scene
             }
             else if (property.name == "Capture Pixels")
             {
-                const auto decoded = Base64Decode(property.value);
+                const auto decoded = Base64Decode(property.Text());
                 const std::size_t facePixelCount = static_cast<std::size_t>(m_resolution) *
                                                    static_cast<std::size_t>(m_resolution) * 4;
                 const std::size_t expectedByteCount = facePixelCount * 6 * sizeof(float);

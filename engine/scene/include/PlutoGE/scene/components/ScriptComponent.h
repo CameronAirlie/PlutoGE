@@ -42,6 +42,8 @@ namespace PlutoGE::scene
         void OnCollisionExit(uint32_t otherEntityId);
         void OnAnimationEvent(const render::AnimationClip::Event &event);
         std::vector<Property> Serialize() const override;
+        // Whether Serialize() writes managed asset field metadata, which selects the scene format, without building it.
+        [[nodiscard]] bool WritesManagedAssetFieldMetadata() const;
         void Deserialize(const std::vector<Property> &properties) override;
 
         void SetSource(const std::string &source);

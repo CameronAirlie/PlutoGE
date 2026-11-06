@@ -84,6 +84,9 @@ int main() try
         editor.ClearConsoleMessages();
         std::cout << entry.id << " passed\n";
     }
+    // The loop ran the runtime directly, without the restore the editor's Play does when it stops, so history has to be
+    // told about what the scripts changed.
+    editor.GetSceneHistory().Resynchronize();
     // Extension failures must restore the scene instead of leaving partial edits.
     auto *camera = editor.GetScene()->FindEntityByName("Camera");
     const auto id = camera->GetID();

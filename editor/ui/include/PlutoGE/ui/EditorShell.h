@@ -21,6 +21,7 @@
 #include "PlutoGE/ui/PlayModeToolbar.h"
 #include "PlutoGE/ui/ViewportBookmarks.h"
 #include "PlutoGE/ui/GroundPlacement.h"
+#include "PlutoGE/ui/SceneEditHistory.h"
 #include "PlutoGE/ui/SceneHistory.h"
 #include "PlutoGE/ui/SceneRecovery.h"
 #include "PlutoGE/ui/ModelInstanceRefresh.h"
@@ -75,7 +76,7 @@ namespace PlutoGE::ui
     class ViewportPanel;
     class EditorSceneRenderService;
 
-    class EditorShell
+    class EditorShell : private ISceneHistoryHost
     {
     public:
         AuthoringRegistry &GetAuthoringRegistry() { return m_authoring; }
@@ -166,7 +167,7 @@ namespace PlutoGE::ui
         void ClickEntity(scene::Entity *entity, bool control, bool shift,
                          const std::vector<std::uint32_t> &visible = {});
         [[nodiscard]] std::vector<scene::Entity *> GetSelectedEntities(bool rootsOnly = false);
-        [[nodiscard]] std::uint64_t GetSelectionRevision() const { return m_entitySelection.Revision(); }
+        [[nodiscard]] std::uint64_t GetSelectionRevision() const override { return m_entitySelection.Revision(); }
         // Moves the editor camera so the primary selected entity, or the foliage instances selected in it, fill the view.
         void FrameSelectedEntity();
         [[nodiscard]] FoliageEditTool &GetFoliageTool() { return m_foliageTool; }
@@ -293,7 +294,28 @@ namespace PlutoGE::ui
         std::vector<ConsoleMessage> GetConsoleMessages() const;
         void ClearConsoleMessages();
         TimelinePreview &GetTimelinePreview() { return m_timelinePreview; }
+        // Reports an edit already made to the scene. Its reach comes from the enclosing SceneEditRegion, and without
+        // one it is assumed to be the whole scene; pass one to say otherwise.
         void MarkSceneDirty();
+        void MarkSceneDirty(SceneEditReach reach);
+        // While alive, edits reported with MarkSceneDirty() are taken to have this reach. Panels whose controls all edit
+        // the selection use one instead of annotating each control; a control that reaches further says so explicitly.
+        class SceneEditRegion
+        {
+        public:
+            SceneEditRegion(EditorShell &shell, SceneEditReach reach) : m_shell(shell), m_previous(shell.m_sceneEditReach) { shell.m_sceneEditReach = reach; }
+            ~SceneEditRegion() { m_shell.m_sceneEditReach = m_previous; }
+            SceneEditRegion(const SceneEditRegion &) = delete;
+            SceneEditRegion &operator=(const SceneEditRegion &) = delete;
+        private:
+            EditorShell &m_shell;
+            SceneEditReach m_previous;
+        };
+        // Changes whenever an edit is reported or history moves, for caches of values read from the scene.
+        [[nodiscard]] std::uint64_t GetSceneEditRevision() const { return m_sceneEditRevision; }
+        // Changes when a different scene is opened, unlike GetSceneRevision, which also changes when the current scene
+        // is restored from a snapshot.
+        [[nodiscard]] std::uint64_t GetSceneIdentityRevision() const { return m_sceneIdentityRevision; }
         // Recovers publications and refreshes a validated catalog; logical writers are format-gated.
         bool RefreshProjectAssets();
         bool BeginModelImport(std::string sourceReference,
@@ -320,9 +342,11 @@ namespace PlutoGE::ui
         void MarkProjectDirty();
         [[nodiscard]] bool IsSceneDirty() const { return m_sceneDirty; }
         [[nodiscard]] bool IsProjectDirty() const { return m_projectDirty; }
-        [[nodiscard]] bool CanUndo() const { return !m_engine.IsRuntimeRunning() && (!m_undoStack.empty() || m_untrackedSceneEdit); }
-        [[nodiscard]] bool CanRedo() const { return !m_engine.IsRuntimeRunning() && !m_redoStack.empty(); }
-        void ExecuteSceneEdit(std::string label, const std::function<void()> &edit);
+        [[nodiscard]] bool CanUndo() const { return !m_engine.IsRuntimeRunning() && m_sceneHistory.CanUndo(); }
+        [[nodiscard]] bool CanRedo() const { return !m_engine.IsRuntimeRunning() && m_sceneHistory.CanRedo(); }
+        // `scope` names what the edit may change, which lets it record only that; see SceneEditScope.
+        void ExecuteSceneEdit(std::string label, const std::function<void()> &edit, const SceneEditScope &scope = SceneEditScope::WholeScene());
+        [[nodiscard]] SceneEditHistory &GetSceneHistory() { return m_sceneHistory; }
         void PushSceneEditCommand(std::string label,
                                   std::function<bool()> undo,
                                   std::function<bool()> redo,
@@ -330,7 +354,7 @@ namespace PlutoGE::ui
         // Records pending inspector edits as their own undo step. Call before capturing state for a command pushed
         // with PushSceneEditCommand, which would otherwise absorb them.
         void FlushPendingSceneEdits() { FlushUntrackedSceneEdit(); }
-        bool BeginSceneEdit(std::string label);
+        bool BeginSceneEdit(std::string label, SceneEditReach reach = SceneEditReach::Scene);
         bool EndSceneEdit();
         void CancelSceneEdit();
         bool Undo();
@@ -361,7 +385,8 @@ namespace PlutoGE::ui
         bool SaveProjectManifest(std::string *errorMessage = nullptr);
         void UpdateWindowTitle();
         void ResetSelection();
-        void SetScene(std::unique_ptr<scene::Scene> scene, bool updatePrefabs = true);
+        enum class SceneHistorySync { Resynchronize, Deferred };
+        void SetScene(std::unique_ptr<scene::Scene> scene, bool updatePrefabs = true, SceneHistorySync historySync = SceneHistorySync::Resynchronize);
         std::filesystem::path GetDefaultProjectScenePath() const;
         std::filesystem::path GetDefaultExportExecutablePath() const;
         bool SaveSceneToPath(const std::filesystem::path &scenePath);
@@ -400,8 +425,18 @@ namespace PlutoGE::ui
         bool BuildAndRunProjectToPath(const std::filesystem::path &destinationExecutablePath);
         bool ExportScriptAuthoringSdk(const std::filesystem::path &destinationExecutablePath, std::string *errorMessage = nullptr) const;
         bool CaptureSceneState(std::string &state, std::string *errorMessage = nullptr, SceneGenerationRetention *retained = nullptr) const;
-        void PushSceneHistoryEntry(SceneHistoryEntry entry);
         void FlushUntrackedSceneEdit();
+        void RefreshDirtyFromHistory();
+
+        // ISceneHistoryHost
+        scene::Scene *GetHistoryScene() override { return m_scene.get(); }
+        bool CaptureSceneSnapshot(SceneSnapshot &snapshot, std::string &error) override;
+        bool RestoreSceneSnapshot(const SceneSnapshot &snapshot, bool &exact, std::string &error) override;
+        void OnEntitiesChangedInPlace() override;
+        void OnSceneEdited() override;
+        bool IsHistorySuspended() const override;
+        std::vector<scene::EntityID> GetEditableSelection() const override;
+        void LogHistoryWarning(const std::string &message) override { Log(ConsoleSeverity::Warning, message); }
         void PollModelInstances();
         bool UnpackModelInstance(std::uint32_t rootEntityId, std::string &error);
         void RecordModelInstanceRefresh(const PreparedModelInstanceRefresh &prepared);
@@ -411,7 +446,9 @@ namespace PlutoGE::ui
         bool RunProjectValidation(bool includeCurrentScene, bool headless = false);
         void RenderProjectValidation(const std::function<void(const std::string &)> &reveal);
         void SaveRecoveryBackup();
-        bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true);
+        // With `exact`, the caller takes over telling history about the new scene, and learns whether it serializes to
+        // `state`. Without it, history re-reads the scene.
+        bool RestoreSceneState(const std::string &state, std::string *errorMessage = nullptr, bool markDirty = true, bool *exact = nullptr);
         bool StartEditorRuntime(ViewportPanel &gameViewport);
         bool StopEditorRuntime(bool reviewChanges = false);
         [[nodiscard]] PlayState GetPlayState() const;
@@ -462,10 +499,11 @@ namespace PlutoGE::ui
         void GenerateAmbientReflectionCaptures();
         std::string m_statusMessage;
         bool m_sceneDirty = false;
-        bool m_untrackedSceneEdit = false;
-        std::string m_observedSceneState;
-        SceneGenerationRetention m_observedSceneGenerations;
-        std::string m_savedSceneState;
+        SceneEditReach m_sceneEditReach = SceneEditReach::Scene;
+        std::uint64_t m_sceneEditRevision = 0;
+        std::uint64_t m_sceneIdentityRevision = 0;
+        std::uint64_t m_idleRefreshEditRevision = 0;
+        std::chrono::steady_clock::time_point m_idleRefreshChangedAt;
         std::filesystem::path m_recoveryDirectory;
         RecoverySettings m_recoverySettings;
         bool m_showSceneRecovery = false;
@@ -484,13 +522,8 @@ namespace PlutoGE::ui
         std::string m_lastRecoveryState;
         std::chrono::steady_clock::time_point m_nextRecovery;
         bool m_projectDirty = false;
-        std::vector<SceneHistoryEntry> m_undoStack;
-        std::vector<SceneHistoryEntry> m_redoStack;
+        SceneEditHistory m_sceneHistory{*this};
         std::vector<std::filesystem::path> m_recentProjects;
-        bool m_sceneEditInProgress = false;
-        std::string m_sceneEditLabel;
-        std::string m_sceneEditBeforeState;
-        SceneGenerationRetention m_sceneEditBeforeGenerations;
         std::vector<ConsoleMessage> m_consoleMessages;
         mutable std::mutex m_consoleMessagesMutex;
         std::string m_activeMaterialAssetReference;
@@ -512,8 +545,7 @@ namespace PlutoGE::ui
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
         TimelinePreview m_timelinePreview;
-        std::string m_runtimeSceneSnapshot;
-        SceneGenerationRetention m_runtimeSceneGenerations;
+        SceneSnapshot m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;
         bool m_runtimeSceneWasDirty = false;
         bool m_runtimeSceneReplaced = false;
@@ -523,8 +555,6 @@ namespace PlutoGE::ui
         std::string m_playModeChangesError;
         PlayModeChanges::Snapshot m_playModeBaseline;
         std::vector<PlayModeChanges::Change> m_playModeChanges;
-        std::vector<SceneHistoryEntry> m_prePlayUndoStack;
-        std::vector<SceneHistoryEntry> m_prePlayRedoStack;
         bool m_showViewportBookmarks = false;
         bool m_showPreferences = false;
         bool m_bookmarksLoaded = false;

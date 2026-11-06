@@ -130,6 +130,52 @@ issue edits through ExecuteSceneEdit. Unregister before unloading code. These
 are source-level native hooks, not a binary plugin ABI or a managed custom
 inspector UI API.
 
+## Scene undo
+
+`SceneEditHistory` owns scene undo and redo, and `EditorShell` forwards to it. It
+records an edit in one of two ways, and the edit's reach decides which:
+
+- **Scoped.** Before and after states of the entities that changed
+  (`EntityStateCapture`), applied in place. The cost follows the edit, and undo
+  keeps the scene object and every entity's ID.
+- **Snapshot.** The whole scene's text, for edits that reach further or do not
+  say how far they reach. The cost follows the scene, and undo swaps the scene.
+
+| To record | Use | Reach |
+| --- | --- | --- |
+| A change you are about to make | `ExecuteSceneEdit(label, edit, scope)` | `SceneEditScope`: `Entities`, `Subtrees`, `Additive`, or the default `WholeScene` |
+| A change you already made | `MarkSceneDirty()` | The enclosing `SceneEditRegion`, or `Scene` without one |
+| A change over several frames | `BeginSceneEdit(label, reach)` and `EndSceneEdit()` | `SceneEditReach::Selection` or the default `Scene` |
+| A change you can reverse yourself | `PushSceneEditCommand(label, undo, redo, bytes)` | Yours; commands look entities up by ID, because a snapshot undo replaces them |
+
+A wider reach is always correct, just slower, so only narrow it when you know
+the edit stays inside. The inspector and the viewport gizmos narrow theirs with a
+`SceneEditRegion`, and a control inside one that reaches further, such as applying
+a prefab, passes `SceneEditReach::Scene` itself. Members of linked model instances
+and selections above `kMaxScopedEntities` always record by snapshot.
+
+An edit reported after the fact needs a before-state that already exists. If a
+scoped step has moved the scene on since the last whole-scene state, a late `Scene`
+edit merges with the steps since then into one undo step. Nothing is lost, but
+undo gets coarser. To keep that rare, the shell catches the whole-scene state up
+after two seconds with no edit or interaction.
+
+### Heavy data
+
+A component holding data too large to copy per edit (foliage instances, baked
+probes, terrain heights, capture pixels) overrides the heavy-data methods on
+`Component`, and encodes through `HeavyPropertyCache`. Bump the revision in every
+write to the data: a missed bump saves stale data, so debug builds re-encode and
+compare. Heavy text must not contain tabs, newlines or backslashes, because the
+serializer writes it without escaping.
+
+### Finding edits undo misses
+
+Window > Tools > Verify Scene Undo keeps a whole-scene snapshot beside every step,
+undoes and redoes each step as it is recorded, compares the results, and logs any
+difference with the step's label. A scoped edit that changed something outside its
+reach shows up there. It is slow, and off by default.
+
 ## Save/load
 
 SaveGameService is session-owned and accepts an ISaveStore. ProjectSaveStore uses

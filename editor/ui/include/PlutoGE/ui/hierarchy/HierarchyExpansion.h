@@ -25,9 +25,12 @@ namespace PlutoGE::ui
         void SetSubtreeExpanded(const scene::Entity &entity, bool expanded);
         // Expands every ancestor so the entity's row becomes visible.
         void ExpandAncestors(const scene::Entity &entity);
-        void Clear() { m_expanded.clear(); }
+        void Clear() { m_expanded.clear(); ++m_revision; }
+        // Changes when the expanded set does.
+        std::uint64_t GetRevision() const { return m_revision; }
 
     private:
         std::unordered_set<ID> m_expanded;
+        std::uint64_t m_revision = 0;
     };
 }

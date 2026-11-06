@@ -291,7 +291,7 @@ namespace
         EntitySelection selection;
         selection.Set({idA, idB});
         Require(SceneSerializer::SaveToString(*scene, after, &error), error.c_str());
-        std::vector<SceneHistoryEntry> undo{{.label = "Edit selection", .beforeState = before, .afterState = after}}, redo;
+        std::vector<SceneHistoryEntry> undo{{.label = "Edit selection", .before = {MakeSceneStateText(before)}, .after = {MakeSceneStateText(after)}}}, redo;
         const auto restore = [&](const std::string &state)
         {
             auto restored = LoadSceneSnapshot(state, error);
@@ -300,10 +300,10 @@ namespace
             selection.Prune([&](auto id) { return scene->FindEntityByID(id) != nullptr; });
             return true;
         };
-        Require(TransferSceneHistory(undo, redo, [&](const auto &entry) { return restore(entry.beforeState); }), "Undo failed");
+        Require(TransferSceneHistory(undo, redo, [&](const auto &entry) { return restore(*entry.before.text); }), "Undo failed");
         Require(scene->FindEntityByID(idA)->GetComponent<LightComponent>()->GetLight().intensity != 9, "Undo missed first entity");
         Require(scene->FindEntityByID(idB)->GetComponent<LightComponent>()->GetLight().intensity != 9, "Undo missed second entity");
-        Require(TransferSceneHistory(redo, undo, [&](const auto &entry) { return restore(entry.afterState); }), "Redo failed");
+        Require(TransferSceneHistory(redo, undo, [&](const auto &entry) { return restore(*entry.after.text); }), "Redo failed");
         Require(selection.Ids() == std::vector<std::uint32_t>({idA, idB}), "Selection lost across restore");
         Require(scene->FindEntityByID(idB)->GetComponent<LightComponent>()->GetLight().intensity == 9, "Redo missed common edit");
     }

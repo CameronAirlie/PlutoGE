@@ -12,6 +12,7 @@ namespace PlutoGE::ui
         std::uint32_t parentId = 0; // 0 for scene roots.
         bool hasChildren = false;
         bool expanded = false;
+        std::uint32_t depth = 0; // 0 for scene roots.
     };
 
     enum class HierarchyNavKey

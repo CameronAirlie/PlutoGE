@@ -2253,7 +2253,9 @@ namespace PlutoGE::ui
                 ImGui::PopID();
             }
         }
-        auto groups = FindCommonComponents(selection);
+        // Live runtime values change without an edit being reported, so only an editing scene can use the cached groups.
+        if (shell.GetEngine().IsRuntimeRunning()) m_commonComponents.Invalidate();
+        auto &groups = m_commonComponents.Get(selection, shell.GetSceneRevision(), shell.GetSceneEditRevision());
         ImGui::Separator();
         ImGui::TextUnformatted("Common Components");
         for (std::size_t index = 0; index < groups.size(); ++index)
@@ -2274,15 +2276,11 @@ namespace PlutoGE::ui
                     }
                     shell.MarkSceneDirty();
                 }
+                const auto &mixedProperties = GetMixedProperties(group);
                 for (auto property : group.properties)
                 {
                     ImGui::PushID(property.name.c_str());
-                    bool mixedValue = false;
-                    for (auto *c : group.instances)
-                        for (const auto &p : c->Serialize())
-                            if (p.name == property.name && p.value != property.value)
-                                mixedValue = true;
-                    ImGui::TextDisabled("%s", mixedValue ? "Mixed values" : "Shared value");
+                    ImGui::TextDisabled("%s", mixedProperties.contains(property.name) ? "Mixed values" : "Shared value");
                     if (property.type == scene::PropertyType::Vec2 || property.type == scene::PropertyType::Vec3)
                     {
                         ImGui::TextUnformatted(property.name.c_str());
@@ -2330,6 +2328,7 @@ namespace PlutoGE::ui
         const auto selection = editorShell.GetSelectedEntities();
         if (selection.size() > 1)
         {
+            EditorShell::SceneEditRegion selectionEdits(editorShell, SceneEditReach::Selection);
             RenderMultiEntityInspector(selection);
             return;
         }
@@ -2349,6 +2348,8 @@ namespace PlutoGE::ui
         }
 
         editorShell.RenderModelInstanceInspector(*entity);
+        // From here the controls edit this entity; the few that reach further pass SceneEditReach::Scene themselves.
+        EditorShell::SceneEditRegion selectionEdits(editorShell, SceneEditReach::Selection);
         auto entityNameBuffer = std::array<char, 256>{};
         std::strncpy(entityNameBuffer.data(), entity->GetName().c_str(), entityNameBuffer.size() - 1);
         ImGui::Text("Entity Name: %s", entityNameBuffer.data());
@@ -2453,7 +2454,7 @@ namespace PlutoGE::ui
                 std::string errorMessage;
                 if (scene::Prefab::UpdateInstance(*entity, &errorMessage))
                 {
-                    editorShell.MarkSceneDirty();
+                    editorShell.MarkSceneDirty(SceneEditReach::Scene);
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Updated prefab instance.");
                 }
                 else
@@ -2479,7 +2480,7 @@ namespace PlutoGE::ui
                     {
                         scene::Prefab::UpdateInstances(*currentScene, entity->GetPrefabSource());
                     }
-                    editorShell.MarkSceneDirty();
+                    editorShell.MarkSceneDirty(SceneEditReach::Scene);
                     editorShell.MarkProjectDirty();
                     editorShell.Log(EditorShell::ConsoleSeverity::Info, "Applied instance overrides to prefab.");
                 }
@@ -2493,7 +2494,7 @@ namespace PlutoGE::ui
             if (ImGui::Button("Unpack"))
             {
                 entity->ClearPrefabLinkRecursive();
-                editorShell.MarkSceneDirty();
+                editorShell.MarkSceneDirty(SceneEditReach::Scene);
             }
             ImGui::EndDisabled();
         }
@@ -2556,7 +2557,8 @@ namespace PlutoGE::ui
                                                          {
                                                              scene::ComponentRegistry::Get().AddToEntity(*target, menuItem);
                                                          }
-                                                     });
+                                                     },
+                                                     SceneEditScope::Entities({entityId}));
                         ImGui::CloseCurrentPopup();
                     }
                     ImGui::EndPopup();
@@ -2632,7 +2634,7 @@ namespace PlutoGE::ui
                         if (const auto inspector = FindComponentInspector(componentPtr->GetTypeID()))
                         {
                             // Registered inspectors draw their own controls and pass the rest on.
-                            properties = componentPtr->Serialize();
+                            properties = componentPtr->SerializeForInspector();
                             ComponentInspectorContext inspectorContext{*entity, editorShell};
                             inspector(*componentPtr, inspectorContext, properties);
                             propertiesProvided = true;
@@ -2643,6 +2645,8 @@ namespace PlutoGE::ui
                             if (ImGui::Checkbox("Main Camera", &isMainCamera))
                             {
                                 SetSceneMainCamera(entity->GetScene(), cameraComponent, isMainCamera);
+                                // Choosing a main camera clears the flag on every other camera.
+                                editorShell.MarkSceneDirty(SceneEditReach::Scene);
                             }
                             RenderCameraTargetTextureEditor(*cameraComponent);
 
@@ -3422,7 +3426,7 @@ namespace PlutoGE::ui
                             RenderAttachmentInspectorTools(*attachment);
                         if (!propertiesProvided)
                         {
-                            properties = componentPtr->Serialize();
+                            properties = componentPtr->SerializeForInspector();
                         }
 
                         int propertyIndex = 0;
@@ -3629,7 +3633,8 @@ namespace PlutoGE::ui
 
                         if (propertiesChanged)
                         {
-                            componentPtr->Deserialize(properties);
+                            // `properties` leaves out heavy data, which must survive this.
+                            componentPtr->DeserializeKeepingHeavyData(properties);
                             const auto componentTypeName = GetComponentPrefabTypeName(*componentPtr);
                             if (!componentTypeName.empty())
                             {
@@ -3637,6 +3642,9 @@ namespace PlutoGE::ui
                                 {
                                     entity->AddPrefabOverride("Component:" + componentTypeName + ":" + property.name);
                                 }
+                                // This list used to carry the heights, so any terrain edit overrode them. Prefab updates rely on that.
+                                if (dynamic_cast<scene::TerrainComponent *>(componentPtr))
+                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightSamples");
                             }
                             editorShell.MarkSceneDirty();
                         }
@@ -3667,7 +3675,8 @@ namespace PlutoGE::ui
                                                      {
                                                          target->RemoveComponent(componentToRemove);
                                                      }
-                                                 });
+                                                 },
+                                                 SceneEditScope::Entities({entityId}));
                 }
             }
         }

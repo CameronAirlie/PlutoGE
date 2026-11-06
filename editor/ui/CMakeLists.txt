@@ -6,6 +6,9 @@ add_library(PlutoGEEditorUI
     src/RmlVisualAuthoringUI.cpp
     src/EntityTransformEditing.cpp
     src/MultiEntityEdit.cpp
+    src/EntityStateCapture.cpp
+    src/SceneEditHistory.cpp
+    src/hierarchy/HierarchyRows.cpp
     src/IKInspector.cpp
     src/RmlDocumentEditSession.cpp
     src/SourceTextEditor.cpp

@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/scene/FoliageTypeAsset.h"
+#include "PlutoGE/scene/HeavyPropertyCache.h"
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
@@ -77,6 +78,8 @@ namespace PlutoGE::scene
         FoliageTypeAsset asset;
         // Why the linked file could not be read, when it could not; the type then uses the scene's copy.
         std::string assetLoadError;
+        // `instances` as scene text, valid for the owning component's heavy data revision.
+        HeavyPropertyCache instancesText;
     };
 
     // Where an instance currently is. Indices change as instances are added and removed: keep an instance's ID, and
@@ -183,6 +186,10 @@ namespace PlutoGE::scene
 
         std::vector<Property> Serialize() const override;
         void Deserialize(const std::vector<Property> &properties) override;
+        std::vector<Property> SerializeForInspector() const override;
+        std::vector<Property> SerializeShared() const override;
+        void DeserializeKeepingHeavyData(const std::vector<Property> &properties) override;
+        std::uint64_t GetHeavyDataRevision() const override { return m_instanceTextRevision; }
         bool IsRetiredProperty(std::string_view name) const override;
 
         void SetMesh(render::Mesh *mesh);
@@ -310,6 +317,10 @@ namespace PlutoGE::scene
         std::size_t RefreshMaterialAsset(const render::Material *material);
 
     private:
+        enum class HeavyDetail { Omit, Shared };
+        enum class MissingInstances { Clear, Keep };
+        std::vector<Property> SerializeProperties(HeavyDetail detail) const;
+        void DeserializeProperties(const std::vector<Property> &properties, MissingInstances missingInstances);
         FoliageType &EnsureSelectedType();
         void EnsureTypeStorage();
         render::Material *GetMaterialForTypeSubmesh(const FoliageType &type, std::size_t submeshIndex) const;
@@ -335,6 +346,8 @@ namespace PlutoGE::scene
         bool m_hasCachedRenderCommandModel = false;
         std::uint64_t m_nextInstanceId = 1;
         std::uint64_t m_revision = 1;
+        // Changes only when instance values do. m_revision also moves for rebuilds that keep them (physics, restores).
+        std::uint64_t m_instanceTextRevision = 1;
         mutable std::uint64_t m_collisionCacheRevision = 0;
         mutable glm::mat4 m_collisionCacheOwnerTransform{0.0f};
         mutable std::vector<FoliageCollisionCell> m_cachedCollisionCells;

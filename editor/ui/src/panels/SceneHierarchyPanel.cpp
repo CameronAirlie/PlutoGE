@@ -1,4 +1,6 @@
 #include "PlutoGE/ui/panels/SceneHierarchyPanel.h"
+#include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/ui/hierarchy/HierarchyRows.h"
 
 // Editor selection access is validated by EditorShell before panel use.
 #include "PlutoGE/assets/Project.h"
@@ -122,7 +124,8 @@ namespace PlutoGE::ui
                                                         [scene, parent, reference = std::move(reference), &createdEntity, &errorMessage]()
                                                         {
                                                             createdEntity = scene::Prefab::Instantiate(*scene, reference, parent, &errorMessage);
-                                                        });
+                                                        },
+                                                        SceneEditScope::Additive());
             if (createdEntity)
             {
                 EditorShell::GetInstance().SetSelectedEntity(createdEntity);
@@ -193,30 +196,35 @@ namespace PlutoGE::ui
     // ---------------------------------------------------------------------
     // Rows
 
-    void SceneHierarchyPanel::RenderEntityNode(scene::Entity *entity)
+    void SceneHierarchyPanel::RefreshRows(const scene::Scene &scene)
     {
-        if (!entity || !m_filter.IsVisible(entity->GetID()))
-        {
+        // The filter's result can change at any time without a revision, so it rebuilds while one is active.
+        if (!m_filter.IsActive() && !m_filterWasActive && m_rowsScene == &scene &&
+            m_rowsStructureRevision == scene.GetStructureRevision() && m_rowsExpansionRevision == m_expansion.GetRevision())
             return;
-        }
+        m_rows = BuildHierarchyRows(scene, m_filter, m_expansion);
+        m_rowsScene = &scene;
+        m_rowsStructureRevision = scene.GetStructureRevision();
+        m_rowsExpansionRevision = m_expansion.GetRevision();
+        m_filterWasActive = m_filter.IsActive();
+    }
 
-        const EntityId id = entity->GetID();
-        const bool hasChildren = !entity->GetChildren().empty();
+    void SceneHierarchyPanel::RenderEntityRow(scene::Entity *entity, const HierarchyRow &rowInfo)
+    {
+        const EntityId id = rowInfo.id;
+        const bool hasChildren = rowInfo.hasChildren;
         const bool filtering = m_filter.IsActive();
         const bool isRenaming = m_renamingEntityId == id;
-        // Filtering shows every match, so its rows are open regardless of the
-        // stored expansion, which is left untouched for when it is cleared.
-        const bool expanded = hasChildren && (filtering || m_expansion.IsExpanded(id));
-        m_rows.push_back({.id = id,
-                          .parentId = entity->GetParent() ? entity->GetParent()->GetID() : 0,
-                          .hasChildren = hasChildren,
-                          .expanded = expanded});
+        const bool expanded = rowInfo.expanded;
+        const float indent = static_cast<float>(rowInfo.depth) * ImGui::GetStyle().IndentSpacing;
+        if (indent > 0.0f) ImGui::Indent(indent);
 
         // Frame padding gives rows a regular widget height; spanning the full
         // width makes the whole row, indent included, a click target. The
         // rename field shares the row, so it keeps the narrow hit box.
+        // The row list provides the indentation and nesting, so nodes push no tree level.
         ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick |
-                                       ImGuiTreeNodeFlags_FramePadding;
+                                       ImGuiTreeNodeFlags_FramePadding | ImGuiTreeNodeFlags_NoTreePushOnOpen;
         if (!isRenaming)
         {
             nodeFlags |= ImGuiTreeNodeFlags_SpanFullWidth | ImGuiTreeNodeFlags_AllowOverlap;
@@ -286,6 +294,8 @@ namespace PlutoGE::ui
             .max = ImGui::GetItemRectMax(),
             .labelPos = ImVec2(cursor.x + ImGui::GetFontSize() + style.FramePadding.x * 2.0f, cursor.y + style.FramePadding.y),
         };
+        // A clipped row cannot keep what it is doing alive, such as a drag it started or its open context menu.
+        if (ImGui::IsItemActive()) m_pinnedRowId = id;
         const bool markCollapsedSelection = containsSelection && !nodeOpen;
         if (!isRenaming)
         {
@@ -294,17 +304,6 @@ namespace PlutoGE::ui
         if (containsSelection)
         {
             drawList->ChannelsMerge();
-        }
-
-        if (id == m_scrollToEntityId)
-        {
-            const float viewTop = ImGui::GetWindowPos().y;
-            const float viewBottom = viewTop + ImGui::GetWindowHeight();
-            if (row.min.y < viewTop || row.max.y > viewBottom)
-            {
-                ImGui::SetScrollHereY(0.5f);
-            }
-            m_scrollToEntityId = 0;
         }
 
         // Interaction must follow the node directly: these calls all target
@@ -332,21 +331,15 @@ namespace PlutoGE::ui
             HandleRowDragDrop(*entity, row, nodeOpen);
             if (ImGui::BeginPopupContextItem())
             {
+                m_pinnedRowId = id;
                 RenderEntityContextMenu(*entity);
                 ImGui::EndPopup();
             }
             RenderRowToggles(*entity, row);
         }
 
-        if (nodeOpen)
-        {
-            for (auto *child : entity->GetChildren())
-            {
-                RenderEntityNode(child);
-            }
-            ImGui::TreePop();
-        }
         ImGui::PopID();
+        if (indent > 0.0f) ImGui::Unindent(indent);
     }
 
     void SceneHierarchyPanel::RenderRowLabel(const scene::Entity &entity, const RowLayout &row, bool containsCollapsedSelection)
@@ -423,7 +416,7 @@ namespace PlutoGE::ui
                                  active ? "Deactivate entity" : "Activate entity"))
         {
             shell.ExecuteSceneEdit(active ? "Deactivate Entity" : "Activate Entity", [&entity, active]()
-                                   { entity.SetActive(!active); });
+                                   { entity.SetActive(!active); }, SceneEditScope::Entities({id}));
         }
         if (showLock && toggle("##Lock", 0, locked ? icons::Lock : icons::Unlock, locked,
                                locked ? "Unlock (allow viewport picking)" : "Lock (prevent viewport picking)"))
@@ -756,7 +749,8 @@ namespace PlutoGE::ui
                                              {
                                                  MoveEntityTo(*entity, {.parent = nullptr, .index = scene->GetRootEntities().size()});
                                              }
-                                         });
+                                         },
+                                         SceneEditScope::Entities(movedIds));
               });
     }
 
@@ -794,7 +788,7 @@ namespace PlutoGE::ui
             .sceneHasCamera = SceneHasAnyCamera(*scene),
         };
         scene::Entity *createdEntity = nullptr;
-        shell.ExecuteSceneEdit(preset.editLabel, [&]() { createdEntity = preset.create(context); });
+        shell.ExecuteSceneEdit(preset.editLabel, [&]() { createdEntity = preset.create(context); }, SceneEditScope::Additive());
         if (createdEntity)
         {
             shell.SetSelectedEntity(createdEntity);
@@ -860,7 +854,8 @@ namespace PlutoGE::ui
                                                                 {
                                                                     target->SetName(newName);
                                                                 }
-                                                            });
+                                                            },
+                                                            SceneEditScope::Entities({entityId}));
                 m_filter.Invalidate();
             }
         }
@@ -909,8 +904,13 @@ namespace PlutoGE::ui
         if (shell.GetSceneRevision() != m_observedSceneRevision)
         {
             m_observedSceneRevision = shell.GetSceneRevision();
-            m_expansion.Clear();
             m_filter.Invalidate();
+            // Restoring a snapshot swaps in a new copy of the same scene: entity IDs still mean the same entities.
+            if (shell.GetSceneIdentityRevision() != m_observedSceneIdentityRevision)
+            {
+                m_observedSceneIdentityRevision = shell.GetSceneIdentityRevision();
+                m_expansion.Clear();
+            }
         }
 
         // Selection changes from elsewhere (viewport picks, creation, undo)
@@ -1090,6 +1090,9 @@ namespace PlutoGE::ui
         const glm::vec3 pivot = hasBounds ? (minimum + maximum) * 0.5f : entities.front()->GetWorldPosition();
 
         scene::Entity *group = nullptr;
+        std::vector<scene::EntityID> groupedIds;
+        groupedIds.reserve(entities.size());
+        for (const auto *entity : entities) groupedIds.push_back(entity->GetID());
         EditorShell::GetInstance().ExecuteSceneEdit("Group Selected Entities",
                                                     [scene, commonParent, entities, pivot, &group]()
                                                     {
@@ -1104,7 +1107,8 @@ namespace PlutoGE::ui
                                                         {
                                                             ReparentIntoTranslationGroup(*entities[index], *group);
                                                         }
-                                                    });
+                                                    },
+                                                    SceneEditScope::Entities(groupedIds));
         if (group)
         {
             EditorShell::GetInstance().SetSelectedEntity(group);
@@ -1121,12 +1125,16 @@ namespace PlutoGE::ui
         const char *label = combined
                                 ? (bottomCenter ? "Set Pivots To Selection Bottom Centre" : "Set Pivots To Selection Centre")
                                 : (bottomCenter ? "Set Pivots To Individual Bottom Centres" : "Set Pivots To Individual Centres");
+        std::vector<scene::EntityID> entityIds;
+        entityIds.reserve(entities.size());
+        for (const auto *entity : entities) entityIds.push_back(entity->GetID());
+        // Moving a pivot moves the children the opposite way to keep them still.
         shell.ExecuteSceneEdit(label, [entities, combined, bottomCenter]()
         {
             std::string error;
             if (!SetSelectionPivotsToMeshBounds(entities, combined, bottomCenter, error))
                 EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning, error);
-        });
+        }, SceneEditScope::Subtrees(std::move(entityIds)));
     }
 
     // ---------------------------------------------------------------------
@@ -1223,14 +1231,46 @@ namespace PlutoGE::ui
             ImGui::TextDisabled("No matching entities");
         }
 
-        m_rows.clear();
+        RefreshRows(scene);
         // Selected rows use the accent; collapsing headers elsewhere keep the neutral Header colour.
         ImGui::PushStyleColor(ImGuiCol_Header, GetEditorColorU32(EditorColor::Selection));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, GetEditorColorU32(EditorColor::Accent, 0.16f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, GetEditorColorU32(EditorColor::SelectionHovered));
-        for (auto *entity : scene.GetRootEntities())
         {
-            RenderEntityNode(entity);
+            core::CpuScope scope("Hierarchy Rows", core::CpuCategory::UI);
+            const auto rowIndexOf = [this](EntityId id)
+            {
+                const auto found = std::find_if(m_rows.begin(), m_rows.end(), [id](const HierarchyRow &row) { return row.id == id; });
+                return found == m_rows.end() ? -1 : static_cast<int>(found - m_rows.begin());
+            };
+            const float rowHeight = ImGui::GetFrameHeight();
+            if (const int target = m_scrollToEntityId ? rowIndexOf(m_scrollToEntityId) : -1; target >= 0)
+            {
+                const float top = ImGui::GetCursorPosY() + static_cast<float>(target) * rowHeight;
+                const float viewHeight = ImGui::GetWindowHeight();
+                if (top < ImGui::GetScrollY() || top + rowHeight > ImGui::GetScrollY() + viewHeight)
+                    ImGui::SetScrollY(top - (viewHeight - rowHeight) * 0.5f);
+            }
+
+            ImGuiListClipper clipper;
+            clipper.Begin(static_cast<int>(m_rows.size()), rowHeight);
+            // Rows that are mid-interaction stay submitted however far they scroll.
+            if (const int renaming = m_renamingEntityId ? rowIndexOf(m_renamingEntityId) : -1; renaming >= 0)
+                clipper.IncludeItemByIndex(renaming);
+            if (const int pinned = m_pinnedRowId ? rowIndexOf(m_pinnedRowId) : -1; pinned >= 0)
+                clipper.IncludeItemByIndex(pinned);
+            m_pinnedRowId = 0;
+            while (clipper.Step())
+            {
+                for (int index = clipper.DisplayStart; index < clipper.DisplayEnd; ++index)
+                {
+                    const auto &row = m_rows[static_cast<std::size_t>(index)];
+                    if (auto *entity = scene.FindEntityByID(row.id))
+                        RenderEntityRow(entity, row);
+                    else
+                        ImGui::Dummy(ImVec2(0.0f, rowHeight)); // Removed since the list was built: keep the layout.
+                }
+            }
         }
         ImGui::PopStyleColor(3);
         m_scrollToEntityId = 0;

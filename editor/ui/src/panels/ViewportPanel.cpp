@@ -47,6 +47,7 @@
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
+#include <unordered_set>
 #include <ImGuizmo.h>
 #include <iostream>
 
@@ -317,6 +318,26 @@ namespace PlutoGE::ui
             };
         }
 
+        // The entities that get a viewport icon. Finding them walks the scene and checks each one's components, so it
+        // is kept until the hierarchy or a component list changes.
+        const std::vector<scene::EntityID> &ViewportIconEntities(const scene::Scene &scene)
+        {
+            static const scene::Scene *cachedScene = nullptr;
+            static std::uint64_t cachedRevision = 0;
+            static std::vector<scene::EntityID> cached;
+            if (cachedScene == &scene && cachedRevision == scene.GetStructureRevision()) return cached;
+            cachedScene = &scene;
+            cachedRevision = scene.GetStructureRevision();
+            cached.clear();
+            const auto visit = [&](const scene::Entity *entity, const auto &self) -> void
+            {
+                if (HasViewportEntityIcon(*entity)) cached.push_back(entity->GetID());
+                for (const auto *child : entity->GetChildren()) self(child, self);
+            };
+            for (const auto *root : scene.GetRootEntities()) visit(root, visit);
+            return cached;
+        }
+
         // Marks entities with nothing else to see or click (cameras, lights,
         // volumes, audio) with their hierarchy glyph. Drawn far to near so the
         // nearest sits on top; `hits` keeps what was drawn for click selection.
@@ -337,17 +358,18 @@ namespace PlutoGE::ui
             const float unit = ImGui::GetFontSize() / 13.0f;
             const float radius = 11.0f * unit;
             std::vector<Icon> icons;
-            const auto visit = [&](scene::Entity *entity, const auto &self) -> void
+            const std::unordered_set<const scene::Entity *> selected(selection.begin(), selection.end());
+            for (const auto id : ViewportIconEntities(scene))
             {
-                if (!entity->IsActiveInHierarchy())
-                    return;
-                if (HasViewportEntityIcon(*entity))
+                auto *entity = scene.FindEntityByID(id);
+                if (!entity || !entity->IsActiveInHierarchy())
+                    continue;
                 {
                     const glm::vec3 position = entity->GetWorldPosition();
                     const float depth = -(cameraData.view * glm::vec4(position, 1.0f)).z;
-                    const bool selected = std::find(selection.begin(), selection.end(), entity) != selection.end();
+                    const bool isSelected = selected.contains(entity);
                     // Selected entities stay marked however far away they are.
-                    const float alpha = selected ? 1.0f : ViewportEntityIconAlpha(depth, kFadeStart, kFadeEnd);
+                    const float alpha = isSelected ? 1.0f : ViewportEntityIconAlpha(depth, kFadeStart, kFadeEnd);
                     const auto projected = ProjectWorldPoint(position, cameraData, viewportMin, viewportSize);
                     if (projected.visible && alpha > 0.0f)
                     {
@@ -360,14 +382,10 @@ namespace PlutoGE::ui
                                 tint = ImGui::ColorConvertFloat4ToU32(ImVec4(color.r / peak, color.g / peak, color.b / peak, 1.0f));
                         }
                         icons.push_back({{entity->GetID(), {projected.screen.x, projected.screen.y}, radius, depth},
-                                         GetHierarchyEntityIcon(*entity), tint, alpha, selected});
+                                         GetHierarchyEntityIcon(*entity), tint, alpha, isSelected});
                     }
                 }
-                for (auto *child : entity->GetChildren())
-                    self(child, self);
-            };
-            for (auto *root : scene.GetRootEntities())
-                visit(root, visit);
+            }
             std::sort(icons.begin(), icons.end(), [](const Icon &a, const Icon &b) { return a.hit.depth > b.hit.depth; });
 
             auto *drawList = ImGui::GetWindowDrawList();
@@ -2865,7 +2883,7 @@ namespace PlutoGE::ui
                 m_isTransformGizmoUsing = true;
                 std::string error;
                 if (TransformSelection(selection, m_multiGizmoTransform * glm::inverse(before), error))
-                    editorShell.MarkSceneDirty();
+                    editorShell.MarkSceneDirty(SceneEditReach::Selection);
                 else
                 {
                     m_multiGizmoTransform = before;
@@ -3055,7 +3073,7 @@ namespace PlutoGE::ui
                             m_resizeHandleScreenDirection = screenAxis / halfPixels;
                             m_resizeHandleStartSize = authoredSize;
                             m_resizeHandleStartHalfPixels = halfPixels;
-                            editorShell.BeginSceneEdit(resizeTarget == 1 ? "Resize Collider" : "Resize Volume");
+                            editorShell.BeginSceneEdit(resizeTarget == 1 ? "Resize Collider" : "Resize Volume", SceneEditReach::Selection);
                             shapeHandleBlocksGizmo = true;
                             gizmoBlocksSelection = true;
                         }
@@ -3710,7 +3728,7 @@ namespace PlutoGE::ui
                         gizmoBlocksSelection = pointGizmoUsing || pointGizmoHovered || splineHandleClicked;
                         if (pointGizmoUsing && !m_isOceanPointGizmoUsing)
                         {
-                            editorShell.BeginSceneEdit("Move Ocean Area Point");
+                            editorShell.BeginSceneEdit("Move Ocean Area Point", SceneEditReach::Selection);
                         }
                         if (pointGizmoUsing)
                         {
@@ -3773,7 +3791,7 @@ namespace PlutoGE::ui
                     gizmoBlocksSelection = pointGizmoUsing || pointGizmoHovered || splineHandleClicked;
                     if (pointGizmoUsing && !m_isOceanPointGizmoUsing)
                     {
-                        editorShell.BeginSceneEdit("Move Ocean Area Point");
+                        editorShell.BeginSceneEdit("Move Ocean Area Point", SceneEditReach::Selection);
                     }
                     if (pointGizmoUsing)
                     {
@@ -3824,7 +3842,7 @@ namespace PlutoGE::ui
                     {
                         if (!m_splinePointEditActive)
                         {
-                            editorShell.BeginSceneEdit(m_gizmoOperation == ImGuizmo::ROTATE ? "Rotate Spline Point" : "Move Spline Point");
+                            editorShell.BeginSceneEdit(m_gizmoOperation == ImGuizmo::ROTATE ? "Rotate Spline Point" : "Move Spline Point", SceneEditReach::Selection);
                             m_splinePointEditActive = true;
                         }
                         const glm::mat4 localPointTransform = glm::inverse(selectedEntity->GetWorldTransform()) * entityTransform;
@@ -3856,7 +3874,7 @@ namespace PlutoGE::ui
                         if (selectedEntity->GetScale() != previousScale)
                             selectedEntity->AddPrefabOverride("Transform.Scale");
                     }
-                    editorShell.MarkSceneDirty();
+                    editorShell.MarkSceneDirty(SceneEditReach::Selection);
                 }
                 else if (!entityGizmoUsing)
                 {

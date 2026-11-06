@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/HeavyPropertyCache.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/render/Texture.h"
 
@@ -21,6 +22,11 @@ namespace PlutoGE::scene
         std::vector<Property> Serialize() const override;
         std::vector<Property> SerializeEditableProperties() const;
         void Deserialize(const std::vector<Property> &properties) override;
+        std::vector<Property> SerializeForInspector() const override;
+        std::vector<Property> SerializeShared() const override;
+        // A missing or mismatched "Capture Pixels" already keeps the current capture.
+        void DeserializeKeepingHeavyData(const std::vector<Property> &properties) override { Deserialize(properties); }
+        std::uint64_t GetHeavyDataRevision() const override { return m_captureRevision; }
 
         void SetSize(const glm::vec3 &size);
         void SetIntensity(float intensity);
@@ -76,5 +82,7 @@ namespace PlutoGE::scene
         glm::vec3 m_automaticSize{10.0f};
         std::unique_ptr<render::Texture> m_captureTexture;
         std::vector<float> m_capturePixels;
+        std::uint64_t m_captureRevision = 0;
+        HeavyPropertyCache m_captureText;
     };
 }

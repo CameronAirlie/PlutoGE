@@ -973,6 +973,32 @@ namespace PlutoGE::scene
         return attachments.size() - retained.size();
     }
 
+    std::size_t MeshComponent::SerializedMaterialSlotCount() const
+    {
+        // An isolated submesh entity inherits the model asset's material table.
+        // Its editable per-part material belongs in SubmeshOverrides, not in a
+        // private copy of every model material slot.
+        return m_submeshIndex >= 0 && !m_privateResources ? 0 : m_materials.size();
+    }
+
+    bool MeshComponent::IsMaterialSlotAssetBacked(std::size_t materialSlotIndex, const render::Material *material) const
+    {
+        const auto &reference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
+        return !reference.empty() && ResourceManager().FindLoadedMaterialAsset(reference) == material;
+    }
+
+    bool MeshComponent::HasInlineMaterialVersion() const
+    {
+        if (ResourceManager().GetAssetPipelineVersion() < 5) return false;
+        for (std::size_t slot = 0; slot < SerializedMaterialSlotCount(); ++slot)
+            if (const auto *material = GetMaterialForMaterialSlot(slot); material && !IsMaterialSlotAssetBacked(slot, material))
+                return true;
+        for (std::size_t submesh = 0; submesh < m_submeshMaterials.size(); ++submesh)
+            if (m_submeshMaterials[submesh] && GetMaterialAssetForSubmesh(submesh).empty())
+                return true;
+        return false;
+    }
+
     std::vector<Property> MeshComponent::Serialize() const
     {
         std::vector<Property> properties{
@@ -993,10 +1019,7 @@ namespace PlutoGE::scene
         const auto *assetMaterialReferences = m_sourceMeshPath.empty()
                                                   ? nullptr
                                                   : &ResourceManager().GetMeshAssetMaterialReferences(m_sourceMeshPath);
-        // An isolated submesh entity inherits the model asset's material table.
-        // Its editable per-part material belongs in SubmeshOverrides, not in a
-        // private copy of every model material slot.
-        const size_t materialSlotCountToSerialize = m_submeshIndex >= 0 && !m_privateResources ? 0 : m_materials.size();
+        const size_t materialSlotCountToSerialize = SerializedMaterialSlotCount();
         for (size_t materialSlotIndex = 0; materialSlotIndex < materialSlotCountToSerialize; ++materialSlotIndex)
         {
             auto *material = GetMaterialForMaterialSlot(materialSlotIndex);
@@ -1009,7 +1032,7 @@ namespace PlutoGE::scene
             const std::string prefix = std::string(kMaterialSlotPrefix) + std::to_string(materialSlotIndex) + ".";
             const auto &materialAssetReference = GetMaterialAssetForMaterialSlot(materialSlotIndex);
             auto &assetManager = ResourceManager();
-            if (!materialAssetReference.empty() && assetManager.FindLoadedMaterialAsset(materialAssetReference) == material)
+            if (IsMaterialSlotAssetBacked(materialSlotIndex, material))
             {
                 // Mesh assets already own their default material table. Repeating that
                 // table on every submesh entity made large imported hierarchies grow

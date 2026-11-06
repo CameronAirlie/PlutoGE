@@ -52,12 +52,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <ostream>
+#include <streambuf>
 #include <map>
 #include <unordered_set>
 #include <optional>
@@ -230,6 +233,30 @@ namespace PlutoGE::scene
             return ComponentRegistry::Get().IsAssetPathProperty(componentType, propertyName);
         }
 
+        // An std::ostream that appends straight to a string, so finishing a save moves the text rather than copying it.
+        class StringAppendBuffer final : public std::streambuf
+        {
+        public:
+            explicit StringAppendBuffer(std::string &target) : m_target(target) {}
+
+        protected:
+            int_type overflow(int_type character) override
+            {
+                if (!traits_type::eq_int_type(character, traits_type::eof()))
+                    m_target.push_back(traits_type::to_char_type(character));
+                return traits_type::not_eof(character);
+            }
+
+            std::streamsize xsputn(const char *text, std::streamsize count) override
+            {
+                m_target.append(text, static_cast<std::size_t>(count));
+                return count;
+            }
+
+        private:
+            std::string &m_target;
+        };
+
         std::string CanonicalizeStoredAssetPath(assets::AssetManager &assetManager, const std::string &value)
         {
             if (value.empty() || value.starts_with("asset://") || assets::Project::IsProjectAssetReference(value) ||
@@ -267,17 +294,13 @@ namespace PlutoGE::scene
             const bool linked = !scene.GetStaticModelInstances().empty();
             const bool extendedMaterials = std::any_of(entities.begin(), entities.end(), [](const Entity *entity)
             {
-                for (const auto *mesh : entity->GetComponents<MeshComponent>())
-                    for (const auto &property : mesh->Serialize())
-                        if (property.name.ends_with(".InlineMaterialVersion")) return true;
-                return false;
+                const auto meshes = entity->GetComponents<MeshComponent>();
+                return std::any_of(meshes.begin(), meshes.end(), [](const MeshComponent *mesh) { return mesh->HasInlineMaterialVersion(); });
             });
             const bool extendedManagedFields = std::any_of(entities.begin(), entities.end(), [](const Entity *entity)
             {
-                for (const auto *script : entity->GetComponents<ScriptComponent>())
-                    for (const auto &property : script->Serialize())
-                        if (assets::IsManagedAssetFieldMetadata(property.name)) return true;
-                return false;
+                const auto scripts = entity->GetComponents<ScriptComponent>();
+                return std::any_of(scripts.begin(), scripts.end(), [](const ScriptComponent *script) { return script->WritesManagedAssetFieldMetadata(); });
             });
             const bool version5 = linked || extendedMaterials || extendedManagedFields;
             if (version5 && (context.GetProjectRootDirectory().empty() || context.GetAssetPipelineVersion() < assets::kLinkedModelSceneProjectVersion))
@@ -386,19 +409,22 @@ namespace PlutoGE::scene
                             continue;
                         }
 
-                        const auto componentType = ResolveComponentTypeName(*component);
-                        if (componentType.empty())
+                        const auto *typeInfo = ComponentRegistry::Get().Find(*component);
+                        if (!typeInfo || typeInfo->typeName.empty())
                         {
                             if (linked) { if (errorMessage) *errorMessage = "Linked scene contains an unsupported component."; return false; }
                             continue;
                         }
+                        const std::string &componentType = typeInfo->typeName;
+                        const auto isAssetPath = [typeInfo](std::string_view name)
+                        { return typeInfo->isAssetPathProperty && typeInfo->isAssetPathProperty(name); };
 
                         output << "COMPONENT\t" << entity->GetID() << '\t' << componentType << '\t'
                                << (component->IsEnabled() ? 1 : 0) << '\n';
                         const auto *meshComponent = dynamic_cast<const MeshComponent *>(component);
                         const auto privateReader = meshComponent ? meshComponent->GetRetainedAssetReader() : nullptr;
                         auto &componentAssets = privateReader ? *privateReader : assetManager;
-                        const auto properties = component->Serialize();
+                        const auto properties = component->SerializeShared();
                         assets::ManagedAssetFieldMetadata managedFields;
                         if (componentType == "ScriptComponent")
                         {
@@ -410,12 +436,21 @@ namespace PlutoGE::scene
                         }
                         for (const auto &property : properties)
                         {
+                            if (property.sharedValue)
+                            {
+                                // Heavy text never needs escaping or path handling, and at tens of MB it should not be copied.
+                                output << "PROPERTY\t" << EscapeText(property.name) << '\t' << static_cast<int>(property.type) << '\t';
+                                output.write(property.sharedValue->data(), static_cast<std::streamsize>(property.sharedValue->size()));
+                                output << '\t' << property.enumOptions.size() << '\n';
+                                continue;
+                            }
+                            const bool assetPath = isAssetPath(property.name);
                             const auto managedRole = managedFields.fields.find(property.name);
                             const auto persist = [&](const std::string &reference) { return componentAssets.PersistAssetPath(reference); };
                             std::string serializedValue = managedRole != managedFields.fields.end()
                                 ? assets::TransformManagedAssetFieldValue(managedRole->second, property.value, persist)
-                                : IsAssetPathProperty(componentType, property.name) ? persist(property.value) : property.value;
-                            if (privateReader && IsAssetPathProperty(componentType, property.name))
+                                : assetPath ? persist(property.value) : property.value;
+                            if (privateReader && assetPath)
                                 if (const auto catalog = componentAssets.GetAssetCatalog())
                                     if (const auto identity = catalog->FindIdentityByLocation(serializedValue))
                                         assets::SerializeAssetReference(*identity, serializedValue);
@@ -542,9 +577,15 @@ namespace PlutoGE::scene
     {
         try
         {
-            std::ostringstream output;
+            // Snapshots of one scene are about the same size, so the last one sizes the next.
+            static std::atomic<std::size_t> lastTextSize{0};
+            std::string text;
+            text.reserve(lastTextSize.load(std::memory_order_relaxed) + 1024);
+            StringAppendBuffer buffer(text);
+            std::ostream output(&buffer);
             if (!SaveSceneToStream(scene, output, errorMessage)) return false;
-            outputText = output.str();
+            lastTextSize.store(text.size(), std::memory_order_relaxed);
+            outputText = std::move(text);
             if (errorMessage) errorMessage->clear();
             return true;
         }

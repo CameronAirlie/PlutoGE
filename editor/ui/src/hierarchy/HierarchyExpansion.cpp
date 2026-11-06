@@ -6,14 +6,8 @@ namespace PlutoGE::ui
 {
     void HierarchyExpansion::SetExpanded(ID id, bool expanded)
     {
-        if (expanded)
-        {
-            m_expanded.insert(id);
-        }
-        else
-        {
-            m_expanded.erase(id);
-        }
+        const bool changed = expanded ? m_expanded.insert(id).second : m_expanded.erase(id) > 0;
+        if (changed) ++m_revision;
     }
 
     void HierarchyExpansion::SetSubtreeExpanded(const scene::Entity &entity, bool expanded)
@@ -36,7 +30,7 @@ namespace PlutoGE::ui
     {
         for (const auto *ancestor = entity.GetParent(); ancestor; ancestor = ancestor->GetParent())
         {
-            m_expanded.insert(ancestor->GetID());
+            if (m_expanded.insert(ancestor->GetID()).second) ++m_revision;
         }
     }
 }

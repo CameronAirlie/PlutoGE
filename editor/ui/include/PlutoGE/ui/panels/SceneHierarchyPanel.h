@@ -52,7 +52,8 @@ namespace PlutoGE::ui
         void RenderPinnedRows();
         void RenderFilterBar(scene::Scene &scene);
         void RenderTree(scene::Scene &scene);
-        void RenderEntityNode(scene::Entity *entity);
+        void RefreshRows(const scene::Scene &scene);
+        void RenderEntityRow(scene::Entity *entity, const HierarchyRow &rowInfo);
         void RenderRowLabel(const scene::Entity &entity, const RowLayout &row, bool containsCollapsedSelection);
         void RenderRowToggles(scene::Entity &entity, const RowLayout &row);
         void HandleRowInteraction(scene::Entity &entity);
@@ -84,7 +85,14 @@ namespace PlutoGE::ui
 
         HierarchyExpansion m_expansion;
         HierarchyFilter m_filter;
-        std::vector<HierarchyRow> m_rows; // Rows visible this frame, in display order.
+        // Every row the tree shows, in display order, whether or not it is scrolled into view. Rebuilt when the
+        // hierarchy or expansion changes.
+        std::vector<HierarchyRow> m_rows;
+        const scene::Scene *m_rowsScene = nullptr;
+        std::uint64_t m_rowsStructureRevision = 0;
+        std::uint64_t m_rowsExpansionRevision = 0;
+        bool m_filterWasActive = false;
+        EntityId m_pinnedRowId = 0; // Row with an active drag or open menu, which must keep being submitted.
         std::vector<std::function<void()>> m_deferredEdits;
 
         std::vector<EntityId> m_selectedEntityIds;
@@ -93,6 +101,7 @@ namespace PlutoGE::ui
         std::unordered_set<EntityId> m_selectionAncestorIds;
         std::uint64_t m_observedSelectionRevision = 0;
         std::uint64_t m_observedSceneRevision = 0;
+        std::uint64_t m_observedSceneIdentityRevision = 0;
         EntityId m_scrollToEntityId = 0;
 
         EntityId m_renamingEntityId = 0;

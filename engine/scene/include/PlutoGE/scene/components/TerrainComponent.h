@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/scene/TerrainLayerStack.h"
+#include "PlutoGE/scene/HeavyPropertyCache.h"
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
@@ -47,6 +48,11 @@ namespace PlutoGE::scene
         void SubmitRenderCommands();
 
         std::vector<Property> Serialize() const override;
+        std::vector<Property> SerializeForInspector() const override;
+        std::vector<Property> SerializeShared() const override;
+        // Missing "HeightSamples" already keep the current heights (unless Width or Depth changes their count).
+        void DeserializeKeepingHeavyData(const std::vector<Property> &properties) override { Deserialize(properties); }
+        std::uint64_t GetHeavyDataRevision() const override { return m_heightsRevision; }
         void Deserialize(const std::vector<Property> &properties) override;
 
         bool LoadHeightMap(const std::string &filePath);
@@ -114,6 +120,8 @@ namespace PlutoGE::scene
         float GetBrushHardness() const { return m_brushHardness; }
 
     private:
+        enum class HeavyDetail { Omit, Shared };
+        std::vector<Property> SerializeProperties(HeavyDetail detail) const;
         float GetHeightSample(int x, int z) const;
         void SetHeightSample(int x, int z, float height);
         float SampleHeight(float x, float z) const;
@@ -133,6 +141,8 @@ namespace PlutoGE::scene
         int m_lodCount = 4;
         bool m_isStatic = false;
         std::vector<float> m_heights;
+        std::uint64_t m_heightsRevision = 0;
+        HeavyPropertyCache m_heightsText;
 
         std::unique_ptr<render::Mesh> m_mesh;
         render::Material *m_material = nullptr;

@@ -9,7 +9,7 @@ namespace PlutoGE::ui
 {
     void EditorShell::SaveRecoveryBackup()
     {
-        if (!m_project || !m_scene || m_engine.IsRuntimeRunning() || m_activeBakeTask || m_sceneEditInProgress) return;
+        if (!m_project || !m_scene || m_engine.IsRuntimeRunning() || m_activeBakeTask || m_sceneHistory.IsGestureActive()) return;
         std::string state;
         if (!CaptureSceneState(state, &m_recoveryError)) return;
         const auto identity = m_scene->GetFilePath() + '\0' + state;
@@ -46,7 +46,7 @@ namespace PlutoGE::ui
             m_nextRecovery = now + std::chrono::seconds(m_recoverySettings.intervalSeconds);
         }
         if (directory.empty() || !m_recoverySettings.enabled || m_engine.IsRuntimeRunning() || m_activeBakeTask ||
-            m_sceneEditInProgress || ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left)) return;
+            m_sceneHistory.IsGestureActive() || ImGui::IsAnyItemActive() || ImGui::IsMouseDown(ImGuiMouseButton_Left)) return;
         if (now >= m_nextRecovery)
         {
             m_nextRecovery = now + std::chrono::seconds(m_recoverySettings.intervalSeconds);
@@ -71,7 +71,7 @@ namespace PlutoGE::ui
                 m_nextRecovery = std::chrono::steady_clock::now() + std::chrono::seconds(m_recoverySettings.intervalSeconds);
         }
         ImGui::SameLine();
-        const bool busy = m_engine.IsRuntimeRunning() || m_activeBakeTask || m_sceneEditInProgress;
+        const bool busy = m_engine.IsRuntimeRunning() || m_activeBakeTask || m_sceneHistory.IsGestureActive();
         ImGui::BeginDisabled(busy);
         if (ImGui::Button("Back Up Now")) SaveRecoveryBackup();
         ImGui::EndDisabled();
@@ -102,10 +102,10 @@ namespace PlutoGE::ui
                     {
                         restored->SetFilePath({});
                         SetScene(std::move(restored), false);
+                        ++m_sceneIdentityRevision;
                         m_recoveredSceneNeedsSaveAs = true;
-                        m_undoStack.clear();
-                        m_redoStack.clear();
-                        m_savedSceneState.clear();
+                        m_sceneHistory.Clear();
+                        m_sceneHistory.ClearSavedPosition();
                         MarkSceneDirty();
                         m_statusMessage = "Recovered backup as an unsaved scene. Review before saving.";
                         m_showSceneRecovery = false;

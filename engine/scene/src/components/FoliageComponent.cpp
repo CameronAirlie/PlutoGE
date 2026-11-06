@@ -9,6 +9,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/FastTextNumbers.h"
 #include "PlutoGE/scene/Scene.h"
 
 #include <algorithm>
@@ -53,51 +54,49 @@ namespace PlutoGE::scene
 
         std::string SerializeInstances(const std::vector<FoliageInstance> &instances)
         {
-            std::ostringstream output;
-            for (std::size_t index = 0; index < instances.size(); ++index)
+            constexpr std::size_t kTypicalRecordBytes = 90;
+            std::string output;
+            output.reserve(instances.size() * kTypicalRecordBytes);
+            for (const auto &instance : instances)
             {
-                const auto &instance = instances[index];
-                if (index > 0)
+                if (!output.empty()) output.push_back(';');
+                AppendNumber(output, instance.id);
+                const float values[9]{instance.position.x, instance.position.y, instance.position.z,
+                                      instance.rotationDegrees.x, instance.rotationDegrees.y, instance.rotationDegrees.z,
+                                      instance.scale.x, instance.scale.y, instance.scale.z};
+                for (const float value : values)
                 {
-                    output << ';';
+                    output.push_back(',');
+                    AppendNumber(output, value);
                 }
-                output << instance.id << ','
-                       << instance.position.x << ',' << instance.position.y << ',' << instance.position.z << ','
-                       << instance.rotationDegrees.x << ',' << instance.rotationDegrees.y << ',' << instance.rotationDegrees.z << ','
-                       << instance.scale.x << ',' << instance.scale.y << ',' << instance.scale.z;
             }
-            return output.str();
+            return output;
         }
 
         std::vector<FoliageInstance> DeserializeInstances(const std::string &value)
         {
             std::vector<FoliageInstance> instances;
-            std::size_t begin = 0;
-            while (begin < value.size())
+            instances.reserve(static_cast<std::size_t>(std::count(value.begin(), value.end(), ';')) + 1);
+            std::string_view remaining = value;
+            std::string_view record;
+            while (!remaining.empty() && NextToken(remaining, ';', record))
             {
-                const std::size_t end = value.find(';', begin);
-                const std::string record = value.substr(begin, end == std::string::npos ? std::string::npos : end - begin);
-                std::stringstream stream(record);
-                std::string token;
-                float values[9]{};
+                // Records written before instance IDs have nine fields; unparsable ones are skipped.
+                std::string_view token;
                 std::uint64_t instanceId = 0;
-                const auto commaCount = static_cast<int>(std::count(record.begin(), record.end(), ','));
-                if (commaCount == 9 && std::getline(stream, token, ','))
-                {
-                    try { instanceId = std::stoull(token); } catch (...) { instanceId = 0; }
-                }
+                if (std::count(record.begin(), record.end(), ',') == 9 && NextToken(record, ',', token))
+                    instanceId = ParseNumberToken<std::uint64_t>(token).value_or(0);
+                float values[9]{};
                 int valueIndex = 0;
-                while (valueIndex < 9 && std::getline(stream, token, ','))
+                while (valueIndex < 9 && NextToken(record, ',', token))
                 {
-                    try
-                    {
-                        values[valueIndex++] = std::stof(token);
-                    }
-                    catch (...)
+                    const auto parsed = ParseNumberToken<float>(token);
+                    if (!parsed)
                     {
                         valueIndex = 0;
                         break;
                     }
+                    values[valueIndex++] = *parsed;
                 }
                 if (valueIndex == 9)
                 {
@@ -108,11 +107,6 @@ namespace PlutoGE::scene
                         .scale = {values[6], values[7], values[8]},
                     });
                 }
-                if (end == std::string::npos)
-                {
-                    break;
-                }
-                begin = end + 1;
             }
             return instances;
         }
@@ -811,6 +805,21 @@ namespace PlutoGE::scene
 
     std::vector<Property> FoliageComponent::Serialize() const
     {
+        return MaterializeSharedProperties(SerializeProperties(HeavyDetail::Shared));
+    }
+
+    std::vector<Property> FoliageComponent::SerializeForInspector() const
+    {
+        return SerializeProperties(HeavyDetail::Omit);
+    }
+
+    std::vector<Property> FoliageComponent::SerializeShared() const
+    {
+        return SerializeProperties(HeavyDetail::Shared);
+    }
+
+    std::vector<Property> FoliageComponent::SerializeProperties(HeavyDetail detail) const
+    {
         std::vector<Property> properties = {
             {"MaxDrawDistance", PropertyType::Float, std::to_string(m_maxDrawDistance)},
             {"MaxShadowDistance", PropertyType::Float, std::to_string(m_maxShadowDistance)},
@@ -853,7 +862,12 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "WindFlutter", PropertyType::Float, std::to_string(type.asset.wind.flutter)});
             properties.push_back({prefix + "WindBendHeight", PropertyType::Float, std::to_string(type.asset.wind.bendHeight)});
             properties.push_back({prefix + "WindPivotHeight", PropertyType::Float, std::to_string(type.asset.wind.pivotHeight)});
-            properties.push_back({prefix + "Instances", PropertyType::String, SerializeInstances(type.instances)});
+            if (detail == HeavyDetail::Shared)
+            {
+                Property instances{prefix + "Instances", PropertyType::String};
+                instances.sharedValue = type.instancesText.Get(m_instanceTextRevision, [&type] { return SerializeInstances(type.instances); });
+                properties.push_back(std::move(instances));
+            }
         }
 
         return properties;
@@ -861,7 +875,18 @@ namespace PlutoGE::scene
 
     void FoliageComponent::Deserialize(const std::vector<Property> &properties)
     {
+        DeserializeProperties(properties, MissingInstances::Clear);
+    }
+
+    void FoliageComponent::DeserializeKeepingHeavyData(const std::vector<Property> &properties)
+    {
+        DeserializeProperties(properties, MissingInstances::Keep);
+    }
+
+    void FoliageComponent::DeserializeProperties(const std::vector<Property> &properties, MissingInstances missingInstances)
+    {
         std::unordered_map<std::size_t, FoliageType> parsedTypes;
+        std::unordered_set<std::size_t> typesWithInstances;
         std::string legacySourceMeshPath;
         std::string legacyMaterialAssetReference;
         std::string legacyInstances;
@@ -980,10 +1005,25 @@ namespace PlutoGE::scene
                 else if (fieldName == "WindPivotHeight")
                     type.asset.wind.pivotHeight = ParseFloatOr(property.value, type.asset.wind.pivotHeight);
                 else if (fieldName == "Instances")
-                    type.instances = DeserializeInstances(property.value);
+                {
+                    type.instances = DeserializeInstances(property.Text());
+                    typesWithInstances.insert(typeIndex);
+                }
             }
         }
 
+        // Types are rebuilt below, so anything to keep has to move across before they are cleared.
+        // Nothing but kept instances means their text is still valid, so a property edit does not re-encode them.
+        const auto previousTextRevision = m_instanceTextRevision;
+        const bool instancesUnchanged = missingInstances == MissingInstances::Keep && typesWithInstances.empty() &&
+                                        parsedTypes.size() == m_types.size();
+        if (missingInstances == MissingInstances::Keep)
+            for (auto &[typeIndex, type] : parsedTypes)
+                if (typeIndex < m_types.size() && !typesWithInstances.contains(typeIndex))
+                {
+                    type.instances = std::move(m_types[typeIndex].instances);
+                    type.instancesText = std::move(m_types[typeIndex].instancesText);
+                }
         m_types.clear();
         if (!parsedTypes.empty() || typeCount > 0)
         {
@@ -1059,6 +1099,7 @@ namespace PlutoGE::scene
         // instance revision so an existing Bullet cache cannot keep the old (or
         // empty) collider set for the newly restored placements.
         MarkInstancesDirty();
+        if (instancesUnchanged) m_instanceTextRevision = previousTextRevision;
     }
 
     void FoliageComponent::SetMesh(render::Mesh *mesh)
@@ -2244,6 +2285,7 @@ namespace PlutoGE::scene
     void FoliageComponent::MarkInstancesDirty()
     {
         ++m_revision;
+        ++m_instanceTextRevision;
         MarkRenderCommandsDirty();
         if (auto *owner = GetOwner())
         {

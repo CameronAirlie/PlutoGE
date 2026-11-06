@@ -46,16 +46,17 @@ namespace PlutoGE::ui
         candidate.reset();
         if (beforeState == afterState)
             return true;
-        if (!RestoreSceneState(afterState, &error))
+        bool exact = false;
+        if (!RestoreSceneState(afterState, &error, false, &exact))
         {
             m_statusMessage = "Could not restore retained changes: " + error;
             Log(ConsoleSeverity::Error, m_statusMessage);
             return false;
         }
-        PushSceneHistoryEntry(SceneHistoryEntry{.label = "Keep Play Mode Changes",
-            .beforeState = std::move(beforeState), .afterState = std::move(afterState),
-            .beforeGenerations = std::move(beforeGenerations), .afterGenerations = std::move(afterGenerations)});
-        m_redoStack.clear();
+        m_sceneHistory.PushSnapshotStep("Keep Play Mode Changes",
+            SceneSnapshot{MakeSceneStateText(std::move(beforeState)), std::move(beforeGenerations)},
+            SceneSnapshot{MakeSceneStateText(std::move(afterState)), std::move(afterGenerations)});
+        if (!exact) SynchronizeHistoryState();
         m_statusMessage = "Kept selected play-mode changes. Undo restores the pre-play values.";
         return true;
     }

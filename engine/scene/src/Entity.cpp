@@ -291,8 +291,16 @@ namespace PlutoGE::scene
             rootEntities.erase(std::remove(rootEntities.begin(), rootEntities.end(), child), rootEntities.end());
         }
 
-        if (m_scene) m_scene->InvalidateRuntimeHierarchy();
-        if (child->m_scene) child->m_scene->InvalidateRuntimeHierarchy();
+        if (m_scene)
+        {
+            m_scene->InvalidateRuntimeHierarchy();
+            m_scene->NoteStructureChanged();
+        }
+        if (child->m_scene)
+        {
+            child->m_scene->InvalidateRuntimeHierarchy();
+            child->m_scene->NoteStructureChanged();
+        }
         m_children.push_back(child);
         child->m_parent = this;
         if (m_scene)
@@ -324,6 +332,7 @@ namespace PlutoGE::scene
         {
             m_scene->m_rootEntities.push_back(this);
             m_scene->InvalidateRuntimeHierarchy();
+            m_scene->NoteStructureChanged();
             m_scene->InvalidateEnvironmentComponents();
         }
 
@@ -380,6 +389,7 @@ namespace PlutoGE::scene
         if (m_scene)
         {
             m_scene->InvalidateRuntimeHierarchy();
+            m_scene->NoteStructureChanged();
         }
     }
 
@@ -414,6 +424,7 @@ namespace PlutoGE::scene
         if (m_scene && IsEnvironmentComponentType(typeID))
             m_scene->InvalidateEnvironmentComponents();
         ++m_componentRevision;
+        if (m_scene) m_scene->NoteStructureChanged();
         if (m_scene && typeID == GetComponentTypeID<AnimationComponent>())
             m_scene->QueueRenderSubtree(this);
     }
@@ -432,6 +443,7 @@ namespace PlutoGE::scene
         bucket.erase(std::remove(bucket.begin(), bucket.end(), component), bucket.end());
         component->m_entity = nullptr;
         ++m_componentRevision;
+        if (m_scene) m_scene->NoteStructureChanged();
         if (m_scene && typeID == GetComponentTypeID<AnimationComponent>())
             m_scene->QueueRenderSubtree(this);
     }

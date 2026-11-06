@@ -58,7 +58,7 @@ namespace PlutoGE::ui
     bool EditorShell::ApplyReviewedModelNodeRepair(const assetimport::ModelNodeRepairProposal &proposal,
         std::string *errorMessage)
     {
-        if (!m_project || m_engine.IsRuntimeRunning() || m_sceneEditInProgress || m_activeBakeTask || IsModelImportRunning())
+        if (!m_project || m_engine.IsRuntimeRunning() || m_sceneHistory.IsGestureActive() || m_activeBakeTask || IsModelImportRunning())
         {
             if (errorMessage) *errorMessage = "Finish the active edit/import or stop Play before repairing model correspondence.";
             return false;
@@ -159,7 +159,7 @@ namespace PlutoGE::ui
 
     void EditorShell::PollModelImport()
     {
-        if (m_engine.IsRuntimeRunning() || m_sceneEditInProgress || m_activeBakeTask) return;
+        if (m_engine.IsRuntimeRunning() || m_sceneHistory.IsGestureActive() || m_activeBakeTask) return;
         if (m_modelImportTask)
         {
             auto completion = m_modelImportTask->TakeCompletion();

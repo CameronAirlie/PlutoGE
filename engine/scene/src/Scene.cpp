@@ -1437,6 +1437,12 @@ namespace PlutoGE::scene
     void Scene::UnregisterRuntimeComponent(Component *component) { m_runtimeComponents->Unregister(component); }
     void Scene::InvalidateRuntimeHierarchy() { m_runtimeComponents->InvalidateHierarchy(); }
 
+    void Scene::NoteStructureChanged()
+    {
+        static std::atomic<std::uint64_t> nextRevision{1};
+        m_structureRevision = nextRevision.fetch_add(1, std::memory_order_relaxed);
+    }
+
     SceneStreaming &Scene::GetStreaming()
     {
         if (!m_streaming)
@@ -2739,6 +2745,7 @@ namespace PlutoGE::scene
             m_physicsQueryCache->refreshSequence = std::numeric_limits<uint64_t>::max();
 
         auto *entityPtr = entity.get();
+        NoteStructureChanged();
         m_entityStorage.push_back(std::move(entity));
         m_entitiesById[entityPtr->GetID()] = entityPtr;
 
@@ -2778,6 +2785,7 @@ namespace PlutoGE::scene
         {
             return;
         }
+        NoteStructureChanged();
 
         const bool affectsPhysics = EntitySubtreeContainsPhysicsCollider(entity);
         if (affectsPhysics)

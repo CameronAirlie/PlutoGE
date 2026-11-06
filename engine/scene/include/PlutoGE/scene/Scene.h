@@ -143,6 +143,9 @@ namespace PlutoGE::scene
                                        const std::string &newMaterialAssetReference,
                                        render::Material *material);
         const std::vector<Entity *> &GetRootEntities() const { return m_rootEntities; }
+        // Changes when entities are added, removed, reparented or reordered, or gain or lose components. Values are
+        // unique across scenes, so a cache keyed on this alone cannot mistake one scene for another.
+        [[nodiscard]] std::uint64_t GetStructureRevision() const { return m_structureRevision; }
 
         void StartRuntime();
         void StopRuntime();
@@ -359,6 +362,8 @@ namespace PlutoGE::scene
         std::vector<std::unique_ptr<Entity>> m_entityStorage;
         std::unordered_map<EntityID, Entity *> m_entitiesById;
         std::vector<Entity *> m_rootEntities;
+        void NoteStructureChanged();
+        std::uint64_t m_structureRevision = 0;
         std::vector<MeshComponent *> m_meshComponents;
         std::unordered_set<MeshComponent *> m_dirtyRenderMeshes, m_dynamicRenderMeshes;
         std::vector<std::uint64_t> m_removedRenderProducers;

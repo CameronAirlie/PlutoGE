@@ -4,11 +4,23 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <unordered_map>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/euler_angles.hpp>
 
 namespace PlutoGE::ui
 {
+    namespace
+    {
+        std::unordered_map<std::string, scene::Property> PropertiesByName(const scene::Component &component)
+        {
+            std::unordered_map<std::string, scene::Property> properties;
+            for (auto &property : component.SerializeForInspector())
+                properties.insert_or_assign(property.name, std::move(property));
+            return properties;
+        }
+    }
+
     std::vector<scene::Entity *> SelectionRoots(const std::vector<scene::Entity *> &selection)
     {
         std::vector<scene::Entity *> roots;
@@ -69,14 +81,14 @@ namespace PlutoGE::ui
                 }
                 if (group.instances.size() != selection.size()) continue;
                 group.name = scene::SceneSerializer::GetComponentTypeName(*group.instances.front());
-                group.properties = group.instances.front()->Serialize();
-                for (auto *component : group.instances)
+                group.properties = group.instances.front()->SerializeForInspector();
+                for (std::size_t instance = 1; instance < group.instances.size(); ++instance)
                 {
-                    const auto properties = component->Serialize();
+                    const auto properties = PropertiesByName(*group.instances[instance]);
                     std::erase_if(group.properties, [&](const scene::Property &candidate)
                     {
-                        return std::none_of(properties.begin(), properties.end(), [&](const scene::Property &p)
-                        { return p.name == candidate.name && p.type == candidate.type && p.enumOptions == candidate.enumOptions; });
+                        const auto found = properties.find(candidate.name);
+                        return found == properties.end() || found->second.type != candidate.type || found->second.enumOptions != candidate.enumOptions;
                     });
                 }
                 result.push_back(std::move(group));
@@ -84,11 +96,38 @@ namespace PlutoGE::ui
         return result;
     }
 
+    const std::unordered_set<std::string> &GetMixedProperties(CommonComponent &group)
+    {
+        if (group.mixedProperties) return *group.mixedProperties;
+        auto &mixed = group.mixedProperties.emplace();
+        for (const auto *component : group.instances)
+        {
+            const auto properties = PropertiesByName(*component);
+            for (const auto &shown : group.properties)
+                if (const auto found = properties.find(shown.name); found != properties.end() && found->second.value != shown.value)
+                    mixed.insert(shown.name);
+        }
+        return mixed;
+    }
+
+    std::vector<CommonComponent> &CommonComponentCache::Get(const std::vector<scene::Entity *> &selection, std::uint64_t sceneRevision, std::uint64_t editRevision)
+    {
+        if (!m_valid || m_selection != selection || m_sceneRevision != sceneRevision || m_editRevision != editRevision)
+        {
+            m_groups = FindCommonComponents(selection);
+            m_selection = selection;
+            m_sceneRevision = sceneRevision;
+            m_editRevision = editRevision;
+            m_valid = true;
+        }
+        return m_groups;
+    }
+
     void SetCommonProperty(const CommonComponent &group, const scene::Property &property, int vectorAxis)
     {
         for (auto *component : group.instances)
         {
-            auto properties = component->Serialize();
+            auto properties = component->SerializeForInspector();
             for (auto &current : properties)
                 if (current.name == property.name && current.type == property.type)
                 {
@@ -109,7 +148,8 @@ namespace PlutoGE::ui
                         current.value = output.str();
                     }
                 }
-            component->Deserialize(properties);
+            // `properties` leaves out heavy data, which must survive this.
+            component->DeserializeKeepingHeavyData(properties);
             component->GetOwner()->AddPrefabOverride("Component:" + group.name + ":" + property.name);
         }
     }

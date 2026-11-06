@@ -424,6 +424,25 @@ add_executable(PlutoGESceneHistoryTests SceneHistoryTests.cpp)
 target_include_directories(PlutoGESceneHistoryTests PRIVATE ../editor/ui/include)
 pluto_link_engine(PlutoGESceneHistoryTests)
 add_test(NAME PlutoGESceneHistoryTests COMMAND PlutoGESceneHistoryTests)
+add_executable(PlutoGESceneEditHistoryTests
+    SceneEditHistoryTests.cpp
+    ../editor/ui/src/EntityStateCapture.cpp
+    ../editor/ui/src/MultiEntityEdit.cpp
+    ../editor/ui/src/EntityTransformEditing.cpp
+    ../editor/ui/src/SceneEditHistory.cpp
+    ../editor/ui/src/hierarchy/HierarchyExpansion.cpp
+    ../editor/ui/src/hierarchy/HierarchyFilter.cpp
+    ../editor/ui/src/hierarchy/HierarchyRows.cpp)
+target_include_directories(PlutoGESceneEditHistoryTests PRIVATE ../editor/ui/include)
+pluto_link_engine(PlutoGESceneEditHistoryTests)
+add_test(NAME PlutoGESceneEditHistoryTests COMMAND PlutoGESceneEditHistoryTests)
+add_executable(PlutoGESceneEditScalingTests
+    SceneEditScalingTests.cpp
+    ../editor/ui/src/EntityStateCapture.cpp
+    ../editor/ui/src/SceneEditHistory.cpp)
+target_include_directories(PlutoGESceneEditScalingTests PRIVATE ../editor/ui/include)
+pluto_link_engine(PlutoGESceneEditScalingTests)
+add_test(NAME PlutoGESceneEditScalingTests COMMAND PlutoGESceneEditScalingTests)
 
 add_executable(PlutoGEAssetReferenceCookingTests AssetReferenceCookingTests.cpp)
 pluto_link_engine(PlutoGEAssetReferenceCookingTests)

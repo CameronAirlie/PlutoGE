@@ -1,6 +1,7 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include <climits>
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/FastTextNumbers.h"
 #include "PlutoGE/render/Texture.h"
 
 #include "PlutoGE/assets/Project.h"
@@ -71,17 +72,14 @@ namespace PlutoGE::scene
 
         std::string SerializeHeightSamples(const std::vector<float> &heights)
         {
-            std::ostringstream output;
-            output << std::setprecision(9);
+            std::string output;
+            output.reserve(heights.size() * 10);
             for (std::size_t index = 0; index < heights.size(); ++index)
             {
-                if (index > 0)
-                {
-                    output << ',';
-                }
-                output << heights[index];
+                if (index > 0) output.push_back(',');
+                AppendNumber(output, heights[index]);
             }
-            return output.str();
+            return output;
         }
 
         bool DeserializeHeightSamples(const std::string &value, std::size_t expectedCount, std::vector<float> &heights)
@@ -255,6 +253,21 @@ namespace PlutoGE::scene
 
     std::vector<Property> TerrainComponent::Serialize() const
     {
+        return MaterializeSharedProperties(SerializeShared());
+    }
+
+    std::vector<Property> TerrainComponent::SerializeForInspector() const
+    {
+        return SerializeProperties(HeavyDetail::Omit);
+    }
+
+    std::vector<Property> TerrainComponent::SerializeShared() const
+    {
+        return SerializeProperties(HeavyDetail::Shared);
+    }
+
+    std::vector<Property> TerrainComponent::SerializeProperties(HeavyDetail detail) const
+    {
         std::vector<Property> properties{
             {"Width", PropertyType::Int, std::to_string(m_width)},
             {"Depth", PropertyType::Int, std::to_string(m_depth)},
@@ -265,7 +278,6 @@ namespace PlutoGE::scene
             {"LodCount", PropertyType::Int, std::to_string(m_lodCount)},
             {"Static", PropertyType::Bool, m_isStatic ? "true" : "false"},
             {"HeightMap", PropertyType::String, m_heightMapPath},
-            {"HeightSamples", PropertyType::String, SerializeHeightSamples(m_heights)},
             {"MaterialAsset", PropertyType::String, m_materialAssetReference},
             {"PaintedAlbedo", PropertyType::String, m_paintedAlbedoPath},
             {"PaintEnabled", PropertyType::Bool, m_paintEnabled ? "true" : "false"},
@@ -274,6 +286,15 @@ namespace PlutoGE::scene
             {"BrushStrength", PropertyType::Float, std::to_string(m_brushStrength)},
             {"FlattenHeight", PropertyType::Float, std::to_string(m_flattenHeight)},
         };
+        if (detail == HeavyDetail::Shared)
+        {
+            // Stays in its long-standing position, so scene files diff cleanly.
+            Property samples{"HeightSamples", PropertyType::String};
+            samples.sharedValue = m_heightsText.Get(m_heightsRevision, [this] { return SerializeHeightSamples(m_heights); });
+            const auto materialAsset = std::find_if(properties.begin(), properties.end(),
+                                                    [](const Property &property) { return property.name == "MaterialAsset"; });
+            properties.insert(materialAsset, std::move(samples));
+        }
         properties.push_back({"PaintLayer", PropertyType::Int, std::to_string(m_paintLayer)});
         properties.push_back({"LayerOpacity", PropertyType::Float, std::to_string(m_layerOpacity)});
         properties.push_back({"BrushHardness", PropertyType::Float, std::to_string(m_brushHardness)});
@@ -349,7 +370,7 @@ namespace PlutoGE::scene
             else if (property.name == "HeightMap")
                 heightMapPath = property.value;
             else if (property.name == "HeightSamples")
-                serializedHeightSamples = property.value;
+                serializedHeightSamples = property.Text();
             else if (property.name == "MaterialAsset")
                 materialAssetReference = property.value;
             else if (property.name == "PaintedAlbedo")
@@ -426,6 +447,7 @@ namespace PlutoGE::scene
         if (!serializedHeightSamples.empty() &&
             DeserializeHeightSamples(serializedHeightSamples, expectedHeightSampleCount, m_heights))
         {
+            ++m_heightsRevision;
             m_heightMapPath = heightMapPath;
             MarkMeshDirty();
         }
@@ -475,6 +497,7 @@ namespace PlutoGE::scene
         m_width = width;
         m_depth = height;
         m_heights.resize(static_cast<std::size_t>(m_width * m_depth));
+        ++m_heightsRevision;
         for (int z = 0; z < m_depth; ++z)
         {
             for (int x = 0; x < m_width; ++x)
@@ -566,6 +589,7 @@ namespace PlutoGE::scene
 
         if (changed)
         {
+            ++m_heightsRevision;
             MarkMeshDirty();
         }
         return changed;
@@ -682,6 +706,7 @@ namespace PlutoGE::scene
             }
         }
         m_heights.swap(resized);
+        ++m_heightsRevision;
         MarkMeshDirty();
     }
 
@@ -849,6 +874,7 @@ namespace PlutoGE::scene
             return;
         }
         m_heights[static_cast<std::size_t>(z * m_width + x)] = glm::clamp(height, 0.0f, m_heightScale);
+        ++m_heightsRevision;
     }
 
     float TerrainComponent::SampleHeight(float x, float z) const
@@ -904,6 +930,7 @@ namespace PlutoGE::scene
         }
 
         m_heights.assign(targetSize, 0.0f);
+        ++m_heightsRevision;
     }
 
     void TerrainComponent::MarkMeshDirty()

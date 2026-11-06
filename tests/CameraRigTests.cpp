@@ -174,12 +174,12 @@ namespace
         Require(SceneSerializer::SaveToString(f.scene, before, &error), "Save failed");
         f.rig->Deserialize({{"Yaw", PropertyType::Float, "42"}});
         Require(SceneSerializer::SaveToString(f.scene, after, &error), "Save after edit failed");
-        std::vector<SceneHistoryEntry> undo{{.beforeState = before, .afterState = after}}, redo;
+        std::vector<SceneHistoryEntry> undo{{.before = {MakeSceneStateText(before)}, .after = {MakeSceneStateText(after)}}}, redo;
         std::unique_ptr<Scene> restored;
         const auto restore = [&](const std::string &state) { restored = LoadSceneSnapshot(state, error); return restored != nullptr; };
-        Require(TransferSceneHistory(undo, redo, [&](const auto &e) { return restore(e.beforeState); }), "Undo failed");
+        Require(TransferSceneHistory(undo, redo, [&](const auto &e) { return restore(*e.before.text); }), "Undo failed");
         Require(restored->FindEntityByID(id)->GetComponent<CameraRigComponent>()->GetSettings().yaw == 0, "Undo lost settings");
-        Require(TransferSceneHistory(redo, undo, [&](const auto &e) { return restore(e.afterState); }), "Redo failed");
+        Require(TransferSceneHistory(redo, undo, [&](const auto &e) { return restore(*e.after.text); }), "Redo failed");
         auto *rig = restored->FindEntityByID(id)->GetComponent<CameraRigComponent>();
         Require(rig && rig->GetSettings().yaw == 42 && rig->GetSettings().target == f.target->GetID(), "Rig serialization failed");
         rig->UpdateRig(0.1f);

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <vector>
 #include <type_traits>
 #include <string>
@@ -38,6 +40,11 @@ namespace PlutoGE::scene
         PropertyType type;
         std::string value;
         std::vector<std::string> enumOptions; // Only used if type is Enum
+        // Heavy data from Component::SerializeShared, in place of `value`. Immutable and shared with the component's
+        // cache, so passing it around copies nothing. Holds only unescaped-safe text: no tabs, newlines or backslashes.
+        std::shared_ptr<const std::string> sharedValue;
+
+        [[nodiscard]] const std::string &Text() const { return sharedValue ? *sharedValue : value; }
     };
 
     class Component
@@ -53,6 +60,19 @@ namespace PlutoGE::scene
 
         virtual std::vector<Property> Serialize() const { return {}; }
         virtual void Deserialize(const std::vector<Property> &properties) {}
+
+        // Heavy data is a property too large to copy per frame or per edit (foliage instances, baked probes, terrain
+        // heights, capture pixels). Components that hold some override all four of these, and the defaults below make
+        // everything else behave like plain Serialize/Deserialize.
+        //
+        // Serialize() without the heavy properties, for code that only reads or edits the light ones.
+        virtual std::vector<Property> SerializeForInspector() const { return Serialize(); }
+        // The same properties in the same order as Serialize(), with heavy values in Property::sharedValue.
+        virtual std::vector<Property> SerializeShared() const { return Serialize(); }
+        // Deserialize() where a heavy property missing from the list keeps the current data rather than clearing it.
+        virtual void DeserializeKeepingHeavyData(const std::vector<Property> &properties) { Deserialize(properties); }
+        // Changes whenever heavy data changes, so equal revisions mean the encoded text is identical.
+        virtual std::uint64_t GetHeavyDataRevision() const { return 0; }
         // A property older files may name but Serialize no longer writes. Prefab overrides of one are dropped rather
         // than treated as naming something that no longer exists.
         virtual bool IsRetiredProperty(std::string_view name) const { (void)name; return false; }

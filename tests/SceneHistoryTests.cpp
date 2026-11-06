@@ -301,7 +301,7 @@ int main()
         entity->SetPosition({3, 4, 5});
         entity->GetComponent<LightComponent>()->SetIntensity(8);
         const auto after = Snapshot(*scene);
-        std::vector<SceneHistoryEntry> undo{{.label = "Inspector", .beforeState = before, .afterState = after}}, redo;
+        std::vector<SceneHistoryEntry> undo{{.label = "Inspector", .before = {MakeSceneStateText(before)}, .after = {MakeSceneStateText(after)}}}, redo;
         const auto restore = [&](const std::string &state) {
             std::string error;
             auto staged = LoadSceneSnapshot(state, error);
@@ -314,13 +314,13 @@ int main()
         };
         Require(!TransferSceneHistory(undo, redo, [](const auto &) { return false; }), "Failed application accepted");
         Require(undo.size() == 1 && redo.empty() && Snapshot(*scene) == after, "Failure lost history or changed scene");
-        Require(TransferSceneHistory(undo, redo, [&](const auto &entry) { return restore(entry.beforeState); }), "Undo failed");
+        Require(TransferSceneHistory(undo, redo, [&](const auto &entry) { return restore(*entry.before.text); }), "Undo failed");
         Require(undo.empty() && redo.size() == 1 && Snapshot(*scene) == before, "Undo did not restore saved state");
         Require(scene->FindEntityByID(id)->GetName() == "Before", "Owner ID/name did not survive restore");
-        Require(TransferSceneHistory(redo, undo, [&](const auto &entry) { return restore(entry.afterState); }), "Redo failed");
+        Require(TransferSceneHistory(redo, undo, [&](const auto &entry) { return restore(*entry.after.text); }), "Redo failed");
         Require(Snapshot(*scene) == after && scene->FindEntityByID(id)->GetComponent<LightComponent>()->GetLight().intensity == 8, "Component edit did not roundtrip");
-        undo.push_back({.label = "Bad snapshot", .beforeState = "broken"});
-        Require(!TransferSceneHistory(undo, redo, [&](const auto &entry) { return restore(entry.beforeState); }) && undo.size() == 2, "Malformed restore lost entry");
+        undo.push_back({.label = "Bad snapshot", .before = {MakeSceneStateText("broken")}});
+        Require(!TransferSceneHistory(undo, redo, [&](const auto &entry) { return restore(*entry.before.text); }) && undo.size() == 2, "Malformed restore lost entry");
         Require(Snapshot(*scene) == after, "Malformed restore replaced scene");
         undo.pop_back();
         int value = 2;

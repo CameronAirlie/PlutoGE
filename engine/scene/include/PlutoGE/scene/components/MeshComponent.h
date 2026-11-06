@@ -58,6 +58,8 @@ namespace PlutoGE::scene
         bool NeedsFrameRenderSubmission() const;
 
         std::vector<Property> Serialize() const override;
+        // Whether Serialize() writes an extended inline material, which selects the scene format, without building it.
+        [[nodiscard]] bool HasInlineMaterialVersion() const;
         void Deserialize(const std::vector<Property> &properties) override;
         // Accepted linked generations must never resolve through the current global catalog.
         std::shared_ptr<assets::AssetManager> GetRetainedAssetReader() const { return m_privateResources; }
@@ -281,6 +283,9 @@ namespace PlutoGE::scene
 
     private:
         void DeserializeUsingAssets(const std::vector<Property> &properties, assets::AssetManager &assets, bool allowSourceImport);
+        // How many material slots Serialize() writes, and whether a slot's material is the loaded asset it references.
+        [[nodiscard]] std::size_t SerializedMaterialSlotCount() const;
+        [[nodiscard]] bool IsMaterialSlotAssetBacked(std::size_t materialSlotIndex, const render::Material *material) const;
         void MarkRenderCommandsDirty();
         void RefreshMeshDerivedState();
         void UpdateCachedPreviousModels();

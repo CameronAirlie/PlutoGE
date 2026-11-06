@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <array>
@@ -60,6 +61,7 @@ namespace PlutoGE::ui
         const render::Mesh *m_materialUsageMesh = nullptr;
         std::size_t m_materialUsageMaterialCount = 0;
         std::vector<std::string> m_materialSlotUsageSummaries;
+        mutable CommonComponentCache m_commonComponents;
         int m_selectedMaterialSlotIndex = 0;
     };
 }

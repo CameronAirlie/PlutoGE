@@ -142,7 +142,7 @@ namespace PlutoGE::ui
         if (!m_showProjectValidation || !m_project) return;
         ImGui::SetNextWindowSize(ImVec2(850, 500), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("Project Validation", &m_showProjectValidation)) { ImGui::End(); return; }
-        const bool busy = m_engine.IsRuntimeRunning() || m_activeBakeTask || m_sceneEditInProgress;
+        const bool busy = m_engine.IsRuntimeRunning() || m_activeBakeTask || m_sceneHistory.IsGestureActive();
         ImGui::BeginDisabled(busy);
         if (ImGui::Button("Validate Project")) RunProjectValidation(true);
         ImGui::EndDisabled();

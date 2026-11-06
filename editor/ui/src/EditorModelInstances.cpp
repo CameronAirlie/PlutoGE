@@ -30,7 +30,7 @@ namespace PlutoGE::ui
     void EditorShell::PollModelInstances()
     {
         if (!m_project || !m_scene || m_project->GetManifest().assetPipelineVersion < 5 ||
-            m_engine.IsRuntimeRunning() || m_sceneEditInProgress || m_activeBakeTask) return;
+            m_engine.IsRuntimeRunning() || m_sceneHistory.IsGestureActive() || m_activeBakeTask) return;
         if (m_requestedModelInstanceUnpack)
         {
             const auto root = std::exchange(m_requestedModelInstanceUnpack, 0);
@@ -67,7 +67,7 @@ namespace PlutoGE::ui
     }
     bool EditorShell::UnpackModelInstance(std::uint32_t rootEntityId, std::string &error)
     {
-        if (!m_project || !m_scene || m_engine.IsRuntimeRunning() || m_sceneEditInProgress || m_activeBakeTask || IsModelImportRunning())
+        if (!m_project || !m_scene || m_engine.IsRuntimeRunning() || m_sceneHistory.IsGestureActive() || m_activeBakeTask || IsModelImportRunning())
         { error="Finish the active edit/import or stop Play before unpacking."; return false; }
         const auto found=m_scene->GetStaticModelInstances().find(rootEntityId);
         if (found == m_scene->GetStaticModelInstances().end()) { error="Selected linked instance no longer exists."; return false; }
@@ -135,7 +135,7 @@ namespace PlutoGE::ui
         if (!m_modelInstanceRefreshError.empty()) ImGui::TextWrapped("Refresh pending: %s", m_modelInstanceRefreshError.c_str());
         if (m_modelInstanceUnpackErrorRoot == found->first && !m_modelInstanceUnpackError.empty())
             ImGui::TextWrapped("Unpack failed: %s", m_modelInstanceUnpackError.c_str());
-        ImGui::BeginDisabled(m_engine.IsRuntimeRunning() || m_sceneEditInProgress || bool(m_activeBakeTask) || IsModelImportRunning());
+        ImGui::BeginDisabled(m_engine.IsRuntimeRunning() || m_sceneHistory.IsGestureActive() || bool(m_activeBakeTask) || IsModelImportRunning());
         if (ImGui::Button("Retry Source Update")) m_modelInstancesNeedRefresh = true;
         ImGui::SameLine();
         if (ImGui::Button("Unpack Instance")) m_requestedModelInstanceUnpack=found->first;

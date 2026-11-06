@@ -355,6 +355,14 @@ namespace PlutoGE::scene
             m_instance->OnAnimationEvent(event.name, event.stringParameter, event.floatParameter, event.intParameter);
     }
 
+    bool ScriptComponent::WritesManagedAssetFieldMetadata() const
+    {
+        const auto &context = core::Engine::GetInstance().GetAssetManager();
+        if (context.GetProjectRootDirectory().empty() || context.GetAssetPipelineVersion() < 5) return false;
+        return m_assetFieldMetadataDeclared || m_scriptClass.empty() ||
+               core::Engine::GetInstance().GetScriptEngine().FindClass(m_scriptClass) != nullptr;
+    }
+
     std::vector<Property> ScriptComponent::Serialize() const
     {
         std::vector<Property> properties;
@@ -387,15 +395,18 @@ namespace PlutoGE::scene
             });
         }
 
+        // Fields the class does not declare, in name order: the map's own order changes between loads, and a save has
+        // to be stable for scene history and source control.
+        std::vector<const std::string *> undeclaredFields;
         for (const auto &[fieldName, fieldValue] : m_fieldValues)
+            if (!serializedFieldNames.contains(fieldName))
+                undeclaredFields.push_back(&fieldName);
+        std::sort(undeclaredFields.begin(), undeclaredFields.end(), [](const std::string *a, const std::string *b) { return *a < *b; });
+        for (const auto *fieldName : undeclaredFields)
         {
-            if (serializedFieldNames.contains(fieldName))
-            {
-                continue;
-            }
-
+            const auto &fieldValue = m_fieldValues.at(*fieldName);
             properties.push_back(Property{
-                .name = fieldName,
+                .name = *fieldName,
                 .type = ToPropertyType(GetScriptFieldType(fieldValue)),
                 .value = SerializeFieldValue(fieldValue),
             });
@@ -404,9 +415,7 @@ namespace PlutoGE::scene
         const auto &context = core::Engine::GetInstance().GetAssetManager();
         if (m_assetFieldMetadataDeclared && (context.GetProjectRootDirectory().empty() || context.GetAssetPipelineVersion() < 5))
             throw std::runtime_error("Persisted typed managed asset fields require project format 5.");
-        const bool fieldSchemaKnown = m_assetFieldMetadataDeclared || m_scriptClass.empty() ||
-            core::Engine::GetInstance().GetScriptEngine().FindClass(m_scriptClass) != nullptr;
-        if (fieldSchemaKnown && !context.GetProjectRootDirectory().empty() && context.GetAssetPipelineVersion() >= 5)
+        if (WritesManagedAssetFieldMetadata())
         {
             properties.insert(properties.begin() + 1, Property{.name=std::string(assets::kManagedAssetFieldSchema),
                 .type=PropertyType::String, .value="1"});

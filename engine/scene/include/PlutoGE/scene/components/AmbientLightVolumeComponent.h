@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/scene/components/Component.h"
 #include "PlutoGE/scene/BakedProbeVolume.h"
+#include "PlutoGE/scene/HeavyPropertyCache.h"
 #include <cstdint>
 
 namespace PlutoGE::scene
@@ -25,6 +26,11 @@ namespace PlutoGE::scene
         std::vector<Property> Serialize() const override;
         std::vector<Property> SerializeEditableProperties() const;
         void Deserialize(const std::vector<Property> &properties) override;
+        std::vector<Property> SerializeForInspector() const override { return SerializeEditableProperties(); }
+        std::vector<Property> SerializeShared() const override;
+        // A missing "Baked Data" already keeps the current bake.
+        void DeserializeKeepingHeavyData(const std::vector<Property> &properties) override { Deserialize(properties); }
+        std::uint64_t GetHeavyDataRevision() const override { return m_bakeRevision; }
         void SetSize(glm::vec3 size);
         glm::vec3 GetSize() const { return m_size; }
         glm::mat4 GetVolumeTransform() const;
@@ -66,6 +72,8 @@ namespace PlutoGE::scene
         float m_reflectionOcclusion = 1.0f;
         AmbientSkyLighting m_skyLighting = AmbientSkyLighting::Live;
         std::uint64_t m_revision = 0;
+        std::uint64_t m_bakeRevision = 0; // Only the encoded bake; m_revision also covers render parameters.
         BakedProbeVolume m_baked;
+        HeavyPropertyCache m_bakeText;
     };
 }

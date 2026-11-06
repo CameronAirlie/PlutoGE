@@ -19,7 +19,12 @@ namespace PlutoGE::assetimport
         {
             std::set<std::filesystem::path> paths{std::filesystem::weakly_canonical(source)};
             for (const auto &dependency : imported.sourceDependencies)
-                paths.insert(std::filesystem::weakly_canonical(std::filesystem::u8path(dependency)));
+            {
+                // A missing file has no content to track; the model imports without it.
+                const auto path = std::filesystem::u8path(dependency);
+                std::error_code error;
+                if (std::filesystem::is_regular_file(path, error)) paths.insert(std::filesystem::weakly_canonical(path));
+            }
             return paths;
         }
 

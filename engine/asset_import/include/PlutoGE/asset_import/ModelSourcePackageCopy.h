@@ -20,6 +20,9 @@ namespace PlutoGE::assetimport
         // they are placed beside the model, which only helps importers that
         // also search by file name.
         std::vector<std::filesystem::path> flattened;
+        // Dependencies the model references but that do not exist. Models often
+        // ship without their textures, so these are reported rather than fatal.
+        std::vector<std::filesystem::path> missing;
     };
 
     // How many directories above the model's own directory a dependency may
@@ -34,7 +37,8 @@ namespace PlutoGE::assetimport
                                                             const std::filesystem::path &destinationDirectory);
 
     // The files a source model reads besides itself (external buffers,
-    // textures), as reported by the importer that will later import it.
+    // textures), as reported by the importer that will later import it. These
+    // are the model's references, so some may not exist.
     bool CollectModelSourceDependencies(const std::filesystem::path &source,
                                         std::vector<std::filesystem::path> &dependencies,
                                         std::string *errorMessage = nullptr);
@@ -53,4 +57,8 @@ namespace PlutoGE::assetimport
                                 const std::filesystem::path &destinationDirectory,
                                 ModelPackageCopyPlan &plan,
                                 std::string *errorMessage = nullptr);
+
+    // A one-line warning naming the files in `plan.missing`; empty if there are none.
+    [[nodiscard]] std::string DescribeMissingModelDependencies(const std::filesystem::path &source,
+                                                               const ModelPackageCopyPlan &plan);
 }

@@ -108,8 +108,12 @@ namespace PlutoGE::assetimport
             dependencies.clear();
             for (const auto &dependency : imported.sourceDependencies)
             {
-                const auto path = std::filesystem::weakly_canonical(
-                    std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(dependency.data()), dependency.size())));
+                const std::filesystem::path reference(std::u8string(reinterpret_cast<const char8_t *>(dependency.data()), dependency.size()));
+                // A reference may name an unavailable drive or characters no
+                // file can have, which must not stop the model being read.
+                std::error_code error;
+                auto path = std::filesystem::weakly_canonical(reference, error);
+                if (error) path = reference.lexically_normal();
                 if (path != absolute && std::find(dependencies.begin(), dependencies.end(), path) == dependencies.end())
                 {
                     dependencies.push_back(path);
@@ -144,15 +148,15 @@ namespace PlutoGE::assetimport
         {
             return Fail(errorMessage, "Destination already exists: " + destinationDirectory.string());
         }
+        std::vector<std::filesystem::path> present;
+        std::vector<std::filesystem::path> missing;
         for (const auto &dependency : dependencies)
         {
-            if (!std::filesystem::is_regular_file(dependency, error))
-            {
-                return Fail(errorMessage, "Model dependency is missing: " + dependency.string());
-            }
+            (std::filesystem::is_regular_file(dependency, error) ? present : missing).push_back(dependency);
         }
 
-        plan = PlanModelPackageCopy(std::filesystem::weakly_canonical(source), dependencies, destinationDirectory);
+        plan = PlanModelPackageCopy(std::filesystem::weakly_canonical(source), present, destinationDirectory);
+        plan.missing = std::move(missing);
         for (const auto &[from, to] : plan.files)
         {
             std::filesystem::create_directories(to.parent_path(), error);
@@ -166,5 +170,20 @@ namespace PlutoGE::assetimport
         }
         if (errorMessage) errorMessage->clear();
         return true;
+    }
+
+    std::string DescribeMissingModelDependencies(const std::filesystem::path &source, const ModelPackageCopyPlan &plan)
+    {
+        if (plan.missing.empty()) return {};
+        constexpr std::size_t kMaxNamedFiles = 5;
+        std::string message = "'" + source.filename().string() + "' references " + std::to_string(plan.missing.size()) +
+                              " file(s) that were not found, so it imports without them: ";
+        for (std::size_t index = 0; index < std::min(plan.missing.size(), kMaxNamedFiles); ++index)
+        {
+            if (index > 0) message += ", ";
+            message += plan.missing[index].filename().string();
+        }
+        if (plan.missing.size() > kMaxNamedFiles) message += " and " + std::to_string(plan.missing.size() - kMaxNamedFiles) + " more";
+        return message + ".";
     }
 }

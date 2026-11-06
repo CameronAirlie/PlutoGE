@@ -305,6 +305,24 @@ namespace
         Require(imported.Succeeded() && imported.results == std::vector<fs::path>{package} && fs::exists(package / "tri.gltf") &&
                     fs::file_size(package / "buffers" / "tri.bin") == sizeof(positions) && !fs::exists(package / "unrelated.txt"),
                 "A dropped glTF must bring exactly its buffers: " + (imported.errors.empty() ? std::string{} : imported.errors.front()));
+
+        // Models often ship without their textures: copy what exists and say what does not.
+        const auto noTextures = scratch.root / "NoTextures";
+        fs::create_directories(noTextures / "buffers");
+        fs::copy_file(source / "tri.gltf", noTextures / "tri.gltf");
+        fs::copy_file(source / "buffers" / "tri.bin", noTextures / "buffers" / "tri.bin");
+        const std::vector<fs::path> dependencies{noTextures / "buffers" / "tri.bin", noTextures / "Textures" / "absent.png",
+                                                 noTextures / "Textures" / "body.<UDIM>.png"};
+        assetimport::ModelPackageCopyPlan partial;
+        std::string copyError;
+        Require(assetimport::CopyModelSourcePackage(noTextures / "tri.gltf", dependencies, scratch.root / "Partial", partial, &copyError),
+                "Missing model dependencies must not stop the copy: " + copyError);
+        Require(partial.missing.size() == 2 && fs::exists(scratch.root / "Partial" / "tri.gltf") &&
+                    fs::exists(scratch.root / "Partial" / "buffers" / "tri.bin") && !fs::exists(scratch.root / "Partial" / "Textures"),
+                "Existing dependencies must be copied and missing ones reported");
+        const auto warning = assetimport::DescribeMissingModelDependencies(noTextures / "tri.gltf", partial);
+        Require(warning.find("2 file(s)") != std::string::npos && warning.find("absent.png") != std::string::npos,
+                "The missing-dependency warning must name the files: " + warning);
     }
 }
 

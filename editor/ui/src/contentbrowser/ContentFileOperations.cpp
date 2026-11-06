@@ -362,6 +362,10 @@ namespace PlutoGE::ui
             report.warnings.push_back("'" + DisplayName(file) + "' is outside the model's folder and was placed beside '" +
                                       DisplayName(source) + "'; check the model's references to it.");
         }
+        if (auto warning = assetimport::DescribeMissingModelDependencies(source, plan); !warning.empty())
+        {
+            report.warnings.push_back(std::move(warning));
+        }
         report.results.push_back(package);
         return true;
     }

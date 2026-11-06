@@ -18,7 +18,8 @@ namespace PlutoGE::assetimport
 
     // Discovers dependencies before the authoritative parse, hashes them before
     // and after that parse, and rejects changes to either their set or contents.
-    // A future importer IO adapter can supply the same contract in one pass.
+    // Referenced files that do not exist are not inputs. A future importer IO
+    // adapter can supply the same contract in one pass.
     bool ReadModelSourceSnapshot(const std::filesystem::path &source,
                                  const MeshImportOptions &options,
                                  ModelSourceSnapshot &snapshot,

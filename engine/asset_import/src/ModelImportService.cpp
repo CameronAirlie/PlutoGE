@@ -373,7 +373,15 @@ namespace PlutoGE::assetimport
                 progress("Writing textures");
                 const auto &texture = imported.textures[index];
                 std::filesystem::path destination;
-                if (!texture.sourcePath.empty() && std::filesystem::is_regular_file(texture.sourcePath))
+                std::error_code sourceError;
+                const bool sourceExists = !texture.sourcePath.empty() && std::filesystem::is_regular_file(texture.sourcePath, sourceError);
+                if (!sourceExists && !texture.sourcePath.empty() && texture.pixels.empty())
+                {
+                    // Referenced but not present: leave the material slot empty.
+                    textureReferences.emplace_back();
+                    continue;
+                }
+                if (sourceExists)
                 {
                     const auto texturePath = std::filesystem::path(texture.sourcePath);
                     std::error_code relativeError;

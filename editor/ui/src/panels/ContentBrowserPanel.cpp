@@ -1025,6 +1025,7 @@ namespace PlutoGE::ui
                 EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning,
                                                "'" + file.filename().string() + "' is outside the model's folder and was placed beside it.");
             }
+            EditorShell::GetInstance().Log(EditorShell::ConsoleSeverity::Warning, assetimport::DescribeMissingModelDependencies(sourceFilePath, plan));
             importedSourcePath = plan.copiedSource;
             return true;
         }

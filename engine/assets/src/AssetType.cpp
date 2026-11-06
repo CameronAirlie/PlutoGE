@@ -79,6 +79,7 @@ namespace PlutoGE::assets
             return ProjectAssetType::AnimationGraph;
         }
         if (EndsWithInsensitive(reference, ".plutosurface")) return ProjectAssetType::SurfaceResponse;
+        if (EndsWithInsensitive(reference, ".plutofoliage")) return ProjectAssetType::FoliageType;
         if (EndsWithInsensitive(reference, ".plutoparticles"))
         {
             return ProjectAssetType::ParticleSystem;

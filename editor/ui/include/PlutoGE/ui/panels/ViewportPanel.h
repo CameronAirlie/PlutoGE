@@ -8,6 +8,7 @@
 #include "PlutoGE/ui/PlayModeToolbar.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorViewportOverlay.h"
+#include "PlutoGE/ui/FoliageViewportTool.h"
 #include "PlutoGE/ui/ViewportEntityIcons.h"
 
 
@@ -140,8 +141,7 @@ namespace PlutoGE::ui
         bool m_multiGizmoUsing = false;
         struct PlacementState;
         std::unique_ptr<PlacementState> m_placement;
-        struct FoliageStrokeState;
-        std::unique_ptr<FoliageStrokeState> m_foliageStroke;
+        FoliageViewportTool m_foliageTool;
         bool m_enableSnap = false;
         ImGuizmo::OPERATION m_gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE m_gizmoMode = ImGuizmo::LOCAL;

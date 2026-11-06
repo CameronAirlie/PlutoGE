@@ -174,12 +174,10 @@ int main()
     // the normal restore path to normalize IDs before testing authored paint.
     foliage->RestoreInstanceSnapshot(foliage->CaptureInstanceSnapshot());
     foliage->SetMesh(&prototype);
-    foliage->SetPaintEnabled(true);
-    foliage->SetDensity(100);
-    foliage->SetBrushRadius(5);
+    const FoliageBrush brush{.mode = FoliageBrushMode::Add, .radius = 5.0f, .density = 100};
     const auto beforePaint = foliage->GetSelectedTypeInstanceCount();
     const auto rejectedRevision = foliage->GetRevision();
-    if (foliage->ApplyBrushAtWorldPosition({10, 0, 0},
+    if (foliage->ApplyBrush(brush, {10, 0, 0},
         [](float, float) -> std::optional<FoliageSurfaceSample> { return std::nullopt; }) ||
         foliage->GetRevision() != rejectedRevision)
     {
@@ -189,7 +187,7 @@ int main()
     foliage->SetTypeAlignToTerrainNormal(static_cast<std::size_t>(foliage->GetSelectedTypeIndex()), true);
     const glm::vec3 slope = glm::normalize(glm::vec3(-1, 1, -.25f));
     const glm::vec3 worldSlope = glm::normalize(glm::transpose(glm::inverse(glm::mat3(owner->GetWorldTransform()))) * slope);
-    if (!foliage->ApplyBrushAtWorldPosition({10, 0, 0},
+    if (!foliage->ApplyBrush(brush, {10, 0, 0},
         [&](float x, float z) -> std::optional<FoliageSurfaceSample>
         {
             if (x < 0 || z < 0) return std::nullopt;
@@ -215,7 +213,7 @@ int main()
             return 1;
         }
     }
-    if (foliage->ApplyBrushAtWorldPosition({10, 0, 0},
+    if (foliage->ApplyBrush(brush, {10, 0, 0},
         [](float, float) -> std::optional<FoliageSurfaceSample>
         { return FoliageSurfaceSample{std::numeric_limits<float>::quiet_NaN(), {0, 1, 0}}; }))
     {
@@ -233,8 +231,8 @@ int main()
     const auto serializedPaint = foliage->Serialize();
     FoliageComponent restoredFoliage;
     restoredFoliage.Deserialize(serializedPaint);
-    if (!restoredFoliage.GetSelectedType()->alignToTerrainNormal ||
-        restoredFoliage.GetType(treeTypeIndex)->alignToTerrainNormal)
+    if (!restoredFoliage.GetSelectedType()->asset.alignToTerrainNormal ||
+        restoredFoliage.GetType(treeTypeIndex)->asset.alignToTerrainNormal)
     {
         std::cerr << "Growth orientation did not persist independently per type.\n";
         return 1;
@@ -257,7 +255,7 @@ int main()
     std::erase_if(legacyProperties, [](const Property &property)
         { return property.name.ends_with(".AlignToTerrainNormal"); });
     restoredFoliage.Deserialize(legacyProperties);
-    if (restoredFoliage.GetSelectedType()->alignToTerrainNormal ||
+    if (restoredFoliage.GetSelectedType()->asset.alignToTerrainNormal ||
         restoredFoliage.CaptureInstanceSnapshot() != restoredPaint)
     {
         std::cerr << "Legacy orientation fallback changed authored instances.\n";
@@ -268,7 +266,7 @@ int main()
     if (foliage->CaptureInstanceSnapshot() != existingInstances) return 1;
     owner->SetRotation({20, 35, -15});
     const auto uprightStart = foliage->GetSelectedTypeInstanceCount();
-    if (!foliage->ApplyBrushAtWorldPosition(glm::vec3(owner->GetWorldTransform() * glm::vec4(1, 0, 1, 1)),
+    if (!foliage->ApplyBrush(brush, glm::vec3(owner->GetWorldTransform() * glm::vec4(1, 0, 1, 1)),
         [&](float x, float z) -> std::optional<FoliageSurfaceSample>
         { return FoliageSurfaceSample{x + z * .25f, slope}; })) return 1;
     for (std::size_t i = uprightStart; i < foliage->GetInstances().size(); ++i)

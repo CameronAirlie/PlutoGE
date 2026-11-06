@@ -25,4 +25,5 @@ public enum AssetType
     SurfaceResponse,
     LoadingScreen,
     UITheme,
+    FoliageType,
 }

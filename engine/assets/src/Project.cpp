@@ -1024,6 +1024,7 @@ namespace PlutoGE::assets
         case ProjectAssetType::AnimationGraph:
             return "Animation Graph";
         case ProjectAssetType::SurfaceResponse: return "Surface Response";
+        case ProjectAssetType::FoliageType: return "Foliage Type";
         case ProjectAssetType::ParticleSystem:
             return "Particle System";
         case ProjectAssetType::PostProcessPreset:
@@ -1072,6 +1073,7 @@ namespace PlutoGE::assets
         if (typeName == "Animation Graph" || typeName == "AnimationGraph")
             return ProjectAssetType::AnimationGraph;
         if (typeName == "Surface Response" || typeName == "SurfaceResponse") return ProjectAssetType::SurfaceResponse;
+        if (typeName == "Foliage Type" || typeName == "FoliageType") return ProjectAssetType::FoliageType;
         if (typeName == "Particle System" || typeName == "ParticleSystem")
             return ProjectAssetType::ParticleSystem;
         if (typeName == "Post Process Preset" || typeName == "PostProcessPreset")

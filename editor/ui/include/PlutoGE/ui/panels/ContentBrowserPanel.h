@@ -63,6 +63,8 @@ namespace PlutoGE::ui
         void Render() override;
         void OnProjectChanged() override;
         std::string RevealAsset(std::string reference);
+        // The cached preview of an asset, or 0 while there is none. An ImTextureID, drawn with V flipped.
+        [[nodiscard]] std::uint64_t GetAssetThumbnail(const std::string &reference);
 
     private:
         // One row of the explorer view: a folder or an asset in the current
@@ -174,6 +176,7 @@ namespace PlutoGE::ui
             ImportModel,
             CreateMaterial,
             CreateSurfaceResponse,
+            CreateFoliageType,
             CreateParticleSystem,
             CreatePostProcessPreset,
             CreateRenderTexture,
@@ -191,6 +194,7 @@ namespace PlutoGE::ui
         std::string m_surfaceEditorReference;
         assets::SurfaceResponseAsset m_surfaceDraft;
         std::string m_surfaceError;
+        std::array<char, 96> m_newFoliageTypeNameBuffer{};
         std::array<char, 96> m_newParticleSystemNameBuffer{};
         std::array<char, 96> m_newPostProcessPresetNameBuffer{};
         std::array<char, 96> m_newRenderTextureNameBuffer{};

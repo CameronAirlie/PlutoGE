@@ -26,7 +26,7 @@ namespace PlutoGE::ui
         void EnsureBuiltins()
         {
             static const bool registered =
-                (RegisterUIComponentInspectors(), RegisterUIStyleInspectors(), RegisterWindInspectors(), true);
+                (RegisterUIComponentInspectors(), RegisterUIStyleInspectors(), RegisterWindInspectors(), RegisterFoliageInspectors(), true);
             (void)registered;
         }
     }

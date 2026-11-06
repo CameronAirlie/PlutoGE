@@ -348,6 +348,14 @@ pluto_link_engine(PlutoGEFoliageCollisionTests)
 
 add_test(NAME PlutoGEFoliageCollisionTests COMMAND PlutoGEFoliageCollisionTests)
 
+add_executable(PlutoGEFoliageEditingTests
+    FoliageEditingTests.cpp
+    ../editor/ui/src/foliage/FoliageDiagnostics.cpp
+    ../editor/ui/src/foliage/FoliageEditTool.cpp)
+target_include_directories(PlutoGEFoliageEditingTests PRIVATE ../editor/ui/include)
+pluto_link_engine(PlutoGEFoliageEditingTests)
+add_test(NAME PlutoGEFoliageEditingTests COMMAND PlutoGEFoliageEditingTests)
+
 add_executable(PlutoGEFoliageWindTests FoliageWindTests.cpp)
 pluto_link_engine(PlutoGEFoliageWindTests)
 add_test(NAME PlutoGEFoliageWindTests COMMAND PlutoGEFoliageWindTests)
@@ -545,6 +553,10 @@ if (TARGET PlutoGEEditorUI)
     target_link_libraries(PlutoGEPostProcessEditorTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGEPostProcessEditorTests)
     add_test(NAME PlutoGEPostProcessEditorTests COMMAND PlutoGEPostProcessEditorTests)
+    add_executable(PlutoGEFoliageEditorTests FoliageEditorTests.cpp)
+    target_link_libraries(PlutoGEFoliageEditorTests PRIVATE PlutoGE::EditorUI)
+    pluto_link_engine(PlutoGEFoliageEditorTests)
+    add_test(NAME PlutoGEFoliageEditorTests COMMAND PlutoGEFoliageEditorTests)
     add_executable(PlutoGERuntimeProfilerTests RuntimeProfilerTests.cpp ../runtime/src/RuntimeProfiler.cpp)
     target_include_directories(PlutoGERuntimeProfilerTests PRIVATE ../runtime/src)
     target_link_libraries(PlutoGERuntimeProfilerTests PRIVATE PlutoGE::EditorUI)
@@ -1198,6 +1210,7 @@ foreach(target IN ITEMS
         PlutoGEInputMappingEditorTests
         PlutoGENativeUIRenderTests
         PlutoGEOpenGLRhiTests
+        PlutoGEFoliageEditorTests
         PlutoGEPostProcessEditorTests
         PlutoGERhiOceanTests
         PlutoGERmlDocumentPreviewTests

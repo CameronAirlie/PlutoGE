@@ -404,6 +404,7 @@ namespace PlutoGE::scene
 
         std::optional<std::string> CaptureOverrideValue(const Entity &, std::string_view);
         void ApplyOverrideValue(Entity &, std::string_view, std::string_view);
+        bool IsRetiredOverride(const Entity &, std::string_view);
 
         struct VariantPatch { EntityID entity; std::string path, value; };
         struct VariantData { std::string base; std::vector<VariantPatch> patches; };
@@ -481,6 +482,7 @@ namespace PlutoGE::scene
                         !patch.path.starts_with("Component:MeshComponent:") &&
                         !patch.path.starts_with("Component:ColliderComponent:")) continue;
                     auto *entity = scene->FindEntityByID(patch.entity);
+                    if (entity && IsRetiredOverride(*entity, patch.path)) continue;
                     if (!entity || !CaptureOverrideValue(*entity, patch.path))
                         throw std::runtime_error("Variant override target no longer exists: " + patch.path + " in " + path);
                     ApplyOverrideValue(*entity, patch.path, patch.value);
@@ -632,6 +634,18 @@ namespace PlutoGE::scene
             }
 
             return nullptr;
+        }
+
+        // Whether `path` overrides a component property that files may still name but the component no longer has.
+        bool IsRetiredOverride(const Entity &entity, std::string_view path)
+        {
+            constexpr std::string_view prefix = "Component:";
+            if (!path.starts_with(prefix)) return false;
+            const auto remainder = path.substr(prefix.size());
+            const auto separator = remainder.find(':');
+            if (separator == std::string_view::npos) return false;
+            const auto *component = FindFirstComponentByType(entity, remainder.substr(0, separator));
+            return component && component->IsRetiredProperty(remainder.substr(separator + 1));
         }
 
         std::optional<std::string> CaptureOverrideValue(const Entity &entity, std::string_view path)
@@ -1120,7 +1134,7 @@ namespace PlutoGE::scene
                 for (const auto &path : entity->GetPrefabOverrides())
                 {
                     // Scene references stay on the instance; see CollectExternalReferenceOverrides.
-                    if (IsExternalReferenceOverride(*entity, path, normalized))
+                    if (IsExternalReferenceOverride(*entity, path, normalized) || IsRetiredOverride(*entity, path))
                         continue;
                     const auto value = CaptureOverrideValue(*entity, path);
                     if (!value || !CaptureOverrideValue(*original, path)) throw std::runtime_error("Unsupported variant override: " + path);

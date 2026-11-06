@@ -322,10 +322,10 @@ namespace PlutoGE::scene
             }
 
             const std::size_t submeshCount = type.mesh->GetSubmeshCount();
-            if (!type.submeshIndices.empty())
+            if (!type.asset.submeshIndices.empty())
             {
-                selectedSubmeshes.reserve(type.submeshIndices.size());
-                for (const int submeshIndex : type.submeshIndices)
+                selectedSubmeshes.reserve(type.asset.submeshIndices.size());
+                for (const int submeshIndex : type.asset.submeshIndices)
                 {
                     if (submeshIndex >= 0 && static_cast<std::size_t>(submeshIndex) < submeshCount)
                     {
@@ -337,9 +337,9 @@ namespace PlutoGE::scene
                     }
                 }
             }
-            else if (type.submeshIndex >= 0 && static_cast<std::size_t>(type.submeshIndex) < submeshCount)
+            else if (type.asset.submeshIndex >= 0 && static_cast<std::size_t>(type.asset.submeshIndex) < submeshCount)
             {
-                selectedSubmeshes.push_back(static_cast<std::size_t>(type.submeshIndex));
+                selectedSubmeshes.push_back(static_cast<std::size_t>(type.asset.submeshIndex));
             }
 
             if (selectedSubmeshes.empty())
@@ -426,20 +426,20 @@ namespace PlutoGE::scene
         {
             if (!type.mesh)
             {
-                type.submeshIndex = -1;
-                type.submeshIndices.clear();
+                type.asset.submeshIndex = -1;
+                type.asset.submeshIndices.clear();
                 return;
             }
 
             const int maxSubmeshIndex = static_cast<int>((std::max<std::size_t>)(type.mesh->GetSubmeshCount(), 1) - 1);
-            if (type.submeshIndex > maxSubmeshIndex)
+            if (type.asset.submeshIndex > maxSubmeshIndex)
             {
-                type.submeshIndex = -1;
+                type.asset.submeshIndex = -1;
             }
 
             std::vector<int> sanitizedIndices;
-            sanitizedIndices.reserve(type.submeshIndices.size());
-            for (const int submeshIndex : type.submeshIndices)
+            sanitizedIndices.reserve(type.asset.submeshIndices.size());
+            for (const int submeshIndex : type.asset.submeshIndices)
             {
                 if (submeshIndex < 0 || submeshIndex > maxSubmeshIndex)
                 {
@@ -451,10 +451,10 @@ namespace PlutoGE::scene
                 }
             }
 
-            type.submeshIndices = std::move(sanitizedIndices);
-            if (!type.submeshIndices.empty())
+            type.asset.submeshIndices = std::move(sanitizedIndices);
+            if (!type.asset.submeshIndices.empty())
             {
-                type.submeshIndex = type.submeshIndices.size() == 1 ? type.submeshIndices.front() : -1;
+                type.asset.submeshIndex = type.asset.submeshIndices.size() == 1 ? type.asset.submeshIndices.front() : -1;
             }
         }
 
@@ -497,6 +497,26 @@ namespace PlutoGE::scene
                 type.ownedMaterials.push_back(std::make_unique<render::Material>(FoliageMaterialConfig(*materialConfig)));
                 type.materials.push_back(type.ownedMaterials.back().get());
             }
+        }
+
+        // Moller-Trumbore, two-sided: foliage is routinely single-sheet geometry seen from behind.
+        std::optional<float> IntersectRayTriangle(const glm::vec3 &origin, const glm::vec3 &direction,
+                                                  const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &c)
+        {
+            const glm::vec3 edge1 = b - a;
+            const glm::vec3 edge2 = c - a;
+            const glm::vec3 p = glm::cross(direction, edge2);
+            const float determinant = glm::dot(edge1, p);
+            if (std::abs(determinant) < 1e-12f) return std::nullopt;
+            const float inverse = 1.0f / determinant;
+            const glm::vec3 s = origin - a;
+            const float u = glm::dot(s, p) * inverse;
+            if (u < 0.0f || u > 1.0f) return std::nullopt;
+            const glm::vec3 q = glm::cross(s, edge1);
+            const float v = glm::dot(direction, q) * inverse;
+            if (v < 0.0f || u + v > 1.0f) return std::nullopt;
+            const float t = glm::dot(edge2, q) * inverse;
+            return t >= 0.0f ? std::optional<float>(t) : std::nullopt;
         }
 
         std::string DefaultTypeName(std::size_t index)
@@ -729,15 +749,69 @@ namespace PlutoGE::scene
         m_renderCommandCacheDirty = false;
     }
 
+    bool FoliageComponent::IsRetiredProperty(std::string_view name) const
+    {
+        return name == "PaintEnabled" || name == "BrushMode" || name == "BrushRadius" || name == "Density" ||
+               name == "MinScale" || name == "MaxScale" ||
+               // Painting used to record this override, though only per-type instance lists exist.
+               name == "Instances";
+    }
+
+    FoliageInstance ApplyFoliageInstanceWorldEdit(const glm::mat4 &ownerTransform, const FoliageInstance &instance,
+                                                  const FoliageInstanceWorldEdit &edit)
+    {
+        FoliageInstance result = instance;
+        const glm::vec3 worldPosition = glm::vec3(ownerTransform * glm::vec4(instance.position, 1.0f));
+        const glm::vec3 moved = edit.pivot + edit.rotation * ((worldPosition - edit.pivot) * edit.scale) + edit.translation;
+        result.position = glm::vec3(glm::inverse(ownerTransform) * glm::vec4(moved, 1.0f));
+        result.scale = glm::max(instance.scale * edit.scale, glm::vec3(0.0001f));
+        if (edit.rotation != glm::mat3(1.0f))
+        {
+            // Instances draw with the owner's unscaled axes, then yaw, pitch and roll (ComposeInstanceTransform).
+            const glm::mat3 ownerAxes(SafeNormalizedAxis(glm::vec3(ownerTransform[0]), glm::vec3(1, 0, 0)),
+                                      SafeNormalizedAxis(glm::vec3(ownerTransform[1]), glm::vec3(0, 1, 0)),
+                                      SafeNormalizedAxis(glm::vec3(ownerTransform[2]), glm::vec3(0, 0, 1)));
+            glm::mat4 local(1.0f);
+            local = glm::rotate(local, glm::radians(instance.rotationDegrees.y), glm::vec3(0, 1, 0));
+            local = glm::rotate(local, glm::radians(instance.rotationDegrees.x), glm::vec3(1, 0, 0));
+            local = glm::rotate(local, glm::radians(instance.rotationDegrees.z), glm::vec3(0, 0, 1));
+            const glm::mat3 r = glm::inverse(ownerAxes) * edit.rotation * ownerAxes * glm::mat3(local);
+            // R = Ry * Rx * Rz: column 2 row 1 is -sin(pitch).
+            result.rotationDegrees = glm::degrees(glm::vec3(std::asin(glm::clamp(-r[2][1], -1.0f, 1.0f)),
+                                                            std::atan2(r[2][0], r[2][2]),
+                                                            std::atan2(r[0][1], r[1][1])));
+        }
+        return result;
+    }
+
+    std::vector<std::string> RemapFoliageOverridesAfterTypeRemoval(const std::vector<std::string> &overrides, std::size_t removedIndex)
+    {
+        constexpr std::string_view prefix = "Component:FoliageComponent:Type.";
+        std::vector<std::string> remapped;
+        remapped.reserve(overrides.size());
+        for (const auto &path : overrides)
+        {
+            const auto separator = path.rfind(prefix, 0) == 0 ? path.find('.', prefix.size()) : std::string::npos;
+            std::size_t index = 0;
+            bool indexed = separator != std::string::npos && separator > prefix.size();
+            for (std::size_t at = prefix.size(); indexed && at < separator; ++at)
+            {
+                indexed = path[at] >= '0' && path[at] <= '9';
+                index = index * 10 + static_cast<std::size_t>(path[at] - '0');
+            }
+            if (!indexed)
+                remapped.push_back(path);
+            else if (index > removedIndex)
+                remapped.push_back(std::string(prefix) + std::to_string(index - 1) + path.substr(separator));
+            else if (index < removedIndex)
+                remapped.push_back(path);
+        }
+        return remapped;
+    }
+
     std::vector<Property> FoliageComponent::Serialize() const
     {
         std::vector<Property> properties = {
-            {"PaintEnabled", PropertyType::Bool, m_paintEnabled ? "true" : "false"},
-            {"BrushMode", PropertyType::String, m_brushMode == FoliageBrushMode::Remove ? "Remove" : "Add"},
-            {"BrushRadius", PropertyType::Float, std::to_string(m_brushRadius)},
-            {"Density", PropertyType::Int, std::to_string(m_density)},
-            {"MinScale", PropertyType::Float, std::to_string(m_minScale)},
-            {"MaxScale", PropertyType::Float, std::to_string(m_maxScale)},
             {"MaxDrawDistance", PropertyType::Float, std::to_string(m_maxDrawDistance)},
             {"MaxShadowDistance", PropertyType::Float, std::to_string(m_maxShadowDistance)},
             {"MinRenderLod", PropertyType::Int, std::to_string(m_minRenderLod)},
@@ -753,14 +827,16 @@ namespace PlutoGE::scene
             const auto &type = m_types[index];
             const std::string prefix = std::string(kTypePrefix) + std::to_string(index) + ".";
             properties.push_back({prefix + "Name", PropertyType::String, type.name});
-            properties.push_back({prefix + "SourceMesh", PropertyType::String, type.sourceMeshPath});
-            properties.push_back({prefix + "ModelAssetId", PropertyType::String, type.modelAssetId});
-            properties.push_back({prefix + "ModelObjectId", PropertyType::String, std::to_string(type.modelObjectId)});
-            properties.push_back({prefix + "MaterialAsset", PropertyType::String, type.materialAssetReference});
-            properties.push_back({prefix + "SubmeshIndex", PropertyType::Int, std::to_string(type.submeshIndex)});
-            properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.submeshIndices)});
-            properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.useGeneratedLods ? "true" : "false"});
-            properties.push_back({prefix + "AlignToTerrainNormal", PropertyType::Bool, type.alignToTerrainNormal ? "true" : "false"});
+            properties.push_back({prefix + "SourceMesh", PropertyType::String, type.asset.sourceMeshPath});
+            properties.push_back({prefix + "ModelAssetId", PropertyType::String, type.asset.modelAssetId});
+            properties.push_back({prefix + "ModelObjectId", PropertyType::String, std::to_string(type.asset.modelObjectId)});
+            properties.push_back({prefix + "MaterialAsset", PropertyType::String, type.asset.materialAssetReference});
+            properties.push_back({prefix + "SubmeshIndex", PropertyType::Int, std::to_string(type.asset.submeshIndex)});
+            properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.asset.submeshIndices)});
+            properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.asset.useGeneratedLods ? "true" : "false"});
+            properties.push_back({prefix + "AlignToTerrainNormal", PropertyType::Bool, type.asset.alignToTerrainNormal ? "true" : "false"});
+            properties.push_back({prefix + "MinScale", PropertyType::Float, std::to_string(type.asset.minScale)});
+            properties.push_back({prefix + "MaxScale", PropertyType::Float, std::to_string(type.asset.maxScale)});
             properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
             properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
@@ -790,21 +866,18 @@ namespace PlutoGE::scene
         std::string legacyMaterialAssetReference;
         std::string legacyInstances;
         int typeCount = 0;
+        // Brush scale used to be one range per component; types written then start with it.
+        std::optional<float> legacyMinScale;
+        std::optional<float> legacyMaxScale;
+        std::unordered_set<std::size_t> typesWithScaleRange;
 
         for (const auto &property : properties)
         {
-            if (property.name == "PaintEnabled")
-                m_paintEnabled = property.value == "true" || property.value == "1";
-            else if (property.name == "BrushMode")
-                m_brushMode = property.value == "Remove" ? FoliageBrushMode::Remove : FoliageBrushMode::Add;
-            else if (property.name == "BrushRadius")
-                SetBrushRadius(std::stof(property.value));
-            else if (property.name == "Density")
-                SetDensity(std::stoi(property.value));
-            else if (property.name == "MinScale")
-                m_minScale = (std::max)(0.01f, std::stof(property.value));
+            // Retired brush records (PaintEnabled, BrushMode, BrushRadius, Density) are ignored: see IsRetiredProperty.
+            if (property.name == "MinScale")
+                legacyMinScale = ParseFloatOr(property.value, 0.8f);
             else if (property.name == "MaxScale")
-                m_maxScale = (std::max)(0.01f, std::stof(property.value));
+                legacyMaxScale = ParseFloatOr(property.value, 1.2f);
             else if (property.name == "MaxDrawDistance")
                 SetMaxDrawDistance(std::stof(property.value));
             else if (property.name == "MaxShadowDistance")
@@ -846,23 +919,33 @@ namespace PlutoGE::scene
                 if (fieldName == "Name")
                     type.name = property.value.empty() ? DefaultTypeName(typeIndex) : property.value;
                 else if (fieldName == "SourceMesh")
-                    type.sourceMeshPath = property.value;
+                    type.asset.sourceMeshPath = property.value;
                 else if (fieldName == "ModelAssetId")
-                    type.modelAssetId = property.value;
+                    type.asset.modelAssetId = property.value;
                 else if (fieldName == "ModelObjectId")
                 {
-                    try { type.modelObjectId = std::stoull(property.value); } catch (...) { type.modelObjectId = 0; }
+                    try { type.asset.modelObjectId = std::stoull(property.value); } catch (...) { type.asset.modelObjectId = 0; }
                 }
                 else if (fieldName == "MaterialAsset")
-                    type.materialAssetReference = property.value;
+                    type.asset.materialAssetReference = property.value;
                 else if (fieldName == "SubmeshIndex")
-                    type.submeshIndex = std::stoi(property.value);
+                    type.asset.submeshIndex = std::stoi(property.value);
                 else if (fieldName == "SubmeshIndices")
-                    type.submeshIndices = DeserializeSubmeshIndices(property.value);
+                    type.asset.submeshIndices = DeserializeSubmeshIndices(property.value);
                 else if (fieldName == "UseGeneratedLods")
-                    type.useGeneratedLods = property.value == "true" || property.value == "1";
+                    type.asset.useGeneratedLods = property.value == "true" || property.value == "1";
                 else if (fieldName == "AlignToTerrainNormal")
-                    type.alignToTerrainNormal = property.value == "true" || property.value == "1";
+                    type.asset.alignToTerrainNormal = property.value == "true" || property.value == "1";
+                else if (fieldName == "MinScale")
+                {
+                    type.asset.minScale = ParseFloatOr(property.value, type.asset.minScale);
+                    typesWithScaleRange.insert(typeIndex);
+                }
+                else if (fieldName == "MaxScale")
+                {
+                    type.asset.maxScale = ParseFloatOr(property.value, type.asset.maxScale);
+                    typesWithScaleRange.insert(typeIndex);
+                }
                 else if (fieldName == "AssetReference")
                     type.asset.assetReference = property.value;
                 else if (fieldName == "CellSize")
@@ -926,42 +1009,47 @@ namespace PlutoGE::scene
         {
             FoliageType legacyType;
             legacyType.name = "Foliage 1";
-            legacyType.sourceMeshPath = legacySourceMeshPath;
-            legacyType.materialAssetReference = legacyMaterialAssetReference;
+            legacyType.asset.sourceMeshPath = legacySourceMeshPath;
+            legacyType.asset.materialAssetReference = legacyMaterialAssetReference;
             legacyType.instances = DeserializeInstances(legacyInstances);
             m_types.push_back(std::move(legacyType));
         }
 
-        if (m_maxScale < m_minScale)
+        for (std::size_t index = 0; index < m_types.size(); ++index)
         {
-            std::swap(m_minScale, m_maxScale);
+            if (typesWithScaleRange.contains(index))
+                continue;
+            if (legacyMinScale) m_types[index].asset.minScale = *legacyMinScale;
+            if (legacyMaxScale) m_types[index].asset.maxScale = *legacyMaxScale;
         }
 
         EnsureTypeStorage();
         m_selectedTypeIndex = std::clamp(m_selectedTypeIndex, 0, static_cast<int>(m_types.size()) - 1);
         for (auto &type : m_types)
         {
-            if (type.modelAssetId.empty() && !type.sourceMeshPath.empty())
+            // The linked file is authoritative; if it cannot be read the scene's copy keeps the type working, and the
+            // inspector reports why.
+            type.assetLoadError.clear();
+            if (!type.asset.assetReference.empty())
+            {
+                LoadFoliageTypeAsset(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(type.asset.assetReference),
+                                     type.asset, &type.assetLoadError);
+            }
+            SanitizeFoliageTypeAsset(type.asset);
+            if (type.asset.modelAssetId.empty() && !type.asset.sourceMeshPath.empty())
             {
                 // Upgrade legacy foliage that stored only an Imported/... mesh
                 // reference. Its mesh metadata already carries the stable model
                 // identity needed to follow the canonical artifact after reimport.
-                const auto &metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(type.sourceMeshPath);
-                type.modelAssetId = metadata.sourceAssetId;
-                type.modelObjectId = metadata.sourceObjectId;
+                const auto &metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(type.asset.sourceMeshPath);
+                type.asset.modelAssetId = metadata.sourceAssetId;
+                type.asset.modelObjectId = metadata.sourceObjectId;
             }
-            if (!type.modelAssetId.empty() && type.modelObjectId != 0)
+            if (!type.asset.modelAssetId.empty() && type.asset.modelObjectId != 0)
             {
                 const auto resolved = core::Engine::GetInstance().GetAssetManager().ResolveModelObject(
-                    type.modelAssetId, type.modelObjectId);
-                if (!resolved.empty()) type.sourceMeshPath = resolved;
-            }
-            type.asset.wind = type.asset.wind.Sanitized();
-            if (!type.asset.assetReference.empty())
-            {
-                const std::string reference = type.asset.assetReference;
-                LoadFoliageTypeAsset(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference), type.asset);
-                type.asset.assetReference = reference;
+                    type.asset.modelAssetId, type.asset.modelObjectId);
+                if (!resolved.empty()) type.asset.sourceMeshPath = resolved;
             }
             RebuildTypeMeshFromReference(type);
             RebuildTypeMaterialFromReference(type);
@@ -994,7 +1082,7 @@ namespace PlutoGE::scene
     {
         static const std::string empty;
         const auto *type = GetSelectedType();
-        return type ? type->sourceMeshPath : empty;
+        return type ? type->asset.sourceMeshPath : empty;
     }
 
     void FoliageComponent::SetMaterialAssetReference(const std::string &materialAssetReference)
@@ -1006,23 +1094,7 @@ namespace PlutoGE::scene
     {
         static const std::string empty;
         const auto *type = GetSelectedType();
-        return type ? type->materialAssetReference : empty;
-    }
-
-    void FoliageComponent::SetBrushRadius(float radius)
-    {
-        m_brushRadius = (std::max)(radius, 0.05f);
-    }
-
-    void FoliageComponent::SetDensity(int density)
-    {
-        m_density = std::clamp(density, 1, 100);
-    }
-
-    void FoliageComponent::SetScaleRange(float minScale, float maxScale)
-    {
-        m_minScale = (std::max)(0.0001f, (std::min)(minScale, maxScale));
-        m_maxScale = (std::max)(m_minScale, (std::max)(minScale, maxScale));
+        return type ? type->asset.materialAssetReference : empty;
     }
 
     void FoliageComponent::SetMaxDrawDistance(float distance)
@@ -1055,43 +1127,22 @@ namespace PlutoGE::scene
         MarkRenderCommandsDirty();
     }
 
-    bool FoliageComponent::ApplyBrushAtWorldPosition(const glm::vec3 &worldPosition,
-                                                     const glm::vec3 &terrainNormal,
-                                                     const std::function<float(float, float)> &sampleTerrainHeight)
+    bool FoliageComponent::ApplyBrush(const FoliageBrush &brush, const glm::vec3 &worldPosition,
+                                      const FoliageSurfaceSampler &sampleSurface)
     {
-        const auto *owner = GetOwner();
-        if (!owner) return false;
-        const glm::vec3 localNormal = glm::transpose(glm::mat3(owner->GetWorldTransform())) * terrainNormal;
-        return ApplyBrushAtWorldPosition(worldPosition,
-            [&](float x, float z) -> std::optional<FoliageSurfaceSample>
-            {
-                return FoliageSurfaceSample{
-                    sampleTerrainHeight ? sampleTerrainHeight(x, z) :
-                        glm::vec3(glm::inverse(owner->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f)).y,
-                    localNormal};
-            });
+        const float radius = (std::max)(brush.radius, 0.05f);
+        if (brush.mode == FoliageBrushMode::Remove)
+            return RemoveInstancesAtWorldPosition(worldPosition, radius);
+        return PaintAtWorldPosition(FoliageBrush{.mode = brush.mode, .radius = radius, .density = std::clamp(brush.density, 1, 100)},
+                                    worldPosition, sampleSurface);
     }
 
-    bool FoliageComponent::ApplyBrushAtWorldPosition(const glm::vec3 &worldPosition,
-                                                     const FoliageSurfaceSampler &sampleSurface)
-    {
-        if (m_brushMode == FoliageBrushMode::Add)
-        {
-            return PaintAtWorldPosition(worldPosition, sampleSurface);
-        }
-        else if (m_brushMode == FoliageBrushMode::Remove)
-        {
-            return RemoveInstancesAtWorldPosition(worldPosition, m_brushRadius);
-        }
-        return false;
-    }
-
-    bool FoliageComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition,
+    bool FoliageComponent::PaintAtWorldPosition(const FoliageBrush &brush, const glm::vec3 &worldPosition,
                                                 const FoliageSurfaceSampler &sampleSurface)
     {
         auto *owner = GetOwner();
         auto &type = EnsureSelectedType();
-        if (!owner || !m_paintEnabled || !type.mesh || !sampleSurface)
+        if (!owner || !type.mesh || !sampleSurface)
         {
             return false;
         }
@@ -1118,14 +1169,14 @@ namespace PlutoGE::scene
         std::uniform_real_distribution<float> angleDistribution(0.0f, glm::two_pi<float>());
         std::uniform_real_distribution<float> radiusDistribution(0.0f, 1.0f);
         std::uniform_real_distribution<float> yawDistribution(0.0f, 360.0f);
-        std::uniform_real_distribution<float> scaleDistribution(m_minScale, m_maxScale);
+        std::uniform_real_distribution<float> scaleDistribution(type.asset.minScale, type.asset.maxScale);
 
         const auto startCount = type.instances.size();
-        type.instances.reserve(type.instances.size() + static_cast<std::size_t>(m_density));
-        for (int index = 0; index < m_density; ++index)
+        type.instances.reserve(type.instances.size() + static_cast<std::size_t>(brush.density));
+        for (int index = 0; index < brush.density; ++index)
         {
             const float angle = angleDistribution(rng);
-            const float radius = std::sqrt(radiusDistribution(rng)) * m_brushRadius;
+            const float radius = std::sqrt(radiusDistribution(rng)) * brush.radius;
             glm::vec3 localPosition = localCenter + glm::vec3(std::cos(angle) * radius, 0.0f, std::sin(angle) * radius);
             const auto surface = sampleSurface(localPosition.x, localPosition.z);
             const float scale = scaleDistribution(rng);
@@ -1141,7 +1192,7 @@ namespace PlutoGE::scene
             // Normals use inverse transpose; instance axes use the ordinary
             // owner transform. Convert the desired world axis back to local
             // space so rotated/nonuniformly scaled terrain does not lean trees.
-            const glm::vec3 worldUp = type.alignToTerrainNormal
+            const glm::vec3 worldUp = type.asset.alignToTerrainNormal
                 ? glm::transpose(glm::mat3(inverseWorld)) * localSurfaceNormal
                 : glm::vec3(0, 1, 0);
             const glm::vec3 localUp = glm::mat3(inverseWorld) * worldUp;
@@ -1291,7 +1342,7 @@ namespace PlutoGE::scene
     std::size_t FoliageComponent::ApplyInstanceScaleEdit(const FoliageScaleEdit &edit,
                                                          std::optional<std::size_t> typeIndex)
     {
-        constexpr float kMinimumScale = 0.0001f;
+        static constexpr float kMinimumScale = 0.0001f;
         const auto sanitize = [](float value, float fallback)
         {
             return std::isfinite(value) ? (std::max)(value, kMinimumScale) : fallback;
@@ -1415,6 +1466,241 @@ namespace PlutoGE::scene
         type->instances.erase(type->instances.begin() + static_cast<std::ptrdiff_t>(instanceIndex));
         MarkInstancesDirty();
         return true;
+    }
+
+    std::optional<FoliageInstanceLocation> FoliageComponent::FindInstance(std::uint64_t instanceId,
+                                                                          std::optional<FoliageInstanceLocation> hint) const
+    {
+        if (hint)
+            if (const auto *instance = GetInstance(*hint); instance && instance->id == instanceId)
+                return hint;
+        for (std::size_t typeIndex = 0; typeIndex < m_types.size(); ++typeIndex)
+        {
+            const auto &instances = m_types[typeIndex].instances;
+            for (std::size_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
+                if (instances[instanceIndex].id == instanceId)
+                    return FoliageInstanceLocation{typeIndex, instanceIndex};
+        }
+        return std::nullopt;
+    }
+
+    const FoliageInstance *FoliageComponent::GetInstance(const FoliageInstanceLocation &location) const
+    {
+        const auto *type = GetType(location.typeIndex);
+        return type && location.instanceIndex < type->instances.size() ? &type->instances[location.instanceIndex] : nullptr;
+    }
+
+    std::size_t FoliageComponent::SetInstances(std::span<const FoliageInstance> instances)
+    {
+        if (instances.empty()) return 0;
+        std::unordered_map<std::uint64_t, const FoliageInstance *> replacements;
+        replacements.reserve(instances.size());
+        for (const auto &instance : instances) replacements[instance.id] = &instance;
+
+        std::size_t changed = 0;
+        for (auto &type : m_types)
+            for (auto &instance : type.instances)
+                if (const auto found = replacements.find(instance.id); found != replacements.end())
+                {
+                    FoliageInstance replacement = *found->second;
+                    replacement.scale = glm::max(replacement.scale, glm::vec3(0.0001f));
+                    if (replacement != instance)
+                    {
+                        instance = replacement;
+                        ++changed;
+                    }
+                }
+        if (changed > 0) MarkInstancesDirty();
+        return changed;
+    }
+
+    std::vector<FoliageRemovedInstance> FoliageComponent::RemoveInstances(std::span<const std::uint64_t> instanceIds)
+    {
+        std::vector<FoliageRemovedInstance> removed;
+        if (instanceIds.empty()) return removed;
+        const std::unordered_set<std::uint64_t> ids(instanceIds.begin(), instanceIds.end());
+        for (std::size_t typeIndex = 0; typeIndex < m_types.size(); ++typeIndex)
+        {
+            auto &instances = m_types[typeIndex].instances;
+            std::size_t kept = 0;
+            for (std::size_t index = 0; index < instances.size(); ++index)
+            {
+                if (ids.contains(instances[index].id))
+                    removed.push_back({{typeIndex, index}, instances[index]});
+                else
+                {
+                    if (kept != index) instances[kept] = instances[index];
+                    ++kept;
+                }
+            }
+            instances.resize(kept);
+        }
+        if (!removed.empty()) MarkInstancesDirty();
+        return removed;
+    }
+
+    void FoliageComponent::RestoreInstances(std::span<const FoliageRemovedInstance> removed)
+    {
+        if (removed.empty()) return;
+        // Ascending original indices: each insert lands where it was, given the earlier ones are back.
+        for (const auto &entry : removed)
+        {
+            auto *type = GetType(entry.location.typeIndex);
+            if (!type) continue;
+            const auto index = (std::min)(entry.location.instanceIndex, type->instances.size());
+            type->instances.insert(type->instances.begin() + static_cast<std::ptrdiff_t>(index), entry.instance);
+            m_nextInstanceId = (std::max)(m_nextInstanceId, entry.instance.id + 1);
+        }
+        MarkInstancesDirty();
+    }
+
+    std::optional<FoliageInstanceHit> FoliageComponent::PickInstance(const glm::vec3 &origin, const glm::vec3 &direction) const
+    {
+        const auto *owner = GetOwner();
+        if (!owner) return std::nullopt;
+        const glm::mat4 ownerTransform = owner->GetWorldTransform();
+
+        struct Candidate
+        {
+            FoliageInstanceLocation location;
+            std::uint64_t id = 0;
+            float entry = 0.0f;
+            float centerMiss = 0.0f; // How far from the sphere's center the ray passes, as a share of its radius.
+        };
+        std::vector<Candidate> candidates;
+        for (std::size_t typeIndex = 0; typeIndex < m_types.size(); ++typeIndex)
+        {
+            const auto &type = m_types[typeIndex];
+            if (!type.mesh) continue;
+            const auto submeshes = ResolveSelectedSubmeshes(type);
+            const auto bounds = CombineSubmeshBounds(*type.mesh, submeshes);
+            const glm::vec3 originOffset = ComputeSubmeshGroupCenterOfMass(*type.mesh, submeshes);
+            // Reaches every instance's sphere from its pivot, so most instances are rejected without a matrix.
+            const float pivotReach = glm::length(bounds.center - originOffset) + bounds.radius;
+            for (std::size_t instanceIndex = 0; instanceIndex < type.instances.size(); ++instanceIndex)
+            {
+                const auto &instance = type.instances[instanceIndex];
+                const glm::vec3 pivot = glm::vec3(ownerTransform * glm::vec4(instance.position, 1.0f));
+                const float largestScale = (std::max)({std::abs(instance.scale.x), std::abs(instance.scale.y), std::abs(instance.scale.z)});
+                const float reach = pivotReach * largestScale;
+                const glm::vec3 toPivot = pivot - origin;
+                const float along = glm::dot(toPivot, direction);
+                if (along < -reach || glm::length2(toPivot - direction * along) > reach * reach) continue;
+
+                const auto worldBounds = TransformBounds(bounds, ComposeInstanceTransform(ownerTransform, instance, originOffset));
+                const glm::vec3 toCenter = worldBounds.center - origin;
+                const float centerAlong = glm::dot(toCenter, direction);
+                const float missSquared = glm::length2(toCenter - direction * centerAlong);
+                const float radiusSquared = worldBounds.radius * worldBounds.radius;
+                if (missSquared > radiusSquared) continue;
+                const float entry = centerAlong - std::sqrt(radiusSquared - missSquared);
+                if (entry + 2.0f * worldBounds.radius < 0.0f) continue; // Wholly behind the ray.
+                candidates.push_back({{typeIndex, instanceIndex}, instance.id, (std::max)(entry, 0.0f),
+                                      radiusSquared > 0.0f ? std::sqrt(missSquared / radiusSquared) : 1.0f});
+            }
+        }
+        if (candidates.empty()) return std::nullopt;
+        std::sort(candidates.begin(), candidates.end(), [](const Candidate &a, const Candidate &b) { return a.entry < b.entry; });
+
+        // Triangles decide among the nearest spheres, which overlap heavily in a forest.
+        constexpr std::size_t kExactCandidates = 24;
+        constexpr std::size_t kMaxExactTriangles = 250000;
+        std::optional<FoliageInstanceHit> best;
+        const std::size_t exactCount = (std::min)(candidates.size(), kExactCandidates);
+        for (std::size_t index = 0; index < exactCount; ++index)
+        {
+            const auto &candidate = candidates[index];
+            if (best && candidate.entry > best->distance) break;
+            const auto &type = m_types[candidate.location.typeIndex];
+            const auto &meshData = type.mesh->GetMeshData();
+            if (meshData.vertices.empty()) continue;
+            const auto submeshes = ResolveSelectedSubmeshes(type);
+            const glm::vec3 originOffset = ComputeSubmeshGroupCenterOfMass(*type.mesh, submeshes);
+            const glm::mat4 inverse = glm::inverse(ComposeInstanceTransform(ownerTransform, type.instances[candidate.location.instanceIndex], originOffset));
+            const glm::vec3 localOrigin = glm::vec3(inverse * glm::vec4(origin, 1.0f));
+            // Not renormalized, so the hit parameter stays a world distance.
+            const glm::vec3 localDirection = glm::vec3(inverse * glm::vec4(direction, 0.0f));
+            for (const std::size_t submeshIndex : submeshes)
+            {
+                const auto &submesh = type.mesh->GetSubmesh(submeshIndex);
+                if (submesh.indexCount / 3 > kMaxExactTriangles || submesh.indexOffset + submesh.indexCount > meshData.indices.size())
+                    continue;
+                const std::size_t end = submesh.indexOffset + submesh.indexCount;
+                for (std::size_t triangle = submesh.indexOffset; triangle + 2 < end; triangle += 3)
+                {
+                    const auto a = meshData.indices[triangle], b = meshData.indices[triangle + 1], c = meshData.indices[triangle + 2];
+                    if (a >= meshData.vertices.size() || b >= meshData.vertices.size() || c >= meshData.vertices.size()) continue;
+                    const auto position = [&](auto vertex)
+                    {
+                        const auto &p = meshData.vertices[vertex].position;
+                        return glm::vec3(p[0], p[1], p[2]);
+                    };
+                    const auto hit = IntersectRayTriangle(localOrigin, localDirection, position(a), position(b), position(c));
+                    if (hit && (!best || *hit < best->distance))
+                        best = FoliageInstanceHit{candidate.id, candidate.location, *hit};
+                }
+            }
+        }
+        if (best) return best;
+
+        const auto closest = std::min_element(candidates.begin(), candidates.end(),
+            [](const Candidate &a, const Candidate &b) { return a.centerMiss < b.centerMiss; });
+        return FoliageInstanceHit{closest->id, closest->location, closest->entry};
+    }
+
+    std::optional<FoliageInstanceBounds> FoliageComponent::GetInstanceBounds(const FoliageInstanceLocation &location) const
+    {
+        const auto *type = GetType(location.typeIndex);
+        const auto *instance = GetInstance(location);
+        const auto *owner = GetOwner();
+        if (!type || !instance || !owner) return std::nullopt;
+
+        FoliageInstanceBounds result;
+        render::MeshBounds sphere{};
+        glm::vec3 originOffset(0.0f);
+        if (type->mesh)
+        {
+            const auto submeshes = ResolveSelectedSubmeshes(*type);
+            sphere = CombineSubmeshBounds(*type->mesh, submeshes);
+            originOffset = ComputeSubmeshGroupCenterOfMass(*type->mesh, submeshes);
+            result.localMin = sphere.center - glm::vec3(sphere.radius);
+            result.localMax = sphere.center + glm::vec3(sphere.radius);
+            bool exact = !submeshes.empty();
+            glm::vec3 low(std::numeric_limits<float>::max());
+            glm::vec3 high(-std::numeric_limits<float>::max());
+            for (const std::size_t submeshIndex : submeshes)
+            {
+                const auto &submesh = type->mesh->GetSubmesh(submeshIndex);
+                exact = exact && submesh.hasBoundsExtents;
+                low = glm::min(low, submesh.boundsMin);
+                high = glm::max(high, submesh.boundsMax);
+            }
+            if (exact)
+            {
+                result.localMin = low;
+                result.localMax = high;
+            }
+        }
+        else
+        {
+            // Without a mesh there is still a pivot to show.
+            sphere.radius = 0.5f;
+            result.localMin = glm::vec3(-0.5f);
+            result.localMax = glm::vec3(0.5f);
+        }
+        result.model = ComposeInstanceTransform(owner->GetWorldTransform(), *instance, originOffset);
+        const auto world = TransformBounds(sphere, result.model);
+        result.worldCenter = world.center;
+        result.worldRadius = world.radius;
+        return result;
+    }
+
+    std::optional<glm::mat4> FoliageComponent::GetInstancePivotTransform(const FoliageInstanceLocation &location) const
+    {
+        const auto *instance = GetInstance(location);
+        const auto *owner = GetOwner();
+        if (!instance || !owner) return std::nullopt;
+        return ComposeInstanceTransform(owner->GetWorldTransform(), *instance, glm::vec3(0.0f), false);
     }
 
     std::size_t FoliageComponent::GetTotalInstanceCount() const
@@ -1580,14 +1866,14 @@ namespace PlutoGE::scene
         {
             if (!type->mesh || submeshIndex < 0)
             {
-                type->submeshIndex = -1;
-                type->submeshIndices.clear();
+                type->asset.submeshIndex = -1;
+                type->asset.submeshIndices.clear();
             }
             else
             {
                 const int maxSubmeshIndex = static_cast<int>((std::max<std::size_t>)(type->mesh->GetSubmeshCount(), 1) - 1);
-                type->submeshIndex = std::clamp(submeshIndex, 0, maxSubmeshIndex);
-                type->submeshIndices = {type->submeshIndex};
+                type->asset.submeshIndex = std::clamp(submeshIndex, 0, maxSubmeshIndex);
+                type->asset.submeshIndices = {type->asset.submeshIndex};
             }
             MarkRenderCommandsDirty();
         }
@@ -1597,10 +1883,10 @@ namespace PlutoGE::scene
     {
         if (auto *type = GetType(index))
         {
-            type->submeshIndices.clear();
+            type->asset.submeshIndices.clear();
             if (!type->mesh || submeshIndices.empty())
             {
-                type->submeshIndex = -1;
+                type->asset.submeshIndex = -1;
                 MarkRenderCommandsDirty();
                 return;
             }
@@ -1613,20 +1899,20 @@ namespace PlutoGE::scene
                     continue;
                 }
                 const int clampedIndex = std::clamp(requestedIndex, 0, maxSubmeshIndex);
-                if (std::find(type->submeshIndices.begin(), type->submeshIndices.end(), clampedIndex) == type->submeshIndices.end())
+                if (std::find(type->asset.submeshIndices.begin(), type->asset.submeshIndices.end(), clampedIndex) == type->asset.submeshIndices.end())
                 {
-                    type->submeshIndices.push_back(clampedIndex);
+                    type->asset.submeshIndices.push_back(clampedIndex);
                 }
             }
 
-            type->submeshIndex = type->submeshIndices.size() == 1 ? type->submeshIndices.front() : -1;
+            type->asset.submeshIndex = type->asset.submeshIndices.size() == 1 ? type->asset.submeshIndices.front() : -1;
             MarkRenderCommandsDirty();
         }
     }
 
     void FoliageComponent::SetTypeAlignToTerrainNormal(std::size_t index, bool align)
     {
-        if (auto *type = GetType(index)) type->alignToTerrainNormal = align;
+        if (auto *type = GetType(index)) type->asset.alignToTerrainNormal = align;
         // Placement policy only: existing instance transforms stay authored.
     }
 
@@ -1634,12 +1920,12 @@ namespace PlutoGE::scene
     {
         if (auto *type = GetType(index))
         {
-            if (type->useGeneratedLods == useGeneratedLods)
+            if (type->asset.useGeneratedLods == useGeneratedLods)
             {
                 return;
             }
 
-            type->useGeneratedLods = useGeneratedLods;
+            type->asset.useGeneratedLods = useGeneratedLods;
             RebuildTypeMeshFromReference(*type);
             RebuildTypeMaterialFromReference(*type);
             MarkRenderCommandsDirty();
@@ -1650,10 +1936,10 @@ namespace PlutoGE::scene
     {
         if (auto *type = GetType(index))
         {
-            type->sourceMeshPath = sourceMeshPath;
+            type->asset.sourceMeshPath = sourceMeshPath;
             const auto &metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(sourceMeshPath);
-            type->modelAssetId = metadata.sourceAssetId;
-            type->modelObjectId = metadata.sourceObjectId;
+            type->asset.modelAssetId = metadata.sourceAssetId;
+            type->asset.modelObjectId = metadata.sourceObjectId;
             RebuildTypeMeshFromReference(*type);
             RebuildTypeMaterialFromReference(*type);
             MarkRenderCommandsDirty();
@@ -1664,7 +1950,7 @@ namespace PlutoGE::scene
     {
         if (auto *type = GetType(index))
         {
-            type->materialAssetReference = materialAssetReference;
+            type->asset.materialAssetReference = materialAssetReference;
             RebuildTypeMaterialFromReference(*type);
             MarkRenderCommandsDirty();
         }
@@ -1674,29 +1960,119 @@ namespace PlutoGE::scene
     {
         if (auto *type = GetType(index))
         {
-            type->materialAssetReference.clear();
+            type->asset.materialAssetReference.clear();
             type->materialOverride = nullptr;
             MarkRenderCommandsDirty();
         }
     }
 
-    bool FoliageComponent::SetTypeAssetReference(std::size_t index, const std::string &assetReference)
+    bool FoliageComponent::SetTypeAssetReference(std::size_t index, const std::string &assetReference, std::string *errorMessage)
     {
         auto *type = GetType(index);
         if (!type) return false;
         if (assetReference.empty())
         {
             type->asset.assetReference.clear();
-            MarkInstancesDirty();
+            type->assetLoadError.clear();
             return true;
         }
-        FoliageTypeAsset loaded;
+        FoliageTypeAsset loaded = type->asset;
         loaded.assetReference = assetReference;
-        if (!LoadFoliageTypeAsset(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference), loaded))
+        if (!LoadFoliageTypeAsset(core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference), loaded, errorMessage))
             return false;
-        type->asset = std::move(loaded);
-        MarkInstancesDirty();
+        type->assetLoadError.clear();
+        type->asset.assetReference = assetReference;
+        ApplyTypeAsset(index, std::move(loaded));
         return true;
+    }
+
+    void FoliageComponent::ApplyTypeAsset(std::size_t index, FoliageTypeAsset asset)
+    {
+        auto *type = GetType(index);
+        if (!type) return;
+        asset.assetReference = type->asset.assetReference;
+        SanitizeFoliageTypeAsset(asset);
+        if (asset == type->asset) return;
+
+        const FoliageTypeAsset before = std::move(type->asset);
+        type->asset = std::move(asset);
+        auto &current = type->asset;
+        const bool meshChanged = before.sourceMeshPath != current.sourceMeshPath ||
+                                 before.useGeneratedLods != current.useGeneratedLods;
+        if (before.sourceMeshPath != current.sourceMeshPath)
+        {
+            const auto &metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(current.sourceMeshPath);
+            current.modelAssetId = metadata.sourceAssetId;
+            current.modelObjectId = metadata.sourceObjectId;
+        }
+        if (meshChanged)
+        {
+            // An import can fail on a bad file. The type is left without a mesh, which the inspector reports, rather
+            // than failing whatever edit got here.
+            try
+            {
+                RebuildTypeMeshFromReference(*type);
+            }
+            catch (const std::exception &)
+            {
+                type->mesh = nullptr;
+            }
+        }
+        if (meshChanged || before.materialAssetReference != current.materialAssetReference)
+            RebuildTypeMaterialFromReference(*type);
+        if (!meshChanged && (before.submeshIndex != current.submeshIndex || before.submeshIndices != current.submeshIndices))
+            SanitizeTypeSubmeshSelection(*type);
+
+        // Cells and capsules feed collision, which follows the instance revision.
+        const bool instancesAffected = before.cellSize != current.cellSize || before.collisionEnabled != current.collisionEnabled ||
+                                       before.collisionCenter != current.collisionCenter ||
+                                       before.collisionRadius != current.collisionRadius ||
+                                       before.collisionHeight != current.collisionHeight;
+        if (instancesAffected) MarkInstancesDirty();
+        else MarkRenderCommandsDirty();
+    }
+
+    std::size_t FoliageComponent::ReloadTypeAssets(const std::string &assetReference)
+    {
+        if (assetReference.empty()) return 0;
+        const auto path = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(assetReference);
+        std::size_t reloaded = 0;
+        for (std::size_t index = 0; index < m_types.size(); ++index)
+        {
+            auto &type = m_types[index];
+            if (type.asset.assetReference != assetReference) continue;
+            ++reloaded;
+            FoliageTypeAsset loaded = type.asset;
+            if (LoadFoliageTypeAsset(path, loaded, &type.assetLoadError))
+            {
+                type.assetLoadError.clear();
+                ApplyTypeAsset(index, std::move(loaded));
+            }
+        }
+        return reloaded;
+    }
+
+    std::size_t FoliageComponent::PreviewTypeAsset(const std::string &assetReference, const FoliageTypeAsset &asset)
+    {
+        if (assetReference.empty()) return 0;
+        std::size_t previewed = 0;
+        for (std::size_t index = 0; index < m_types.size(); ++index)
+        {
+            if (m_types[index].asset.assetReference != assetReference) continue;
+            ++previewed;
+            ApplyTypeAsset(index, asset);
+        }
+        return previewed;
+    }
+
+    void FoliageComponent::SetTypeScaleRange(std::size_t index, float minScale, float maxScale)
+    {
+        if (auto *type = GetType(index))
+        {
+            type->asset.minScale = minScale;
+            type->asset.maxScale = maxScale;
+            SanitizeFoliageTypeAsset(type->asset);
+        }
     }
 
     void FoliageComponent::SetTypeCollisionEnabled(std::size_t index, bool enabled)
@@ -1770,9 +2146,9 @@ namespace PlutoGE::scene
         {
             type->mesh = mesh;
             AssignFoliageMaterials(*type, materials);
-            type->sourceMeshPath = sourceMeshPath;
+            type->asset.sourceMeshPath = sourceMeshPath;
             SanitizeTypeSubmeshSelection(*type);
-            if (type->materialAssetReference.empty())
+            if (type->asset.materialAssetReference.empty())
             {
                 type->materialOverride = nullptr;
             }
@@ -1817,8 +2193,8 @@ namespace PlutoGE::scene
                 MarkRenderCommandsDirty();
                 ++refreshed;
             }
-            if (type.sourceMeshPath.empty() || !type.mesh) continue;
-            const auto references = assets.GetMeshAssetMaterialReferences(type.sourceMeshPath);
+            if (type.asset.sourceMeshPath.empty() || !type.mesh) continue;
+            const auto references = assets.GetMeshAssetMaterialReferences(type.asset.sourceMeshPath);
             std::vector<render::Material *> current;
             current.reserve(references.size());
             bool uses = false;
@@ -1932,7 +2308,7 @@ namespace PlutoGE::scene
 
     void FoliageComponent::RebuildTypeMaterialFromReference(FoliageType &type)
     {
-        if (type.materialAssetReference.empty())
+        if (type.asset.materialAssetReference.empty())
         {
             type.materialOverride = nullptr;
             if (!m_material)
@@ -1942,7 +2318,7 @@ namespace PlutoGE::scene
             return;
         }
 
-        type.materialOverride = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(type.materialAssetReference);
+        type.materialOverride = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(type.asset.materialAssetReference);
     }
 
     void FoliageComponent::RebuildTypeMeshFromReference(FoliageType &type)
@@ -1951,16 +2327,16 @@ namespace PlutoGE::scene
         type.materials.clear();
         type.ownedMaterials.clear();
         type.impostor = nullptr;
-        if (type.sourceMeshPath.empty())
+        if (type.asset.sourceMeshPath.empty())
         {
             return;
         }
 
         auto &engine = core::Engine::GetInstance();
-        if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(type.sourceMeshPath))
+        if (auto *mesh = engine.GetAssetManager().LoadMeshAsset(type.asset.sourceMeshPath))
         {
             type.mesh = mesh;
-            const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(type.sourceMeshPath);
+            const auto &materialReferences = engine.GetAssetManager().GetMeshAssetMaterialReferences(type.asset.sourceMeshPath);
             std::vector<render::Material *> loadedMaterials;
             loadedMaterials.reserve((std::max<std::size_t>)(materialReferences.size(), 1));
             for (const auto &materialReference : materialReferences)
@@ -1972,14 +2348,14 @@ namespace PlutoGE::scene
                 loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
             }
             AssignFoliageMaterials(type, loadedMaterials);
-            type.impostor = LoadImpostor(engine.GetAssetManager(), type.sourceMeshPath);
+            type.impostor = LoadImpostor(engine.GetAssetManager(), type.asset.sourceMeshPath);
             SanitizeTypeSubmeshSelection(type);
             return;
         }
 
-        const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(type.sourceMeshPath);
+        const std::string resolvedPath = engine.GetAssetManager().ResolveMeshAssetSourcePath(type.asset.sourceMeshPath);
         const auto options = SourceModelImportOptions(resolvedPath);
-        auto imported = type.useGeneratedLods || options.generateLods ? engine.GenerateMeshAssetLods(resolvedPath, options)
+        auto imported = type.asset.useGeneratedLods || options.generateLods ? engine.GenerateMeshAssetLods(resolvedPath, options)
                                                                       : engine.ImportMeshAsset(resolvedPath, options);
         type.mesh = imported.mesh;
         AssignFoliageMaterials(type, imported.materials);

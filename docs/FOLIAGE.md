@@ -30,22 +30,71 @@ Then configure and paint the foliage:
 
 1. Select an entity containing both `TerrainComponent` and
    `FoliageComponent`.
-2. In the foliage inspector, add or select a foliage type and assign its tree
-   mesh and material.
-3. Open **Spatial Cells & Collision** for that type.
-4. Enable **Enable Capsule Collision**.
-5. Set **Collider Center**, **Collider Radius**, and **Collider Height** so the
-   capsule surrounds the trunk. Keep the capsule tight and exclude branches
-   and leaves.
-6. Leave **Cell Size** at `32` initially. Smaller cells make local edits and
-   physics rebuilds more granular, while larger cells create fewer Bullet
-   objects.
-7. Enable foliage painting, select **Add**, and paint the trees onto the
-   terrain.
-8. Enter play mode and test movement and raycasts against the trunks.
+2. Drag the tree mesh or model from the Content Browser onto the inspector's
+   type list. This adds a type named after it.
+3. Open the type's **Collision** section and turn on **Capsule Collision**.
+4. Set **Center**, **Radius**, and **Height** so the capsule surrounds the
+   trunk. Keep the capsule tight and exclude branches and leaves.
+5. Leave **Cell Size**, under **Rendering**, at `32` initially. Smaller cells
+   make local edits and physics rebuilds more granular, while larger cells
+   create fewer Bullet objects.
+6. Click **Paint** and paint the trees onto the terrain.
+7. Enter play mode and test movement and raycasts against the trunks.
 
 Collision is configured independently for every foliage type. Leave it disabled
 for grass, flowers, and other small decorative meshes.
+
+## The foliage tool
+
+The tool has three modes. **Paint**, **Erase** and **Select** are at the top of the
+foliage inspector and in the viewport's Paint menu; clicking the active mode turns the
+tool off. While the tool is on, a bar at the bottom of the viewport shows its settings
+and the selected type, and the tool owns the mouse: the entity gizmo, terrain brush and
+entity picking stand aside. It turns off when another entity is selected, the scene
+changes or play starts.
+
+| Input | Paint / Erase | Select |
+|---|---|---|
+| Click or drag | Paints or erases the selected type | Selects an instance; a click on nothing clears |
+| Shift | Hold to swap Paint and Erase | Adds to the selection |
+| Ctrl | | Toggles an instance |
+| `[` and `]` | Change the radius | |
+| W, E, R | | Move, rotate, scale gizmo |
+| Delete | Does nothing, so the entity is safe | Removes the selected instances |
+| F | | Frames the selection |
+| Esc | Leaves the tool | Clears the selection, then leaves the tool |
+
+The bar says why painting cannot work, such as a missing terrain or mesh. Painting needs
+an enabled `TerrainComponent` on the same entity. Brush radius and density belong to the
+editor session and are not saved; older scenes' brush records are ignored. Each foliage
+type has its own **Scale Range** and **Growth**.
+
+## Editing individual instances
+
+Select instances in the viewport with **Select**, or in the list under the inspector's
+**Instances** section, which stays responsive at any instance count. Double-click a row
+to frame it. Selecting from the list turns on Select so the gizmo appears.
+
+- **One instance** gets a gizmo on its own axes, and the fields show its transform in the
+  entity's local space.
+- **Several instances** turn about their shared middle. The fields show the primary
+  (the last selected, with a yellow box). A field edit moves the others by the same
+  amount and scales them by the same ratio, so a group keeps its arrangement. A
+  non-uniform gizmo scale applies along each instance's own axes, so it is only exact
+  for one instance.
+- **Frame**, **Snap To Terrain**, **Delete** and **Deselect** act on the selection.
+
+Each gesture is one undo step that stores only the instances it touched. A selection
+holds instance IDs, so it follows instances as others are added or removed, and drops
+any that undo or a brush removes. Picking tests triangles among the nearest instances
+and falls back to the instance whose bounds the ray passes closest to the middle of, so
+a click through a gap in a canopy still selects it. From C++, use
+`FoliageComponent::FindInstance`, `SetInstances`, `RemoveInstances`, `RestoreInstances`
+and `PickInstance`.
+
+While a gizmo drags, the component's render commands rebuild every frame, so a component
+with very many instances may drag slowly until local updates arrive
+([environment milestone E06](ENVIRONMENT_DESIGN_MILESTONES.md)).
 
 ## Painting strokes
 
@@ -58,7 +107,7 @@ frames. A discontinuous jump exceeding 256 dab intervals starts at the new curso
 position instead of filling the gap in one frame.
 
 Each candidate samples its own local height and normal. Candidates outside the
-terrain or with invalid surface data are skipped. Choose **Growth Orientation** per foliage type in the Inspector or paint toolbar:
+terrain or with invalid surface data are skipped. Choose **Growth** per foliage type under its **Placement** section:
 **Upright (World Up)** is the default for trees; **Terrain Normal** follows the
 slope for grass and ground cover. Upright means world +Y even on rotated/scaled
 terrain. Random yaw works with either option. This setting affects new instances;
@@ -75,22 +124,22 @@ not repainted or moved automatically.
 
 ## Rescaling existing instances
 
-The brush's **Scale** range only affects new instances. To change foliage that is
-already placed, open **Scale Existing Instances** in the foliage inspector, choose a
-mode, and apply it:
+A type's **Scale Range** only affects new instances. To change foliage that is
+already placed, open **Rescale Instances** under the inspector's **Instances** section,
+choose a mode, and apply it:
 
 - **Multiply** multiplies current scales, keeping each instance's size variation and
   proportions. Use this to make everything, say, 20% larger.
 - **Set** gives every instance the same uniform scale.
-- **Randomize In Range** gives each instance a uniform scale in the range; **Use Brush
-  Range** copies the brush's. The result depends only on the range and the instance's
+- **Randomize In Range** gives each instance a uniform scale in the range; **Use Type's
+  Range** copies the selected type's. The result depends only on the range and the instance's
   ID, so the same range always gives an instance the same scale.
 
 **Selected Type** applies it to the selected foliage type, **All Types** to every type
 on the entity, and **Whole Scene** to every foliage type on every entity in the scene.
 Instances scale around their own pivots, so they stay where they are. Each application
 is one undo step. Collision capsules are in world units and do not change; resize them
-under **Spatial Cells & Collision**. From C++, use
+under the type's **Collision** section. From C++, use
 `FoliageComponent::ApplyInstanceScaleEdit`.
 
 ## Meshes for foliage
@@ -116,36 +165,82 @@ Each instance contains:
 The ID remains stable when other instances are removed. Old scenes whose
 instance records do not contain IDs receive unique IDs when they are loaded.
 
-A foliage type contains its render prototype and a `FoliageTypeAsset` policy.
-The policy currently stores:
+A foliage type holds its name, its placed instances, what the renderer needs at run time,
+and a `FoliageTypeAsset` with all its authored settings:
 
-- Optional asset reference
-- Spatial cell size
-- Per-type maximum draw distance (`0` inherits the component setting)
-- Whether collision is enabled
-- Local capsule center
-- Capsule radius and height
+- **Prototype:** mesh or model reference and identity, material override, mesh parts
+- **Placement:** scale range and growth orientation for new instances
+- **Rendering:** cell size, draw distance (`0` inherits the component setting), LOD
+  distance scale
+- **Collision:** whether it is enabled, and the local capsule's center, radius and height
+- **Wind:** see [Foliage wind](FOLIAGE_WIND.md)
 
-The runtime mesh and material pointers are not stored in the policy asset. They
-remain on the foliage type and are restored through their existing project
-asset references.
+The component keeps what applies to all its types: cast shadows, static, the default draw
+and shadow distances, and the finest LODs it renders and casts shadows from. New
+components use every LOD (`MinRenderLod` and `MinShadowLod` of `0`).
 
 ## Foliage type assets
 
-Reusable foliage policy files use the `PLUTOFOLIAGE` text format. The current
-version is 1:
+A `.plutofoliage` asset defines a plant once for any number of scenes, and is an
+ordinary asset: it has its own type, icon and picker, it is scanned for references, and
+its mesh and material cook with it.
+
+- **Create one:** **Create > Rendering > Foliage Type** in the Content Browser,
+  **Create Foliage Type** on a mesh or model, or **Save as Asset** on a type in the
+  inspector, which writes to the project's `Foliage` folder and links the type.
+- **Use one:** drop it on the inspector's type list, or choose it under **Link to
+  existing asset**.
+- **Edit one:** double-click it in the Content Browser, or click **Edit Asset** on a
+  linked type in the inspector. Both open the **Foliage Editor** (also under **Window >
+  Asset Editors**).
+
+The Foliage Editor shows the mesh's thumbnail, the types in the open scene that use the
+asset, any setup problems, and the same settings sections as the inspector. It has undo
+and redo (Ctrl+Z, Ctrl+Y) and asks before discarding unsaved changes.
+
+- **Live** shows unsaved changes on every linked type in the open scene, without touching
+  the file. Turn it off if a slider feels slow on a very large scene: each change rebuilds
+  the render commands of the components involved. The preview pauses while the game runs.
+- **Save** (Ctrl+S) writes the file and updates every linked type. Revert, closing without
+  saving, or turning Live off puts them back to the saved settings.
+- **Used In This Scene** lists the linked types. Click one to show it in the inspector, or
+  its brush to start painting it. **Add to \<entity\>** adds a linked type to the selected
+  entity's Foliage component.
+
+The thumbnail shows the mesh's own materials, so it does not reflect a Material Override.
+
+A linked type's settings are read-only in the inspector, so the file is the single
+source of truth. **Make Local** drops the link and keeps the current settings in the
+scene. The type's name and placed instances always belong to the scene. If the file
+cannot be read, the type falls back to the copy of its settings the scene stores and the
+inspector says why.
+
+The format is text:
 
 ```text
-PLUTOFOLIAGE	1
+PLUTOFOLIAGE	2
+MESH	project://Trees/Oak.plutomesh
+MODEL_OBJECT	12345	oak-model-id
+MATERIAL	project://Materials/Bark.plutomaterial
+SUBMESHES	1	3
+GENERATED_LODS	0
+SCALE_RANGE	0.8	1.2
+ALIGN_TO_NORMAL	0
 CELL_SIZE	32
 MAX_DRAW_DISTANCE	60
+LOD_DISTANCE_SCALE	1
 COLLISION_ENABLED	1
 COLLISION_CENTER	0	1.5	0
 COLLISION_CAPSULE	0.4	3
-LOD_DISTANCE_SCALE	1
+WIND_ENABLED	0
+WIND_RESPONSE	0.5	0.5	1	0
 ```
 
-The public C++ functions are:
+In version 2, an omitted record takes its default. Version 1 files hold only the rendering,
+collision and wind records: a type linked to one keeps the mesh and placement settings
+from its scene, and files still load unchanged. Saving writes version 2.
+
+From C++:
 
 ```cpp
 bool SaveFoliageTypeAsset(const std::string& path,
@@ -155,21 +250,10 @@ bool SaveFoliageTypeAsset(const std::string& path,
 bool LoadFoliageTypeAsset(const std::string& path,
                           FoliageTypeAsset& asset,
                           std::string* errorMessage = nullptr);
-```
 
-Assign an existing project asset reference to a foliage type with:
-
-```cpp
 foliage->SetTypeAssetReference(typeIndex, "project://Trees/Oak.plutofoliage");
+scene->RefreshFoliageTypeAsset("project://Trees/Oak.plutofoliage");
 ```
-
-When an asset reference is present, the external asset is authoritative for
-cell, draw-distance, and collision settings when the scene loads. Inline scene properties are
-still serialized as a fallback and for backward compatibility.
-
-The editor currently exposes inline policy editing. Creating and selecting a
-standalone foliage policy asset is a C++ or manual asset-file workflow until a
-dedicated content-browser asset editor is added.
 
 ## Spatial cells and rendering
 
@@ -187,7 +271,7 @@ arrays, with one cluster per foliage type and cell.
 Camera rendering rejects whole cells outside a type's draw distance, then
 filters individual instances only for cells crossing the cutoff. This is useful
 for grass and other meshes too small for geometry LODs to save meaningful work:
-give those types a short **Draw Distance Override** in the inspector while
+give those types a short **Draw Distance** in the inspector while
 leaving trees on the component's longer range.
 
 The serialized source of truth remains the per-type instance array so existing
@@ -439,6 +523,8 @@ and 48–64 m for ground cover.
 Current scene serialization adds the following per-type fields:
 
 ```text
+Type.N.MinScale
+Type.N.MaxScale
 Type.N.AssetReference
 Type.N.CellSize
 Type.N.MaxDrawDistance
@@ -455,7 +541,15 @@ Type.N.WindPivotHeight
 ```
 
 The wind fields ([Foliage wind](FOLIAGE_WIND.md)) default to disabled, so older scenes keep still foliage.
-`LodDistanceScale` defaults to 1, so older scenes keep their LOD distances.
+`LodDistanceScale` defaults to 1, so older scenes keep their LOD distances. Types without a
+scale range start with the component's old `MinScale` and `MaxScale`.
+
+`PaintEnabled`, `BrushMode`, `BrushRadius`, `Density`, `MinScale` and `MaxScale` at
+component level are retired: older files may contain them, and loading reads the two
+scales as above and ignores the rest. `Component::IsRetiredProperty` lets prefab
+variants and overrides naming a retired property load instead of failing. Prefab overrides
+stay indexed by type (`Type.N.*`); removing a type in the inspector renumbers them with
+`RemapFoliageOverridesAfterTypeRemoval`, so they keep naming the same types.
 
 Instance records now begin with their ID:
 
@@ -476,7 +570,9 @@ This milestone provides static capsule collision. It does not yet provide:
 - Navigation obstacle generation
 - Collision-layer settings per foliage type
 - Destructible-tree promotion into entities
-- A dedicated foliage asset editor
+- Painting on anything but a terrain on the same entity
+- Per-field overrides of a linked type's settings
+- Marquee selection of instances
 - Binary or streamed instance storage
 - Per-cell render-command patching during an editor stroke
 
@@ -491,8 +587,16 @@ command cache. Physics collision cells themselves are cached and revisioned.
 - `engine/scene/include/PlutoGE/scene/components/FoliageComponent.h`
 - `engine/scene/src/components/FoliageComponent.cpp`
 - `engine/scene/src/Scene.cpp`
-- `editor/ui/src/panels/InspectorPanel.cpp`
+- `editor/ui/src/inspectors/FoliageInspector.cpp` (the inspector, top to bottom)
+- `editor/ui/src/foliage/FoliageTypeSections.cpp` (settings UI shared with the asset editor; add new settings here)
+- `editor/ui/src/panels/FoliageEditorPanel.cpp` (the Foliage Editor)
+- `editor/ui/src/foliage/FoliageTypeSession.cpp` (the open asset: undo, saving and live preview, no UI)
+- `editor/ui/src/foliage/FoliageTypeUsage.cpp` (which types use an asset)
+- `editor/ui/src/foliage/FoliageViewportTool.cpp` (tool bar, brush strokes, picking, instance gizmo)
+- `editor/ui/src/foliage/FoliageEditTool.cpp` (session state and selection, no UI)
+- `editor/ui/src/foliage/FoliageEditing.cpp` (undoable edits, dirty state and prefab overrides)
+- `editor/ui/src/foliage/FoliageDiagnostics.cpp` (setup checks; add new checks here)
 - `engine/render/src/InstanceBinning.h`, `engine/render/src/InstanceBinning.cpp`
 - `engine/render/include/PlutoGE/render/GraphicsQuality.h` (foliage detail per tier)
-- `tests/FoliageCollisionTests.cpp`
+- `tests/FoliageCollisionTests.cpp`, `tests/FoliageEditingTests.cpp`
 - `tests/InstanceLodChecks.h`, `tests/GpuInstanceCullingChecks.h`

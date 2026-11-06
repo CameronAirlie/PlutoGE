@@ -76,6 +76,34 @@ namespace PlutoGE::assets
         return hash;
     }
 
+    bool ImportedFileCheckCache::Verify(const std::filesystem::path &path, const content::ContentDigest &expected)
+    {
+        std::error_code error;
+        const auto size = std::filesystem::file_size(path, error);
+        if (error) return false;
+        const auto modified = std::filesystem::last_write_time(path, error);
+        if (error) return false;
+        const auto key = path.generic_string();
+        {
+            std::lock_guard lock(m_mutex);
+            if (const auto found = m_entries.find(key); found != m_entries.end() && found->second.size == size &&
+                found->second.modified == modified && found->second.digest == expected)
+                return true;
+        }
+        // Hashed outside the lock: a large file must not hold up other scans.
+        content::ContentDigest actual;
+        if (!content::HashFileContent(path, actual) || actual != expected) return false;
+        std::lock_guard lock(m_mutex);
+        m_entries[key] = {size, modified, actual};
+        return true;
+    }
+
+    std::shared_ptr<ImportedFileCheckCache> SharedImportedFileChecks()
+    {
+        static const auto cache = std::make_shared<ImportedFileCheckCache>();
+        return cache;
+    }
+
     bool AssetDatabase::Scan(Project &project, std::string *errorMessage)
     {
         return Scan(project, AssetScanOptions{}, errorMessage);
@@ -344,9 +372,14 @@ namespace PlutoGE::assets
                     }
                     std::error_code fileError;
                     const auto fileStatus = inside ? std::filesystem::symlink_status(physical, fileError) : std::filesystem::file_status{};
-                    content::ContentDigest digest;
+                    const auto contentMatches = [&]
+                    {
+                        if (options.importedFileChecks) return options.importedFileChecks->Verify(physical, storage.digest);
+                        content::ContentDigest digest;
+                        return content::HashFileContent(physical, digest) && digest == storage.digest;
+                    };
                     const bool available = storage.available && leaseAvailable && inside && !fileError && std::filesystem::is_regular_file(fileStatus) &&
-                        content::HashFileContent(physical, digest) && digest == storage.digest;
+                        contentMatches();
                     if (!available && !options.allowUnavailableImportedStorage)
                         throw std::runtime_error("Imported storage is missing, corrupt, or not an ordinary Library file: " + storage.reference);
                     auto existing = std::find_if(records.begin(), records.end(), [&](const auto &record) { return record.reference == storage.reference; });

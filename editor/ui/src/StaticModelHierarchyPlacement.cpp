@@ -34,7 +34,7 @@ namespace PlutoGE::ui
         { error = "Source hierarchy changed during snapshot preparation; retry."; return false; }
         assets::AssetDatabase database;
         auto scanProject = project;
-        if (!database.Scan(scanProject, assets::AssetScanOptions{.createMissingMetadata = false}, &error)) return false;
+        if (!database.Scan(scanProject, assets::AssetScanOptions{.createMissingMetadata = false, .hashContent = false, .collectDependencies = false, .importedFileChecks = assets::SharedImportedFileChecks()}, &error)) return false;
         assets::AssetReference identity;
         if (!assets::ParseAssetReference(hierarchy.meshReference, identity, &error)) return false;
         const auto *object = database.GetCatalog()->Find(identity);

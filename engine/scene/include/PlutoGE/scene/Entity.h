@@ -102,6 +102,7 @@ namespace PlutoGE::scene
         void ClearPrefabLinkRecursive();
         void AddPrefabOverride(std::string propertyPath);
         void ClearPrefabOverrides() { m_prefabOverrides.clear(); }
+        void SetPrefabOverrides(std::vector<std::string> overrides) { m_prefabOverrides = std::move(overrides); }
         void ClearPrefabOverridesRecursive();
 
         Component *AddComponent(Component *component);

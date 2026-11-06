@@ -34,6 +34,7 @@ namespace PlutoGE::scene
     class NavigationSystem;
     class Entity;
     class FoliageComponent;
+    struct FoliageTypeAsset;
     class DecalComponent;
     class MeshComponent;
     class LightComponent;
@@ -133,6 +134,10 @@ namespace PlutoGE::scene
         // Rebind imported geometry while retaining explicit instance overrides.
         AssetReconciliationReport ApplyModelAssetGeneration(const std::string &sourceAssetId,
             const std::string &sourceReference, assets::AssetManager &manager, const ModelAssetSnapshot &previous);
+        // After a .plutofoliage file changed: rereads it into every foliage type linked to it. Returns how many.
+        std::size_t RefreshFoliageTypeAsset(const std::string &assetReference);
+        // Shows unsaved settings on the foliage types linked to a file; RefreshFoliageTypeAsset goes back to the file.
+        std::size_t PreviewFoliageTypeAsset(const std::string &assetReference, const FoliageTypeAsset &asset);
         std::size_t RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material);
         std::size_t RemapMaterialAsset(const std::string &oldMaterialAssetReference,
                                        const std::string &newMaterialAssetReference,

@@ -2910,6 +2910,22 @@ namespace PlutoGE::scene
             return entity && entity->IsActive() && widget->IsEnabled() && !widget->GetSource().empty(); });
     }
 
+    std::size_t Scene::RefreshFoliageTypeAsset(const std::string &assetReference)
+    {
+        std::size_t refreshed = 0;
+        for (auto *foliage : m_foliageComponents)
+            if (foliage) refreshed += foliage->ReloadTypeAssets(assetReference);
+        return refreshed;
+    }
+
+    std::size_t Scene::PreviewFoliageTypeAsset(const std::string &assetReference, const FoliageTypeAsset &asset)
+    {
+        std::size_t previewed = 0;
+        for (auto *foliage : m_foliageComponents)
+            if (foliage) previewed += foliage->PreviewTypeAsset(assetReference, asset);
+        return previewed;
+    }
+
     std::size_t Scene::RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material)
     {
         std::size_t refreshedCount = 0;

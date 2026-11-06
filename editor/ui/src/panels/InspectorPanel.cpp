@@ -2600,7 +2600,10 @@ namespace PlutoGE::ui
                         const bool wasComponentOpen = storedOpenState != componentHeaderOpenStates.end() && storedOpenState->second;
                         ImGui::SetNextItemOpen(componentExpansion ? componentExpansion > 0 : wasComponentOpen);
                         // "###" keeps the ID stable when a script is renamed or reassigned.
-                        const bool isComponentOpen = ImGui::TreeNodeEx((headerLabel + "###ComponentHeader").c_str(), ImGuiTreeNodeFlags_Framed);
+                        // A component's body is a form, not a hierarchy: without opting out of the theme's tree lines, a
+                        // vertical line would run from this header down to the last header or tree node in the body.
+                        const bool isComponentOpen = ImGui::TreeNodeEx((headerLabel + "###ComponentHeader").c_str(),
+                                                                       ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DrawLinesNone);
                         if (isComponentOpen != wasComponentOpen)
                         {
                             componentHeaderOpenStates[headerStateKey] = isComponentOpen;

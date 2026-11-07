@@ -56,6 +56,34 @@ the saved target mappings, and common Blender/Unreal/Mixamo finger aliases match
 when unambiguous. Existing soldier hand/foot queries therefore also work with the mapped
 Mixamo ninja. Unrecognized custom finger names still require exact joint names.
 
+## Rigs that do not look like the source
+
+Three things decide whether a map works, and none of them shows up as a missing bone. The
+Humanoid Rig section lists hierarchy problems in orange above the bone table.
+
+**Slots follow the hierarchy, not the numbering.** Spine, Chest and UpperChest must run from
+the pelvis upward. MakeHuman/MPFB numbers `spine05` at the bottom and `spine01` at the top,
+the reverse of Unreal, so `Auto Map Missing` now orders the chosen joints by depth. A source
+rig with more spine bones than the target needs Source Overrides so the top of the source
+spine reaches the top of the target. For Unreal clips on an MPFB rig:
+
+| Slot | Target joint | Source Override |
+| --- | --- | --- |
+| Spine | `spine04` | |
+| Chest | `spine02` | `spine_03` |
+| UpperChest | `spine01` | `spine_05` |
+
+**A slot takes one source bone.** A target joint can share a name with a foreign source bone:
+MPFB's pelvis joint is `root`, which is also the bone that carries travel in Unreal clips.
+When several source bones claim one slot, a Source Override match beats an alias, an alias
+beats a shared joint name, and the losers are not retargeted. Clips authored on the rig
+itself have no competing pelvis, so their `root` still drives the hips.
+
+**Split pelvis.** A rig can hang its torso and each leg from separate skeleton roots. Map Hips
+to the root above the spine and leave the leg roots unmapped: they then move rigidly with the
+hips. Spine and the chest slots may stay unassigned on a rig with one torso bone, though that
+bone follows the pelvis and does not receive the source spine's bending.
+
 ## Validation
 
 `PlutoGEHumanoidRetargetBasisTests` exercises A/T pose combinations, both arms, differing

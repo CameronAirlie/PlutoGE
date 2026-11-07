@@ -42,6 +42,10 @@ namespace PlutoGE::scene
         std::vector<glm::vec4> referencePoseCorrections;
         // Source node mapped to Hips, used to find root-motion ancestors.
         int sourceHipsNodeIndex = -1;
+        // Unmapped skeleton roots above mapped joints when the rig has no single pelvis
+        // (separate torso and leg roots). They move rigidly with the root mapped to Hips.
+        int targetHipsJointIndex = -1;
+        std::vector<int> hipsFollowerJoints;
     };
 
     class AnimationComponent : public TypedComponent<AnimationComponent>

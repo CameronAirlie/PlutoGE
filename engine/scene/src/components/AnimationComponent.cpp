@@ -436,18 +436,8 @@ namespace PlutoGE::scene
             return glm::vec4(rotation.x, rotation.y, rotation.z, rotation.w);
         }
 
-        int ResolveChannelJointIndex(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
+        int ResolveChannelJointByName(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
         {
-            if (!skeleton.humanoidBoneMappings.empty() && !channel.targetName.empty())
-            {
-                if (const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
-                    mapping && mapping->targetJointIndex >= 0 &&
-                    mapping->targetJointIndex < static_cast<int>(skeleton.joints.size()))
-                {
-                    return mapping->targetJointIndex;
-                }
-            }
-
             if (!channel.targetName.empty())
             {
                 for (size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
@@ -479,6 +469,93 @@ namespace PlutoGE::scene
                            channel.jointIndex >= 0 && channel.jointIndex < static_cast<int>(skeleton.joints.size())
                        ? channel.jointIndex
                        : -1;
+        }
+
+        int ResolveChannelJointIndex(const render::AnimationChannel &channel, const render::Skeleton &skeleton)
+        {
+            if (!skeleton.humanoidBoneMappings.empty() && !channel.targetName.empty())
+            {
+                if (const auto *mapping = FindHumanoidMappingForChannel(channel, skeleton);
+                    mapping && mapping->targetJointIndex >= 0 &&
+                    mapping->targetJointIndex < static_cast<int>(skeleton.joints.size()))
+                {
+                    return mapping->targetJointIndex;
+                }
+            }
+            return ResolveChannelJointByName(channel, skeleton);
+        }
+
+        // How strongly a channel's name identifies it with a slot it was bound to.
+        int HumanoidBindingPriority(const render::AnimationChannel &channel, const render::HumanoidBoneMapping &mapping,
+                                    const render::Skeleton &skeleton)
+        {
+            if (!mapping.sourceBoneName.empty())
+                return TargetNamesMatch(mapping.sourceBoneName, channel.targetName) ? 3 : 1;
+            if (render::GuessHumanoidBone(channel.targetName) != mapping.bone)
+                return 1;
+            // An alias that also names a different target joint is that rig's own bone.
+            const bool namesMappedJoint = mapping.targetJointIndex >= 0 && mapping.targetJointIndex < static_cast<int>(skeleton.joints.size()) &&
+                                          skeleton.joints[static_cast<size_t>(mapping.targetJointIndex)].name == channel.targetName;
+            const bool namesAnotherJoint = !namesMappedJoint &&
+                std::any_of(skeleton.joints.begin(), skeleton.joints.end(), [&](const render::SkeletonJoint &joint) { return joint.name == channel.targetName; });
+            return namesAnotherJoint ? 0 : 2;
+        }
+
+        // A slot takes one source bone. Several can claim it when a target joint shares a name
+        // with a foreign bone: MakeHuman's pelvis joint is "root", the same name as the bone
+        // that carries travel in Unreal clips, whose real pelvis then fights it for Hips. The
+        // best-identified bone keeps the slot and the others fall back to plain name binding.
+        void ResolveContestedHumanoidSlots(const std::vector<render::AnimationChannel> &channels,
+                                           const render::Skeleton &skeleton, AnimationRetargetClipCache &cache)
+        {
+            std::vector<int> bestPriority(skeleton.humanoidBoneMappings.size(), -1);
+            std::vector<int> priorities(channels.size(), -1);
+            for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
+            {
+                const int mappingIndex = cache.mappingBindings[channelIndex];
+                if (mappingIndex < 0)
+                    continue;
+                priorities[channelIndex] = HumanoidBindingPriority(channels[channelIndex],
+                    skeleton.humanoidBoneMappings[static_cast<size_t>(mappingIndex)], skeleton);
+                bestPriority[static_cast<size_t>(mappingIndex)] = std::max(bestPriority[static_cast<size_t>(mappingIndex)], priorities[channelIndex]);
+            }
+            for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
+            {
+                const int mappingIndex = cache.mappingBindings[channelIndex];
+                if (mappingIndex < 0 || priorities[channelIndex] >= bestPriority[static_cast<size_t>(mappingIndex)])
+                    continue;
+                cache.mappingBindings[channelIndex] = -1;
+                cache.jointBindings[channelIndex] = ResolveChannelJointByName(channels[channelIndex], skeleton);
+            }
+        }
+
+        void ResolveHipsFollowers(const render::Skeleton &skeleton, AnimationRetargetClipCache &cache)
+        {
+            const auto valid = [&](int joint) { return joint >= 0 && joint < static_cast<int>(skeleton.joints.size()); };
+            const auto isMapped = [&](int joint)
+            {
+                return std::any_of(skeleton.humanoidBoneMappings.begin(), skeleton.humanoidBoneMappings.end(),
+                                   [&](const render::HumanoidBoneMapping &mapping) { return mapping.targetJointIndex == joint; });
+            };
+            int hips = -1;
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+                if (mapping.bone == render::HumanoidBone::Hips && valid(mapping.targetJointIndex))
+                    hips = mapping.targetJointIndex;
+            if (hips < 0 || valid(skeleton.joints[static_cast<size_t>(hips)].parentJointIndex))
+                return;
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+            {
+                if (!valid(mapping.targetJointIndex))
+                    continue;
+                int top = mapping.targetJointIndex;
+                for (size_t depth = 0; depth < skeleton.joints.size() && valid(skeleton.joints[static_cast<size_t>(top)].parentJointIndex); ++depth)
+                    top = skeleton.joints[static_cast<size_t>(top)].parentJointIndex;
+                if (top != hips && !isMapped(top) &&
+                    std::find(cache.hipsFollowerJoints.begin(), cache.hipsFollowerJoints.end(), top) == cache.hipsFollowerJoints.end())
+                    cache.hipsFollowerJoints.push_back(top);
+            }
+            if (!cache.hipsFollowerJoints.empty())
+                cache.targetHipsJointIndex = hips;
         }
 
         int ParseIntSafe(const std::string &value, int fallback = 0)
@@ -1121,6 +1198,27 @@ namespace PlutoGE::scene
                                        hipsTranslationScale;
                 translations[targetIndex] = targetBindTranslations[targetIndex] + glm::inverse(parentBasis) * currentGlobalDelta;
                 animatedLocals[targetIndex] = 1;
+            }
+
+            // Split pelvis: move the other skeleton roots rigidly with the root mapped to Hips,
+            // otherwise the legs stay behind whenever the hips move. Both joints are roots, so
+            // their local transforms are already in skeleton space.
+            if (const int hips = cache.targetHipsJointIndex; hips >= 0)
+            {
+                const auto globalRotation = [](const glm::vec4 &q) { return glm::quat(q.w, q.x, q.y, q.z); };
+                const size_t hipsIndex = static_cast<size_t>(hips);
+                const glm::quat hipsDelta = hasDesiredTargetGlobalRotation[hipsIndex]
+                    ? glm::normalize(desiredTargetGlobalRotations[hipsIndex] * glm::inverse(globalRotation(targetGlobalBindRotations[hipsIndex])))
+                    : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+                const glm::vec3 hipsBindPosition(targetGlobalBindTransforms[hipsIndex][3]);
+                for (const int follower : cache.hipsFollowerJoints)
+                {
+                    const size_t index = static_cast<size_t>(follower);
+                    translations[index] = translations[hipsIndex] + hipsDelta * (glm::vec3(targetGlobalBindTransforms[index][3]) - hipsBindPosition);
+                    desiredTargetGlobalRotations[index] = glm::normalize(hipsDelta * globalRotation(targetGlobalBindRotations[index]));
+                    hasDesiredTargetGlobalRotation[index] = 1;
+                    animatedLocals[index] = 1;
+                }
             }
 
             auto &targetGlobalRotations = scratch.targetGlobalRotations;
@@ -3918,6 +4016,7 @@ namespace PlutoGE::scene
                     cache.sourceGlobalBindTransforms[nodeIndex] * cache.sourceInverseLocalBindTransforms[nodeIndex]);
             }
         }
+        ResolveContestedHumanoidSlots(channels, skeleton, cache);
         cache.sourceToTargetBasis = ResolveRetargetBasis(channels, cache, skeleton, m_targetGlobalBindTransforms);
         ResolveReferencePoseCorrections(channels, cache, skeleton, m_targetGlobalBindTransforms);
         for (size_t channelIndex = 0; channelIndex < channels.size(); ++channelIndex)
@@ -3930,6 +4029,8 @@ namespace PlutoGE::scene
                 break;
             }
         }
+        if (cache.sourceHipsNodeIndex >= 0)
+            ResolveHipsFollowers(skeleton, cache);
     }
 
     void AnimationComponent::EvaluateJointMatrices(const render::Skeleton &skeleton)

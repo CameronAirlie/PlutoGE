@@ -1,4 +1,5 @@
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/render/HumanoidRigAnalysis.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
@@ -379,6 +380,134 @@ namespace
         Require(glm::length(left - glm::vec3(0.0f, 0.0f, -1.0f)) < 0.001f,
                 prefix + "pelvis yaw was not applied about the target up axis");
     }
+    // Blender-style split pelvis: the upper body and each leg hang from separate skeleton roots
+    // that share one pivot, so nothing but the hips slot can carry the legs.
+    render::Skeleton MakeSplitPelvisSkeleton()
+    {
+        render::Skeleton skeleton;
+        const auto add = [&](const char *name, int parent, glm::vec3 offset)
+        {
+            render::SkeletonJoint joint;
+            joint.name = name;
+            joint.nodeIndex = static_cast<int>(skeleton.joints.size());
+            joint.parentJointIndex = parent;
+            joint.localBindTransform = glm::translate(glm::mat4(1.0f), offset);
+            const glm::mat4 global = parent < 0 ? joint.localBindTransform
+                                                : glm::inverse(skeleton.joints[static_cast<size_t>(parent)].inverseBindMatrix) * joint.localBindTransform;
+            joint.inverseBindMatrix = glm::inverse(global);
+            skeleton.joints.push_back(joint);
+        };
+        add("Torso", -1, {0.0f, 1.0f, 0.0f});
+        add("Head", 0, {0.0f, 0.6f, 0.0f});
+        add("Hip.L", -1, {0.0f, 1.0f, 0.0f});
+        add("UpperLeg.L", 2, {0.1f, -0.05f, 0.0f});
+        add("Hip.R", -1, {0.0f, 1.0f, 0.0f});
+        add("UpperLeg.R", 4, {-0.1f, -0.05f, 0.0f});
+        for (const auto [bone, joint] : {std::pair{render::HumanoidBone::Hips, 0}, {render::HumanoidBone::Head, 1},
+                                         {render::HumanoidBone::LeftUpperLeg, 3}, {render::HumanoidBone::RightUpperLeg, 5}})
+            skeleton.humanoidBoneMappings.push_back({.bone = bone, .targetJointIndex = joint,
+                                                     .copyTranslation = bone == render::HumanoidBone::Hips});
+        return skeleton;
+    }
+
+    void CheckRootNamedHips()
+    {
+        // MakeHuman/MPFB call the pelvis joint "root"; Unreal clips also have a "root" that
+        // carries travel. The name collision must not route that travel into the hips.
+        auto rooted = MakeTargetSkeleton();
+        rooted.joints[0].name = "root";
+        const auto turning = MakeSourceClip({0, 0, 1}, {1, 0, 0}, 1.0f, 90.0f);
+        RequireHipsPose(EvaluateHips(turning, rooted, true), "Root-named hips, stripped");
+        RequireHipsPose(EvaluateHips(MakeSourceClip({0, 0, 1}, {1, 0, 0}), rooted), "Root-named hips");
+        RequireHipsPose(EvaluateHips(MakeSourceClip({0, 0, 1}, {1, 0, 0}, 1.0f), rooted), "Root-named hips, folded lift", 1.9f);
+
+        // A clip authored on that rig has no separate pelvis, so its "root" still drives the hips.
+        const std::vector<SourceNode> nodes = {{"root", -1, rooted.joints[0].localBindTransform}};
+        const std::vector<glm::mat4> globals = {nodes[0].local};
+        render::AnimationClip own;
+        own.name = "Own";
+        own.duration = 1.0f;
+        const glm::quat yaw = glm::angleAxis(glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        AddChannel(own, nodes, globals, 0, render::AnimationTargetPath::Rotation, glm::vec4(yaw.x, yaw.y, yaw.z, yaw.w));
+        own.channelCount = 1;
+        const glm::vec3 left = glm::normalize(glm::mat3(EvaluateHips(own, rooted)) * glm::vec3(1.0f, 0.0f, 0.0f));
+        Require(glm::length(left - glm::vec3(0.0f, 0.0f, -1.0f)) < 0.001f, "Same-rig root channel no longer drives the hips");
+    }
+
+    void CheckRigAnalysis()
+    {
+        using Bone = render::HumanoidBone;
+        const auto makeRig = [](std::initializer_list<std::pair<const char *, int>> joints)
+        {
+            render::Skeleton rig;
+            for (const auto &[name, parent] : joints)
+            {
+                render::SkeletonJoint joint;
+                joint.name = name;
+                joint.parentJointIndex = parent;
+                rig.joints.push_back(joint);
+            }
+            return rig;
+        };
+        const auto assign = [](render::Skeleton &rig, Bone bone, int joint)
+        { rig.humanoidBoneMappings.push_back({.bone = bone, .targetJointIndex = joint}); };
+
+        // MPFB numbering: spine03 is the lowest of the three, spine01 the highest.
+        auto mpfb = makeRig({{"root", -1}, {"spine03", 0}, {"spine02", 1}, {"spine01", 2}, {"head", 3}, {"thigh.L", 0}, {"thigh.R", 0}});
+        assign(mpfb, Bone::Spine, 3);
+        assign(mpfb, Bone::Chest, 2);
+        assign(mpfb, Bone::UpperChest, 1);
+        assign(mpfb, Bone::Head, 4);
+        assign(mpfb, Bone::LeftUpperLeg, 5);
+        assign(mpfb, Bone::RightUpperLeg, 6);
+        const auto problems = render::FindHumanoidRigProblems(mpfb);
+        Require(problems.size() == 3, "Expected missing Hips and two spine order problems, got " + std::to_string(problems.size()));
+        Require(render::InferHumanoidHipsJoint(mpfb) == 0, "Hips should be the joint above the spine and both legs");
+        Require(render::CorrectHumanoidSpineOrder(mpfb), "Reversed spine was not corrected");
+        Require(render::GetHumanoidTargetJoint(mpfb, Bone::Spine) == 1 && render::GetHumanoidTargetJoint(mpfb, Bone::Chest) == 2 &&
+                    render::GetHumanoidTargetJoint(mpfb, Bone::UpperChest) == 3, "Spine slots should run bottom to top");
+        Require(!render::CorrectHumanoidSpineOrder(mpfb), "An ordered spine should be left alone");
+        assign(mpfb, Bone::Hips, 0);
+        Require(render::FindHumanoidRigProblems(mpfb).empty(), "A corrected rig should report no problems");
+
+        // Spine joints on different branches are not a chain, so they are not reordered.
+        auto branched = makeRig({{"root", -1}, {"a", 0}, {"b", 0}});
+        assign(branched, Bone::Spine, 2);
+        assign(branched, Bone::Chest, 1);
+        Require(!render::CorrectHumanoidSpineOrder(branched) && render::GetHumanoidTargetJoint(branched, Bone::Spine) == 2,
+                "Unrelated joints must not be reordered");
+
+        auto split = MakeSplitPelvisSkeleton();
+        split.humanoidBoneMappings.erase(split.humanoidBoneMappings.begin());
+        Require(render::InferHumanoidHipsJoint(split) == 0, "A split pelvis should infer the root above the head");
+
+        for (const auto &[name, bone] : {std::pair{"upperarm01.L", Bone::LeftUpperArm}, {"lowerarm01.R", Bone::RightLowerArm},
+                                         {"wrist.L", Bone::LeftHand}, {"clavicle.R", Bone::RightShoulder},
+                                         {"upperleg01.R", Bone::RightUpperLeg}, {"lowerleg01.L", Bone::LeftLowerLeg},
+                                         {"toe1-1.L", Bone::LeftToes}, {"UpperLeg.L", Bone::LeftUpperLeg},
+                                         {"LowerLeg.R", Bone::RightLowerLeg}, {"Shoulder.L", Bone::LeftShoulder}})
+            Require(render::GuessHumanoidBone(name) == bone, std::string("Alias not recognized: ") + name);
+        Require(!render::GuessHumanoidBone("upperarm02.L") && !render::GuessHumanoidBone("lowerleg02.R"),
+                "Twist segments must stay unmapped");
+    }
+
+    void CheckSplitPelvis()
+    {
+        const auto skeleton = MakeSplitPelvisSkeleton();
+        Scene scene;
+        auto *owner = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Split"}));
+        auto *animator = owner->CreateComponent<AnimationComponent>();
+        animator->SetClipsFromImportedAnimations({MakeSourceClip({0, 0, 1}, {1, 0, 0})});
+        const auto &palette = animator->GetJointMatrices(skeleton);
+        const auto world = [&](size_t joint) { return palette[joint] * glm::inverse(skeleton.joints[joint].inverseBindMatrix); };
+        const glm::vec3 torso(world(0)[3]);
+        Require(std::abs(torso.y - 0.9f) < 0.001f, "Split pelvis: hips did not lower");
+        for (size_t hip : {size_t{2}, size_t{4}})
+            Require(glm::length(glm::vec3(world(hip)[3]) - torso) < 0.001f, "Split pelvis: leg root did not follow the hips");
+        // 90 degree yaw about +Y carries +X to -Z.
+        const glm::vec3 expected = torso + glm::vec3(0.0f, -0.05f, -0.1f);
+        Require(glm::length(glm::vec3(world(3)[3]) - expected) < 0.001f, "Split pelvis: left leg did not swing with the hips");
+    }
 }
 
 int main(int argc, char **argv)
@@ -448,6 +577,9 @@ int main(int argc, char **argv)
             Require(glm::length(headUp - glm::vec3(0.0f, 0.0f, 1.0f)) < 0.001f,
                     "Same-rig Head channel was dropped by a foreign source override");
         }
+        CheckRootNamedHips();
+        CheckSplitPelvis();
+        CheckRigAnalysis();
         std::cout << "Humanoid retarget basis tests passed\n";
         return 0;
     }

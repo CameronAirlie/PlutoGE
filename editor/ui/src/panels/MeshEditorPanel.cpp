@@ -2,6 +2,7 @@
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/HumanoidRigAnalysis.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -129,6 +130,10 @@ namespace PlutoGE::ui
                     mapping->targetJointIndex = static_cast<int>(jointIndex);
                 }
             }
+
+            render::CorrectHumanoidSpineOrder(skeleton);
+            if (auto *hips = FindHumanoidMapping(skeleton, render::HumanoidBone::Hips); hips && hips->targetJointIndex < 0)
+                hips->targetJointIndex = render::InferHumanoidHipsJoint(skeleton);
         }
 
         bool IsRequiredHumanoidBone(render::HumanoidBone bone)
@@ -136,7 +141,6 @@ namespace PlutoGE::ui
             switch (bone)
             {
             case render::HumanoidBone::Hips:
-            case render::HumanoidBone::Spine:
             case render::HumanoidBone::Head:
             case render::HumanoidBone::LeftUpperArm:
             case render::HumanoidBone::LeftLowerArm:
@@ -215,6 +219,13 @@ namespace PlutoGE::ui
                 ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "Rig Ready (%d/%d required bones)", requiredMapped, requiredCount);
             else
                 ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "Needs Attention (%d/%d required bones)%s", requiredMapped, requiredCount, duplicateTarget ? " - duplicate target joints" : "");
+
+            for (const auto &problem : render::FindHumanoidRigProblems(skeleton))
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.2f, 1.0f));
+                ImGui::TextWrapped("%s", problem.c_str());
+                ImGui::PopStyleColor();
+            }
 
             ImGui::TextWrapped("Source Override is optional. Set it when an animation uses a name the automatic Mixamo/Unreal/common aliases do not recognize.");
             ImGui::Columns(3, "HumanoidRigColumns", true);

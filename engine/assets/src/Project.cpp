@@ -685,6 +685,18 @@ namespace PlutoGE::assets
                 manifest.buildUsedAssetsOnly = tokens[1] == "1";
                 continue;
             }
+
+            if (tokens[0] == "BUILD_PROFILE" && tokens.size() >= 2)
+            {
+                manifest.buildShipping = tokens[1] == "Shipping";
+                continue;
+            }
+
+            if (tokens[0] == "BUILD_OUTPUT" && tokens.size() >= 2)
+            {
+                manifest.buildOutput = tokens[1];
+                continue;
+            }
             if (tokens[0] == "BUILD_ALWAYS_INCLUDE" && tokens.size() >= 2)
             {
                 manifest.buildAlwaysInclude.push_back(tokens[1]);
@@ -1137,6 +1149,9 @@ namespace PlutoGE::assets
         output << "ASSET_DIR\t" << EscapeText(m_manifest.assetDirectory) << '\n';
         output << "STARTUP_SCENE\t" << EscapeText(m_manifest.startupScene) << '\n';
         output << "BUILD_USED_ASSETS_ONLY\t" << (m_manifest.buildUsedAssetsOnly ? 1 : 0) << '\n';
+        output << "BUILD_PROFILE\t" << (m_manifest.buildShipping ? "Shipping" : "Development") << '\n';
+        if (!m_manifest.buildOutput.empty())
+            output << "BUILD_OUTPUT\t" << EscapeText(m_manifest.buildOutput) << '\n';
         for (const auto &reference : m_manifest.buildAlwaysInclude)
             output << "BUILD_ALWAYS_INCLUDE\t" << EscapeText(reference) << '\n';
         output << "SERVER_SCENE\t" << EscapeText(m_manifest.server.startupScene) << '\n';

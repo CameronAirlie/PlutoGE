@@ -86,6 +86,11 @@ namespace PlutoGE::assets
         std::uint32_t assetPipelineVersion = 1;
         std::string startupScene;
         bool buildUsedAssetsOnly = false;
+        // Shipping compiles scripts optimised (Release) and leaves out the script SDK; Development keeps debug
+        // scripts for attaching a debugger to the built game.
+        bool buildShipping = false;
+        // Last game build location, relative to the project root when inside it.
+        std::string buildOutput;
         std::vector<std::string> buildAlwaysInclude;
         ProjectServerSettings server;
         render::LoadingScreenStyle loadingScreen;

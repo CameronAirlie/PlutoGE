@@ -62,6 +62,17 @@ that editor and reports why. **Don't Save** discards them, and **Cancel** goes b
 - On Linux the dialog uses zenity or kdialog. Without either, the editor refuses to continue and says so rather
   than discarding anything.
 
+## Build profiles
+
+**Project Settings > Build > Profile** chooses what **Build Project** produces:
+
+- **Development** compiles scripts in Debug and includes the script SDK, so you can attach a debugger to the built
+  game.
+- **Shipping** compiles optimised (Release) scripts and leaves the SDK out. Afterwards the editor runs the
+  optimised scripts until you next change a script, which rebuilds Debug.
+
+The build location is remembered for the next build. Any failure is reported in the Console as "Build failed: ...".
+
 ## Projects in version control
 
 New projects come ready for Git:

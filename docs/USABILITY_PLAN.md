@@ -85,7 +85,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   state moved out of `.plutoproject` into per-user editor storage.
 - [x] **T3.4 VCS-ready new projects.** Generate `.gitignore` / `.gitattributes`; csproj references the engine through
   a property, keeps a user-owned import for customisation.
-- [ ] **T3.5 Build settings and profiles.** Development / Shipping profiles, Release scripts for shipping, remembered
+- [x] **T3.5 Build settings and profiles.** Development / Shipping profiles, Release scripts for shipping, remembered
   output folder, product name / version / icon, every failure logged to the Console.
 - [ ] **T3.6 Hot reload beyond models.** File watching for textures, materials and audio with live reload.
 
@@ -356,4 +356,16 @@ the numeric parts of scene text.
 - Verified: `PlutoGEEditorWorkflowTests` (no machine path in the csproj, props content, existing .gitignore kept)
   and `PlutoGEAuthoringIntegrationTests` (a real `dotnet build` of the regenerated project, automatic reload and
   failure handling) pass.
+
+### 2026-11-08 — T3.5
+
+- Project Settings > Build > Profile: Development (debug scripts, script SDK) or Shipping (Release scripts, no SDK);
+  `BUILD_PROFILE` in the manifest. `BuildProjectScripts(configuration)`.
+- The game build location is remembered (`BUILD_OUTPUT`, project-relative) and used as the next suggestion.
+- Every failed build logs "Build failed: ..." to the Console (source Build) through one scope guard instead of only
+  setting the status bar; success logs the profile used.
+- Not done: product version/icon fields (no consumer yet; an exe icon needs a resource-editing step) and validation
+  in the command-line `--export` path (it needs the editor's catalog and model-instance verification setup, which
+  would otherwise reject linked-model projects). The editor's build already validates.
+- Verified: `PlutoGEProjectFileTests` (profile/output round trip); `PlutoGEEditorUI` builds.
 

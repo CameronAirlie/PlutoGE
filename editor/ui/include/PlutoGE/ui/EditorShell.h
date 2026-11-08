@@ -200,7 +200,8 @@ namespace PlutoGE::ui
         bool CreateScriptAsset(std::string_view requestedName,
                                std::string *createdClassName = nullptr,
                                std::string *errorMessage = nullptr);
-        bool BuildProjectScripts();
+        // Debug for editing and Development builds; Release for Shipping builds.
+        bool BuildProjectScripts(const std::string &configuration = "Debug");
         void SetStatusMessage(std::string message) { m_statusMessage = std::move(message); }
         bool LoadProjectFromPath(const std::filesystem::path &manifestPath);
         bool OpenSceneFromPath(const std::filesystem::path &scenePath);

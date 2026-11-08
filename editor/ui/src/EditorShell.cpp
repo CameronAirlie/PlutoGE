@@ -1355,7 +1355,7 @@ namespace PlutoGE::ui
         return true;
     }
 
-    bool EditorShell::BuildProjectScripts()
+    bool EditorShell::BuildProjectScripts(const std::string &configuration)
     {
         ProjectOperationTiming timing("scripts", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
         if (m_scriptBuildFuture.valid())
@@ -1383,7 +1383,7 @@ namespace PlutoGE::ui
 
         auto buildConfig = scripting::ScriptBuildConfig{};
         buildConfig.projectPath = GetProjectScriptProjectPath();
-        buildConfig.configuration = "Debug";
+        buildConfig.configuration = configuration;
         buildConfig.framework = "net8.0";
         buildConfig.echoOutputToLog = false;
 
@@ -2497,6 +2497,11 @@ namespace PlutoGE::ui
             return {};
         }
 
+        if (const auto &remembered = m_project->GetManifest().buildOutput; !remembered.empty())
+        {
+            std::filesystem::path path(remembered);
+            return (path.is_relative() ? m_project->GetRootDirectory() / path : path).lexically_normal();
+        }
         std::string projectName = m_project->GetManifest().name.empty() ? "PlutoGEProject" : m_project->GetManifest().name;
         std::filesystem::path executablePath = m_project->GetRootDirectory() / "Build" / projectName;
 #ifdef _WIN32
@@ -3065,6 +3070,19 @@ namespace PlutoGE::ui
             return true;
         }
         ProjectOperationTiming timing("export", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
+        // Every way out of a failed build reports to the Console, not only the status bar the next message replaces.
+        bool buildSucceeded = false;
+        struct ReportFailure
+        {
+            EditorShell &shell;
+            const bool &succeeded;
+            ~ReportFailure()
+            {
+                if (!succeeded)
+                    shell.Log(ConsoleEntry{.severity = ConsoleSeverity::Error, .source = ConsoleSource::Build,
+                                           .text = "Build failed: " + (shell.m_statusMessage.empty() ? std::string("unknown error") : shell.m_statusMessage)});
+            }
+        } reportFailure{*this, buildSucceeded};
         if (IsModelImportRunning())
         {
             m_statusMessage = "Finish or cancel the active model import before exporting.";
@@ -3090,8 +3108,8 @@ namespace PlutoGE::ui
             const auto scriptSourceDirectory = GetProjectScriptSourceDirectory();
             if (std::filesystem::exists(scriptProjectPath) || std::filesystem::exists(scriptSourceDirectory))
             {
-                SetBuildProgress(.10f, "Compiling project scripts...");
-                if (!BuildProjectScripts())
+                SetBuildProgress(.10f, manifest.buildShipping && !headless ? "Compiling optimised project scripts..." : "Compiling project scripts...");
+                if (!BuildProjectScripts(manifest.buildShipping && !headless ? "Release" : "Debug"))
                 {
                     m_statusMessage = "Game export stopped because project scripts failed to build. " + m_statusMessage;
                     return false;
@@ -3112,17 +3130,16 @@ namespace PlutoGE::ui
         {
             std::string error;
             if (!assets::ValidateServerSettings(*m_project, &error))
-            { m_statusMessage = error; Log(ConsoleSeverity::Error, error); return false; }
+            { m_statusMessage = error; return false; }
             for (const auto &script : manifest.server.scripts)
                 if (!m_engine.GetScriptEngine().HasClass(script))
-                { m_statusMessage = "Unknown server script: " + script; Log(ConsoleSeverity::Error, m_statusMessage); return false; }
+                { m_statusMessage = "Unknown server script: " + script; return false; }
         }
         SetBuildProgress(.30f, "Validating project assets...");
         if (!RunProjectValidation(false, headless))
         {
             m_showProjectValidation = true;
             m_statusMessage = "Export stopped: resolve errors in Project Validation and build again.";
-            Log(ConsoleSeverity::Error, m_statusMessage);
             return false;
         }
 
@@ -3171,14 +3188,31 @@ namespace PlutoGE::ui
         }
 
         SetBuildProgress(.95f, "Finishing build...");
-        if (!headless && !ExportScriptAuthoringSdk(destinationExecutablePath, &errorMessage))
+        // The script SDK lets players and modders build against the game; Shipping builds leave it out.
+        if (!headless && !manifest.buildShipping && !ExportScriptAuthoringSdk(destinationExecutablePath, &errorMessage))
         {
             m_statusMessage = errorMessage.empty() ? "Built project but failed to export the script SDK." : errorMessage;
             return false;
         }
 
-        m_statusMessage = std::string(headless ? "Built dedicated server: " : "Built project: ") + destinationExecutablePath.string();
-        Log(ConsoleSeverity::Info, m_statusMessage);
+        if (!headless)
+        {
+            // Remember where the game was built, relative to the project when inside it.
+            auto remembered = destinationExecutablePath.lexically_normal();
+            const auto relative = remembered.lexically_relative(m_project->GetRootDirectory());
+            if (!relative.empty() && *relative.begin() != "..")
+                remembered = relative;
+            if (m_project->GetManifest().buildOutput != remembered.generic_string())
+            {
+                m_project->GetManifest().buildOutput = remembered.generic_string();
+                MarkProjectDirty();
+            }
+        }
+
+        buildSucceeded = true;
+        m_statusMessage = std::string(headless ? "Built dedicated server: " : manifest.buildShipping ? "Built project (Shipping): " : "Built project (Development): ") +
+                          destinationExecutablePath.string();
+        Log(ConsoleEntry{.severity = ConsoleSeverity::Info, .source = ConsoleSource::Build, .text = m_statusMessage});
         return true;
     }
 
@@ -3795,6 +3829,7 @@ namespace PlutoGE::ui
         std::array<char, 512> projectScriptAssemblyBuffer{};
         std::string projectStartupScene;
         bool projectBuildUsedAssetsOnly = false;
+        bool projectBuildShipping = false;
         std::vector<std::string> projectBuildAlwaysInclude;
         assets::ProjectServerSettings projectServer;
         std::string projectLoadingScreen;
@@ -3825,6 +3860,7 @@ namespace PlutoGE::ui
             const auto &manifest = m_project->GetManifest();
             projectStartupScene = manifest.startupScene;
             projectBuildUsedAssetsOnly = manifest.buildUsedAssetsOnly;
+            projectBuildShipping = manifest.buildShipping;
             projectBuildAlwaysInclude = manifest.buildAlwaysInclude;
             projectServer = manifest.server;
             projectLoadingScreen = manifest.loadingScreen.assetReference;
@@ -5268,6 +5304,12 @@ namespace PlutoGE::ui
                         widgets::BeginCard("##PackagingCard");
                         if (widgets::BeginSettingsTable("##PackagingTable"))
                         {
+                            widgets::SettingsRow("Profile",
+                                                 "Development keeps debug scripts and the script SDK for testing; Shipping compiles optimised scripts for release.");
+                            constexpr std::array<const char *, 2> buildProfiles = {"Development", "Shipping"};
+                            int buildProfile = projectBuildShipping ? 1 : 0;
+                            if (widgets::SegmentedControl("##BuildProfile", &buildProfile, buildProfiles))
+                                projectBuildShipping = buildProfile == 1;
                             widgets::SettingsRow("Build used assets only",
                                                  "Package only the startup scene, loading screen, scripts and their dependencies.");
                             widgets::ToggleSwitch("##BuildUsedAssetsOnly", &projectBuildUsedAssetsOnly);
@@ -5410,6 +5452,7 @@ namespace PlutoGE::ui
                         manifest.name = projectNameBuffer.data();
                         manifest.startupScene = projectStartupScene;
                         manifest.buildUsedAssetsOnly = projectBuildUsedAssetsOnly;
+                        manifest.buildShipping = projectBuildShipping;
                         manifest.buildAlwaysInclude = projectBuildAlwaysInclude;
                         manifest.server = projectServer;
                         std::erase(manifest.buildAlwaysInclude, std::string{});

@@ -65,6 +65,14 @@ int main()
         Require(ReadFile(manifestPath).find("EDITOR_") == std::string::npos, "Legacy editor lines were not moved out on save");
         auto migrated = assets::Project::Load(manifestPath, &error);
         Require(migrated && migrated->GetManifest().editorCamera.positionX == 1.0f, "Migrated editor state lost");
+
+        // Build settings are shared project settings.
+        migrated->GetManifest().buildShipping = true;
+        migrated->GetManifest().buildOutput = "Build/My Game.exe";
+        Require(migrated->Save(&error), "Build settings save: " + error);
+        auto built = assets::Project::Load(manifestPath, &error);
+        Require(built && built->GetManifest().buildShipping && built->GetManifest().buildOutput == "Build/My Game.exe",
+                "Build profile and output did not round-trip");
     }
     catch (const std::exception &exception)
     {

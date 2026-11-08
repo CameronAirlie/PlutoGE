@@ -1754,6 +1754,7 @@ internal static unsafe partial class ScriptBridge
             }
 
             instance.OnCreate();
+            instance.MarkStarted();
             return 1;
         }
         catch (Exception exception)
@@ -1783,7 +1784,10 @@ internal static unsafe partial class ScriptBridge
                 Timers.Tick(uiUpdateSequence);
                 RefreshScriptableObjectReferences(instance);
             }
-            instance.OnUpdate(deltaTime);
+            if (instance.Enabled)
+            {
+                instance.OnUpdate(deltaTime);
+            }
             return 1;
         }
         catch (Exception exception)
@@ -1804,7 +1808,10 @@ internal static unsafe partial class ScriptBridge
                 return 0;
             }
 
-            instance.OnLateUpdate(deltaTime);
+            if (instance.Enabled)
+            {
+                instance.OnLateUpdate(deltaTime);
+            }
             return 1;
         }
         catch (Exception exception)
@@ -1825,7 +1832,10 @@ internal static unsafe partial class ScriptBridge
                 return 0;
             }
 
-            instance.OnFixedUpdate(fixedDeltaTime);
+            if (instance.Enabled)
+            {
+                instance.OnFixedUpdate(fixedDeltaTime);
+            }
             return 1;
         }
         catch (Exception exception)
@@ -1848,6 +1858,7 @@ internal static unsafe partial class ScriptBridge
 
             try
             {
+                instance.MarkStopping();
                 instance.OnDestroy();
             }
             finally
@@ -1874,7 +1885,10 @@ internal static unsafe partial class ScriptBridge
                 return 0;
             }
 
-            instance.OnCollisionEnter(new GameObject(otherEntityId));
+            if (instance.Enabled)
+            {
+                instance.OnCollisionEnter(new GameObject(otherEntityId));
+            }
             return 1;
         }
         catch (Exception exception)
@@ -1895,7 +1909,10 @@ internal static unsafe partial class ScriptBridge
                 return 0;
             }
 
-            instance.OnCollisionExit(new GameObject(otherEntityId));
+            if (instance.Enabled)
+            {
+                instance.OnCollisionExit(new GameObject(otherEntityId));
+            }
             return 1;
         }
         catch (Exception exception)
@@ -1932,6 +1949,11 @@ internal static unsafe partial class ScriptBridge
             {
                 SetError($"Unknown managed script instance handle '{handle}'.");
                 return 0;
+            }
+
+            if (!instance.Enabled)
+            {
+                return 1;
             }
 
             instance.OnAnimationEvent(new AnimationEvent(

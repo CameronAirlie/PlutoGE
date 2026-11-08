@@ -134,3 +134,36 @@ public sealed class TimerProbe : ScriptBehaviour
         SeenUnscaledTime = (float)Time.UnscaledTimeSinceStart;
     }
 }
+
+// Enabled: disables itself after two updates; EnableControllerProbe turns it back on later.
+public sealed class EnableProbe : ScriptBehaviour
+{
+    [SerializedField] public int Updates;
+    [SerializedField] public int Enables;
+    [SerializedField] public int Disables;
+
+    public override void OnEnable() => Enables++;
+    public override void OnDisable() => Disables++;
+
+    public override void OnUpdate(float deltaTime)
+    {
+        Updates++;
+        if (Updates == 2)
+        {
+            Enabled = false;
+        }
+    }
+}
+
+public sealed class EnableControllerProbe : ScriptBehaviour
+{
+    private int _frames;
+
+    public override void OnUpdate(float deltaTime)
+    {
+        if (++_frames == 4 && GameObject.Find("Toggled")?.GetComponent<EnableProbe>() is { } target)
+        {
+            target.Enabled = true;
+        }
+    }
+}

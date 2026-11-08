@@ -27,6 +27,62 @@ public abstract class ScriptBehaviour
     /// <summary>Set once OnDestroy has run or the engine released this script; timers it owns stop.</summary>
     internal bool IsDestroyed { get; set; }
 
+    private bool _enabled = true;
+    private bool _started;
+
+    /// <summary>
+    /// A disabled script receives no OnUpdate, OnFixedUpdate, OnLateUpdate, collision or animation-event callbacks;
+    /// its timers keep running. Changing it calls <see cref="OnEnable"/> or <see cref="OnDisable"/> once the script
+    /// has started. Use it to switch a behaviour off (a dead enemy's AI) without removing it.
+    /// </summary>
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled == value)
+            {
+                return;
+            }
+
+            _enabled = value;
+            if (!_started || IsDestroyed)
+            {
+                return;
+            }
+
+            if (value)
+            {
+                OnEnable();
+            }
+            else
+            {
+                OnDisable();
+            }
+        }
+    }
+
+    // OnEnable follows OnCreate for a script that starts enabled.
+    internal void MarkStarted()
+    {
+        _started = true;
+        if (_enabled)
+        {
+            OnEnable();
+        }
+    }
+
+    // OnDisable precedes OnDestroy for a script that is still enabled.
+    internal void MarkStopping()
+    {
+        if (_started && _enabled && !IsDestroyed)
+        {
+            OnDisable();
+        }
+
+        _started = false;
+    }
+
     /// <summary>Runs <paramref name="action"/> once after <paramref name="seconds"/> of game time (see <see cref="Timers.After"/>).</summary>
     protected TimerHandle After(float seconds, Action action, bool unscaled = false) =>
         Timers.After(seconds, action, this, unscaled);
@@ -58,6 +114,16 @@ public abstract class ScriptBehaviour
     }
 
     public virtual void OnDestroy()
+    {
+    }
+
+    /// <summary>Runs after OnCreate when the script starts enabled, and whenever <see cref="Enabled"/> becomes true.</summary>
+    public virtual void OnEnable()
+    {
+    }
+
+    /// <summary>Runs whenever <see cref="Enabled"/> becomes false, and before OnDestroy when the script is still enabled.</summary>
+    public virtual void OnDisable()
     {
     }
 

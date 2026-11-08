@@ -10,12 +10,13 @@ public sealed class RotatorScript : ScriptBehaviour
     [SerializedField]
     public Vector3 Axis = new(1.0f, 1.0f, 1.0f);
 
-    [SerializedField]
-    public bool Enabled = true;
+    // A pause switch for this example; older scenes saved it as "Enabled".
+    [SerializedField, FormerlySerializedAs("Enabled")]
+    public bool Spinning = true;
 
     public override void OnUpdate(float deltaTime)
     {
-        if (!Enabled)
+        if (!Spinning)
         {
             return;
         }

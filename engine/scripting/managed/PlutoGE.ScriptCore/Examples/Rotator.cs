@@ -7,8 +7,9 @@ public sealed class Rotator : ScriptBehaviour
     [SerializedField]
     public float DegreesPerSecond = 90.0f;
 
-    [SerializedField]
-    public bool Enabled = true;
+    // Kept separate from ScriptBehaviour.Enabled so a stopped rotator still receives collisions.
+    [SerializedField, FormerlySerializedAs("Enabled")]
+    public bool Spinning = true;
 
     public override void OnUpdate(float deltaTime)
     {
@@ -16,7 +17,7 @@ public sealed class Rotator : ScriptBehaviour
 
     public override void OnLateUpdate(float deltaTime)
     {
-        if (!Enabled)
+        if (!Spinning)
         {
             return;
         }
@@ -38,9 +39,9 @@ public sealed class Rotator : ScriptBehaviour
         Debug.Log($"Rotator collided with {other.Name}.");
         if (other.GetComponent<Rotator>() is Rotator otherRotator)
         {
-            Debug.Log($"Collided with {other.Name}, toggling Enabled state for both Rotators.");
-            Enabled = !Enabled;
-            otherRotator.Enabled = !otherRotator.Enabled;
+            Debug.Log($"Collided with {other.Name}, toggling Spinning state for both Rotators.");
+            Spinning = !Spinning;
+            otherRotator.Spinning = !otherRotator.Spinning;
             _hasCollided = true;
         }
     }

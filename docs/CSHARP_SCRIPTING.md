@@ -55,11 +55,17 @@ public override void OnUpdate(float deltaTime) {}
 public override void OnFixedUpdate(float fixedDeltaTime) {}
 public override void OnLateUpdate(float deltaTime) {}
 public override void OnDestroy() {}
+public override void OnEnable() {}
+public override void OnDisable() {}
 public override void OnCollisionEnter(GameObject other) {}
 public override void OnCollisionExit(GameObject other) {}
 ```
 
 - Serialized values are applied before `OnCreate`.
+- `Enabled` switches a script off without removing it. A disabled script receives no update, collision or
+  animation-event callbacks, but its timers keep running. `OnEnable` runs after `OnCreate` (when the script
+  starts enabled) and whenever `Enabled` becomes true. `OnDisable` runs whenever it becomes false, and before
+  `OnDestroy` if the script is still enabled. Use it, for example, to stop a dead enemy's AI.
 - Scripts start in two phases. When Play starts, and when a prefab is spawned, every script instance is created
   and its serialized fields applied first, and only then does each `OnCreate` run. `OnCreate` can therefore
   safely look up other scripts with `GetComponent<OtherScript>()`, whatever order the entities are in.

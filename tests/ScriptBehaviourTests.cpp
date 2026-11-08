@@ -198,6 +198,26 @@ namespace
         Require(LiveField<int32_t>(*timers, "UnscaledFired") == 1, "Unscaled timers run at time scale 0");
     }
 
+    void EnableAndDisable(core::Engine &engine)
+    {
+        scene::Scene scene;
+        auto *toggled = AddScript(scene, "Toggled", "EnableProbe");
+        AddScript(scene, "Controller", "EnableControllerProbe");
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+
+        Require(LiveField<int32_t>(*toggled, "Enables") == 1, "OnEnable follows OnCreate");
+        for (int i = 0; i < 3; ++i)
+            scene.Update(1.0f / 60.0f);
+        Require(LiveField<int32_t>(*toggled, "Updates") == 2 && LiveField<int32_t>(*toggled, "Disables") == 1,
+                "A disabled script stopped receiving OnUpdate");
+        for (int i = 0; i < 3; ++i)
+            scene.Update(1.0f / 60.0f);
+        Require(LiveField<int32_t>(*toggled, "Enables") == 2, "Re-enabling calls OnEnable");
+        Require(LiveField<int32_t>(*toggled, "Updates") >= 4, "A re-enabled script updates again");
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -260,6 +280,7 @@ try
     engine.SetScene(nullptr);
     StartOrderAndSpawning(engine);
     TimeAndTimers(engine);
+    EnableAndDisable(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

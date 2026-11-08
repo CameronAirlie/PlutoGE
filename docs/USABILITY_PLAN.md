@@ -61,7 +61,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   pick up new fields with their C# default values.
 - [x] **T2.4 Time and timers.** Static `Time` (deltaTime, unscaledDeltaTime, time, unscaledTime, frameCount,
   timeScale) and `Timers.After/Every` bound to the owning behaviour's lifetime.
-- [ ] **T2.5 Behaviour enable/disable.** `ScriptBehaviour.Enabled`, `OnEnable/OnDisable`, callbacks skipped while
+- [x] **T2.5 Behaviour enable/disable.** `ScriptBehaviour.Enabled`, `OnEnable/OnDisable`, callbacks skipped while
   disabled.
 - [ ] **T2.6 Physics queries and triggers.** Overlap sphere/box, SphereCast, RaycastAll, layer masks, trigger callbacks,
   contact data on collisions.
@@ -214,4 +214,14 @@ Record each completed item here with the date, what changed, and how it was veri
   scoped to `SceneManager.RuntimeGeneration`.
 - Verified: `PlutoGEScriptBehaviourTests` runs 24 frames (time scale 1 then 0): frame count, scaled/unscaled time,
   After once, Every on interval, Cancel, scaled timers frozen and unscaled timers running at time scale 0.
+
+### 2026-11-08 — T2.5
+
+- `ScriptBehaviour.Enabled` with `OnEnable`/`OnDisable` (after OnCreate / before OnDestroy). The managed bridge
+  skips update, collision and animation-event callbacks for disabled scripts; the per-frame UI and timer dispatch
+  still runs. Native component enable and entity active state already gated scripts.
+- Built-in examples' own `Enabled` fields renamed `Spinning` with `[FormerlySerializedAs("Enabled")]`. Game
+  scripts with their own `Enabled` member keep working (the compiler warns that it hides the base member).
+- Verified: `PlutoGEScriptBehaviourTests` (self-disable after two updates, re-enable from another script,
+  OnEnable/OnDisable counts).
 

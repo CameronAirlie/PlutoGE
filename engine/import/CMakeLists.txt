@@ -1,5 +1,6 @@
 add_library(PlutoGEImport
     src/ImportedMaterial.cpp
+    src/MaterialUvSets.cpp
     src/ImportedModelHierarchy.cpp
     src/MeshImporter.cpp
     src/MeshTriangleBudget.cpp

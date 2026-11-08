@@ -3,6 +3,7 @@
 #include "PlutoGE/import/MeshImporter.h"
 #include "PlutoGE/import/FoliageCards.h"
 #include "PlutoGE/import/MeshTriangleBudget.h"
+#include "PlutoGE/import/MaterialUvSets.h"
 #include "SimplificationSeamLocks.h"
 #include "SkinWeightAttributeSlots.h"
 
@@ -176,35 +177,10 @@ namespace PlutoGE::assetimport
         constexpr uint32_t kCookedMeshCacheMagic = 0x434d4750; // PGMC
         // Increment whenever imported geometry, skeleton, or animation
         // semantics change so unchanged source files are recooked.
-        constexpr uint32_t kCookedMeshCacheVersion = 44;
+        constexpr uint32_t kCookedMeshCacheVersion = 45;
 
-        bool ImportedMaterialsEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
-        {
-            return a.color == b.color &&
-                   a.surfaceType == b.surfaceType && a.alphaMode == b.alphaMode &&
-                   a.alphaCutoff == b.alphaCutoff && a.castsShadow == b.castsShadow && a.twoSided == b.twoSided &&
-                   a.metallic == b.metallic && a.roughness == b.roughness && a.emission == b.emission &&
-                   a.emissionTextureIndex == b.emissionTextureIndex && a.emissionTexCoord == b.emissionTexCoord &&
-                   a.subsurface == b.subsurface && a.subsurfaceColor == b.subsurfaceColor &&
-                   a.subsurfaceRadius == b.subsurfaceRadius && a.diffuseTransmission == b.diffuseTransmission &&
-                   a.diffuseTransmissionColor == b.diffuseTransmissionColor &&
-                   a.diffuseTransmissionAlbedoTint == b.diffuseTransmissionAlbedoTint &&
-                   a.diffuseTransmissionTextureIndex == b.diffuseTransmissionTextureIndex && a.transmission == b.transmission &&
-                   a.ior == b.ior && a.thickness == b.thickness &&
-                   a.attenuationColor == b.attenuationColor && a.attenuationDistance == b.attenuationDistance &&
-                   a.albedoTextureIndex == b.albedoTextureIndex && a.normalTextureIndex == b.normalTextureIndex &&
-                   a.metallicRoughnessTextureIndex == b.metallicRoughnessTextureIndex &&
-                   a.metallicRoughnessTextureHasMetallicChannel == b.metallicRoughnessTextureHasMetallicChannel &&
-                   a.occlusionTextureIndex == b.occlusionTextureIndex && a.occlusionStrength == b.occlusionStrength &&
-                   a.clearCoat == b.clearCoat && a.clearCoatRoughness == b.clearCoatRoughness &&
-                   a.clearCoatTextureIndex == b.clearCoatTextureIndex &&
-                   a.clearCoatRoughnessTextureIndex == b.clearCoatRoughnessTextureIndex &&
-                   a.sheenColor == b.sheenColor && a.sheenRoughness == b.sheenRoughness &&
-                   a.sheenColorTextureIndex == b.sheenColorTextureIndex &&
-                   a.sheenRoughnessTextureIndex == b.sheenRoughnessTextureIndex &&
-                   a.flipNormalY == b.flipNormalY;
-        }
-
+        // Merges material slots that are indistinguishable: same authored name and same parameters. Differently named
+        // materials stay separate even when their exportable parameters match.
         void DeduplicateImportedMaterials(ImportedMeshSourceAsset &asset)
         {
             if (asset.materials.size() < 2)
@@ -220,7 +196,8 @@ namespace PlutoGE::assetimport
                 const auto match = std::find_if(uniqueMaterials.begin(), uniqueMaterials.end(),
                                                 [&](const ImportedMaterialData &candidate)
                                                 {
-                                                    return ImportedMaterialsEqual(candidate, asset.materials[oldIndex]);
+                                                    return candidate.name == asset.materials[oldIndex].name &&
+                                                           ImportedMaterialParametersEqual(candidate, asset.materials[oldIndex]);
                                                 });
                 if (match != uniqueMaterials.end())
                 {
@@ -537,6 +514,7 @@ namespace PlutoGE::assetimport
 
         void WriteImportedMaterial(std::ostream &output, const ImportedMaterialData &material)
         {
+            WriteString(output, material.name);
             WriteVec4(output, material.color);
             WritePod(output, static_cast<uint32_t>(material.surfaceType));
             WritePod(output, static_cast<uint32_t>(material.alphaMode));
@@ -590,6 +568,7 @@ namespace PlutoGE::assetimport
         ImportedMaterialData ReadImportedMaterial(std::istream &input)
         {
             ImportedMaterialData material;
+            material.name = ReadString(input);
             material.color = ReadVec4(input);
             material.surfaceType = static_cast<render::MaterialSurfaceType>(ReadPod<uint32_t>(input));
             material.alphaMode = static_cast<render::AlphaMode>(ReadPod<uint32_t>(input));
@@ -643,6 +622,7 @@ namespace PlutoGE::assetimport
 
         void WriteImportedTexture(std::ostream &output, const ImportedTextureData &texture)
         {
+            WriteString(output, texture.name);
             WriteString(output, texture.cacheKey);
             WriteString(output, texture.baseCacheKey);
             WriteString(output, texture.sourcePath);
@@ -656,6 +636,7 @@ namespace PlutoGE::assetimport
         ImportedTextureData ReadImportedTexture(std::istream &input)
         {
             ImportedTextureData texture;
+            texture.name = ReadString(input);
             texture.cacheKey = ReadString(input);
             texture.baseCacheKey = ReadString(input);
             texture.sourcePath = ReadString(input);
@@ -1223,9 +1204,45 @@ namespace PlutoGE::assetimport
                 userData);
         }
 
+        // The core glTF textures of a material, in the order they claim the primary UV stream.
+        std::array<SourceTextureUvUse, 5> GltfTextureUvUses(const tinygltf::Material &material)
+        {
+            const auto use = [](int textureIndex, int texCoord) { return SourceTextureUvUse{textureIndex >= 0, texCoord}; };
+            const auto &pbr = material.pbrMetallicRoughness;
+            return {use(pbr.baseColorTexture.index, pbr.baseColorTexture.texCoord),
+                    use(material.normalTexture.index, material.normalTexture.texCoord),
+                    use(pbr.metallicRoughnessTexture.index, pbr.metallicRoughnessTexture.texCoord),
+                    use(material.occlusionTexture.index, material.occlusionTexture.texCoord),
+                    use(material.emissiveTexture.index, material.emissiveTexture.texCoord)};
+        }
+
+        int SelectGltfPrimaryUvSet(const tinygltf::Material &material)
+        {
+            return SelectPrimaryUvSet(GltfTextureUvUses(material));
+        }
+
+        // Reports textures whose authored UV set neither engine stream carries; they sample the primary stream.
+        void WarnUnmappedGltfUvSets(const std::string &filePath, const tinygltf::Material &material, int primaryUvSet)
+        {
+            constexpr std::array<const char *, 5> kTextureNames{"base colour", "normal", "metallic-roughness", "occlusion", "emissive"};
+            constexpr std::size_t kEmissive = 4;
+            const auto uses = GltfTextureUvUses(material);
+            for (std::size_t index = 0; index < uses.size(); ++index)
+            {
+                if (!uses[index].used) continue;
+                const auto stream = ResolveEngineUvStream(uses[index].uvSet, primaryUvSet);
+                const bool mapped = stream == EngineUvStream::Primary || (index == kEmissive && stream == EngineUvStream::Secondary);
+                if (!mapped)
+                    std::cerr << "Mesh import warning for '" << filePath << "': material '" << material.name << "' "
+                              << kTextureNames[index] << " texture uses TEXCOORD_" << uses[index].uvSet
+                              << " but the material's UVs come from TEXCOORD_" << primaryUvSet << "." << std::endl;
+            }
+        }
+
         ImportedMaterialData ParseMaterial(
             const tinygltf::Model &model,
             const tinygltf::Material &material,
+            int primaryUvSet,
             const std::string &filePath,
             std::vector<ImportedTextureData> &textures,
             std::unordered_map<std::string, int> &textureVariantByCacheKey,
@@ -1233,6 +1250,7 @@ namespace PlutoGE::assetimport
             MeshImportProfile *profile = nullptr)
         {
             ImportedMaterialData parsedMaterial;
+            parsedMaterial.name = material.name;
             parsedMaterial.twoSided = material.doubleSided;
             const auto readExtensionNumber = [&material](const char *extensionName, const char *propertyName, float fallback)
             {
@@ -1296,7 +1314,9 @@ namespace PlutoGE::assetimport
             parsedMaterial.emissionTextureIndex = ResolveImportedTextureColorSpaceIndex(
                 textures, ResolveImageIndex(model, material.emissiveTexture.index),
                 ImportedTextureColorSpace::SRGB, textureVariantByCacheKey);
-            parsedMaterial.emissionTexCoord = material.emissiveTexture.texCoord;
+            parsedMaterial.emissionTexCoord =
+                ResolveEngineUvStream(material.emissiveTexture.texCoord, primaryUvSet) == EngineUvStream::Secondary ? 1 : 0;
+            WarnUnmappedGltfUvSets(filePath, material, primaryUvSet);
             const int albedoImageIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.baseColorTexture.index);
             const int normalImageIndex = ResolveImageIndex(model, material.normalTexture.index);
             const int metallicRoughnessImageIndex = ResolveImageIndex(model, material.pbrMetallicRoughness.metallicRoughnessTexture.index);
@@ -2449,6 +2469,7 @@ namespace PlutoGE::assetimport
             const tinygltf::Primitive &primitive,
             const glm::mat4 &worldTransform,
             uint32_t materialIndex,
+            int primaryUvSet,
             int nodeIndex,
             int animatedNodeIndex)
         {
@@ -2468,8 +2489,11 @@ namespace PlutoGE::assetimport
             ValidateFloatAccessorView(workItem.positionView);
             workItem.vertexCount = static_cast<uint32_t>(workItem.positionView.accessor->count);
             const auto normalIt = primitive.attributes.find("NORMAL");
-            const auto uvIt = primitive.attributes.find("TEXCOORD_0");
-            const auto lightmapUvIt = primitive.attributes.find("TEXCOORD_1");
+            // The primary stream reads the UV set the primitive's material textures were authored against; a
+            // primitive without that set falls back to TEXCOORD_0.
+            auto uvIt = primitive.attributes.find("TEXCOORD_" + std::to_string(primaryUvSet));
+            if (uvIt == primitive.attributes.end()) uvIt = primitive.attributes.find("TEXCOORD_0");
+            const auto lightmapUvIt = primitive.attributes.find("TEXCOORD_" + std::to_string(kSecondaryUvSourceSet));
             const auto tangentIt = primitive.attributes.find("TANGENT");
             const auto jointsIt = primitive.attributes.find("JOINTS_0");
             const auto weightsIt = primitive.attributes.find("WEIGHTS_0");
@@ -2616,6 +2640,7 @@ namespace PlutoGE::assetimport
             int nodeIndex,
             const glm::mat4 &parentTransform,
             uint32_t defaultMaterialIndex,
+            const std::vector<int> &primaryUvSetByMaterial,
             const std::unordered_set<int> &animatedNodeIndices,
             const std::vector<glm::mat4> &nodeGlobals,
             int activeAnimatedNodeIndex,
@@ -2647,7 +2672,8 @@ namespace PlutoGE::assetimport
                     const uint32_t materialIndex = primitive.material >= 0 && primitive.material < static_cast<int>(defaultMaterialIndex)
                                                        ? static_cast<uint32_t>(primitive.material)
                                                        : defaultMaterialIndex;
-                    if (auto workItem = CreatePrimitiveWorkItem(model, primitive, primitiveTransform, materialIndex, nodeIndex, animatedNodeIndex))
+                    const int primaryUvSet = materialIndex < primaryUvSetByMaterial.size() ? primaryUvSetByMaterial[materialIndex] : 0;
+                    if (auto workItem = CreatePrimitiveWorkItem(model, primitive, primitiveTransform, materialIndex, primaryUvSet, nodeIndex, animatedNodeIndex))
                     {
                         primitiveWorkItems.push_back(std::move(*workItem));
                     }
@@ -2656,7 +2682,7 @@ namespace PlutoGE::assetimport
 
             for (const auto childIndex : node.children)
             {
-                CollectPrimitiveWorkItems(model, childIndex, worldTransform, defaultMaterialIndex, animatedNodeIndices, nodeGlobals, animatedNodeIndex, visitedNodes, primitiveWorkItems);
+                CollectPrimitiveWorkItems(model, childIndex, worldTransform, defaultMaterialIndex, primaryUvSetByMaterial, animatedNodeIndices, nodeGlobals, animatedNodeIndex, visitedNodes, primitiveWorkItems);
             }
         }
 
@@ -3400,6 +3426,13 @@ namespace PlutoGE::assetimport
             return scene.mTextures[textureIndex];
         }
 
+        // A texture's display name from an authored path: its file stem, or empty for Assimp's "*N" embedded indices.
+        std::string TextureNameFromPath(std::string_view path)
+        {
+            if (path.empty() || path.front() == '*') return {};
+            return std::filesystem::u8path(std::string(path)).stem().string();
+        }
+
         int AddAssimpTexture(
             const aiScene &scene,
             const std::string &filePath,
@@ -3422,6 +3455,8 @@ namespace PlutoGE::assetimport
                 }
 
                 ImportedTextureData importedTexture;
+                importedTexture.name = TextureNameFromPath(embeddedTexture->mFilename.C_Str());
+                if (importedTexture.name.empty()) importedTexture.name = TextureNameFromPath(path);
                 importedTexture.baseCacheKey = cacheKey;
                 importedTexture.cacheKey = BuildImportedTextureCacheKey(importedTexture.baseCacheKey, ImportedTextureColorSpace::Unknown);
                 importedTexture.colorSpace = ImportedTextureColorSpace::Unknown;
@@ -3492,6 +3527,7 @@ namespace PlutoGE::assetimport
             importedTexture.cacheKey = BuildImportedTextureCacheKey(importedTexture.baseCacheKey, ImportedTextureColorSpace::Unknown);
             importedTexture.colorSpace = ImportedTextureColorSpace::Unknown;
             importedTexture.sourcePath = sourcePath;
+            importedTexture.name = TextureNameFromPath(sourcePath);
             const int textureIndex = static_cast<int>(textures.size());
             textures.push_back(std::move(importedTexture));
             textureIndexByKey[cacheKey] = textureIndex;
@@ -3692,6 +3728,9 @@ namespace PlutoGE::assetimport
             unsigned int *primaryUvChannel = nullptr)
         {
             ImportedMaterialData importedMaterial;
+            // Assimp names materials it synthesises for unassigned meshes; those have no authored name.
+            if (const aiString name = material.GetName(); std::strcmp(name.C_Str(), AI_DEFAULT_MATERIAL_NAME) != 0)
+                importedMaterial.name = name.C_Str();
             int twoSided = 0;
             if (AI_SUCCESS == aiGetMaterialInteger(&material, AI_MATKEY_TWOSIDED, &twoSided))
             {
@@ -5006,6 +5045,9 @@ namespace PlutoGE::assetimport
                 importedTexture.baseCacheKey = BuildImageCacheKey(filePath, static_cast<int>(imageIndex));
                 importedTexture.cacheKey = BuildImportedTextureCacheKey(importedTexture.baseCacheKey, ImportedTextureColorSpace::Unknown);
                 importedTexture.sourcePath = ResolveImageSourcePath(filePath, image);
+                importedTexture.name = !image.name.empty() || importedTexture.sourcePath.empty()
+                                           ? image.name
+                                           : std::filesystem::u8path(importedTexture.sourcePath).stem().string();
                 importedTexture.colorSpace = ImportedTextureColorSpace::Unknown;
                 importedTexture.width = image.width;
                 importedTexture.height = image.height;
@@ -5018,11 +5060,15 @@ namespace PlutoGE::assetimport
             std::vector<std::optional<bool>> metallicChannelCache(model.images.size());
             std::unordered_map<std::string, int> textureVariantByCacheKey;
             parsedMeshAsset.materials.reserve(model.materials.size() + 1);
+            std::vector<int> primaryUvSetByMaterial;
+            primaryUvSetByMaterial.reserve(model.materials.size() + 1);
             for (const auto &material : model.materials)
             {
+                primaryUvSetByMaterial.push_back(SelectGltfPrimaryUvSet(material));
                 parsedMeshAsset.materials.push_back(ParseMaterial(
                     model,
                     material,
+                    primaryUvSetByMaterial.back(),
                     filePath,
                     parsedMeshAsset.textures,
                     textureVariantByCacheKey,
@@ -5033,6 +5079,7 @@ namespace PlutoGE::assetimport
 
             const uint32_t defaultMaterialIndex = static_cast<uint32_t>(parsedMeshAsset.materials.size());
             parsedMeshAsset.materials.push_back(ImportedMaterialData{});
+            primaryUvSetByMaterial.push_back(0);
 
             logProgress("Textures and materials imported; assembling mesh geometry");
             std::unordered_set<int> visitedNodes;
@@ -5046,14 +5093,14 @@ namespace PlutoGE::assetimport
                 const auto &scene = model.scenes[defaultSceneIndex];
                 for (const int nodeIndex : scene.nodes)
                 {
-                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, animatedNodeIndices, nodeGlobals, -1, visitedNodes, primitiveWorkItems);
+                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, primaryUvSetByMaterial, animatedNodeIndices, nodeGlobals, -1, visitedNodes, primitiveWorkItems);
                 }
             }
             else
             {
                 for (int nodeIndex = 0; nodeIndex < static_cast<int>(model.nodes.size()); ++nodeIndex)
                 {
-                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, animatedNodeIndices, nodeGlobals, -1, visitedNodes, primitiveWorkItems);
+                    CollectPrimitiveWorkItems(model, nodeIndex, glm::mat4(1.0f), defaultMaterialIndex, primaryUvSetByMaterial, animatedNodeIndices, nodeGlobals, -1, visitedNodes, primitiveWorkItems);
                 }
             }
 

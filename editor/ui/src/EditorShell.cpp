@@ -842,16 +842,17 @@ namespace PlutoGE::ui
                 movement -= kWorldUp;
             }
 
-            if (glm::dot(movement, movement) <= 0.0f)
-            {
-                return;
-            }
-
+            // Speed adjusts whenever fly-look is held, even while stationary.
             if (scrollDeltaY != 0.0)
             {
                 camera.speedAdjustment = glm::clamp(camera.speedAdjustment * std::pow(kEditorCameraScrollStepFactor, static_cast<float>(scrollDeltaY)),
                                                     kEditorCameraMinSpeedAdjustment,
                                                     kEditorCameraMaxSpeedAdjustment);
+            }
+
+            if (glm::dot(movement, movement) <= 0.0f)
+            {
+                return;
             }
 
             float moveSpeed = glm::clamp(camera.moveSpeed, kEditorCameraMinMoveSpeed, kEditorCameraMaxMoveSpeed) * camera.speedAdjustment;

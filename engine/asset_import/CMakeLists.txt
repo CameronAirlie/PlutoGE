@@ -20,6 +20,7 @@ add_library(PlutoGEAssetImport
     src/ModelOutputProvenance.cpp
     src/ModelImportPublication.cpp
     src/ModelImportService.cpp
+    src/ModelObjectNaming.cpp
 )
 add_library(PlutoGE::AssetImport ALIAS PlutoGEAssetImport)
 target_include_directories(PlutoGEAssetImport PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

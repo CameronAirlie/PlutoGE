@@ -52,4 +52,8 @@ namespace PlutoGE::assets
     void BeginModelObjectImport(ModelImportSettings &settings);
     std::uint64_t ResolveModelObjectId(ModelImportSettings &settings, std::string_view sourceKey,
                                        std::uint64_t legacyId = 0, std::string *errorMessage = nullptr);
+    // Moves the identity recorded under previousKey to sourceKey when an importer changes how it keys an object, so
+    // the object keeps its ID (and every remap or reference to it). Applies only while sourceKey has no identity and
+    // previousKey's has not been claimed by this import; returns whether the identity moved.
+    bool AdoptModelObjectIdentity(ModelImportSettings &settings, std::string_view previousKey, std::string_view sourceKey);
 }

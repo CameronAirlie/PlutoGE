@@ -23,6 +23,9 @@ namespace PlutoGE::assetimport
 
     struct ImportedTextureData
     {
+        // Name authored in the source file (glTF image name, embedded filename); empty when the source has none.
+        // Display only: identity comes from the cache/source keys.
+        std::string name;
         std::string cacheKey;
         std::string baseCacheKey;
         std::string sourcePath;
@@ -35,6 +38,9 @@ namespace PlutoGE::assetimport
 
     struct ImportedMaterialData
     {
+        // Name authored in the source file; empty when the source has none. Differently named materials are kept as
+        // separate slots even when their exportable parameters match, so each stays individually editable.
+        std::string name;
         glm::vec4 color{1.0f};
         render::MaterialSurfaceType surfaceType = render::MaterialSurfaceType::Standard;
         render::AlphaMode alphaMode = render::AlphaMode::Opaque;
@@ -87,6 +93,10 @@ namespace PlutoGE::assetimport
     };
 
     ImportedMaterialDefinition DescribeImportedMaterial(const ImportedMaterialData &material);
+
+    // True when two materials render identically: every parameter and texture matches. The authored name is not
+    // compared; callers decide whether differently named materials may share a slot.
+    [[nodiscard]] bool ImportedMaterialParametersEqual(const ImportedMaterialData &a, const ImportedMaterialData &b);
 
     struct ImportedMeshAsset
     {

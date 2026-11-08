@@ -918,6 +918,11 @@ add_executable(PlutoGEModelImportServiceTests ModelImportServiceTests.cpp)
 target_link_libraries(PlutoGEModelImportServiceTests PRIVATE PlutoGE::AssetImport)
 pluto_link_engine(PlutoGEModelImportServiceTests)
 add_test(NAME PlutoGEModelImportServiceTests COMMAND PlutoGEModelImportServiceTests)
+add_executable(PlutoGEModelMaterialImportTests ModelMaterialImportTests.cpp)
+target_link_libraries(PlutoGEModelMaterialImportTests PRIVATE PlutoGE::AssetImport)
+pluto_link_engine(PlutoGEModelMaterialImportTests)
+add_test(NAME PlutoGEModelMaterialImportTests COMMAND PlutoGEModelMaterialImportTests)
+set_tests_properties(PlutoGEModelMaterialImportTests PROPERTIES ENVIRONMENT "PLUTOGE_DISABLE_MESH_DISK_CACHE=1")
 add_executable(PlutoGEImportModel EXCLUDE_FROM_ALL ../tools/ImportModel.cpp)
 target_link_libraries(PlutoGEImportModel PRIVATE PlutoGE::AssetImport)
 pluto_link_engine(PlutoGEImportModel)
@@ -972,7 +977,7 @@ add_custom_target(PlutoGEAssetPipelineChecks DEPENDS
     PlutoGEFbxImportTests PlutoGESkinningCpuTests PlutoGEImportedModelHierarchyTests
     PlutoGEImportedAssetLifetimeTests PlutoGELargeMeshOptimizationTests
     PlutoGEAssetReferencesTests PlutoGEProjectValidationTests PlutoGEArtifactCacheTests
-    PlutoGEModelImportSettingsTests PlutoGEImportFileTransactionTests
+    PlutoGEModelImportSettingsTests PlutoGEModelMaterialImportTests PlutoGEImportFileTransactionTests
     PlutoGEModelImportServiceTests PlutoGEImportModel PlutoGEAssetCatalogTests
     PlutoGEAssetMetadataTests PlutoGEAssetReferenceCookingTests PlutoGEModelAssetTests
     PlutoGEMaterialReloadTests PlutoGEPrefabMeshExporterTests PlutoGEPrefabVariantTests)

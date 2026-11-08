@@ -278,4 +278,19 @@ namespace PlutoGE::assets
         settings.objects.push_back({std::string(sourceKey), id, false});
         return id;
     }
+
+    bool AdoptModelObjectIdentity(ModelImportSettings &settings, std::string_view previousKey, std::string_view sourceKey)
+    {
+        if (!ValidKey(sourceKey) || previousKey == sourceKey) return false;
+        const auto keyed = [&](std::string_view key)
+        {
+            return std::find_if(settings.objects.begin(), settings.objects.end(),
+                                [&](const auto &object) { return object.sourceKey == key; });
+        };
+        if (keyed(sourceKey) != settings.objects.end()) return false;
+        const auto previous = keyed(previousKey);
+        if (previous == settings.objects.end() || !previous->retired) return false;
+        previous->sourceKey = std::string(sourceKey);
+        return true;
+    }
 }

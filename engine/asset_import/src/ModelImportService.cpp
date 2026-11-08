@@ -12,6 +12,7 @@
 #include "PlutoGE/asset_import/ProjectImportLock.h"
 #include "PlutoGE/asset_import/ImportedTextureWriter.h"
 #include "PlutoGE/asset_import/ModelArtifactSettings.h"
+#include "PlutoGE/asset_import/ModelObjectNaming.h"
 #include "PlutoGE/asset_import/ImportFileTransaction.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -368,6 +369,7 @@ namespace PlutoGE::assetimport
                 return persistentSettings ? LogicalReference({sourceMetadata.id, id}) : location;
             };
             std::vector<std::string> textureReferences;
+            ModelObjectNameAllocator textureNames;
             for (std::size_t index = 0; index < imported.textures.size(); ++index)
             {
                 progress("Writing textures");
@@ -381,6 +383,8 @@ namespace PlutoGE::assetimport
                     textureReferences.emplace_back();
                     continue;
                 }
+                const auto name = textureNames.Allocate(texture.name, texture.sourcePath.empty()
+                    ? "Texture " + std::to_string(index) : std::filesystem::path(texture.sourcePath).stem().string());
                 if (sourceExists)
                 {
                     const auto texturePath = std::filesystem::path(texture.sourcePath);
@@ -397,12 +401,12 @@ namespace PlutoGE::assetimport
                 }
                 else
                 {
-                    destination = importDirectory / "Textures" / ("T_" + std::to_string(index) + ".tga");
+                    const bool authoredName = !SanitizeModelObjectName(texture.name).empty();
+                    destination = importDirectory / "Textures" / ("T_" + (authoredName ? name : std::to_string(index)) + ".tga");
                     if (!WriteTextureTga(stage(destination), texture, errorMessage)) return false;
                 }
                 const auto reference = projectReference(destination);
                 textureReferences.push_back(reference);
-                const auto name = texture.sourcePath.empty() ? "Texture " + std::to_string(index) : std::filesystem::path(texture.sourcePath).stem().string();
                 const auto textureKey = GetModelTextureSourceKey(sourcePath, texture, index);
                 const auto textureId = addObject(assets::ProjectAssetType::Texture, name, reference, textureKey);
                 textureReferences.back() = dependencyReference(textureId, reference);
@@ -415,15 +419,26 @@ namespace PlutoGE::assetimport
             std::vector<std::uint64_t> materialIds;
             if (hasMesh || imported.materials.size() > 1)
             {
+                ModelObjectNameAllocator materialNames;
+                const auto legacySlots = LegacyModelMaterialSlots(imported.materials);
                 for (std::size_t index = 0; index < imported.materials.size(); ++index)
                 {
                     progress("Writing materials");
-                    const auto definition = assetimport::DescribeImportedMaterial(imported.materials[index]);
+                    const auto &material = imported.materials[index];
+                    const auto definition = assetimport::DescribeImportedMaterial(material);
                     const auto &config = definition.config;
                     assets::MaterialTextureReferences textures;
                     for (const auto &slot : render::MaterialTextureSlots())
                         textures[slot.slot] = textureReference(definition.TextureIndex(slot.slot));
-                    const auto name = "M_" + sourcePath.stem().string() + "_" + std::to_string(index);
+                    // Generated materials keep the M_ prefix so they never claim the name of an authored file.
+                    const auto authored = SanitizeModelObjectName(material.name);
+                    const bool authoredName = !authored.empty();
+                    const auto name = materialNames.Allocate(authoredName ? "M_" + authored : std::string{},
+                                                             "M_" + sourcePath.stem().string() + "_" + std::to_string(index));
+                    const auto materialKey = ModelMaterialSourceKey(name, authoredName, legacySlots[index]);
+                    // Imports before name keys recorded each material by its parameter-merged slot; keep that identity.
+                    if (persistentSettings && authoredName)
+                        assets::AdoptModelObjectIdentity(settings, LegacyModelMaterialSourceKey(legacySlots[index]), materialKey);
                     const auto destination = importDirectory / (name + ".plutomaterial");
                     std::ofstream output(stage(destination));
                     if (!assets::WriteMaterialAsset(output, config, textures, errorMessage)) return false;
@@ -431,7 +446,7 @@ namespace PlutoGE::assetimport
                     if (!output) throw std::runtime_error("Cannot finish material output.");
                     const auto reference = projectReference(destination);
                     materialReferences.push_back(reference);
-                    const auto materialId = addObject(assets::ProjectAssetType::Material, name, reference, "material/slot/" + std::to_string(index));
+                    const auto materialId = addObject(assets::ProjectAssetType::Material, name, reference, materialKey);
                     materialReferences.back() = dependencyReference(materialId, reference);
                     materialIds.push_back(materialId);
                     for (const auto &remap : settings.materialRemaps)

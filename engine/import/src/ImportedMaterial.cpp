@@ -2,6 +2,33 @@
 
 namespace PlutoGE::assetimport
 {
+    bool ImportedMaterialParametersEqual(const ImportedMaterialData &a, const ImportedMaterialData &b)
+    {
+        return a.color == b.color &&
+               a.surfaceType == b.surfaceType && a.alphaMode == b.alphaMode &&
+               a.alphaCutoff == b.alphaCutoff && a.castsShadow == b.castsShadow && a.twoSided == b.twoSided &&
+               a.metallic == b.metallic && a.roughness == b.roughness && a.emission == b.emission &&
+               a.emissionTextureIndex == b.emissionTextureIndex && a.emissionTexCoord == b.emissionTexCoord &&
+               a.subsurface == b.subsurface && a.subsurfaceColor == b.subsurfaceColor &&
+               a.subsurfaceRadius == b.subsurfaceRadius && a.diffuseTransmission == b.diffuseTransmission &&
+               a.diffuseTransmissionColor == b.diffuseTransmissionColor &&
+               a.diffuseTransmissionAlbedoTint == b.diffuseTransmissionAlbedoTint &&
+               a.diffuseTransmissionTextureIndex == b.diffuseTransmissionTextureIndex && a.transmission == b.transmission &&
+               a.ior == b.ior && a.thickness == b.thickness &&
+               a.attenuationColor == b.attenuationColor && a.attenuationDistance == b.attenuationDistance &&
+               a.albedoTextureIndex == b.albedoTextureIndex && a.normalTextureIndex == b.normalTextureIndex &&
+               a.metallicRoughnessTextureIndex == b.metallicRoughnessTextureIndex &&
+               a.metallicRoughnessTextureHasMetallicChannel == b.metallicRoughnessTextureHasMetallicChannel &&
+               a.occlusionTextureIndex == b.occlusionTextureIndex && a.occlusionStrength == b.occlusionStrength &&
+               a.clearCoat == b.clearCoat && a.clearCoatRoughness == b.clearCoatRoughness &&
+               a.clearCoatTextureIndex == b.clearCoatTextureIndex &&
+               a.clearCoatRoughnessTextureIndex == b.clearCoatRoughnessTextureIndex &&
+               a.sheenColor == b.sheenColor && a.sheenRoughness == b.sheenRoughness &&
+               a.sheenColorTextureIndex == b.sheenColorTextureIndex &&
+               a.sheenRoughnessTextureIndex == b.sheenRoughnessTextureIndex &&
+               a.flipNormalY == b.flipNormalY;
+    }
+
     ImportedMaterialDefinition DescribeImportedMaterial(const ImportedMaterialData &material)
     {
         using render::MaterialTextureSlot;

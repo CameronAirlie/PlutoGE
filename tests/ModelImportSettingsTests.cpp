@@ -37,6 +37,20 @@ int main()
         Require(std::any_of(loaded.objects.begin(), loaded.objects.end(), [&](const auto &object) { return object.localId == material && object.retired; }),
                 "Removed object was not retained as retired");
         Require(ResolveModelObjectId(loaded, "another-key", material, &error) == 0, "Ambiguous legacy ID reused");
+        {
+            ModelImportSettings rekeyed = loaded;
+            BeginModelObjectImport(rekeyed);
+            Require(AdoptModelObjectIdentity(rekeyed, "material/slot/0", "material/name/Skin") &&
+                    ResolveModelObjectId(rekeyed, "material/name/Skin", 0, &error) == material,
+                    "Re-keyed material lost its identity");
+            Require(!AdoptModelObjectIdentity(rekeyed, "material/slot/0", "material/name/Eyes"),
+                    "A legacy identity was adopted twice");
+            Require(!AdoptModelObjectIdentity(rekeyed, "mesh/main", "material/name/Skin"),
+                    "Adoption replaced an existing identity");
+            Require(ResolveModelObjectId(rekeyed, "mesh/main", 0, &error) == mesh &&
+                    !AdoptModelObjectIdentity(rekeyed, "mesh/main", "mesh/renamed"),
+                    "Adoption took an identity already claimed by this import");
+        }
         for (unsigned flags = 0; flags < 8; ++flags)
         {
             loaded.meshOptions = {(flags & 1u) != 0, (flags & 2u) != 0, (flags & 4u) != 0};

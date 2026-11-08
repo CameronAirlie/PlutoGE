@@ -772,71 +772,6 @@ namespace PlutoGE::ui
             return NormalizeContentFolder(errorCode ? path.filename() / std::filesystem::path(std::string(fileName)) : relativePath);
         }
 
-        void OpenAsset(EditorShell &editorShell, const assets::Project &project, const assets::ProjectAssetEntry &asset)
-        {
-            const auto resolvedPath = project.ResolveAssetReference(asset.reference);
-            if (resolvedPath.extension() == ".rml")
-            {
-                editorShell.OpenRmlDocument(asset.reference);
-            }
-            else if (resolvedPath.extension() == ".plutoscene")
-            {
-                editorShell.OpenSceneFromPath(resolvedPath);
-            }
-            else if (resolvedPath.extension() == ".plutoprefab")
-            {
-                editorShell.OpenSceneFromPath(resolvedPath);
-            }
-            else if (resolvedPath.extension() == ".cs")
-            {
-                editorShell.OpenScriptSource(resolvedPath);
-            }
-            else if (asset.type == assets::ProjectAssetType::Material)
-            {
-                editorShell.OpenMaterialAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::Mesh)
-            {
-                editorShell.OpenMeshAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::ShaderGraph)
-            {
-                editorShell.OpenShaderGraphAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::AnimationGraph)
-            {
-                editorShell.OpenAnimationGraphAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::AnimationClip)
-            {
-                editorShell.OpenAnimationClipAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::ParticleSystem)
-            {
-                editorShell.OpenParticleSystemAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::LoadingScreen)
-            {
-                editorShell.OpenLoadingScreenAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::UITheme)
-            {
-                editorShell.OpenUIThemeEditor(UIThemeTarget::ForAsset(asset.reference));
-            }
-            else if (asset.type == assets::ProjectAssetType::InputMapping)
-            {
-                editorShell.OpenInputMappingAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::PostProcessPreset)
-            {
-                editorShell.OpenPostProcessPresetAsset(asset.reference);
-            }
-            else if (asset.type == assets::ProjectAssetType::FoliageType)
-            {
-                editorShell.OpenFoliageTypeAsset(asset.reference);
-            }
-        }
-
         std::string SanitizeAssetFileName(std::string_view text)
         {
             std::string name;
@@ -1540,7 +1475,7 @@ namespace PlutoGE::ui
             const auto reveal = [&](std::string reference) { return RevealAsset(std::move(reference)); };
             m_referenceSearch->Render(project->GetAssetDirectoryPath(), reveal, [&](const std::string &reference) {
                 const auto owner = reveal(reference);
-                OpenAsset(editorShell, *project, assets::ProjectAssetEntry{owner, 0, assets::Project::GetAssetTypeForReference(owner)});
+                editorShell.OpenProjectAsset(assets::ProjectAssetEntry{owner, 0, assets::Project::GetAssetTypeForReference(owner)});
             });
         }
 
@@ -3152,7 +3087,7 @@ namespace PlutoGE::ui
                 if (item->type == assets::ProjectAssetType::Model && scope.keys.size() == 1)
                     OpenModelPackage(*project, *item);
                 else
-                    OpenAsset(shell, *project, entries[static_cast<std::size_t>(item->assetIndex)]);
+                    shell.OpenProjectAsset(entries[static_cast<std::size_t>(item->assetIndex)]);
             }
             break;
         }
@@ -4251,7 +4186,7 @@ namespace PlutoGE::ui
                         DrawCardBackground(metrics, false, hovered);
                         DrawAssetPreview(metrics, m_thumbnailCache->Get(project, editorShell.GetEngine(), asset), object.type, 1.0f);
                         DrawCardLabels(metrics, object.name, std::string(assets::Project::GetAssetTypeName(object.type)), 1.0f);
-                        if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenAsset(editorShell, project, asset);
+                        if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) editorShell.OpenProjectAsset(asset);
                         if (ImGui::BeginDragDropSource())
                         {
                             ImGui::SetDragDropPayload(kContentBrowserAssetDragDropPayload, object.reference.c_str(), object.reference.size() + 1);

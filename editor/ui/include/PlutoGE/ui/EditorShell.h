@@ -2,6 +2,7 @@
 #pragma once
 
 #include "PlutoGE/ui/ConsoleLog.h"
+#include "PlutoGE/ui/EditorCommands.h"
 #include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EntityLocks.h"
 #include "PlutoGE/ui/EntitySelection.h"
@@ -57,6 +58,7 @@
 namespace PlutoGE::assets
 {
     class Project;
+    struct ProjectAssetEntry;
 }
 
 namespace PlutoGE::assetimport { class ModelImportTask; struct ModelImportResult; }
@@ -212,6 +214,11 @@ namespace PlutoGE::ui
         // Reopens the scene that was active when the prefab was opened.
         bool ReturnFromPrefab();
         void OpenMaterialAsset(std::string materialAssetReference);
+        // Opens an asset in its editor, as double-clicking it in the Content Browser does. False for assets with no
+        // editor (textures, models, sounds).
+        bool OpenProjectAsset(const assets::ProjectAssetEntry &asset);
+        // Editor commands with their shortcuts; asset editors may register and bind their own.
+        [[nodiscard]] EditorCommandRegistry &GetCommands() { return m_commands; }
         // Opens a script source file in the system's default editor for its type.
         bool OpenScriptSource(const std::filesystem::path &sourcePath);
         void OpenMeshAsset(std::string meshAssetReference);
@@ -501,7 +508,12 @@ namespace PlutoGE::ui
         bool SaveFocusedDocument();
         void MarkSceneClean();
         void MarkProjectClean();
-        void HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel);
+        void RegisterEditorCommands();
+        // Binds the play, edit and scene commands for this frame and works out which shortcut scopes listen.
+        void BindEditorCommands(bool isRuntimeRunning, ProfilerPanel *profilerPanel);
+        // Runs the palette's choice and pressed shortcuts, once every command is bound.
+        void DispatchEditorCommands();
+        void RenderCommandPalette();
         void LoadRecentProjects();
         bool RunProjectLauncher();
         void SaveRecentProjects() const;
@@ -613,6 +625,11 @@ namespace PlutoGE::ui
         std::vector<PlayModeChanges::Change> m_playModeChanges;
         bool m_showViewportBookmarks = false;
         bool m_showPreferences = false;
+        EditorCommandRegistry m_commands;
+        std::array<bool, 4> m_commandScopeActive{}; // Indexed by EditorCommandScope.
+        bool m_openCommandPalette = false;
+        std::array<char, 128> m_commandPaletteQuery{};
+        int m_commandPaletteSelection = 0;
         bool m_bookmarksLoaded = false;
         std::filesystem::path m_bookmarkPath;
         std::vector<ViewportBookmark> m_viewportBookmarks;

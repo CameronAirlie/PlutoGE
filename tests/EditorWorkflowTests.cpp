@@ -5,6 +5,7 @@
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/ui/AssetHotReload.h"
 #include "PlutoGE/ui/ConsoleLog.h"
+#include "PlutoGE/ui/EditorCommands.h"
 #include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EntityNaming.h"
@@ -365,6 +366,57 @@ namespace
         scripting::ClearScriptErrorListener();
         scripting::ClearScriptLogSink();
     }
+    void EditorCommandsRebindAndRun()
+    {
+        const auto file = std::filesystem::temp_directory_path() / "PlutoGEEditorWorkflowTests" / "commands.ini";
+        std::filesystem::remove_all(file.parent_path());
+        EditorSettings settings(file);
+        EditorCommandRegistry commands(&settings);
+        commands.Register({.id = "scene.duplicate", .label = "Duplicate Entity", .category = "Edit", .defaultShortcut = ImGuiMod_Ctrl | ImGuiKey_D});
+        commands.Register({.id = "file.save", .label = "Save", .category = "File", .defaultShortcut = ImGuiMod_Ctrl | ImGuiKey_S});
+        commands.Register({.id = "file.save", .label = "Duplicate id", .category = "File"});
+        Check(commands.List().size() == 2, "Duplicate ids are ignored");
+
+        Check(commands.GetShortcut("scene.duplicate") == (ImGuiMod_Ctrl | ImGuiKey_D) && !commands.IsCustomized("scene.duplicate"),
+              "Default shortcut without a user binding");
+        commands.SetShortcut("scene.duplicate", ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D);
+        Check(commands.IsCustomized("scene.duplicate") && settings.Has("keys.scene.duplicate"), "Rebinding is stored in user settings");
+        Check(EditorCommandRegistry(&settings).GetShortcut("scene.duplicate") == 0 , "Unregistered commands have no shortcut");
+        commands.SetShortcut("file.save", ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D);
+        Check(commands.FindByShortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_D, "file.save")->id == "scene.duplicate", "Conflicts are found");
+        commands.SetShortcut("file.save", ImGuiKey_None);
+        Check(commands.GetShortcut("file.save") == ImGuiKey_None && commands.IsCustomized("file.save"), "A shortcut can be removed");
+        commands.SetShortcut("file.save", ImGuiMod_Ctrl | ImGuiKey_S);
+        Check(!commands.IsCustomized("file.save"), "Choosing the default again clears the override");
+        commands.ResetShortcut("scene.duplicate");
+        Check(commands.GetShortcut("scene.duplicate") == (ImGuiMod_Ctrl | ImGuiKey_D), "Reset restores the default");
+
+        int ran = 0;
+        commands.BeginFrame();
+        commands.Bind("scene.duplicate", [&] { ++ran; });
+        commands.Bind("file.save", [&] { ran += 10; }, false);
+        Check(commands.IsAvailable("scene.duplicate") && !commands.IsAvailable("file.save"), "Disabled bindings are unavailable");
+        Check(commands.Run("scene.duplicate") && !commands.Run("file.save") && ran == 1, "Run calls only enabled handlers");
+        commands.Queue("scene.duplicate");
+        commands.BeginFrame();
+        commands.RunQueued();
+        Check(ran == 1, "Unbound commands do not run");
+        commands.Bind("scene.duplicate", [&] { ++ran; });
+        commands.Queue("scene.duplicate");
+        commands.RunQueued();
+        commands.RunQueued();
+        Check(ran == 2, "A queued command runs once with the current binding");
+
+        Check(FormatShortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S) == "Ctrl+Shift+S", "Chord text");
+        Check(FormatShortcut(ImGuiMod_Ctrl | ImGuiKey_Comma) == "Ctrl+," && FormatShortcut(ImGuiKey_F5) == "F5", "Punctuation and function keys");
+        Check(FormatShortcut(ImGuiMod_Alt | ImGuiKey_1) == "Alt+1" && FormatShortcut(ImGuiKey_None).empty(), "Digits and unbound");
+
+        Check(FuzzyMatchScore("Edit: Duplicate Entity", "dup") > FuzzyMatchScore("Edit: Drop Selection onto Ground...", "dup"),
+              "Consecutive word-start matches rank first");
+        Check(FuzzyMatchScore("File: Save Scene As...", "ssa") >= 0 && FuzzyMatchScore("File: Save", "xyz") < 0, "Subsequence matching");
+        Check(FuzzyMatchScore("Player.plutoprefab", "PLAYER") > FuzzyMatchScore("Players/Enemy.plutoprefab", "player"), "Case-insensitive, shorter first");
+        Check(FuzzyMatchScore("anything", "") == 0, "Empty query matches everything");
+    }
 }
 
 int main()
@@ -384,6 +436,7 @@ int main()
         RecoverySessionMarker();
         ProjectScaffolding();
         AssetHotReloadWatch();
+        EditorCommandsRebindAndRun();
     }
     catch (const std::exception &error)
     {

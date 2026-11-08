@@ -91,7 +91,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 
 ## Tier 4 â€” Comfort and discoverability
 
-- [ ] **T4.1 Command registry, shortcuts list, command palette.** One registry for editor commands with shortcut,
+- [x] **T4.1 Command registry, shortcuts list, command palette.** One registry for editor commands with shortcut,
   rebinding in Preferences, Help > Keyboard Shortcuts, Ctrl+P palette with quick-open.
 - [ ] **T4.2 Viewport navigation.** Alt+LMB orbit around the selection, wheel dolly in perspective, hold-Ctrl snap,
   speed toast, persisted gizmo/snap settings.
@@ -380,3 +380,20 @@ the numeric parts of scene text.
 - Verified: `PlutoGEEditorWorkflowTests` (classification, quiet period, single report, deletions ignored); audio
   suites pass; `PlutoGEEditorUI` builds.
 
+### 2026-11-08 — T4.1
+
+- `EditorCommands` (registry: definitions with id, label, category, default and fixed alternate shortcut, scope,
+  repeat; per-frame `Bind` so handlers use that frame's state; `DispatchShortcuts` with a scope predicate;
+  `Queue`/`RunQueued` for the palette; overrides stored as `keys.<id>` in `EditorSettings`; `FormatShortcut`,
+  `CapturePressedShortcut`, `FuzzyMatchScore`).
+- `EditorShellCommands.cpp` registers the shell's commands and replaces `HandleEditorShortcuts` and the File-menu
+  shortcut block. Scopes keep the old rules (Global: no text input or popup; Editor: also not in key-owning asset
+  editors; Edit: also not in the Content Browser; Scene: `IsSceneShortcutContext`). Menus show the current binding.
+- Ctrl+P palette (Help > Command Palette): available commands plus quick-open of project assets via the new
+  `EditorShell::OpenProjectAsset` (moved from the Content Browser); assets with no editor are revealed instead.
+  Every panel gets a "Window: Show <panel>" command.
+- Preferences > Keyboard (also Help > Keyboard Shortcuts): filter, record by clicking and pressing keys,
+  conflict warning, remove, reset. Recording suppresses shortcuts so recording Ctrl+S does not save.
+- Viewport-local keys (W/E/R, F) and asset-editor keys stay with their panels; they could register commands later.
+- Verified: `PlutoGEEditorWorkflowTests` (rebinding, persistence, conflicts, availability, queueing, chord text,
+  fuzzy ranking); `PlutoGEEditorUI` builds; `PlutoGEAuthoringIntegrationTests` (links the shell) passes.

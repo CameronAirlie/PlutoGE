@@ -12,6 +12,9 @@ add_library(PlutoGEEditorUI
     src/UnsavedSwitchGuard.cpp
     src/EditorConsole.cpp
     src/EditorSettings.cpp
+    src/EditorCommands.cpp
+    src/EditorCommandsUI.cpp
+    src/EditorShellCommands.cpp
     src/ExternalScriptEditor.cpp
     src/ExternalScriptEditorUI.cpp
     src/ScriptDiagnostics.cpp

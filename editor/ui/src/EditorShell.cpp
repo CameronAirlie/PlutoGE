@@ -928,7 +928,11 @@ namespace PlutoGE::ui
         }
     }
 
-    EditorShell::EditorShell() { RegisterBuiltinAuthoring(m_authoring); }
+    EditorShell::EditorShell() : m_commands(&EditorSettings::Get())
+    {
+        RegisterBuiltinAuthoring(m_authoring);
+        RegisterEditorCommands();
+    }
 
     EditorShell::~EditorShell() { CancelModelImport(); }
 
@@ -1971,99 +1975,6 @@ namespace PlutoGE::ui
         }, SceneEditScope::Subtrees(std::move(rootIds)));
         SetSelectedEntity(nullptr);
         return true;
-    }
-
-    void EditorShell::HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel)
-    {
-        const ImGuiIO &io = ImGui::GetIO();
-        if (io.WantTextInput || (m_rmlDocumentEditor && m_rmlDocumentEditor->OwnsKeyboardFocus()) ||
-            (m_animationGraphEditor && m_animationGraphEditor->OwnsKeyboardFocus()) ||
-            (m_uiThemeEditor && m_uiThemeEditor->HasKeyboardFocus()) ||
-            (m_inputMappingEditor && m_inputMappingEditor->HasKeyboardFocus()) ||
-            (m_postProcessEditor && m_postProcessEditor->HasKeyboardFocus()) ||
-            (m_foliageEditor && m_foliageEditor->HasKeyboardFocus()) ||
-            ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
-        {
-            return;
-        }
-
-        if (ImGui::IsKeyPressed(ImGuiKey_F5, false))
-        {
-            if (isRuntimeRunning && io.KeyShift)
-                StopEditorRuntime();
-            else if (!isRuntimeRunning && !io.KeyShift)
-                m_pendingRuntimeStart = true;
-            return;
-        }
-        if (isRuntimeRunning)
-        {
-            const bool command = io.KeyCtrl || io.KeySuper;
-            PlayModeToolbarActions actions;
-            actions.togglePause = ImGui::IsKeyPressed(ImGuiKey_Pause, false) ||
-                                  (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false));
-            actions.step = command && io.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_P, false);
-            if (actions.togglePause || actions.step)
-            {
-                ApplyPlayModeActions(actions);
-                return;
-            }
-        }
-        // The content browser owns copy, paste, duplicate, delete and undo for
-        // files while focused; scene shortcuts must not act behind it.
-        if (m_contentBrowser && m_contentBrowser->HasKeyboardFocus())
-        {
-            return;
-        }
-        const bool command = io.KeyCtrl || io.KeySuper;
-        const bool sceneContext = IsSceneShortcutContext();
-        if (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
-        {
-            if (profilerPanel)
-            {
-                profilerPanel->CopyMetricsToClipboard();
-            }
-            return;
-        }
-        if (isRuntimeRunning)
-        {
-            return;
-        }
-        const bool foliageToolHandledKey = sceneContext && HandleFoliageToolKeys();
-        if (sceneContext && !foliageToolHandledKey && ImGui::IsKeyPressed(ImGuiKey_Escape))
-        {
-            SetSelectedEntity(nullptr);
-        }
-        if (command && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z))
-        {
-            Undo();
-        }
-        if ((command && ImGui::IsKeyPressed(ImGuiKey_Y)) ||
-            (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)))
-        {
-            Redo();
-        }
-        if (!sceneContext)
-        {
-            return;
-        }
-        if (command && ImGui::IsKeyPressed(ImGuiKey_C))
-        {
-            CopySelectedEntity();
-        }
-        if (command && ImGui::IsKeyPressed(ImGuiKey_V))
-        {
-            PasteCopiedEntity();
-        }
-        if (command && ImGui::IsKeyPressed(ImGuiKey_D))
-        {
-            DuplicateSelectedEntity();
-        }
-        // Delete only: Backspace is the text-editing key, and pressing it just after leaving a field must not
-        // remove the selection.
-        if (!foliageToolHandledKey && ImGui::IsKeyPressed(ImGuiKey_Delete))
-        {
-            DeleteSelectedEntity();
-        }
     }
 
     void EditorShell::UpdateOutdatedPrefabInstances()
@@ -4361,7 +4272,8 @@ namespace PlutoGE::ui
             m_panelManager.BeginPanelUpdate();
             const auto editorChromeStart = std::chrono::high_resolution_clock::now();
 
-            HandleEditorShortcuts(isRuntimeRunning, profilerPanel);
+            m_commands.BeginFrame();
+            BindEditorCommands(isRuntimeRunning, profilerPanel);
 
             auto sanitizeBakeSettings = [](scene::SceneBakeSettings &settings)
             {
@@ -4554,37 +4466,20 @@ namespace PlutoGE::ui
                     }
                 };
 
-                // Use the same actions for menu clicks and keyboard shortcuts.
-                const ImGuiIO &fileShortcutIO = ImGui::GetIO();
-                if (!isBakeRunning && !fileShortcutIO.WantTextInput && !m_rmlDocumentEditor->OwnsKeyboardFocus() &&
-                    !m_animationGraphEditor->OwnsKeyboardFocus() &&
-                    !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
-                    (fileShortcutIO.KeyCtrl || fileShortcutIO.KeySuper))
+                // Menu clicks, keyboard shortcuts and the command palette run the same actions.
                 {
-                    if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N, false))
-                        newProject();
-                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
-                        openProject();
-                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_S, false))
-                    {
-                        if (!SaveFocusedDocument())
-                            saveProject();
-                    }
-                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_B, false))
-                        buildProject();
-                    else if (fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_B, false))
-                        buildAndRunProject();
-                    else if (!fileShortcutIO.KeyShift && fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_N, false))
-                        newScene();
-                    else if (!fileShortcutIO.KeyShift && fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
-                        openScene();
-                    else if (!fileShortcutIO.KeyShift && fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false))
-                        saveScene();
-                    else if (fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_S, false))
-                        saveSceneAs();
-                    else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_Comma, false))
-                        m_showPreferences = true;
+                    const bool canEditFiles = !isBakeRunning;
+                    m_commands.Bind("file.newProject", [&] { newProject(); }, canEditFiles);
+                    m_commands.Bind("file.openProject", [&] { openProject(); }, canEditFiles);
+                    m_commands.Bind("file.save", [&] { if (!SaveFocusedDocument()) saveProject(); }, canEditFiles && m_project);
+                    m_commands.Bind("file.newScene", [&] { newScene(); }, canEditFiles);
+                    m_commands.Bind("file.openScene", [&] { openScene(); }, canEditFiles);
+                    m_commands.Bind("file.saveScene", [&] { saveScene(); }, canEditFiles && m_scene);
+                    m_commands.Bind("file.saveSceneAs", [&] { saveSceneAs(); }, canEditFiles && m_scene);
+                    m_commands.Bind("build.build", [&] { buildProject(); }, canEditFiles && m_project);
+                    m_commands.Bind("build.buildAndRun", [&] { buildAndRunProject(); }, canEditFiles && m_project);
                 }
+                DispatchEditorCommands();
 
                 const bool hasProject = m_project != nullptr;
                 const auto panelToggle = [](const char *label, Panel *panel)
@@ -4595,7 +4490,7 @@ namespace PlutoGE::ui
                 if (ImGui::BeginMenu("File"))
                 {
                     ImGui::BeginDisabled(isBakeRunning);
-                    if (ImGui::MenuItem("New Project...", "Ctrl+N"))
+                    if (ImGui::MenuItem("New Project...", m_commands.GetShortcutText("file.newProject").c_str()))
                     {
                         newProject();
                     }
@@ -4608,7 +4503,7 @@ namespace PlutoGE::ui
                         }
                         ImGui::EndMenu();
                     }
-                    if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
+                    if (ImGui::MenuItem("Open Project...", m_commands.GetShortcutText("file.openProject").c_str()))
                     {
                         openProject();
                     }
@@ -4633,25 +4528,25 @@ namespace PlutoGE::ui
                     }
                     if (!recentProjectToOpen.empty() && ConfirmContinueWithUnsavedChanges())
                         LoadProjectFromPath(recentProjectToOpen);
-                    if (ImGui::MenuItem("Save Project", "Ctrl+S", false, hasProject))
+                    if (ImGui::MenuItem("Save Project", m_commands.GetShortcutText("file.save").c_str(), false, hasProject))
                     {
                         saveProject();
                     }
 
                     ImGui::Separator();
-                    if (ImGui::MenuItem("New Scene", "Ctrl+Alt+N"))
+                    if (ImGui::MenuItem("New Scene", m_commands.GetShortcutText("file.newScene").c_str()))
                     {
                         newScene();
                     }
-                    if (ImGui::MenuItem("Open Scene...", "Ctrl+Alt+O"))
+                    if (ImGui::MenuItem("Open Scene...", m_commands.GetShortcutText("file.openScene").c_str()))
                     {
                         openScene();
                     }
-                    if (ImGui::MenuItem("Save Scene", "Ctrl+Alt+S"))
+                    if (ImGui::MenuItem("Save Scene", m_commands.GetShortcutText("file.saveScene").c_str()))
                     {
                         saveScene();
                     }
-                    if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S"))
+                    if (ImGui::MenuItem("Save Scene As...", m_commands.GetShortcutText("file.saveSceneAs").c_str()))
                     {
                         saveSceneAs();
                     }
@@ -4679,11 +4574,11 @@ namespace PlutoGE::ui
 
                 if (ImGui::BeginMenu("Edit"))
                 {
-                    if (ImGui::MenuItem("Undo", "Ctrl+Z", false, CanUndo()))
+                    if (ImGui::MenuItem("Undo", m_commands.GetShortcutText("edit.undo").c_str(), false, CanUndo()))
                     {
                         Undo();
                     }
-                    if (ImGui::MenuItem("Redo", "Ctrl+Y", false, CanRedo()))
+                    if (ImGui::MenuItem("Redo", m_commands.GetShortcutText("edit.redo").c_str(), false, CanRedo()))
                     {
                         Redo();
                     }
@@ -4692,7 +4587,7 @@ namespace PlutoGE::ui
                                         GetSelectedEntity() && !m_engine.IsRuntimeRunning() && !isBakeRunning))
                         m_showGroundPlacement = true;
                     ImGui::Separator();
-                    if (ImGui::MenuItem("Preferences...", "Ctrl+,"))
+                    if (ImGui::MenuItem("Preferences...", m_commands.GetShortcutText("editor.preferences").c_str()))
                         m_showPreferences = true;
                     ImGui::EndMenu();
                 }
@@ -4823,11 +4718,11 @@ namespace PlutoGE::ui
                 if (ImGui::BeginMenu("Build"))
                 {
                     ImGui::BeginDisabled(isBakeRunning || !hasProject);
-                    if (ImGui::MenuItem("Build Project...", "Ctrl+B"))
+                    if (ImGui::MenuItem("Build Project...", m_commands.GetShortcutText("build.build").c_str()))
                     {
                         buildProject();
                     }
-                    if (ImGui::MenuItem("Build and Run Project...", "Ctrl+Shift+B"))
+                    if (ImGui::MenuItem("Build and Run Project...", m_commands.GetShortcutText("build.buildAndRun").c_str()))
                     {
                         buildAndRunProject();
                     }
@@ -4855,11 +4750,11 @@ namespace PlutoGE::ui
                 {
                     const bool canRunRuntime = m_scene != nullptr;
                     const bool runtimeRunning = m_engine.IsRuntimeRunning();
-                    if (ImGui::MenuItem("Play", "F5", false, canRunRuntime && !runtimeRunning))
+                    if (ImGui::MenuItem("Play", m_commands.GetShortcutText("play.play").c_str(), false, canRunRuntime && !runtimeRunning))
                     {
                         m_pendingRuntimeStart = true;
                     }
-                    if (ImGui::MenuItem("Stop", "Shift+F5", false, runtimeRunning))
+                    if (ImGui::MenuItem("Stop", m_commands.GetShortcutText("play.stop").c_str(), false, runtimeRunning))
                     {
                         StopEditorRuntime();
                         forceEditorCursorVisible = false;
@@ -4874,9 +4769,9 @@ namespace PlutoGE::ui
                     }
                     if (runtimeRunning && m_runtimeSceneReplaced)
                         ImGui::SetItemTooltip("Keeping changes is unavailable after replacing the play scene.");
-                    if (ImGui::MenuItem("Pause", "Ctrl+Shift+P", m_runtimePaused, runtimeRunning))
+                    if (ImGui::MenuItem("Pause", m_commands.GetShortcutText("play.pause").c_str(), m_runtimePaused, runtimeRunning))
                         SetRuntimePaused(!m_runtimePaused);
-                    if (ImGui::MenuItem("Step Frame", "Ctrl+Alt+P", false, runtimeRunning && m_runtimePaused))
+                    if (ImGui::MenuItem("Step Frame", m_commands.GetShortcutText("play.step").c_str(), false, runtimeRunning && m_runtimePaused))
                         StepRuntime();
                     ImGui::Separator();
                     if (ImGui::BeginMenu("Simulation Speed", canRunRuntime))
@@ -4936,6 +4831,18 @@ namespace PlutoGE::ui
                     ImGui::EndMenu();
                 }
 
+                if (ImGui::BeginMenu("Help"))
+                {
+                    if (ImGui::MenuItem("Command Palette...", m_commands.GetShortcutText("editor.commandPalette").c_str()))
+                        m_openCommandPalette = true;
+                    if (ImGui::MenuItem("Keyboard Shortcuts..."))
+                    {
+                        SelectKeyboardPreferencesPage();
+                        m_showPreferences = true;
+                    }
+                    ImGui::EndMenu();
+                }
+
                 titleBar.EndMenus();
                 ApplyPlayModeActions(PlayModeToolbar::Draw(GetPlayState(), m_scene != nullptr));
                 titleBar.AddInteractiveItem();
@@ -4968,7 +4875,8 @@ namespace PlutoGE::ui
             RenderPlayModeChanges();
             RenderViewportBookmarks();
             RenderGroundPlacement();
-            RenderEditorPreferences(&m_showPreferences);
+            RenderEditorPreferences(&m_showPreferences, &m_commands);
+            RenderCommandPalette();
 
             const std::string projectSettingsTitle = std::string(icons::Settings) + "  Project Settings###ProjectSettings";
             if (shouldOpenProjectSettingsPopup)

@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/ExternalScriptEditor.h"
+#include "PlutoGE/ui/EditorCommands.h"
 #include "PlutoGE/ui/ConsoleLog.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EditorIcons.h"
@@ -27,6 +28,7 @@ namespace PlutoGE::ui
             Advanced,
             ExternalTools,
             Behaviour,
+            Keyboard,
         };
 
         struct PreferencesState
@@ -650,7 +652,12 @@ namespace PlutoGE::ui
         }
     }
 
-    void RenderEditorPreferences(bool *open)
+    void SelectKeyboardPreferencesPage()
+    {
+        Prefs().page = PreferencesPage::Keyboard;
+    }
+
+    void RenderEditorPreferences(bool *open, EditorCommandRegistry *commands)
     {
         auto &prefs = Prefs();
         if (open == nullptr || !*open)
@@ -699,6 +706,8 @@ namespace PlutoGE::ui
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0.0f, 6.0f));
             nav(icons::Settings, "Behaviour", PreferencesPage::Behaviour);
+            if (commands)
+                nav(icons::Keyboard, "Keyboard", PreferencesPage::Keyboard);
             nav(icons::ScriptAsset, "External Tools", PreferencesPage::ExternalTools);
             ImGui::EndChild();
             ImGui::PopStyleVar(2);
@@ -721,6 +730,10 @@ namespace PlutoGE::ui
             case PreferencesPage::Advanced: RenderAdvancedPage(); break;
             case PreferencesPage::ExternalTools: RenderExternalToolsPreferences(); break;
             case PreferencesPage::Behaviour: RenderBehaviourPage(); break;
+            case PreferencesPage::Keyboard:
+                if (commands)
+                    RenderKeyboardShortcutsPage(*commands);
+                break;
             }
             ImGui::EndChild();
         }

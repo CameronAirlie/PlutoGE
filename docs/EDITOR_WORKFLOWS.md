@@ -18,6 +18,19 @@ The Console lists editor, script, compiler, import and build messages.
   disappear. **Scripts > Script Build Diagnostics** still shows the full build output.
 - Filter, collapse and Error Pause choices are saved for your user account.
 
+## Commands, shortcuts and the command palette
+
+Ctrl+P (Help > Command Palette) finds any editor command by typing part of its name, for example "dup" for
+Duplicate Entity or "show con" for the Console. Type an asset name to open it in its editor; assets without an
+editor (textures, models, sounds) are shown in the Content Browser. Up/Down select, Enter runs, Esc closes.
+
+Shortcuts can be changed in Preferences > Keyboard (Help > Keyboard Shortcuts): click a shortcut, then press the
+new keys. Esc cancels, the cross removes the shortcut and the arrow restores the default. A warning shows when two
+commands share keys. Bindings are saved per user, not in the project. Menus always show the current binding.
+
+Code that adds an editor action registers it once with `EditorShell::GetCommands().Register(...)` and binds a
+handler each frame with `Bind(id, handler, enabled)`; the palette and shortcut list pick it up automatically.
+
 ## Where shortcuts apply
 
 Scene shortcuts act on the scene only while you are working in it: when the Scene Hierarchy or Editor Viewport

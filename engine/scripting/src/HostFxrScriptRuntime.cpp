@@ -133,6 +133,7 @@ namespace PlutoGE::scripting
         using register_light_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
         using register_mesh_geometry_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_prefab_spawn_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -205,6 +206,8 @@ namespace PlutoGE::scripting
         using instantiate_prefab_fn = uint32_t(PLUTO_HOST_CALL *)(const char *);
         using preload_prefab_fn = int32_t(PLUTO_HOST_CALL *)(const char *);
         using is_prefab_ready_fn = int32_t(PLUTO_HOST_CALL *)(const char *);
+        using instantiate_prefab_prepared_fn = uint32_t(PLUTO_HOST_CALL *)(const char *, uint32_t);
+        using start_entity_scripts_fn = void(PLUTO_HOST_CALL *)(uint32_t);
         using load_scene_fn = int(PLUTO_HOST_CALL *)(const char *);
         using quit_application_fn = void(PLUTO_HOST_CALL *)();
         using load_scriptable_object_asset_fn = const char *(PLUTO_HOST_CALL *)(const char *);
@@ -1460,15 +1463,8 @@ namespace PlutoGE::scripting
         // scripts stay unstarted until the scene's own update reaches them.
         void StartPrefabScripts(scene::Entity *entity)
         {
-            if (!entity || !entity->IsActive())
-                return;
-            for (auto *script : entity->GetComponents<scene::ScriptComponent>())
-                if (script->IsEnabled())
-                    script->Start();
-            // OnCreate may reparent or destroy children, so iterate a copy.
-            const auto children = entity->GetChildren();
-            for (auto *child : children)
-                StartPrefabScripts(child);
+            if (entity)
+                scene::ScriptComponent::StartHierarchy(*entity);
         }
 
         uint32_t InstantiatePrefab(const char *prefabReference)
@@ -1497,6 +1493,43 @@ namespace PlutoGE::scripting
                 StartPrefabScripts(instance);
 
             return instance->GetID();
+        }
+
+        // Spawning in two steps lets C# place and configure a new object before any of its scripts run OnCreate:
+        // InstantiatePrefabPrepared creates the object (under `parentId` when non-zero) with its scripts created
+        // and configured, then StartEntityScripts runs their OnCreate.
+        uint32_t InstantiatePrefabPrepared(const char *prefabReference, uint32_t parentId)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            if (!activeScene || !prefabReference || prefabReference[0] == '\0')
+                return 0;
+            auto *parent = parentId != 0 ? activeScene->FindEntityByID(parentId) : nullptr;
+            if (parentId != 0 && !parent)
+            {
+                DispatchScriptLog(ScriptLogSeverity::Warning, "Cannot instantiate prefab '" + std::string(prefabReference) +
+                                                                  "': the parent no longer exists.");
+                return 0;
+            }
+            std::string errorMessage;
+            auto *instance = scene::Prefab::Instantiate(*activeScene, prefabReference, parent, &errorMessage);
+            if (!instance)
+            {
+                if (!errorMessage.empty())
+                    DispatchScriptLog(ScriptLogSeverity::Warning,
+                                      "Failed to instantiate prefab '" + std::string(prefabReference) + "': " + errorMessage);
+                return 0;
+            }
+            if (activeScene->IsRuntimeStarted())
+                scene::ScriptComponent::PrepareHierarchy(*instance);
+            return instance->GetID();
+        }
+
+        void StartEntityScripts(uint32_t entityId)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            auto *entity = activeScene ? activeScene->FindEntityByID(entityId) : nullptr;
+            if (entity && activeScene->IsRuntimeStarted())
+                scene::ScriptComponent::StartHierarchy(*entity);
         }
 
         int32_t PreloadPrefab(const char *prefabReference)
@@ -3865,6 +3898,7 @@ namespace PlutoGE::scripting
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_mesh_geometry_api_fn registerMeshGeometryApi = nullptr; // Optional: older ScriptCore builds lack it.
+        register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
@@ -3994,6 +4028,7 @@ namespace PlutoGE::scripting
             impl.registerLightComponentApi = nullptr;
             impl.registerMeshComponentApi = nullptr;
             impl.registerMeshGeometryApi = nullptr;
+            impl.registerPrefabSpawnApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
@@ -4400,6 +4435,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("UnloadScriptAssembly"), impl.unloadScriptAssembly))
             {
                 impl.unloadScriptAssembly = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterPrefabSpawnApi"), impl.registerPrefabSpawnApi))
+            {
+                impl.registerPrefabSpawnApi = nullptr;
                 impl.lastError.clear();
             }
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterMeshGeometryApi"), impl.registerMeshGeometryApi))
@@ -4900,6 +4940,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshEmission))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (m_impl->registerPrefabSpawnApi &&
+            m_impl->registerPrefabSpawnApi(
+                reinterpret_cast<void *>(static_cast<instantiate_prefab_prepared_fn>(&InstantiatePrefabPrepared)),
+                reinterpret_cast<void *>(static_cast<start_entity_scripts_fn>(&StartEntityScripts))) == 0)
+        {
+            setManagedBridgeFailure("RegisterPrefabSpawnApi");
             return false;
         }
 

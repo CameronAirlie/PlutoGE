@@ -2424,7 +2424,18 @@ namespace PlutoGE::scene
         m_shaderTime = 0.0f;
         render::SetShaderGraphTimeSeconds(0.0f);
         m_runtimeComponents->Refresh(m_rootEntities);
-        for (const auto handle : m_runtimeComponents->SnapshotScripts())
+        // Two phases: create and configure every script, then run OnCreate, so a script can look up any other
+        // script in the scene from its OnCreate.
+        const auto scriptHandles = m_runtimeComponents->SnapshotScripts();
+        for (const auto handle : scriptHandles)
+        {
+            if (auto *scriptComponent = m_runtimeComponents->Resolve(handle))
+            {
+                platform::LoadingWork::Checkpoint();
+                scriptComponent->Prepare();
+            }
+        }
+        for (const auto handle : scriptHandles)
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
             if (!scriptComponent)

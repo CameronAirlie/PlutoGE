@@ -1,12 +1,17 @@
 // ScriptBehaviour lifecycle through the hosted .NET runtime: error reporting, faulted instances.
 // Probes live in tests/managed/PlutoGE.ScriptBehaviourProbe.
 
+#include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptErrors.h"
 
+#include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -68,6 +73,58 @@ namespace
         Require(reports[0].callback == "OnUpdate" && reports[0].exception.find("UpdateFaultProbe.Fail") != std::string::npos,
                 "OnUpdate report lacks its stack trace");
     }
+
+    scene::ScriptComponent *AddScript(scene::Scene &scene, const char *name, const char *className,
+                                      std::unordered_map<std::string, scripting::ScriptFieldValue> fields = {})
+    {
+        auto *entity = scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = name}));
+        return entity->CreateComponent<scene::ScriptComponent>(scene::ScriptComponentConfig{
+            .scriptClass = std::string("PlutoGE.ScriptBehaviourProbe.") + className, .fieldValues = std::move(fields)});
+    }
+
+    template <typename T>
+    T LiveField(const scene::ScriptComponent &script, const char *name)
+    {
+        const auto value = script.GetFieldValue(name);
+        Require(value && std::holds_alternative<T>(*value), std::string("Live field missing: ") + name);
+        return std::get<T>(*value);
+    }
+
+    // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
+    // configure callback in place before the spawned script's OnCreate).
+    void StartOrderAndSpawning(core::Engine &engine)
+    {
+        const auto root = std::filesystem::temp_directory_path() /
+                          ("PlutoGE-behaviour-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        struct Cleanup
+        {
+            std::filesystem::path root;
+            ~Cleanup() { std::error_code ec; std::filesystem::remove_all(root, ec); }
+        } cleanup{root};
+        engine.GetAssetManager().SetProjectContext(root.string());
+
+        std::string error;
+        {
+            scene::Scene authoring;
+            auto *spawned = AddScript(authoring, "Spawned", "SpawnedProbe")->GetOwner();
+            Require(scene::Prefab::SaveFromEntity(*spawned, root / "Assets" / "Spawned.plutoprefab", &error), error);
+        }
+
+        scene::Scene scene;
+        auto *sibling = AddScript(scene, "Sibling", "SiblingProbe");
+        AddScript(scene, "Partner", "PartnerProbe", {{"Configured", int32_t{5}}});
+        auto *spawner = AddScript(scene, "Spawner", "SpawnerProbe",
+                                  {{"PrefabReference", std::string("project://Spawned.plutoprefab")}});
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+
+        Require(LiveField<bool>(*sibling, "SawPartner"), "OnCreate ran before a later script was created and configured");
+        Require(LiveField<bool>(*spawner, "SpawnWorked"), "Spawn configure failed: " + LiveField<std::string>(*spawner, "Failure"));
+        const auto *spawnerEntity = spawner->GetOwner();
+        Require(spawnerEntity->GetChildren().size() == 1 && spawnerEntity->GetChildren().front()->GetName() == "Spawned",
+                "Spawned prefab was not parented");
+    }
 }
 
 int main()
@@ -90,6 +147,8 @@ try
     Require(scripts.LoadAssembly(PLUTOGE_SCRIPT_BEHAVIOUR_PROBE_ASSEMBLY), scripts.GetLastError());
 
     ExceptionsAreReported(scripts, scene);
+    engine.SetScene(nullptr);
+    StartOrderAndSpawning(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

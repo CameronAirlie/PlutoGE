@@ -60,6 +60,9 @@ public override void OnCollisionExit(GameObject other) {}
 ```
 
 - Serialized values are applied before `OnCreate`.
+- Scripts start in two phases. When Play starts, and when a prefab is spawned, every script instance is created
+  and its serialized fields applied first, and only then does each `OnCreate` run. `OnCreate` can therefore
+  safely look up other scripts with `GetComponent<OtherScript>()`, whatever order the entities are in.
 - `OnCreate` runs when Play/runtime starts and the attached script instance is started.
 - `OnUpdate` runs once per runtime frame.
 - `OnLateUpdate` runs after normal script updates, physics presentation, and built-in camera rigs. Camera-relative aiming and reticles can use the final rig pose here.
@@ -654,7 +657,26 @@ var enemy = enemyPrefab?.Instantiate(position, rotation);
 var other = Prefab.Instantiate("project://Prefabs/Enemy.plutoprefab");
 ```
 
-Available overloads accept no transform, a position, or a position and Euler rotation. Instantiation returns `null` on failure.
+Available overloads accept no transform, a position, a position and Euler rotation, or a position, `Quaternion`
+rotation and optional parent. Instantiation returns `null` on failure.
+
+The new object is placed and parented before any of its scripts run `OnCreate`, so `OnCreate` sees the final
+transform. To hand data to a spawned script, use `Instantiate<T>` with a `configure` callback. It runs after
+the object's scripts are created and their serialized fields applied, but before any `OnCreate`:
+
+```csharp
+[SerializedField] private Prefab? bulletPrefab;
+
+var bullet = bulletPrefab?.Instantiate<Bullet>(muzzle.Position, muzzle.RotationQuaternion, b =>
+{
+    b.Damage = damage;
+    b.Owner = GameObject;
+});
+```
+
+`T` can be a script or an engine component on the prefab's root; the call returns that component, or `null`
+(with a warning) when the root has none. There is no need to pass data through static "pending" dictionaries
+keyed by entity ID.
 
 `Prefab.Preload(reference)` parses and caches a prefab ahead of its first instantiation (for example in a
 spawner's `OnCreate`, while the scene loads); `Prefab.IsReady(reference)` reports whether the cached copy is

@@ -5,6 +5,7 @@
 #include "PlutoGE/assets/AssetManager.h"
 #include <stdexcept>
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
 
@@ -217,6 +218,59 @@ namespace PlutoGE::scene
     bool ScriptComponent::HasLiveInstance() const
     {
         return m_instance && !m_instance->IsFaulted();
+    }
+
+    void ScriptComponent::Prepare()
+    {
+        if (!m_started && !m_scriptClass.empty())
+            EnsureInstance();
+    }
+
+    namespace
+    {
+        // Enabled scripts on active entities, parents before children.
+        std::vector<ScriptComponent *> CollectStartableScripts(Entity &root)
+        {
+            std::vector<ScriptComponent *> scripts;
+            const auto collect = [&](Entity &entity, const auto &self) -> void
+            {
+                if (!entity.IsActive())
+                    return;
+                for (auto *script : entity.GetComponents<ScriptComponent>())
+                    if (script->IsEnabled())
+                        scripts.push_back(script);
+                for (auto *child : entity.GetChildren())
+                    if (child)
+                        self(*child, self);
+            };
+            collect(root, collect);
+            return scripts;
+        }
+    }
+
+    void ScriptComponent::PrepareHierarchy(Entity &root)
+    {
+        for (auto *script : CollectStartableScripts(root))
+            script->Prepare();
+    }
+
+    void ScriptComponent::StartHierarchy(Entity &root)
+    {
+        const auto scripts = CollectStartableScripts(root);
+        for (auto *script : scripts)
+            script->Prepare();
+        // OnCreate may destroy entities in this hierarchy; skip scripts whose entity is gone.
+        std::vector<EntityID> owners;
+        owners.reserve(scripts.size());
+        for (auto *script : scripts)
+            owners.push_back(script->GetOwner() ? script->GetOwner()->GetID() : 0);
+        auto *scene = root.GetScene();
+        for (std::size_t i = 0; i < scripts.size(); ++i)
+        {
+            if (scene && owners[i] != 0 && !scene->FindEntityByID(owners[i]))
+                continue;
+            scripts[i]->Start();
+        }
     }
 
     void ScriptComponent::Start()

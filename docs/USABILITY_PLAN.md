@@ -52,9 +52,9 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 
 ## Tier 2 — C# scripting API
 
-- [ ] **T2.1 Two-phase start.** Create every script instance and apply fields first, then call `OnCreate` on each, so
+- [x] **T2.1 Two-phase start.** Create every script instance and apply fields first, then call `OnCreate` on each, so
   sibling lookups in `OnCreate` succeed. Applies to runtime start and to instantiated prefabs.
-- [ ] **T2.2 Instantiate with configuration.** `Prefab.Instantiate<T>(position, rotation, parent, configure)` where
+- [x] **T2.2 Instantiate with configuration.** `Prefab.Instantiate<T>(position, rotation, parent, configure)` where
   `configure` runs before `OnCreate`; Quaternion and parent overloads.
 - [ ] **T2.3 Serialized field types and attributes.** Enums, Quaternion, Color, primitive arrays/lists, warning on
   unsupported members, `[Range]`, `[Tooltip]`, `[Header]`, `[FormerlySerializedAs]`. Existing `.plutoscriptable` files
@@ -172,4 +172,17 @@ Record each completed item here with the date, what changed, and how it was veri
   unclean exit.
 - Verified: `PlutoGEEditorWorkflowTests` (duplicate naming, session marker) pass; `PlutoGEEditorUI` builds.
   Editor binary still locked by the running editor, so Tier 1 still needs an interactive pass.
+
+### 2026-11-08 — T2.1, T2.2
+
+- `ScriptComponent::Prepare()` creates and configures an instance without OnCreate; `StartHierarchy` /
+  `PrepareHierarchy` run the two phases over a subtree. `Scene::StartRuntime` prepares every script before any
+  OnCreate.
+- Optional bridge API `RegisterPrefabSpawnApi` (`InstantiatePrefabPrepared(reference, parentId)`,
+  `StartEntityScripts(id)`); older hosts fall back to the previous behaviour.
+- `Prefab.Instantiate` overloads now place the object before OnCreate (previously Position was set after);
+  new `Instantiate(position, Quaternion, parent)` and `Instantiate<T>(..., configure, parent)`.
+- Verified: `PlutoGEScriptBehaviourTests` runs a scene with Play started: a script created before its partner sees
+  the partner's configured field in OnCreate, and a spawned prefab's OnCreate sees the configured value, local
+  position and parent.
 

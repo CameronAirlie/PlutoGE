@@ -246,6 +246,8 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, int> _getEntityCountByTag;
     private static delegate* unmanaged[Cdecl]<byte*, int, uint> _getEntityByTag;
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
+    private static delegate* unmanaged[Cdecl]<byte*, uint, uint> _instantiatePrefabPrepared;
+    private static delegate* unmanaged[Cdecl]<uint, void> _startEntityScripts;
     private static delegate* unmanaged[Cdecl]<byte*, int> _preloadPrefab;
     private static delegate* unmanaged[Cdecl]<byte*, int> _isPrefabReady;
     private static delegate* unmanaged[Cdecl]<byte*, int> _loadScene;
@@ -900,6 +902,24 @@ internal static unsafe partial class ScriptBridge
         _setMeshColor = setMeshColor;
         _getMeshEmission = getMeshEmission;
         _setMeshEmission = setMeshEmission;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    /// <summary>Optional: hosts without it start a spawned prefab's scripts immediately, before configuration.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPrefabSpawnApi")]
+    public static int RegisterPrefabSpawnApi(
+        delegate* unmanaged[Cdecl]<byte*, uint, uint> instantiatePrefabPrepared,
+        delegate* unmanaged[Cdecl]<uint, void> startEntityScripts)
+    {
+        if (instantiatePrefabPrepared == null || startEntityScripts == null)
+        {
+            SetError("Managed prefab spawn API registration received a null function pointer.");
+            return 0;
+        }
+
+        _instantiatePrefabPrepared = instantiatePrefabPrepared;
+        _startEntityScripts = startEntityScripts;
         _lastError = string.Empty;
         return 1;
     }
@@ -2137,6 +2157,32 @@ internal static unsafe partial class ScriptBridge
         fixed (byte* referencePtr = referenceBytes)
         {
             return _instantiatePrefab(referencePtr);
+        }
+    }
+
+    /// <summary>True when the host can spawn without starting scripts (see <see cref="InstantiatePrefabPrepared"/>).</summary>
+    internal static bool CanSpawnPrepared => _instantiatePrefabPrepared != null && _startEntityScripts != null;
+
+    /// <summary>Instantiates with scripts created and configured but not started. Call <see cref="StartEntityScripts"/>.</summary>
+    internal static uint InstantiatePrefabPrepared(string prefabReference, uint parentId)
+    {
+        if (!CanSpawnPrepared || string.IsNullOrWhiteSpace(prefabReference))
+        {
+            return 0;
+        }
+
+        var referenceBytes = Encoding.UTF8.GetBytes(prefabReference + '\0');
+        fixed (byte* referencePtr = referenceBytes)
+        {
+            return _instantiatePrefabPrepared(referencePtr, parentId);
+        }
+    }
+
+    internal static void StartEntityScripts(uint entityId)
+    {
+        if (_startEntityScripts != null && entityId != 0)
+        {
+            _startEntityScripts(entityId);
         }
     }
 

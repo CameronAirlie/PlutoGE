@@ -32,8 +32,18 @@ namespace PlutoGE::scene
         explicit ScriptComponent(const ScriptComponentConfig &config = {});
         ~ScriptComponent() override;
 
+        // Creates the script instance and applies its serialized fields without calling OnCreate. Starting a
+        // group of scripts prepares all of them first, so every OnCreate can find the others (two-phase start).
+        void Prepare();
+        // Prepares if needed, then calls OnCreate once.
         void Start();
         void Stop();
+        // Starts the enabled scripts on `root` and its active descendants in two phases: every instance is created
+        // and configured, then each OnCreate runs. Inactive entities and disabled scripts wait for the scene update.
+        static void StartHierarchy(Entity &root);
+        // The first phase of StartHierarchy alone: instances exist and are configured, OnCreate has not run.
+        // Spawning code uses it to configure a new object's scripts before they start.
+        static void PrepareHierarchy(Entity &root);
         bool OnServerCommand(std::string_view command);
         void Update(float deltaTime) override;
         void FixedUpdate(float fixedDeltaTime);

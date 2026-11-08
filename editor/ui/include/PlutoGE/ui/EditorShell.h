@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/TimelinePreview.h"
 #pragma once
 
+#include "PlutoGE/ui/ConsoleLog.h"
 #include "PlutoGE/ui/EntityLocks.h"
 #include "PlutoGE/ui/EntitySelection.h"
 #include "PlutoGE/ui/FoliageEditTool.h"
@@ -8,6 +9,7 @@
 #include "PlutoGE/ui/ScriptSourceWatch.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptBuildProcess.h"
+#include "PlutoGE/scripting/ScriptErrors.h"
 
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Camera.h"
@@ -31,6 +33,7 @@
 #include "PlutoGE/asset_import/ModelNodeRepairService.h"
 #include "PlutoGE/asset_import/ImportState.h"
 #include "PlutoGE/asset_import/ImportWatch.h"
+#include <atomic>
 #include <chrono>
 
 #include <algorithm>
@@ -84,18 +87,8 @@ namespace PlutoGE::ui
         void RenderScriptBuildDiagnostics();
         void UpdateAuthoring() { PollModelImport(); PollScriptSources(); }
         bool IsScriptBuildRunning() const { return m_scriptBuildFuture.valid(); }
-        enum class ConsoleSeverity
-        {
-            Info,
-            Warning,
-            Error,
-        };
-
-        struct ConsoleMessage
-        {
-            ConsoleSeverity severity = ConsoleSeverity::Info;
-            std::string text;
-        };
+        using ConsoleSeverity = ui::ConsoleSeverity;
+        using ConsoleMessage = ui::ConsoleEntry;
 
         struct EditorViewportCamera
         {
@@ -291,8 +284,12 @@ namespace PlutoGE::ui
             return requested;
         }
         void Log(ConsoleSeverity severity, std::string message);
+        void Log(ConsoleEntry entry);
+        [[nodiscard]] const ConsoleLog &GetConsoleLog() const { return m_consoleLog; }
         std::vector<ConsoleMessage> GetConsoleMessages() const;
         void ClearConsoleMessages();
+        // Selects the entry's entity, reveals its asset or opens its source file, whichever it carries.
+        void NavigateToConsoleEntry(const ConsoleEntry &entry);
         TimelinePreview &GetTimelinePreview() { return m_timelinePreview; }
         // Reports an edit already made to the scene. Its reach comes from the enclosing SceneEditRegion, and without
         // one it is assumed to be the whole scene; pass one to say otherwise.
@@ -454,6 +451,10 @@ namespace PlutoGE::ui
         [[nodiscard]] PlayState GetPlayState() const;
         void SetRuntimePaused(bool paused);
         void StepRuntime();
+        // A script callback threw: log it with its entity and source line, and pause play when the user asked to.
+        void OnScriptError(const scripting::ScriptErrorReport &report);
+        // Logs compiler errors and warnings from a script build as navigable Console entries.
+        void ReportScriptBuildDiagnostics(std::string_view output, bool succeeded);
         void ApplyPlayModeActions(const PlayModeToolbarActions &actions);
         void RenderPlayModeChanges();
         bool ApplyPlayModeChanges();
@@ -524,8 +525,7 @@ namespace PlutoGE::ui
         bool m_projectDirty = false;
         SceneEditHistory m_sceneHistory{*this};
         std::vector<std::filesystem::path> m_recentProjects;
-        std::vector<ConsoleMessage> m_consoleMessages;
-        mutable std::mutex m_consoleMessagesMutex;
+        ConsoleLog m_consoleLog;
         std::string m_activeMaterialAssetReference;
         std::string m_activeMeshAssetReference;
         std::string m_activeShaderGraphAssetReference;
@@ -550,6 +550,8 @@ namespace PlutoGE::ui
         bool m_runtimeSceneWasDirty = false;
         bool m_runtimeSceneReplaced = false;
         bool m_runtimePaused = false;
+        // Set from whichever thread ran the failing script; the frame loop pauses play.
+        std::atomic<bool> m_scriptErrorPauseRequested{false};
         float m_pausedOutputVolume = 1.0f;
         bool m_openPlayModeChanges = false;
         std::string m_playModeChangesError;

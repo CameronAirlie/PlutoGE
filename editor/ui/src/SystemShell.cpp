@@ -1,6 +1,7 @@
 #include "PlutoGE/ui/SystemShell.h"
 
 #include <cctype>
+#include <cwctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -76,6 +77,86 @@ namespace PlutoGE::ui
             const auto text = path.u8string();
             return {reinterpret_cast<const char *>(text.data()), text.size()};
         }
+
+#ifdef _WIN32
+        std::wstring Widen(std::string_view utf8)
+        {
+            return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(utf8.data()), utf8.size())).wstring();
+        }
+
+        // CommandLineToArgvW quoting: wrap each argument in quotes, escape quotes and the backslashes before them.
+        std::wstring QuoteWindowsArguments(const std::vector<std::string> &arguments)
+        {
+            std::wstring commandLine;
+            for (const auto &argument : arguments)
+            {
+                const auto wide = Widen(argument);
+                commandLine += commandLine.empty() ? L"\"" : L" \"";
+                std::size_t backslashes = 0;
+                for (const wchar_t character : wide)
+                {
+                    if (character == L'\\') { ++backslashes; continue; }
+                    if (character == L'"') commandLine.append(backslashes * 2 + 1, L'\\');
+                    else commandLine.append(backslashes, L'\\');
+                    backslashes = 0;
+                    commandLine += character;
+                }
+                commandLine.append(backslashes * 2, L'\\');
+                commandLine += L'"';
+            }
+            return commandLine;
+        }
+
+        // Finds `program` on PATH the way a command prompt does, including .cmd/.bat launchers such as `code`.
+        std::filesystem::path FindProgram(const std::string &program)
+        {
+            const auto wide = Widen(program);
+            for (const wchar_t *extension : {L".exe", L".cmd", L".bat", L".com"})
+            {
+                wchar_t buffer[MAX_PATH * 4];
+                const DWORD capacity = static_cast<DWORD>(sizeof(buffer) / sizeof(buffer[0]));
+                const DWORD length = SearchPathW(nullptr, wide.c_str(), extension, capacity, buffer, nullptr);
+                if (length > 0 && length < capacity)
+                    return std::filesystem::path(std::wstring(buffer, length));
+            }
+            return {};
+        }
+#endif
+    }
+
+    bool LaunchDetached(const std::vector<std::string> &arguments, std::string *errorMessage)
+    {
+        if (arguments.empty() || arguments.front().empty())
+            return Fail(errorMessage, "No program to launch.");
+#ifdef _WIN32
+        const auto program = FindProgram(arguments.front());
+        if (program.empty())
+            return Fail(errorMessage, "Could not find " + arguments.front() + " on PATH.");
+
+        auto resolved = arguments;
+        resolved.front() = Utf8(program);
+        std::wstring commandLine = QuoteWindowsArguments(resolved);
+        auto extension = program.extension().wstring();
+        for (auto &character : extension)
+            character = static_cast<wchar_t>(towlower(character));
+        if (extension == L".cmd" || extension == L".bat")
+        {
+            // Batch launchers need the command interpreter; /s strips the outer quotes so the inner quoting survives.
+            commandLine = L"cmd.exe /d /s /c \"" + commandLine + L"\"";
+        }
+
+        STARTUPINFOW startup{};
+        startup.cb = sizeof(startup);
+        PROCESS_INFORMATION process{};
+        if (!CreateProcessW(nullptr, commandLine.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr,
+                            &startup, &process))
+            return Fail(errorMessage, "Could not start " + arguments.front() + " (error " + std::to_string(GetLastError()) + ").");
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        return true;
+#else
+        return Spawn(arguments, false, errorMessage);
+#endif
     }
 
     ProcessResult RunProcess(const std::vector<std::string> &arguments)
@@ -86,24 +167,7 @@ namespace PlutoGE::ui
             return result;
         }
 #ifdef _WIN32
-        std::wstring commandLine;
-        for (const auto &argument : arguments)
-        {
-            // CommandLineToArgvW quoting: wrap in quotes, escape quotes and the backslashes before them.
-            const auto wide = std::filesystem::path(std::u8string(reinterpret_cast<const char8_t *>(argument.data()), argument.size())).wstring();
-            commandLine += commandLine.empty() ? L"\"" : L" \"";
-            std::size_t backslashes = 0;
-            for (const wchar_t character : wide)
-            {
-                if (character == L'\\') { ++backslashes; continue; }
-                if (character == L'"') commandLine.append(backslashes * 2 + 1, L'\\');
-                else commandLine.append(backslashes, L'\\');
-                backslashes = 0;
-                commandLine += character;
-            }
-            commandLine.append(backslashes * 2, L'\\');
-            commandLine += L'"';
-        }
+        std::wstring commandLine = QuoteWindowsArguments(arguments);
         SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
         HANDLE readPipe = nullptr;
         HANDLE writePipe = nullptr;

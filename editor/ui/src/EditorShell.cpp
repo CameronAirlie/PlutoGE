@@ -18,6 +18,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/ui/ProjectLauncher.h"
 #include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/EditorTheme.h"
@@ -1392,15 +1393,16 @@ namespace PlutoGE::ui
         buildConfig.projectPath = GetProjectScriptProjectPath();
         buildConfig.configuration = "Debug";
         buildConfig.framework = "net8.0";
+        buildConfig.echoOutputToLog = false;
 
         timing.Stage("prepare");
         const auto buildResult = scriptEngine.BuildProject(buildConfig);
         timing.Stage("dotnet build");
         m_scriptBuildOutput = buildResult.output;
-        if (!buildResult.succeeded) m_showScriptBuildDiagnostics = true;
+        ReportScriptBuildDiagnostics(m_scriptBuildOutput, buildResult.succeeded);
         if (!buildResult.succeeded)
         {
-            m_statusMessage = "Failed to build scripts (exit code " + std::to_string(buildResult.exitCode) + ").";
+            m_statusMessage = "Failed to build scripts (exit code " + std::to_string(buildResult.exitCode) + "). See the Console.";
 
             std::string restoreErrorMessage;
             if (ReloadProjectScriptAssembly(&restoreErrorMessage) && wasRuntimeRunning)
@@ -1505,22 +1507,6 @@ namespace PlutoGE::ui
         }
 
         return true;
-    }
-
-    void EditorShell::Log(ConsoleSeverity severity, std::string message)
-    {
-        if (message.empty())
-        {
-            return;
-        }
-
-        std::lock_guard lock(m_consoleMessagesMutex);
-        m_consoleMessages.push_back(ConsoleMessage{.severity = severity, .text = std::move(message)});
-        constexpr std::size_t kMaxConsoleMessages = 1000;
-        if (m_consoleMessages.size() > kMaxConsoleMessages)
-        {
-            m_consoleMessages.erase(m_consoleMessages.begin(), m_consoleMessages.begin() + static_cast<std::ptrdiff_t>(m_consoleMessages.size() - kMaxConsoleMessages));
-        }
     }
 
     void EditorShell::MarkSceneDirty()
@@ -2078,18 +2064,6 @@ namespace PlutoGE::ui
         {
             DeleteSelectedEntity();
         }
-    }
-
-    std::vector<EditorShell::ConsoleMessage> EditorShell::GetConsoleMessages() const
-    {
-        std::lock_guard lock(m_consoleMessagesMutex);
-        return m_consoleMessages;
-    }
-
-    void EditorShell::ClearConsoleMessages()
-    {
-        std::lock_guard lock(m_consoleMessagesMutex);
-        m_consoleMessages.clear();
     }
 
     void EditorShell::OpenRmlDocument(std::string reference)
@@ -3430,8 +3404,9 @@ namespace PlutoGE::ui
                     break;
                 }
 
-                Log(consoleSeverity, std::string(message));
+                Log(ConsoleEntry{.severity = consoleSeverity, .source = ConsoleSource::Script, .text = std::string(message)});
             });
+        scripting::SetScriptErrorListener([this](const scripting::ScriptErrorReport &report) { OnScriptError(report); });
 
         InitializeEditorCamera();
         LoadRecentProjects();
@@ -5484,7 +5459,15 @@ namespace PlutoGE::ui
                     window.SetScriptInputEnabled(shouldEnableRuntimeInput());
                 }
                 if (m_engine.IsRuntimeRunning()) HandleRuntimeSceneLoadRequest(*viewportPanel2);
+                if (m_scriptErrorPauseRequested.exchange(false) && m_engine.IsRuntimeRunning() && !m_runtimePaused)
+                {
+                    SetRuntimePaused(true);
+                    m_statusMessage = "Paused on script error. See the Console.";
+                }
             }
+            // Per-user settings are written once per frame at most, and never mid-drag.
+            if (EditorSettings::Get().IsDirty() && !ImGui::IsAnyItemActive())
+                EditorSettings::Get().Flush();
 
             if (m_pendingBuild && !window.ShouldClose())
             {
@@ -5634,6 +5617,8 @@ namespace PlutoGE::ui
         m_editorCamera.ClearPostProcessEffects();
         m_engine.GetAssetManager().ClearProjectContext();
         scripting::ClearScriptLogSink();
+        scripting::ClearScriptErrorListener();
+        EditorSettings::Get().Flush();
         m_panelManager.ShutdownPanels();
         m_gameSceneRenderService.reset();
         m_editorSceneRenderService.reset();

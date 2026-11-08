@@ -65,6 +65,8 @@ namespace PlutoGE::scene
 
     private:
         void EnsureInstance();
+        // An instance exists and its OnCreate did not throw.
+        [[nodiscard]] bool HasLiveInstance() const;
         void ApplySerializedFields();
 
         std::string m_scriptClass;

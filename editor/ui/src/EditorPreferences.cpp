@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorPreferences.h"
+#include "PlutoGE/ui/ExternalScriptEditor.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/EditorWidgets.h"
@@ -22,6 +23,7 @@ namespace PlutoGE::ui
             Colours,
             Interface,
             Advanced,
+            ExternalTools,
         };
 
         struct PreferencesState
@@ -660,6 +662,13 @@ namespace PlutoGE::ui
             nav(icons::Swatches, "Colours", PreferencesPage::Colours);
             nav(icons::Quality, "Interface", PreferencesPage::Interface);
             nav(icons::Settings, "Advanced", PreferencesPage::Advanced);
+            ImGui::Dummy(ImVec2(0.0f, 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::TextMuted));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
+            ImGui::TextUnformatted("TOOLS");
+            ImGui::PopStyleColor();
+            ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            nav(icons::ScriptAsset, "External Tools", PreferencesPage::ExternalTools);
             ImGui::EndChild();
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor();
@@ -679,6 +688,7 @@ namespace PlutoGE::ui
             case PreferencesPage::Colours: RenderColoursPage(); break;
             case PreferencesPage::Interface: RenderInterfacePage(); break;
             case PreferencesPage::Advanced: RenderAdvancedPage(); break;
+            case PreferencesPage::ExternalTools: RenderExternalToolsPreferences(); break;
             }
             ImGui::EndChild();
         }

@@ -4,6 +4,23 @@ add_executable(PlutoGEAuthoringToolsTests AuthoringToolsTests.cpp
 target_include_directories(PlutoGEAuthoringToolsTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
 target_compile_features(PlutoGEAuthoringToolsTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEAuthoringToolsTests COMMAND PlutoGEAuthoringToolsTests)
+# Editor workflow building blocks (Console model, settings, diagnostics, external editor, script error throttle).
+add_executable(PlutoGEEditorWorkflowTests EditorWorkflowTests.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ConsoleLog.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorSettings.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ExternalScriptEditor.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ScriptDiagnostics.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/SystemShell.cpp
+    ${CMAKE_SOURCE_DIR}/engine/scripting/src/ScriptErrors.cpp
+    ${CMAKE_SOURCE_DIR}/engine/scripting/src/ScriptLogging.cpp)
+target_include_directories(PlutoGEEditorWorkflowTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/editor/ui/include
+    ${CMAKE_SOURCE_DIR}/engine/scripting/include)
+target_compile_features(PlutoGEEditorWorkflowTests PRIVATE cxx_std_20)
+if (WIN32)
+    target_link_libraries(PlutoGEEditorWorkflowTests PRIVATE shell32 ole32)
+endif()
+add_test(NAME PlutoGEEditorWorkflowTests COMMAND PlutoGEEditorWorkflowTests)
 add_executable(PlutoGEScriptBuildProcessTests ScriptBuildProcessTests.cpp
     ${CMAKE_SOURCE_DIR}/engine/scripting/src/ScriptBuildProcess.cpp)
 target_include_directories(PlutoGEScriptBuildProcessTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/scripting/include)
@@ -1190,6 +1207,26 @@ if (PLUTOGE_TEST_DOTNET)
         add_dependencies(PlutoGENativeUIScriptingTests PlutoGETestOpenAL)
     endif()
     add_test(NAME PlutoGENativeUIScriptingTests COMMAND PlutoGENativeUIScriptingTests)
+
+    # ScriptBehaviour lifecycle (errors, start order, timing, enable state) against a real managed assembly.
+    set(PLUTO_BEHAVIOUR_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ScriptBehaviourProbe")
+    add_custom_command(OUTPUT "${PLUTO_BEHAVIOUR_PROBE_OUTPUT}/PlutoGE.ScriptBehaviourProbe.dll"
+        COMMAND "${PLUTOGE_TEST_DOTNET}" build
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.ScriptBehaviourProbe/PlutoGE.ScriptBehaviourProbe.csproj"
+            --configuration Release --output "${PLUTO_BEHAVIOUR_PROBE_OUTPUT}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.ScriptBehaviourProbe/PlutoGE.ScriptBehaviourProbe.csproj"
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.ScriptBehaviourProbe/Probe.cs" PlutoGEScriptCore
+        VERBATIM)
+    add_custom_target(PlutoGEScriptBehaviourProbe DEPENDS "${PLUTO_BEHAVIOUR_PROBE_OUTPUT}/PlutoGE.ScriptBehaviourProbe.dll")
+    add_executable(PlutoGEScriptBehaviourTests ScriptBehaviourTests.cpp)
+    target_compile_definitions(PlutoGEScriptBehaviourTests PRIVATE
+        PLUTOGE_SCRIPT_BEHAVIOUR_PROBE_ASSEMBLY="${PLUTO_BEHAVIOUR_PROBE_OUTPUT}/PlutoGE.ScriptBehaviourProbe.dll")
+    pluto_link_engine(PlutoGEScriptBehaviourTests)
+    add_dependencies(PlutoGEScriptBehaviourTests PlutoGEScriptBehaviourProbe)
+    if (TARGET PlutoGETestOpenAL)
+        add_dependencies(PlutoGEScriptBehaviourTests PlutoGETestOpenAL)
+    endif()
+    add_test(NAME PlutoGEScriptBehaviourTests COMMAND PlutoGEScriptBehaviourTests)
 
     set(PLUTO_WEATHER_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/WeatherProbe")
     add_custom_command(OUTPUT "${PLUTO_WEATHER_PROBE_OUTPUT}/PlutoGE.WeatherProbe.dll"

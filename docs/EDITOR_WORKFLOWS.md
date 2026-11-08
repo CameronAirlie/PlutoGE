@@ -1,5 +1,32 @@
 # Editor iteration tools
 
+## Console
+
+The Console lists editor, script, compiler, import and build messages.
+
+- **Filtering.** The toolbar toggles show the message, warning and error counts and hide or show each severity.
+  **Sources** chooses which origins appear (Editor, Script, Compiler, Import, Build). Search matches message text.
+- **Collapse** shows each distinct message once with its total count. Identical messages in a row always merge
+  into one row with a count.
+- **Details.** Select a message to see its full text or stack trace in the pane below the list, which you can
+  resize by dragging the divider. Its buttons open the source line, select the entity or show the asset the
+  message refers to. Double-click a message to do the first of those that applies. **Ctrl+C** copies the
+  selected message.
+- **Error Pause** pauses Play when a script throws. See
+  [C# scripting exceptions](CSHARP_SCRIPTING.md#exceptions).
+- **Compiler messages.** Each script build replaces the previous build's compiler messages, so fixed errors
+  disappear. **Scripts > Script Build Diagnostics** still shows the full build output.
+- Filter, collapse and Error Pause choices are saved for your user account.
+
+## External script editor
+
+**Preferences > External Tools** chooses the program that opens C# files from the Console and the script
+build diagnostics: the system default application, Visual Studio Code, Visual Studio, JetBrains Rider, or a
+custom command. The command's `{file}`, `{line}` and `{column}` placeholders are replaced, and it runs
+without a shell, so paths with spaces need no extra quoting. The program must be on `PATH` or given as a full
+path. The setting is saved per user in `editor-settings.ini` in the PlutoGE settings folder
+(`%APPDATA%\PlutoGE` on Windows, `~/.config/PlutoGE` on Linux).
+
 ## Asset processing before Play
 
 Opening a source project validates model inputs and cached generations. Current

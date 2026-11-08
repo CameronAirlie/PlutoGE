@@ -100,6 +100,10 @@ namespace PlutoGE::ui::icons
     inline constexpr const char *Mouse = "\xef\xa3\x8c"; // computer-mouse
     inline constexpr const char *Record = "\xef\x86\x92"; // circle-dot
     inline constexpr const char *ChevronRight = "\xef\x81\x94"; // chevron-right
+    inline constexpr const char *Info = "\xef\x81\x9a"; // circle-info
+    inline constexpr const char *Error = "\xef\x81\x97"; // circle-xmark
+    inline constexpr const char *Pause = "\xef\x81\x8c"; // pause
+    inline constexpr const char *Compress = "\xef\x81\xa6"; // compress
     inline constexpr ImWchar Ranges[] = {
         0xe163, 0xe163,
         0xe2ca, 0xe2ca,
@@ -116,10 +120,12 @@ namespace PlutoGE::ui::icons
         0xf03d, 0xf03e,
         0xf042, 0xf042,
         0xf047, 0xf047,
+        0xf04c, 0xf04c,
         0xf054, 0xf054,
-        0xf05b, 0xf05b,
+        0xf057, 0xf057,
+        0xf05a, 0xf05b,
         0xf060, 0xf062,
-        0xf065, 0xf065,
+        0xf065, 0xf066,
         0xf067, 0xf067,
         0xf06e, 0xf06e,
         0xf070, 0xf071,

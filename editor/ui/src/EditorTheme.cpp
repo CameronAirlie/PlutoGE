@@ -1,4 +1,5 @@
 #include "PlutoGE/ui/EditorTheme.h"
+#include "PlutoGE/ui/EditorSettings.h"
 
 #include <algorithm>
 #include <array>
@@ -289,16 +290,7 @@ namespace PlutoGE::ui
 
         std::filesystem::path GetSettingsDirectory()
         {
-#ifdef _WIN32
-            if (const char *appData = std::getenv("APPDATA"); appData != nullptr && appData[0] != '\0')
-                return std::filesystem::path(appData) / "PlutoGE";
-#else
-            if (const char *configHome = std::getenv("XDG_CONFIG_HOME"); configHome != nullptr && configHome[0] != '\0')
-                return std::filesystem::path(configHome) / "PlutoGE";
-            if (const char *home = std::getenv("HOME"); home != nullptr && home[0] != '\0')
-                return std::filesystem::path(home) / ".config" / "PlutoGE";
-#endif
-            return std::filesystem::current_path();
+            return GetEditorUserSettingsDirectory();
         }
 
         std::string FormatColor(const ImVec4 &color)

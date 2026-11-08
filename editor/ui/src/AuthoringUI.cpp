@@ -2,19 +2,10 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptBuildProcess.h"
+#include "PlutoGE/ui/ExternalScriptEditor.h"
+#include "PlutoGE/ui/ScriptDiagnostics.h"
 #include <imgui.h>
-#include <regex>
 #include <sstream>
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifdef APIENTRY
-#undef APIENTRY
-#endif
-#include <Windows.h>
-#include <shellapi.h>
-#endif
 
 namespace PlutoGE::ui
 {
@@ -29,13 +20,14 @@ namespace PlutoGE::ui
                 if (m_project && m_project->GetManifestPath() == m_scriptBuildProject)
                 {
                     m_scriptBuildOutput = std::move(result.output);
+                    ReportScriptBuildDiagnostics(m_scriptBuildOutput, result.succeeded);
                     if (result.succeeded)
                     {
                         std::string error;
                         if (!ReloadProjectScriptAssembly(&error)) Log(ConsoleSeverity::Error, error);
                         else m_statusMessage = "Automatically built and reloaded scripts.";
                     }
-                    else { m_statusMessage = "Script build failed; previous assembly retained."; m_showScriptBuildDiagnostics = true; }
+                    else m_statusMessage = "Script build failed; previous assembly retained. See the Console.";
                 }
             }
             catch (const std::exception &error) { Log(ConsoleSeverity::Error, error.what()); }
@@ -70,6 +62,7 @@ namespace PlutoGE::ui
                 config.projectPath = GetProjectScriptProjectPath();
                 config.configuration = "Debug";
                 config.framework = "net8.0";
+                config.echoOutputToLog = false;
                 m_scriptBuildProject = m_project->GetManifestPath();
                 m_scriptBuildFuture = std::async(std::launch::async, [config] { scripting::ScriptEngine builder; return builder.BuildProject(config); });
                 m_statusMessage = "Building scripts in the background...";
@@ -148,25 +141,20 @@ namespace PlutoGE::ui
         if (!m_showScriptBuildDiagnostics) return;
         if (ImGui::Begin("Script Build Diagnostics", &m_showScriptBuildDiagnostics))
         {
-            ImGui::TextUnformatted("Select a source diagnostic to open its file. The compiler line/column is shown below.");
+            ImGui::TextUnformatted("Full output of the last script build. Errors and warnings also appear in the Console.");
+            ImGui::TextDisabled("Select a diagnostic to open it in the external script editor (Preferences > External Tools).");
             std::istringstream lines(m_scriptBuildOutput);
-            static const std::regex diagnostic(R"(^(.+)\(([0-9]+),([0-9]+)\): (error|warning) (.+)$)");
             int index = 0;
             for (std::string line; std::getline(lines, line); ++index)
             {
-                std::smatch match;
                 ImGui::PushID(index);
-                if (std::regex_match(line, match, diagnostic))
+                const auto diagnostics = ParseCompilerDiagnostics(line);
+                if (!diagnostics.empty())
                 {
                     if (ImGui::Selectable(line.c_str()))
                     {
-                        const auto path = std::filesystem::path(match[1].str());
-#ifdef _WIN32
-                        const auto result = reinterpret_cast<std::intptr_t>(ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL));
-                        if (result <= 32) Log(ConsoleSeverity::Error, "Cannot open diagnostic source: " + path.string());
-#else
-                        scripting::RunBuildProcess({"xdg-open", path.string()});
-#endif
+                        std::string error;
+                        if (!OpenInExternalScriptEditor(diagnostics.front().location, &error)) Log(ConsoleSeverity::Error, error);
                     }
                 }
                 else ImGui::TextUnformatted(line.c_str());

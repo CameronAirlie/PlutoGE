@@ -77,6 +77,25 @@ public override void OnCollisionExit(GameObject other) {}
   frame. Override only the callbacks a script needs.
 - Scripts run only as instances attached through an entity's `ScriptComponent`.
 
+### Exceptions
+
+An exception thrown from any callback is caught, so one broken script does not stop the game. It is reported
+as an error naming the class, callback and entity, with the full stack trace:
+
+```text
+PlayerInput.OnUpdate on 'Player' (entity 4) threw: System.NullReferenceException: Object reference not set...
+```
+
+- In the editor the report appears in the **Console**. Select it to see the stack trace; double-click opens
+  the first frame in your project's code in the configured script editor (**Preferences > External Tools**).
+  **Select Entity** in its details selects the entity.
+- Turn on **Error Pause** in the Console toolbar to pause Play when a script throws.
+- A script whose `OnCreate` throws is left half-initialised, so it receives no further update, fixed update,
+  late update, collision or animation-event callbacks. `OnDestroy` still runs so it can undo what it registered.
+- A script that throws every frame keeps running. Its error is reported on the 1st, 10th, 100th, ... occurrence,
+  and the Console shows the total count.
+- Standalone players and dedicated servers print the same report to the error log.
+
 ## Multiplayer networking
 
 Dedicated-server scripts can implement `IServerCommandHandler.HandleServerCommand(string)`
@@ -711,7 +730,7 @@ Debug.LogWarning("Warning");
 Debug.LogError("Error");
 ```
 
-Messages are routed to the PlutoGE script log/editor console.
+Messages are routed to the PlutoGE script log/editor console, labelled **Script**.
 
 ## Common patterns
 

@@ -214,6 +214,11 @@ namespace PlutoGE::scene
         Stop();
     }
 
+    bool ScriptComponent::HasLiveInstance() const
+    {
+        return m_instance && !m_instance->IsFaulted();
+    }
+
     void ScriptComponent::Start()
     {
         if (m_started || m_scriptClass.empty())
@@ -262,7 +267,7 @@ namespace PlutoGE::scene
                                   core::CpuCategory::Scripts,
                                   core::CpuTrace::current && GetOwner() ? GetOwner()->GetName() : std::string{});
         Start();
-        if (!m_instance)
+        if (!HasLiveInstance())
         {
             return;
         }
@@ -283,7 +288,7 @@ namespace PlutoGE::scene
         }
 
         Start();
-        if (!m_instance || !m_instance->Implements(scripting::ScriptCallback::LateUpdate))
+        if (!HasLiveInstance() || !m_instance->Implements(scripting::ScriptCallback::LateUpdate))
         {
             return;
         }
@@ -302,7 +307,7 @@ namespace PlutoGE::scene
         }
 
         Start();
-        if (!m_instance || !m_instance->Implements(scripting::ScriptCallback::FixedUpdate))
+        if (!HasLiveInstance() || !m_instance->Implements(scripting::ScriptCallback::FixedUpdate))
         {
             return;
         }
@@ -321,7 +326,7 @@ namespace PlutoGE::scene
         }
 
         Start();
-        if (m_instance)
+        if (HasLiveInstance())
         {
             m_instance->OnCollisionEnter(otherEntityId);
         }
@@ -335,7 +340,7 @@ namespace PlutoGE::scene
         }
 
         Start();
-        if (m_instance)
+        if (HasLiveInstance())
         {
             m_instance->OnCollisionExit(otherEntityId);
         }
@@ -343,7 +348,7 @@ namespace PlutoGE::scene
 
     bool ScriptComponent::OnServerCommand(std::string_view command)
     {
-        return m_started && m_instance && m_instance->OnServerCommand(command);
+        return m_started && HasLiveInstance() && m_instance->OnServerCommand(command);
     }
 
     void ScriptComponent::OnAnimationEvent(const render::AnimationClip::Event &event)
@@ -351,7 +356,7 @@ namespace PlutoGE::scene
         if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
             return;
         Start();
-        if (m_instance)
+        if (HasLiveInstance())
             m_instance->OnAnimationEvent(event.name, event.stringParameter, event.floatParameter, event.intParameter);
     }
 

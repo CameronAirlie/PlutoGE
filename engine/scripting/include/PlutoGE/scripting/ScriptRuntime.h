@@ -28,6 +28,9 @@ namespace PlutoGE::scripting
         virtual void OnDestroy() {}
         // False when the callback is a no-op, letting callers skip it and its tracing.
         [[nodiscard]] virtual bool Implements(ScriptCallback callback) const { (void)callback; return true; }
+        // True once OnCreate has thrown. A faulted script is half-initialised, so callers stop running its
+        // per-frame and event callbacks; OnDestroy still runs so it can undo whatever registration succeeded.
+        [[nodiscard]] virtual bool IsFaulted() const { return false; }
         virtual bool OnServerCommand(std::string_view command) { (void)command; return false; }
         virtual void OnCollisionEnter(uint32_t otherEntityId) { (void)otherEntityId; }
         virtual void OnCollisionExit(uint32_t otherEntityId) { (void)otherEntityId; }

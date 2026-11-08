@@ -3,6 +3,8 @@ add_library(PlutoGEScripting
     src/TerrainScriptApi.cpp
     src/ComponentScriptApi.cpp
     src/ScriptEngine.cpp
+    src/ScriptErrors.cpp
+    src/ScriptLogging.cpp
     src/ScriptBuildProcess.cpp
 )
 

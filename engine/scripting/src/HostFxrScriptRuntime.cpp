@@ -12,6 +12,7 @@
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/platform/InputState.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
+#include "PlutoGE/scripting/ScriptErrors.h"
 #include "PlutoGE/render/DebugDraw.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/RmlUiRuntime.h"
@@ -4422,6 +4423,8 @@ namespace PlutoGE::scripting
             {
             }
 
+            [[nodiscard]] bool IsFaulted() const override { return m_faulted; }
+
             [[nodiscard]] bool Implements(ScriptCallback callback) const override
             {
                 // Update stays reachable: a skipped OnUpdate may still owe the frame's UI events.
@@ -4490,6 +4493,11 @@ namespace PlutoGE::scripting
                         std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
                         "PlutoGE.ScriptCore.Authoring.EditorCommand") != m_scriptClass.assignableTypeNames.end()))
                         throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
+                    if (!result)
+                    {
+                        m_faulted = true;
+                        ReportFailure("OnCreate");
+                    }
                 }
             }
 
@@ -4509,6 +4517,8 @@ namespace PlutoGE::scripting
                     const auto result = m_impl->invokeOnUpdate(m_instanceHandle, deltaTime);
                     if (!result && m_loadingScreen)
                         throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
+                    if (!result)
+                        ReportFailure("OnUpdate");
                 }
             }
 
@@ -4518,7 +4528,8 @@ namespace PlutoGE::scripting
                     return;
                 if (m_impl && m_impl->invokeOnLateUpdate)
                 {
-                    m_impl->invokeOnLateUpdate(m_instanceHandle, deltaTime);
+                    if (!m_impl->invokeOnLateUpdate(m_instanceHandle, deltaTime))
+                        ReportFailure("OnLateUpdate");
                 }
             }
 
@@ -4528,7 +4539,8 @@ namespace PlutoGE::scripting
                     return;
                 if (m_impl && m_impl->invokeOnFixedUpdate)
                 {
-                    m_impl->invokeOnFixedUpdate(m_instanceHandle, fixedDeltaTime);
+                    if (!m_impl->invokeOnFixedUpdate(m_instanceHandle, fixedDeltaTime))
+                        ReportFailure("OnFixedUpdate");
                 }
             }
 
@@ -4540,6 +4552,8 @@ namespace PlutoGE::scripting
                     if (!result && std::find(m_scriptClass.assignableTypeNames.begin(), m_scriptClass.assignableTypeNames.end(),
                         "PlutoGE.ScriptCore.LoadingScreenController") != m_scriptClass.assignableTypeNames.end())
                         throw std::runtime_error(TakeManagedString(*m_impl, m_impl->getLastError));
+                    if (!result)
+                        ReportFailure("OnDestroy");
                 }
             }
 
@@ -4547,7 +4561,8 @@ namespace PlutoGE::scripting
             {
                 if (m_impl && m_impl->invokeOnCollisionEnter)
                 {
-                    m_impl->invokeOnCollisionEnter(m_instanceHandle, otherEntityId);
+                    if (!m_impl->invokeOnCollisionEnter(m_instanceHandle, otherEntityId))
+                        ReportFailure("OnCollisionEnter");
                 }
             }
 
@@ -4555,7 +4570,8 @@ namespace PlutoGE::scripting
             {
                 if (m_impl && m_impl->invokeOnCollisionExit)
                 {
-                    m_impl->invokeOnCollisionExit(m_instanceHandle, otherEntityId);
+                    if (!m_impl->invokeOnCollisionExit(m_instanceHandle, otherEntityId))
+                        ReportFailure("OnCollisionExit");
                 }
             }
 
@@ -4573,8 +4589,9 @@ namespace PlutoGE::scripting
                 {
                     const std::string eventName(name);
                     const std::string eventString(stringParameter);
-                    m_impl->invokeOnAnimationEvent(m_instanceHandle, eventName.c_str(), eventString.c_str(),
-                                                   floatParameter, intParameter);
+                    if (!m_impl->invokeOnAnimationEvent(m_instanceHandle, eventName.c_str(), eventString.c_str(),
+                                                        floatParameter, intParameter))
+                        ReportFailure("OnAnimationEvent");
                 }
             }
 
@@ -4603,10 +4620,33 @@ namespace PlutoGE::scripting
             }
 
         private:
+            // Takes the managed exception left by a failed callback and reports it with this script's context.
+            void ReportFailure(const char *callback)
+            {
+                std::string exception = TakeManagedString(*m_impl, m_impl->getLastError);
+                const uint64_t occurrences = m_errorThrottle.Record(callback, exception);
+                if (occurrences == 0)
+                    return;
+
+                ScriptErrorReport report;
+                report.scriptClass = m_scriptClass.className;
+                report.callback = callback;
+                if (const auto *owner = GetOwner())
+                {
+                    report.entityId = owner->GetID();
+                    report.entityName = owner->GetName();
+                }
+                report.exception = std::move(exception);
+                report.occurrences = occurrences;
+                DispatchScriptError(report);
+            }
+
             std::shared_ptr<HostFxrScriptRuntime::Impl> m_impl;
             int64_t m_instanceHandle = 0;
             ScriptClassDefinition m_scriptClass;
+            ScriptErrorThrottle m_errorThrottle;
             bool m_loadingScreen = false;
+            bool m_faulted = false;
         };
 #endif
     }

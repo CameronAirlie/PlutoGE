@@ -21,6 +21,10 @@ namespace PlutoGE::ui
     // Blocks the calling thread; intended for short helpers such as dialogs.
     [[nodiscard]] ProcessResult RunProcess(const std::vector<std::string> &arguments);
 
+    // Starts `arguments[0]` (searched on PATH; on Windows .cmd/.bat launchers such as VS Code's `code` work too)
+    // without waiting for it or capturing output.
+    bool LaunchDetached(const std::vector<std::string> &arguments, std::string *errorMessage = nullptr);
+
     // Opens a file with its default application, or a folder in the file manager.
     bool OpenWithSystem(const std::filesystem::path &path, std::string *errorMessage = nullptr);
 

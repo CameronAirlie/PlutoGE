@@ -18,6 +18,9 @@ namespace PlutoGE::scripting
         std::filesystem::path outputDirectory;
         std::string configuration = "Debug";
         std::string framework;
+        // Forward every output line to the script log. Hosts that present diagnostics themselves (the editor
+        // Console) turn this off and read ScriptBuildResult::output instead.
+        bool echoOutputToLog = true;
     };
 
     struct ScriptBuildResult

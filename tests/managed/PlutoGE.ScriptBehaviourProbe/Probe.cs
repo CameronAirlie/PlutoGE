@@ -275,3 +275,27 @@ public sealed class SoundProbe : ScriptBehaviour
         EmptyRejected = !Audio.PlayAt(string.Empty, System.Numerics.Vector3.Zero).IsValid;
     }
 }
+
+// An input map with a hold trigger is advanced by the engine; reading it never warns that Update was not called.
+public sealed class InputMapProbe : ScriptBehaviour
+{
+    private readonly InputActionMap _map = new()
+    {
+        Actions =
+        [
+            new() { Name = "Charge", Bindings = [new() { Kind = InputBindingKind.Key, Key = KeyCode.Space, Trigger = new InputTrigger { Kind = InputTriggerKind.Hold, Duration = 0.5f } }] },
+            new() { Name = "Zoom", Bindings = [new() { Kind = InputBindingKind.MouseScroll, MouseAxis = MouseAxis.Y }] },
+        ],
+    };
+
+    [SerializedField] public int Reads;
+
+    public override void OnUpdate(float deltaTime)
+    {
+        _ = _map.IsDown("Charge");
+        _ = _map.GetAxisRaw("Zoom");
+        _ = _map.WasReleased("Charge");
+        _ = _map.GetVector2("Zoom", "Charge");
+        Reads++;
+    }
+}

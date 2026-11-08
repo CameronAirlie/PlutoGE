@@ -68,7 +68,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T2.7 GameObject ergonomics.** Value equality, `IsAlive`, public `GameObject` on behaviours, quaternion world
   rotation, `GetComponentInParent/InChildren`.
 - [x] **T2.8 Fire-and-forget audio.** `Audio.PlayAt / PlayOneShot` on an engine voice pool.
-- [ ] **T2.9 Input action gaps.** Unclamped delta axes, scroll binding, `WasReleased`, Vector2 composites, engine-driven
+- [x] **T2.9 Input action gaps.** Unclamped delta axes, scroll binding, `WasReleased`, Vector2 composites, engine-driven
   map updates.
 - [ ] **T2.10 Play session hygiene.** `Application.PlayStarted/PlayStopped` events, engine statics reset on stop,
   `[ResetOnPlay]` for user statics.
@@ -258,4 +258,17 @@ Record each completed item here with the date, what changed, and how it was veri
   part of this item.
 - Verified: `PlutoGEScriptBehaviourTests` writes a WAV into a temp project: PlayAt starts, Stop removes, an empty
   reference is rejected, nothing survives StopRuntime.
+
+### 2026-11-08 — T2.9
+
+- `InputBindingKind.MouseScroll` (managed and editor document/UI), `GetAxisRaw` (unclamped), `GetVector2`
+  (length-limited), `WasReleased` (gamepad buttons via per-map held state), `Input.GetAxisRaw/GetVector2/
+  GetActionReleased`.
+- Every `InputActionMap` registers itself; the bridge advances live maps once per frame (unscaled time) before
+  scripts update. `Update` is idempotent per frame.
+- Input Mapping editor: **Copy C# constants** (`BuildActionConstantsSource`). A build-time source generator was
+  not added: the copied class gives the same compile-time checking without changing the script project.
+- Verified: `PlutoGEInputMappingEditorTests` (constants, MouseScroll round trip), `PlutoGEMapBakeTests`, and
+  `PlutoGEScriptBehaviourTests` (a hold-trigger map read for 3 frames without calling Update logs no warning).
+  Key/scroll values themselves are not simulated (no input injection yet).
 

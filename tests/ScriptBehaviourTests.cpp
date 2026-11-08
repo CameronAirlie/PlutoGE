@@ -11,6 +11,7 @@
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptErrors.h"
+#include "PlutoGE/scripting/ScriptLogging.h"
 
 #include <chrono>
 #include <cmath>
@@ -308,6 +309,25 @@ namespace
         Require(scene.GetPlayingSoundCount() == 0, "Sounds outlived Play");
     }
 
+    void InputMapsAdvanceThemselves(core::Engine &engine)
+    {
+        std::vector<std::string> warnings;
+        scripting::SetScriptLogSink([&](scripting::ScriptLogSeverity severity, std::string_view message)
+                                    { if (severity != scripting::ScriptLogSeverity::Info) warnings.emplace_back(message); });
+        struct ClearSink { ~ClearSink() { scripting::ClearScriptLogSink(); } } clearSink;
+
+        scene::Scene scene;
+        auto *probe = AddScript(scene, "Input", "InputMapProbe");
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+        for (int frame = 0; frame < 3; ++frame)
+            scene.Update(1.0f / 60.0f);
+        Require(LiveField<int32_t>(*probe, "Reads") == 3, "Input probe did not update");
+        for (const auto &warning : warnings)
+            Require(warning.find("never updated") == std::string::npos, "Input map was not advanced by the engine: " + warning);
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -374,6 +394,7 @@ try
     PhysicsQueriesAndTriggers(engine);
     GameObjectErgonomics(engine);
     FireAndForgetAudio(engine);
+    InputMapsAdvanceThemselves(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

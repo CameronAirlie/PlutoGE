@@ -24,6 +24,9 @@ public static class Input
     public static float GetAxis(string action) => _actionMap?.GetAxis(action) ?? 0.0f;
     public static bool GetAction(string action) => _actionMap?.IsDown(action) ?? false;
     public static bool GetActionPressed(string action) => _actionMap?.WasPressed(action) ?? false;
+    public static bool GetActionReleased(string action) => _actionMap?.WasReleased(action) ?? false;
+    public static float GetAxisRaw(string action) => _actionMap?.GetAxisRaw(action) ?? 0.0f;
+    public static Vector2 GetVector2(string xAction, string yAction) => _actionMap?.GetVector2(xAction, yAction) ?? Vector2.Zero;
 
     /// <summary>Timed two-motor output (0..1, up to 5 seconds). Zero duration stops. False when unavailable.</summary>
     public static bool TrySetGamepadVibration(float lowFrequency, float highFrequency, float seconds, int gamepad = 0)

@@ -334,11 +334,38 @@ namespace
     }
 }
 
+namespace
+{
+    void TestActionConstantsAndScroll()
+    {
+        std::vector<ui::InputMappingAction> actions(3);
+        actions[0].name = "Jump";
+        actions[1].name = "move left";
+        actions[2].name = "Move-Left";
+        const auto source = ui::BuildActionConstantsSource(actions, "player input");
+        Require(source.find("public static class PlayerInput") != std::string::npos, "Class name becomes an identifier");
+        Require(source.find("public const string Jump = \"Jump\";") != std::string::npos, "Action constant");
+        Require(source.find("public const string MoveLeft = \"move left\";") != std::string::npos, "Spaces become PascalCase");
+        Require(source.find("public const string MoveLeft2 = \"Move-Left\";") != std::string::npos, "Clashing names are numbered");
+
+        ui::InputMappingDocument document;
+        std::string error;
+        Require(document.Parse(R"({"Actions":[{"Name":"Zoom","Bindings":[{"Kind":"MouseScroll","MouseAxis":"Y"}]}]})", &error), error);
+        Require(document.Actions()[0].bindings[0].kind == ui::InputBindingKind::MouseScroll &&
+                    document.Actions()[0].bindings[0].value == "Y",
+                "MouseScroll binding parses");
+        const auto saved = document.Serialize();
+        Require(saved.find("\"MouseScroll\"") != std::string::npos && saved.find("\"MouseAxis\": \"Y\"") != std::string::npos,
+                "MouseScroll binding round-trips: " + saved);
+    }
+}
+
 int main(int argc, char **argv)
 {
     try
     {
         TestSession();
+        TestActionConstantsAndScroll();
         TestCapture();
         TestAnalysis();
         TestViews(argc > 1 ? argv[1] : "");

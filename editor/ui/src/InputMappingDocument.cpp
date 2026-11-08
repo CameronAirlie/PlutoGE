@@ -38,8 +38,8 @@ namespace PlutoGE::ui
             {"Left", 0}, {"Right", 1}, {"Middle", 2}, {"Button4", 3}, {"Button5", 4}, {"Button6", 5}, {"Button7", 6}, {"Button8", 7},
         };
         constexpr InputNamedCode MouseAxes[] = {{"X", 0}, {"Y", 1}};
-        constexpr const char *KindNames[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis"};
-        constexpr const char *ValueFields[] = {"Key", "Button", "Axis", "MouseButton", "MouseAxis"};
+        constexpr const char *KindNames[] = {"Key", "GamepadButton", "GamepadAxis", "MouseButton", "MouseAxis", "MouseScroll"};
+        constexpr const char *ValueFields[] = {"Key", "Button", "Axis", "MouseButton", "MouseAxis", "MouseAxis"};
         constexpr const char *TriggerKindNames[] = {"Press", "Tap", "Hold", "MultiTap"};
         static_assert(std::size(TriggerKindNames) == InputTriggerKindCount);
 
@@ -115,6 +115,60 @@ namespace PlutoGE::ui
         return {};
     }
 
+    namespace
+    {
+        // PascalCase identifier from free text; a leading digit gets an underscore.
+        std::string ToIdentifier(std::string_view text)
+        {
+            std::string identifier;
+            bool upperNext = true;
+            for (const char c : text)
+            {
+                const auto byte = static_cast<unsigned char>(c);
+                if (!std::isalnum(byte))
+                {
+                    upperNext = true;
+                    continue;
+                }
+                identifier += upperNext ? static_cast<char>(std::toupper(byte)) : c;
+                upperNext = false;
+            }
+            if (identifier.empty() || std::isdigit(static_cast<unsigned char>(identifier.front())))
+                identifier.insert(identifier.begin(), '_');
+            return identifier;
+        }
+
+        std::string EscapeCSharpString(std::string_view text)
+        {
+            std::string escaped;
+            for (const char c : text)
+            {
+                if (c == '"' || c == '\\')
+                    escaped += '\\';
+                escaped += c;
+            }
+            return escaped;
+        }
+    }
+
+    std::string BuildActionConstantsSource(const std::vector<InputMappingAction> &actions, std::string_view className)
+    {
+        std::string source = "public static class " + ToIdentifier(className) + "\n{\n";
+        std::vector<std::string> used;
+        for (const auto &action : actions)
+        {
+            if (action.name.empty())
+                continue;
+            auto name = ToIdentifier(action.name);
+            // Actions whose names differ only in punctuation get numbered constants.
+            for (int suffix = 2; std::find(used.begin(), used.end(), name) != used.end(); ++suffix)
+                name = ToIdentifier(action.name) + std::to_string(suffix);
+            used.push_back(name);
+            source += "    public const string " + name + " = \"" + EscapeCSharpString(action.name) + "\";\n";
+        }
+        return source + "}\n";
+    }
+
     std::span<const InputNamedCode> InputKeyNames() { return Keys; }
     std::span<const InputNamedCode> InputGamepadButtonNames() { return Buttons; }
     std::span<const InputNamedCode> InputGamepadAxisNames() { return Axes; }
@@ -129,7 +183,8 @@ namespace PlutoGE::ui
         case InputBindingKind::GamepadButton: return Buttons;
         case InputBindingKind::GamepadAxis: return Axes;
         case InputBindingKind::MouseButton: return MouseButtons;
-        case InputBindingKind::MouseAxis: return MouseAxes;
+        case InputBindingKind::MouseAxis:
+        case InputBindingKind::MouseScroll: return MouseAxes;
         }
         return Keys;
     }
@@ -160,6 +215,7 @@ namespace PlutoGE::ui
         case InputBindingKind::GamepadAxis: label = "Pad " + std::to_string(gamepad) + " axis " + value; break;
         case InputBindingKind::MouseButton: label = "Mouse " + value; break;
         case InputBindingKind::MouseAxis: label = "Mouse axis " + value; break;
+        case InputBindingKind::MouseScroll: label = "Mouse scroll " + value; break;
         }
         const auto trigger = this->trigger.Description();
         return trigger.empty() ? label : label + " (" + trigger + ")";
@@ -247,7 +303,8 @@ namespace PlutoGE::ui
             for (const auto &binding : action.bindings)
             {
                 // Axes are commonly shared by design (menus reuse movement sticks); report buttons and keys.
-                if (binding.kind == InputBindingKind::GamepadAxis || binding.kind == InputBindingKind::MouseAxis) continue;
+                if (binding.kind == InputBindingKind::GamepadAxis || binding.kind == InputBindingKind::MouseAxis ||
+                    binding.kind == InputBindingKind::MouseScroll) continue;
                 const auto id = binding.InputId();
                 auto &entry = inputs[id];
                 entry.inputId = id;

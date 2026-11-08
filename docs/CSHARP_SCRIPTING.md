@@ -675,11 +675,29 @@ bool Input.CursorLocked { get; set; }
 `MouseButton` values: `Left`, `Right`, `Middle`, `Button4` through `Button8`.
 
 Gamepad input is also available through `Input` using `GamepadButton` and
-`GamepadAxis`. `InputActionMap` maps named actions to keyboard, mouse, and
-controller bindings, with `GetAxis`, `IsDown`, and `WasPressed` queries. A binding's optional
-`Trigger` (`Tap`, `Hold`, `MultiTap`) lets actions share a control; maps that use them need
-`Update(deltaTime)` once per frame. See
-[input examples and edge semantics](guide/gameplay.md#keyboard-mouse-controllers-and-action-maps).
+`GamepadAxis`. `InputActionMap` maps named actions to keyboard, mouse, and controller bindings:
+
+| Query | Use |
+|---|---|
+| `GetAxis(action)` | Sum of the bindings, clamped to -1..1 (sticks, triggers, WASD) |
+| `GetAxisRaw(action)` | Unclamped sum: mouse look and scrolling, whose per-frame deltas exceed 1 |
+| `GetVector2(xAction, yAction)` | Movement direction with length at most 1, so diagonals are not faster |
+| `IsDown`, `WasPressed`, `WasReleased` | Held, started this frame, stopped this frame |
+
+The `Input` statics (`GetAxis`, `GetAxisRaw`, `GetVector2`, `GetAction`, `GetActionPressed`, `GetActionReleased`)
+read the map applied with `Input.ApplyActionMap`.
+
+- Bindings can read keys, mouse buttons, mouse movement (`MouseAxis`), the scroll wheel (`MouseScroll`, X or
+  Y), gamepad buttons and gamepad axes.
+- A binding's optional `Trigger` (`Tap`, `Hold`, `MultiTap`) lets actions share a control.
+- The engine advances every map once per frame before scripts update, so triggers work without calling
+  `Update`. Existing `Update(deltaTime)` calls are harmless, since a second update in the same frame does
+  nothing.
+- **Copy C# constants** in the Input Mapping editor's toolbar copies a class such as
+  `public static class PlayerActions { public const string Jump = "Jump"; ... }`. Paste it into a script so the
+  compiler checks action names.
+
+See [input examples and edge semantics](guide/gameplay.md#keyboard-mouse-controllers-and-action-maps).
 
 ## Physics
 

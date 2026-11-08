@@ -50,7 +50,8 @@ namespace PlutoGE::ui::input
         {
         case InputBindingKind::Key: return icons::Keyboard;
         case InputBindingKind::MouseButton:
-        case InputBindingKind::MouseAxis: return icons::Mouse;
+        case InputBindingKind::MouseAxis:
+        case InputBindingKind::MouseScroll: return icons::Mouse;
         case InputBindingKind::GamepadButton:
         case InputBindingKind::GamepadAxis: return icons::Gamepad;
         }
@@ -66,6 +67,7 @@ namespace PlutoGE::ui::input
         case InputBindingKind::GamepadAxis: return "Gamepad Stick / Trigger";
         case InputBindingKind::MouseButton: return "Mouse Button";
         case InputBindingKind::MouseAxis: return "Mouse Movement";
+        case InputBindingKind::MouseScroll: return "Mouse Scroll Wheel";
         }
         return "Key";
     }
@@ -80,6 +82,7 @@ namespace PlutoGE::ui::input
                 label += " Button";
             break;
         case InputBindingKind::MouseAxis: label = "Move " + label; break;
+        case InputBindingKind::MouseScroll: label = "Scroll " + label; break;
         default: break;
         }
         // A negative scale pushes the action the other way (A for left on a MoveX action).

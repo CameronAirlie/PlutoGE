@@ -1992,6 +1992,7 @@ internal static unsafe partial class ScriptBridge
                 UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
                 RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
                 UI.DispatchEvents();
+                InputActionMap.UpdateAll(uiUpdateSequence, GetRuntimeClock().UnscaledDeltaTime);
                 Timers.Tick(uiUpdateSequence);
                 RefreshScriptableObjectReferences(instance);
             }

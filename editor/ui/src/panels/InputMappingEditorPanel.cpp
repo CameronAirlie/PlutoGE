@@ -10,6 +10,7 @@
 #include "PlutoGE/ui/input/InputMappingSession.h"
 #include "PlutoGE/ui/input/InputMappingWidgets.h"
 
+#include <filesystem>
 #include <imgui.h>
 
 #include <algorithm>
@@ -180,7 +181,7 @@ namespace PlutoGE::ui
         }
 
         // Actions sit at the right edge.
-        const float width = 5.0f * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x);
+        const float width = 6.0f * (ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x);
         ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width));
         ImGui::BeginDisabled(!session.CanUndo());
         if (widgets::IconButton("##Undo", icons::ArrowLeft, "Undo (Ctrl+Z)"))
@@ -199,6 +200,14 @@ namespace PlutoGE::ui
         if (widgets::IconButton("##Revert", icons::Revert, "Discard unsaved changes"))
             session.Revert();
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (widgets::IconButton("##CopyConstants", icons::Copy, "Copy C# constants for the action names"))
+        {
+            // "Player.plutoinput" -> PlayerActions; paste into a script so action names are checked by the compiler.
+            auto className = std::filesystem::path(session.GetLabel()).stem().string() + "Actions";
+            ImGui::SetClipboardText(BuildActionConstantsSource(session.GetActions(), className).c_str());
+            EditorShell::GetInstance().SetStatusMessage("Copied " + className + " to the clipboard.");
+        }
         ImGui::SameLine();
         if (widgets::IconButton("##Close", icons::Close, "Close this mapping"))
         {

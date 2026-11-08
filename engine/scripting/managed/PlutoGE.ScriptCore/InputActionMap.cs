@@ -3,7 +3,8 @@ using System.Text.Json.Serialization;
 
 namespace PlutoGE.ScriptCore;
 
-public enum InputBindingKind { Key, GamepadButton, GamepadAxis, MouseButton, MouseAxis }
+/// <summary>Kinds of control a binding reads. MouseScroll uses <see cref="InputBinding.MouseAxis"/> for X or Y.</summary>
+public enum InputBindingKind { Key, GamepadButton, GamepadAxis, MouseButton, MouseAxis, MouseScroll }
 
 public enum MouseAxis { X, Y }
 
@@ -29,12 +30,56 @@ public sealed class InputActionDefinition
 }
 
 /// <summary>
-/// A Unity-style asset that maps named actions to keyboard, mouse, and controller bindings. Bindings
-/// with a stateful <see cref="InputBinding.Trigger"/> (tap, hold, multi-tap) need <see cref="Update"/>
-/// once per frame from the map's owner; plain press bindings are read directly and work without it.
+/// A Unity-style asset that maps named actions to keyboard, mouse, and controller bindings. The engine advances
+/// every live map once per frame before scripts update, so bindings with a tap, hold or multi-tap
+/// <see cref="InputBinding.Trigger"/> work without calling <see cref="Update"/> yourself.
 /// </summary>
 public sealed class InputActionMap
 {
+    // Every map ever created, updated by the engine each frame until it is garbage collected.
+    private static readonly List<WeakReference<InputActionMap>> LiveMaps = [];
+    private static ulong _lastEngineUpdateFrame = ulong.MaxValue;
+
+    public InputActionMap()
+    {
+        LiveMaps.Add(new WeakReference<InputActionMap>(this));
+    }
+
+    // Called by the bridge before the first script update of each frame.
+    internal static void UpdateAll(ulong frame, float unscaledDeltaTime)
+    {
+        if (frame == _lastEngineUpdateFrame)
+            return;
+        _lastEngineUpdateFrame = frame;
+        for (var index = LiveMaps.Count - 1; index >= 0; index--)
+        {
+            if (LiveMaps[index].TryGetTarget(out var map))
+                map.AdvanceFrame(frame, unscaledDeltaTime);
+            else
+                LiveMaps.RemoveAt(index);
+        }
+    }
+
+    [JsonIgnore] private ulong _lastAdvancedFrame = ulong.MaxValue;
+
+    // Gamepad buttons have no native release edge; remember each binding's held state across frames instead.
+    [JsonIgnore] private readonly Dictionary<InputBinding, (bool Previous, bool Current)> _gamepadButtonHeld =
+        new(ReferenceEqualityComparer.Instance);
+
+    private void AdvanceFrame(ulong frame, float deltaTime)
+    {
+        if (frame == _lastAdvancedFrame)
+            return;
+        _lastAdvancedFrame = frame;
+        foreach (var action in Actions)
+            foreach (var binding in action.Bindings)
+                if (binding.Kind == InputBindingKind.GamepadButton)
+                {
+                    var current = Input.IsGamepadButtonDown(binding.Button, binding.Gamepad);
+                    _gamepadButtonHeld[binding] = (_gamepadButtonHeld.TryGetValue(binding, out var held) && held.Current, current);
+                }
+        AdvanceTriggers(deltaTime);
+    }
     public List<InputActionDefinition> Actions { get; set; } = [];
     /// <summary>The asset this map was loaded from; empty for maps built in code or parsed from JSON.</summary>
     [JsonIgnore] public string AssetReference { get; private set; } = string.Empty;
@@ -122,10 +167,23 @@ public sealed class InputActionMap
     };
 
     /// <summary>
-    /// Advances stateful binding triggers by one frame. Call once per frame from the map's owner, before
-    /// reading actions, with the frame's delta in seconds (unscaled if gameplay time is scaled).
+    /// Advances stateful binding triggers by one frame. The engine already does this every frame during play, and
+    /// a second call in the same frame does nothing, so existing calls are harmless. Call it yourself only for maps
+    /// read outside play (editor tools).
     /// </summary>
     public void Update(float deltaTime)
+    {
+        var frame = Native.ScriptBridge.GetUIUpdateSequence();
+        if (frame != 0)
+        {
+            AdvanceFrame(frame, deltaTime);
+            return;
+        }
+
+        AdvanceTriggers(deltaTime);
+    }
+
+    private void AdvanceTriggers(float deltaTime)
     {
         _updates++;
         foreach (var action in Actions)
@@ -152,7 +210,14 @@ public sealed class InputActionMap
     /// <summary>Clears trigger progress (a half-held hold, a pending tap), for example while gameplay is paused.</summary>
     public void Reset() => _triggers.Clear();
 
-    public float GetAxis(string action)
+    /// <summary>The action's value in -1..1: the sum of its bindings, clamped.</summary>
+    public float GetAxis(string action) => Math.Clamp(GetAxisRaw(action), -1.0f, 1.0f);
+
+    /// <summary>
+    /// The unclamped sum of the action's bindings. Use it for mouse look and scrolling, whose per-frame deltas
+    /// routinely exceed 1.
+    /// </summary>
+    public float GetAxisRaw(string action)
     {
         var definition = Find(action);
         if (definition is null) return 0.0f;
@@ -168,10 +233,21 @@ public sealed class InputActionMap
             }
             value += Sample(binding) * binding.Scale;
         }
-        return Math.Clamp(value, -1.0f, 1.0f);
+        return value;
     }
 
-    private static bool IsAnalog(InputBinding binding) => binding.Kind is InputBindingKind.GamepadAxis or InputBindingKind.MouseAxis;
+    /// <summary>
+    /// Two actions as one direction, for movement: (x, y) with its length limited to 1 so diagonals are not faster.
+    /// </summary>
+    public System.Numerics.Vector2 GetVector2(string xAction, string yAction)
+    {
+        var value = new System.Numerics.Vector2(GetAxis(xAction), GetAxis(yAction));
+        var length = value.Length();
+        return length > 1.0f ? value / length : value;
+    }
+
+    private static bool IsAnalog(InputBinding binding) =>
+        binding.Kind is InputBindingKind.GamepadAxis or InputBindingKind.MouseAxis or InputBindingKind.MouseScroll;
 
     /// <summary>The binding's raw value with its dead zone applied (keys and buttons are 0 or 1); 0 when disabled.</summary>
     private static float Sample(InputBinding binding)
@@ -184,6 +260,7 @@ public sealed class InputActionMap
             InputBindingKind.GamepadAxis => Input.GetGamepadAxis(binding.Axis, binding.Gamepad),
             InputBindingKind.MouseButton => Input.IsMouseButtonDown(binding.MouseButton) ? 1.0f : 0.0f,
             InputBindingKind.MouseAxis => binding.MouseAxis == MouseAxis.X ? Input.MouseDelta.X : Input.MouseDelta.Y,
+            InputBindingKind.MouseScroll => binding.MouseAxis == MouseAxis.X ? Input.ScrollDelta.X : Input.ScrollDelta.Y,
             _ => 0.0f
         };
         // The platform layer already exposes triggers in the conventional
@@ -248,6 +325,33 @@ public sealed class InputActionMap
             InputBindingKind.GamepadAxis => AxisWasPressed(binding),
             _ => false
         });
+    }
+
+    /// <summary>
+    /// True on the frame the action stops being held: a bound key or button was released (or a stick returned
+    /// inside its dead zone) and no other binding still holds the action. Bindings with tap, hold or multi-tap
+    /// triggers report through <see cref="WasPressed"/> instead.
+    /// </summary>
+    public bool WasReleased(string action)
+    {
+        var definition = Find(action);
+        if (definition is null || IsDown(action)) return false;
+        return definition.Bindings.Any(binding => binding.Trigger is not { IsStateful: true } && binding.Scale != 0.0f && binding.Kind switch
+        {
+            InputBindingKind.Key => Input.IsKeyReleased(binding.Key),
+            InputBindingKind.MouseButton => Input.IsMouseButtonReleased(binding.MouseButton),
+            InputBindingKind.GamepadButton => _gamepadButtonHeld.TryGetValue(binding, out var held) && held.Previous && !held.Current,
+            InputBindingKind.GamepadAxis => AxisWasReleased(binding),
+            _ => false
+        });
+    }
+
+    private static bool AxisWasReleased(InputBinding binding)
+    {
+        float deadZone = Math.Clamp(binding.DeadZone, 0.0f, 0.99f);
+        static bool Active(float value, float threshold) => value != 0.0f && MathF.Abs(value) >= threshold;
+        return !Active(Input.GetGamepadAxis(binding.Axis, binding.Gamepad), deadZone) &&
+            Active(Native.ScriptBridge.GetPreviousGamepadAxis(binding.Gamepad, (int)binding.Axis), deadZone);
     }
 
     // Compare frame snapshots, not query history: multiple consumers get the same

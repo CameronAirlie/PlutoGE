@@ -10,7 +10,8 @@
 namespace PlutoGE::ui
 {
     // Binding kinds and value names match PlutoGE.ScriptCore.InputActionMap's JSON.
-    enum class InputBindingKind { Key, GamepadButton, GamepadAxis, MouseButton, MouseAxis };
+    // Matches PlutoGE.ScriptCore.InputBindingKind (append only). MouseScroll reuses MouseAxis's X/Y values.
+    enum class InputBindingKind { Key, GamepadButton, GamepadAxis, MouseButton, MouseAxis, MouseScroll };
     // Matches PlutoGE.ScriptCore.InputTriggerKind; Press is the default and is not written.
     enum class InputTriggerKind { Press, Tap, Hold, MultiTap };
 
@@ -27,7 +28,7 @@ namespace PlutoGE::ui
     std::span<const InputNamedCode> InputMouseAxisNames();
     std::span<const InputNamedCode> InputNamesFor(InputBindingKind kind);
     const char *InputKindName(InputBindingKind kind);
-    inline constexpr int InputBindingKindCount = 5;
+    inline constexpr int InputBindingKindCount = 6;
     // Gamepad kinds read a "Gamepad" index; axis kinds produce analogue values a dead zone applies to.
     inline constexpr bool InputBindingUsesGamepad(InputBindingKind kind)
     { return kind == InputBindingKind::GamepadButton || kind == InputBindingKind::GamepadAxis; }
@@ -76,6 +77,10 @@ namespace PlutoGE::ui
         std::vector<InputMappingBinding> bindings;
         assets::JsonValue source = assets::JsonValue::MakeObject();
     };
+
+    // C# source declaring one string constant per action, so scripts write PlayerActions.Jump instead of retyping
+    // "Jump". `className` and action names are made into valid identifiers ("Move Left" -> MoveLeft).
+    [[nodiscard]] std::string BuildActionConstantsSource(const std::vector<InputMappingAction> &actions, std::string_view className);
 
     // Physical input bound by more than one action. Often intentional (a menu action sharing a
     // gameplay button), so it is reported for review rather than rejected.

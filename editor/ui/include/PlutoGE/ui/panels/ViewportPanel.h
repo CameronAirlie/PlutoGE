@@ -1,4 +1,6 @@
 #pragma once
+
+#include "PlutoGE/ui/ViewportToolPreferences.h"
 #include "PlutoGE/render/RenderCommandView.h"
 
 #include "PlutoGE/render/Camera.h"
@@ -148,6 +150,11 @@ namespace PlutoGE::ui
         glm::vec3 m_translateSnap = glm::vec3(1.0f);
         float m_rotateSnapDegrees = 15.0f;
         float m_scaleSnap = 0.1f;
+        // Gizmo, snapping and grid choices persist per user (Editor Viewport only).
+        std::optional<ViewportToolPreferences> m_savedToolPreferences;
+        void SyncToolPreferences();
+        void DrawCameraSpeedToast(const ImVec2 &viewportMin, const ImVec2 &viewportMax) const;
+        [[nodiscard]] bool IsSnapActiveNow() const;
 
     private:
         struct CameraStackState;

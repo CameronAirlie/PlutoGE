@@ -6,6 +6,8 @@ namespace PlutoGE::ui
 {
     // EditorSettings keys for the Behaviour page.
     inline constexpr std::string_view kFocusGameViewOnPlayKey = "play.focusGameView";
+    // Alt + left drag in the Editor Viewport orbits (default) or looks around, for trackpads without a right button.
+    inline constexpr std::string_view kAltDragOrbitsKey = "viewport.altDragOrbits";
 
     class EditorCommandRegistry;
 

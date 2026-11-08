@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
+#include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/BrushStrokeSampler.h"
 #include "PlutoGE/ui/SurfacePlacement.h"
@@ -1765,8 +1766,69 @@ namespace PlutoGE::ui
         // followed immediately by Vulkan reinitialization.
     }
 
+    bool ViewportPanel::IsSnapActiveNow() const
+    {
+        return IsSnapActive(m_enableSnap, ImGui::GetIO().KeyCtrl);
+    }
+
+    void ViewportPanel::SyncToolPreferences()
+    {
+        if (!m_config.editorViewport)
+            return;
+        auto &settings = EditorSettings::Get();
+        if (!m_savedToolPreferences)
+        {
+            const auto loaded = LoadViewportToolPreferences(settings);
+            m_gizmoOperation = loaded.tool == ViewportToolPreferences::Tool::Rotate  ? ImGuizmo::ROTATE
+                               : loaded.tool == ViewportToolPreferences::Tool::Scale ? ImGuizmo::SCALE
+                                                                                     : ImGuizmo::TRANSLATE;
+            m_gizmoMode = loaded.localSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+            m_enableSnap = loaded.snap;
+            m_translateSnap = glm::vec3(loaded.moveSnap[0], loaded.moveSnap[1], loaded.moveSnap[2]);
+            m_rotateSnapDegrees = loaded.rotateSnapDegrees;
+            m_scaleSnap = loaded.scaleSnap;
+            m_showGrid = loaded.showGrid;
+            m_savedToolPreferences = loaded;
+            return;
+        }
+        ViewportToolPreferences current;
+        current.tool = m_gizmoOperation == ImGuizmo::ROTATE  ? ViewportToolPreferences::Tool::Rotate
+                       : m_gizmoOperation == ImGuizmo::SCALE ? ViewportToolPreferences::Tool::Scale
+                                                             : ViewportToolPreferences::Tool::Move;
+        current.localSpace = m_gizmoMode == ImGuizmo::LOCAL;
+        current.snap = m_enableSnap;
+        current.moveSnap = {m_translateSnap.x, m_translateSnap.y, m_translateSnap.z};
+        current.rotateSnapDegrees = m_rotateSnapDegrees;
+        current.scaleSnap = m_scaleSnap;
+        current.showGrid = m_showGrid;
+        if (current != *m_savedToolPreferences)
+        {
+            SaveViewportToolPreferences(settings, current);
+            m_savedToolPreferences = current;
+        }
+    }
+
+    void ViewportPanel::DrawCameraSpeedToast(const ImVec2 &viewportMin, const ImVec2 &viewportMax) const
+    {
+        const auto &camera = EditorShell::GetInstance().GetEditorCamera();
+        if (camera.speedToastSeconds <= 0.0f)
+            return;
+        char text[64];
+        std::snprintf(text, sizeof(text), "Fly speed %.2gx  (%.3g m/s)", camera.speedAdjustment, camera.moveSpeed * camera.speedAdjustment);
+        const float alpha = (std::min)(camera.speedToastSeconds / 0.3f, 1.0f); // Fades over the last 0.3 s.
+        const ImVec2 size = ImGui::CalcTextSize(text);
+        const ImVec2 min((viewportMin.x + viewportMax.x - size.x) * 0.5f, viewportMax.y - size.y - 48.0f);
+        auto *draw = ImGui::GetWindowDrawList();
+        draw->PushClipRect(viewportMin, viewportMax, true);
+        draw->AddRectFilled(ImVec2(min.x - 10.0f, min.y - 6.0f), ImVec2(min.x + size.x + 10.0f, min.y + size.y + 6.0f),
+                            IM_COL32(32, 33, 36, static_cast<int>(220 * alpha)), 6.0f);
+        draw->AddText(min, IM_COL32(230, 232, 236, static_cast<int>(255 * alpha)), text);
+        draw->PopClipRect();
+    }
+
     void ViewportPanel::Render()
     {
+        SyncToolPreferences();
         m_isViewportHovered = false;
         m_isViewportFocused = false;
         m_viewportSize = glm::vec2(0.0f);
@@ -1839,6 +1901,8 @@ namespace PlutoGE::ui
             draw->AddText(statusMin, IM_COL32(166, 170, 178, 255), status.c_str());
             draw->PopClipRect();
         }
+        if (m_config.editorViewport)
+            DrawCameraSpeedToast(viewportMin, viewportMax);
         PlayModeToolbar::DrawViewportFrame(*ImGui::GetWindowDrawList(), viewportMin, viewportMax, m_playState);
         if (m_rhiRenderService && !m_rhiRenderService->GetLastRenderError().empty())
         {
@@ -1857,7 +1921,7 @@ namespace PlutoGE::ui
         m_isViewportHovered = mouseInsideViewport &&
                               ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
                                                      ImGuiHoveredFlags_RootAndChildWindows);
-        // Alt + left-drag is reserved for trackpad camera navigation. Do not
+        // Alt + left-drag is reserved for camera navigation (orbit, or trackpad look). Do not
         // turn the start of that gesture into a scene selection/edit click.
         const bool viewportClicked = mouseInsideViewport && !ImGui::GetIO().KeyAlt &&
                                      ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -2336,7 +2400,7 @@ namespace PlutoGE::ui
             beginControls("Tools", ImVec2(0, 0), ImVec2(48, 48));
             if (toolButton("##Grid", icons::Grid, "Show grid", m_showGrid)) m_showGrid = !m_showGrid;
             ImGui::SameLine();
-            if (toolButton("##SnapToggle", icons::Snap, "Toggle transform snapping", m_enableSnap)) m_enableSnap = !m_enableSnap;
+            if (toolButton("##SnapToggle", icons::Snap, "Toggle transform snapping. Hold Ctrl while dragging to switch it for that drag.", m_enableSnap)) m_enableSnap = !m_enableSnap;
             ImGui::SameLine();
             if (ImGui::Button("##SnapSettings", ImVec2(16 * unit, buttonSize)))
             {
@@ -2884,7 +2948,7 @@ namespace PlutoGE::ui
             if (m_gizmoOperation == ImGuizmo::SCALE) snap[0] = snap[1] = snap[2] = m_scaleSnap;
             ImGuizmo::Manipulate(glm::value_ptr(cameraData.view), glm::value_ptr(gizmoProjection),
                                  m_gizmoOperation, ImGuizmo::WORLD, glm::value_ptr(m_multiGizmoTransform),
-                                 nullptr, m_enableSnap ? snap : nullptr);
+                                 nullptr, IsSnapActiveNow() ? snap : nullptr);
             m_multiGizmoUsing = ImGuizmo::IsUsing();
             if (m_multiGizmoUsing)
             {
@@ -3185,7 +3249,7 @@ namespace PlutoGE::ui
                     .clicked = viewportClicked,
                     .gizmoOperation = m_gizmoOperation,
                     .gizmoMode = m_gizmoMode,
-                    .gizmoSnap = m_enableSnap ? foliageSnap : nullptr,
+                    .gizmoSnap = IsSnapActiveNow() ? foliageSnap : nullptr,
                     .drawLine = [&](const glm::vec3 &from, const glm::vec3 &to, ImU32 color)
                     { DrawWorldLine(drawList, from, to, cameraData, viewportMin, viewportSize, color, 1.5f); },
                     .drawCircle = [&](const glm::vec3 &center, const glm::vec3 &axisA, const glm::vec3 &axisB, ImU32 color)
@@ -3389,7 +3453,7 @@ namespace PlutoGE::ui
                 }
             }
             float *snapValues = nullptr;
-            if (m_enableSnap)
+            if (IsSnapActiveNow())
             {
                 switch (m_gizmoOperation)
                 {
@@ -3729,7 +3793,7 @@ namespace PlutoGE::ui
                                              m_gizmoMode,
                                              glm::value_ptr(pointTransform),
                                              nullptr,
-                                             m_enableSnap ? &m_translateSnap.x : nullptr);
+                                             IsSnapActiveNow() ? &m_translateSnap.x : nullptr);
                         constrainOrthographicTranslation(pointTransform, originalPointPosition);
 
                         const bool pointGizmoUsing = ImGuizmo::IsUsing();
@@ -3792,7 +3856,7 @@ namespace PlutoGE::ui
                                          m_gizmoMode,
                                          glm::value_ptr(pointTransform),
                                          nullptr,
-                                         m_enableSnap ? &m_translateSnap.x : nullptr);
+                                         IsSnapActiveNow() ? &m_translateSnap.x : nullptr);
                     constrainOrthographicTranslation(pointTransform, originalPointPosition);
 
                     const bool pointGizmoUsing = ImGuizmo::IsUsing();

@@ -10,6 +10,8 @@ add_executable(PlutoGEEditorWorkflowTests EditorWorkflowTests.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorDocument.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorSettings.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorCommands.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorCameraNavigation.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ViewportToolPreferences.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/EntityNaming.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ExternalScriptEditor.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/SceneRecovery.cpp
@@ -23,7 +25,7 @@ target_include_directories(PlutoGEEditorWorkflowTests PRIVATE
     ${CMAKE_SOURCE_DIR}/editor/ui/include
     ${CMAKE_SOURCE_DIR}/engine/scripting/include)
 target_compile_features(PlutoGEEditorWorkflowTests PRIVATE cxx_std_20)
-target_link_libraries(PlutoGEEditorWorkflowTests PRIVATE PlutoGE::imgui)
+target_link_libraries(PlutoGEEditorWorkflowTests PRIVATE PlutoGE::imgui glm::glm)
 if (WIN32)
     target_link_libraries(PlutoGEEditorWorkflowTests PRIVATE shell32 ole32 user32)
 endif()

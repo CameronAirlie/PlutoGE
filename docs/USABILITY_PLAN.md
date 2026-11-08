@@ -93,7 +93,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 
 - [x] **T4.1 Command registry, shortcuts list, command palette.** One registry for editor commands with shortcut,
   rebinding in Preferences, Help > Keyboard Shortcuts, Ctrl+P palette with quick-open.
-- [ ] **T4.2 Viewport navigation.** Alt+LMB orbit around the selection, wheel dolly in perspective, hold-Ctrl snap,
+- [x] **T4.2 Viewport navigation.** Alt+LMB orbit around the selection, wheel dolly in perspective, hold-Ctrl snap,
   speed toast, persisted gizmo/snap settings.
 - [ ] **T4.3 Inspector component actions.** Copy / Paste values, Reset, Move Up / Down, property search.
 - [ ] **T4.4 Docs reorganisation.** First-game guide rewritten around templates; engineering notes moved to
@@ -380,7 +380,7 @@ the numeric parts of scene text.
 - Verified: `PlutoGEEditorWorkflowTests` (classification, quiet period, single report, deletions ignored); audio
   suites pass; `PlutoGEEditorUI` builds.
 
-### 2026-11-08 � T4.1
+### 2026-11-08 — T4.1
 
 - `EditorCommands` (registry: definitions with id, label, category, default and fixed alternate shortcut, scope,
   repeat; per-frame `Bind` so handlers use that frame's state; `DispatchShortcuts` with a scope predicate;
@@ -397,3 +397,17 @@ the numeric parts of scene text.
 - Viewport-local keys (W/E/R, F) and asset-editor keys stay with their panels; they could register commands later.
 - Verified: `PlutoGEEditorWorkflowTests` (rebinding, persistence, conflicts, availability, queueing, chord text,
   fuzzy ranking); `PlutoGEEditorUI` builds; `PlutoGEAuthoringIntegrationTests` (links the shell) passes.
+
+### 2026-11-08 — T4.2
+
+- `EditorCameraNavigation` (pure): `OrbitEditorCamera` turns the camera rigidly about a pivot (pitch-limited),
+  `IsUsableOrbitPivot`, `DollyEditorCamera` (15% of the pivot distance per notch; carries the pivot forward past
+  0.5 m and speeds up again when backing out).
+- `UpdateEditorCamera`: Alt + left drag orbits `focusPoint`, re-picking it with `GetSpawnPointInView` when it is
+  behind, off to the side or very far; orbit leaves orthographic like looking does. The wheel dollies in
+  perspective while not flying. Preference `viewport.altDragOrbits` (Behaviour page) restores Alt-drag look.
+- Fly-speed toast: `speedToastSeconds` on the camera, drawn by the Editor Viewport with a fade.
+- `ViewportToolPreferences`: tool, space, snap, increments and grid persisted in `EditorSettings`; Ctrl inverts
+  snapping during gizmo drags (`IsSnapActive`), for entity, multi-selection, foliage and the other gizmos.
+- Verified: `PlutoGEEditorWorkflowTests` (orbit geometry, pivot checks, dolly behaviour, settings round trip and
+  sanitising, snap inversion); viewport tests and `PlutoGEAuthoringIntegrationTests` pass.

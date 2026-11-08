@@ -59,6 +59,22 @@ belong to that panel.
 - **Play** focuses the Game view so input reaches the game immediately. Turn this off in
   **Preferences > Behaviour**.
 
+## Moving around the Editor Viewport
+
+| Input | Action |
+| --- | --- |
+| Right drag + W A S D Q E | Fly. Shift is faster; the wheel changes speed and the new speed shows briefly. |
+| Alt + left drag | Orbit around the last framed point (F), or the surface under the view centre when that point is out of view. |
+| Middle drag, or Alt + Shift + left drag | Pan. |
+| Wheel | Move toward the focus point in perspective, a share of the distance per notch; zoom in orthographic views. |
+| F | Frame the selection; it also becomes the orbit point. |
+
+Trackpad users without a right button can turn off **Preferences > Behaviour > Alt + left drag orbits** so
+Alt + left drag looks around as before.
+
+Holding **Ctrl** while dragging a gizmo switches snapping for that drag (on when off, off when on). The chosen
+tool (Move, Rotate, Scale), space, snapping, snap increments and grid are remembered per user.
+
 ## Unsaved changes
 
 Closing the editor, opening another project or scene, or restoring a recovery backup first asks about every

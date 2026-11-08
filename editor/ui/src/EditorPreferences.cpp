@@ -574,6 +574,16 @@ namespace PlutoGE::ui
                 widgets::EndSettingsTable();
             }
             widgets::EndCard();
+
+            widgets::SectionHeading("Viewport");
+            widgets::BeginCard("##ViewportBehaviour");
+            if (widgets::BeginSettingsTable("##ViewportBehaviourTable"))
+            {
+                SettingToggle("Alt + left drag orbits", "Orbit around what you framed with F. Off: Alt + left drag looks around, "
+                              "for trackpads without a right button.", kAltDragOrbitsKey, true);
+                widgets::EndSettingsTable();
+            }
+            widgets::EndCard();
         }
 
         void RenderAdvancedPage()

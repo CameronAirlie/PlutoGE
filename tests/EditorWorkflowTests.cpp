@@ -5,6 +5,7 @@
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/ui/AssetHotReload.h"
 #include "PlutoGE/ui/ConsoleLog.h"
+#include "PlutoGE/ui/EditorCameraNavigation.h"
 #include "PlutoGE/ui/EditorCommands.h"
 #include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EditorSettings.h"
@@ -14,8 +15,10 @@
 #include "PlutoGE/ui/SceneRecovery.h"
 #include "PlutoGE/ui/ScriptDiagnostics.h"
 #include "PlutoGE/ui/UnsavedSwitchGuard.h"
+#include "PlutoGE/ui/ViewportToolPreferences.h"
 
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -417,6 +420,70 @@ namespace
         Check(FuzzyMatchScore("Player.plutoprefab", "PLAYER") > FuzzyMatchScore("Players/Enemy.plutoprefab", "player"), "Case-insensitive, shorter first");
         Check(FuzzyMatchScore("anything", "") == 0, "Empty query matches everything");
     }
+    bool Near(const glm::vec3 &a, const glm::vec3 &b, float tolerance = 1e-3f)
+    {
+        return glm::length(a - b) <= tolerance;
+    }
+
+    void ViewportNavigation()
+    {
+        // Looking down -Z from 10 m in front of the origin.
+        const EditorCameraPose pose{{0.0f, 0.0f, 10.0f}, 0.0f, 0.0f};
+        const glm::vec3 pivot(0.0f);
+        Check(Near(GetEditorCameraForward(0.0f, 0.0f), {0.0f, 0.0f, -1.0f}), "Zero yaw and pitch look down -Z");
+
+        const auto quarter = OrbitEditorCamera(pose, pivot, 90.0f, 0.0f, 89.0f);
+        Check(Near(quarter.position, {10.0f, 0.0f, 0.0f}), "Orbiting 90 degrees of yaw swings to the side");
+        Check(Near(GetEditorCameraForward(quarter.yawDegrees, quarter.pitchDegrees), {-1.0f, 0.0f, 0.0f}), "Still facing the pivot");
+        const auto raised = OrbitEditorCamera(pose, pivot, 0.0f, -30.0f, 89.0f);
+        Check(std::abs(glm::length(raised.position) - 10.0f) < 1e-3f && raised.position.y > 4.9f, "Orbit keeps the distance and rises");
+        const auto clamped = OrbitEditorCamera(pose, pivot, 0.0f, -200.0f, 89.0f);
+        Check(clamped.pitchDegrees == -89.0f && clamped.position.y < 10.0f, "Pitch stops at the limit");
+        // An off-centre pivot keeps its place relative to the camera.
+        const EditorCameraPose turned{{0.0f, 0.0f, 10.0f}, 20.0f, 0.0f};
+        const auto offCentre = OrbitEditorCamera(turned, pivot, 45.0f, 0.0f, 89.0f);
+        Check(std::abs(glm::length(offCentre.position) - 10.0f) < 1e-3f && offCentre.yawDegrees == 65.0f, "Rigid orbit around any pivot");
+
+        Check(IsUsableOrbitPivot(pose, pivot, 50.0f, 1000.0f), "A pivot ahead is usable");
+        Check(!IsUsableOrbitPivot(pose, {0.0f, 0.0f, 20.0f}, 50.0f, 1000.0f), "A pivot behind is not");
+        Check(!IsUsableOrbitPivot(pose, {20.0f, 0.0f, 9.0f}, 50.0f, 1000.0f), "A pivot far to the side is not");
+
+        const auto closer = DollyEditorCamera(pose, pivot, 1.0f);
+        Check(Near(closer.position, {0.0f, 0.0f, 8.5f}) && Near(closer.pivot, pivot), "One notch covers 15% of the distance");
+        const auto back = DollyEditorCamera(pose, pivot, -1.0f);
+        Check(back.position.z > 10.0f && Near(back.pivot, pivot), "Wheel down backs away");
+        const auto through = DollyEditorCamera({{0.0f, 0.0f, 0.4f}, 0.0f, 0.0f}, pivot, 3.0f);
+        Check(through.position.z < 0.4f && through.pivot.z < through.position.z, "Past the pivot it moves along instead of stopping");
+        const auto behind = DollyEditorCamera(pose, {0.0f, 0.0f, 30.0f}, 1.0f);
+        Check(behind.position.z < 10.0f && behind.pivot.z < 10.0f, "A pivot behind is replaced by one ahead");
+        const auto escape = DollyEditorCamera({{0.0f, 0.0f, 0.1f}, 0.0f, 0.0f}, pivot, -1.0f);
+        const auto escape2 = DollyEditorCamera({escape.position, 0.0f, 0.0f}, escape.pivot, -1.0f);
+        Check(escape2.position.z - escape.position.z > escape.position.z - 0.1f, "Backing away from very close speeds up");
+    }
+
+    void ViewportToolSettingsPersist()
+    {
+        const auto file = std::filesystem::temp_directory_path() / "PlutoGEEditorWorkflowTests" / "viewport.ini";
+        std::filesystem::remove_all(file.parent_path());
+        EditorSettings settings(file);
+        Check(LoadViewportToolPreferences(settings) == ViewportToolPreferences{}, "Defaults without saved values");
+        ViewportToolPreferences chosen;
+        chosen.tool = ViewportToolPreferences::Tool::Rotate;
+        chosen.localSpace = false;
+        chosen.snap = true;
+        chosen.moveSnap = {0.25f, 0.5f, 2.0f};
+        chosen.rotateSnapDegrees = 45.0f;
+        chosen.scaleSnap = 0.5f;
+        chosen.showGrid = false;
+        SaveViewportToolPreferences(settings, chosen);
+        Check(settings.Flush(), "Viewport settings flush");
+        Check(LoadViewportToolPreferences(EditorSettings(file)) == chosen, "Viewport tool settings round trip");
+        settings.SetInt("viewport.tool", 9);
+        settings.SetFloat("viewport.snapRotate", -5.0f);
+        const auto sanitized = LoadViewportToolPreferences(settings);
+        Check(sanitized.tool == ViewportToolPreferences::Tool::Move && sanitized.rotateSnapDegrees == 15.0f, "Invalid values fall back");
+        Check(IsSnapActive(true, false) && !IsSnapActive(true, true) && IsSnapActive(false, true), "Ctrl inverts snapping");
+    }
 }
 
 int main()
@@ -437,6 +504,8 @@ int main()
         ProjectScaffolding();
         AssetHotReloadWatch();
         EditorCommandsRebindAndRun();
+        ViewportNavigation();
+        ViewportToolSettingsPersist();
     }
     catch (const std::exception &error)
     {

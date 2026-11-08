@@ -18,6 +18,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/ui/ProjectLauncher.h"
 #include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/EditorCameraNavigation.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/ProjectScaffold.h"
@@ -248,6 +249,7 @@ namespace PlutoGE::ui
         constexpr float kEditorCameraMinSpeedAdjustment = 0.1f;
         constexpr float kEditorCameraMaxSpeedAdjustment = 10.0f;
         constexpr float kEditorCameraMouseSensitivity = 0.12f;
+        constexpr float kEditorCameraOrbitSensitivity = 0.25f;
         constexpr float kEditorCameraPitchLimitDegrees = 89.0f;
         constexpr std::array kSceneFileFilter{FileDialogFilter{"PlutoGE Scene", "*.plutoscene"}, FileDialogFilter{"All Files", "*"}};
         constexpr std::array kProjectFileFilter{FileDialogFilter{"PlutoGE Project", "*.plutoproject"}, FileDialogFilter{"All Files", "*"}};
@@ -689,16 +691,31 @@ namespace PlutoGE::ui
                                 double &lastCursorX,
                                 double &lastCursorY,
                                 double &restoreCursorX,
-                                double &restoreCursorY)
+                                double &restoreCursorY,
+                                bool altDragOrbits,
+                                const std::function<glm::vec3()> &pickOrbitPivot)
         {
             static bool isPanActive = false;
             static double lastPanCursorX = 0.0;
             static double lastPanCursorY = 0.0;
+            static bool isOrbitActive = false;
+            static double lastOrbitCursorX = 0.0;
+            static double lastOrbitCursorY = 0.0;
+            camera.speedToastSeconds = (std::max)(camera.speedToastSeconds - deltaTime, 0.0f);
+            const auto leaveOrthographic = [&]
+            {
+                if (camera.orthographic && camera.hasPerspectivePosition)
+                {
+                    camera.position = camera.perspectivePosition;
+                    camera.hasPerspectivePosition = false;
+                }
+                camera.orthographic = false;
+            };
 
-            // Frame Selected glides instead of jumping; looking or panning takes control back.
+            // Frame Selected glides instead of jumping; looking, panning or orbiting takes control back.
             if (camera.flyTarget)
             {
-                if (isLookActive || isPanActive)
+                if (isLookActive || isPanActive || isOrbitActive)
                     camera.flyTarget.reset();
                 else
                 {
@@ -720,6 +737,7 @@ namespace PlutoGE::ui
                     isLookActive = false;
                 }
                 isPanActive = false;
+                isOrbitActive = false;
                 return;
             }
 
@@ -731,7 +749,10 @@ namespace PlutoGE::ui
             const bool isShiftDown = glfwGetKey(windowHandle, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                                      glfwGetKey(windowHandle, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
             const bool isTrackpadPanDown = isLeftMouseDown && isAltDown && isShiftDown;
-            const bool isTrackpadLookDown = isLeftMouseDown && isAltDown && !isShiftDown;
+            // Alt + left drag orbits (or looks around, for trackpads, when the preference says so).
+            const bool isAltLeftDrag = isLeftMouseDown && isAltDown && !isShiftDown;
+            const bool isTrackpadLookDown = isAltLeftDrag && !altDragOrbits;
+            const bool isOrbitDown = isAltLeftDrag && altDragOrbits && !isRightMouseDown;
             const bool isPanDown = isMiddleMouseDown || isTrackpadPanDown;
             const bool isLookDown = isRightMouseDown || isTrackpadLookDown;
             const double scrollDeltaY = window.GetInputState().mouseState.scrollDeltaY;
@@ -742,6 +763,48 @@ namespace PlutoGE::ui
                                                      0.05f,
                                                      100000.0f);
             }
+            else if (!camera.orthographic && canActivate && scrollDeltaY != 0.0 && !isLookDown && !isLookActive)
+            {
+                // The wheel dollies toward the focus point; while flying it changes speed instead (below).
+                const auto dolly = DollyEditorCamera({camera.position, camera.yawDegrees, camera.pitchDegrees}, camera.focusPoint,
+                                                     static_cast<float>(scrollDeltaY));
+                camera.flyTarget.reset();
+                camera.position = dolly.position;
+                camera.focusPoint = dolly.pivot;
+            }
+
+            if (isOrbitDown && !isPanDown)
+            {
+                double cursorX = 0.0;
+                double cursorY = 0.0;
+                glfwGetCursorPos(windowHandle, &cursorX, &cursorY);
+                if (!isOrbitActive)
+                {
+                    if (!canActivate)
+                        return;
+                    isOrbitActive = true;
+                    lastOrbitCursorX = cursorX;
+                    lastOrbitCursorY = cursorY;
+                    leaveOrthographic();
+                    const EditorCameraPose pose{camera.position, camera.yawDegrees, camera.pitchDegrees};
+                    // Orbit what was framed last while it is still in view, otherwise what is under the view centre.
+                    if (!IsUsableOrbitPivot(pose, camera.focusPoint, 50.0f, 5000.0f))
+                        camera.focusPoint = pickOrbitPivot ? pickOrbitPivot()
+                                                           : camera.position + GetEditorCameraForward(camera.yawDegrees, camera.pitchDegrees) * 8.0f;
+                }
+                const float deltaX = static_cast<float>(cursorX - lastOrbitCursorX);
+                const float deltaY = static_cast<float>(cursorY - lastOrbitCursorY);
+                lastOrbitCursorX = cursorX;
+                lastOrbitCursorY = cursorY;
+                const auto orbited = OrbitEditorCamera({camera.position, camera.yawDegrees, camera.pitchDegrees}, camera.focusPoint,
+                                                       -deltaX * kEditorCameraOrbitSensitivity, -deltaY * kEditorCameraOrbitSensitivity,
+                                                       kEditorCameraPitchLimitDegrees);
+                camera.position = orbited.position;
+                camera.yawDegrees = orbited.yawDegrees;
+                camera.pitchDegrees = orbited.pitchDegrees;
+                return;
+            }
+            isOrbitActive = false;
             if (isPanDown)
             {
                 if (isLookActive)
@@ -822,14 +885,7 @@ namespace PlutoGE::ui
                                              -kEditorCameraPitchLimitDegrees,
                                              kEditorCameraPitchLimitDegrees);
             if (deltaX != 0.0f || deltaY != 0.0f)
-            {
-                if (camera.orthographic && camera.hasPerspectivePosition)
-                {
-                    camera.position = camera.perspectivePosition;
-                    camera.hasPerspectivePosition = false;
-                }
-                camera.orthographic = false;
-            }
+                leaveOrthographic();
 
             const glm::mat4 transform = GetEditorCameraTransform(camera);
 
@@ -869,6 +925,7 @@ namespace PlutoGE::ui
                 camera.speedAdjustment = glm::clamp(camera.speedAdjustment * std::pow(kEditorCameraScrollStepFactor, static_cast<float>(scrollDeltaY)),
                                                     kEditorCameraMinSpeedAdjustment,
                                                     kEditorCameraMaxSpeedAdjustment);
+                camera.speedToastSeconds = 1.5f; // The viewport shows the new speed briefly.
             }
 
             if (glm::dot(movement, movement) <= 0.0f)
@@ -3921,7 +3978,9 @@ namespace PlutoGE::ui
                                lastEditorCameraCursorX,
                                lastEditorCameraCursorY,
                                restoreEditorCameraCursorX,
-                               restoreEditorCameraCursorY);
+                               restoreEditorCameraCursorY,
+                               EditorSettings::Get().GetBool(kAltDragOrbitsKey, true),
+                               [this] { return GetSpawnPointInView(); });
             viewportPanel->SetEditorMovementEnabled(isEditorCameraLookActive);
             auto shouldEnableRuntimeInput = [&]()
             {

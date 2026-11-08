@@ -112,6 +112,8 @@ namespace PlutoGE::ui
             std::optional<glm::vec3> flyTarget;
             // The point the camera was last framed on, used as the orbit pivot.
             glm::vec3 focusPoint{0.0f};
+            // Counts down after the fly speed changes; the viewport shows the speed meanwhile.
+            float speedToastSeconds = 0.0f;
             bool orthographic = false;
             bool renderRuntimeUI = false;
             float orthographicSize = 10.0f;

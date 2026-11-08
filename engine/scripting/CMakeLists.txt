@@ -4,6 +4,7 @@ add_library(PlutoGEScripting
     src/ComponentScriptApi.cpp
     src/ScriptEngine.cpp
     src/ScriptErrors.cpp
+    src/ScriptFieldText.cpp
     src/ScriptLogging.cpp
     src/ScriptBuildProcess.cpp
 )

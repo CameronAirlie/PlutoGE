@@ -200,13 +200,13 @@ Supported `[SerializedField]` member types:
 
 | Category | Types |
 |---|---|
-| Scalars | `bool`, `int`, `float`, `double`, `string` |
-| Vectors | `Vector2`, `Vector3` |
+| Scalars | `bool`, `int`, `float`, `double`, `string`, any `enum` |
+| Vectors | `Vector2`, `Vector3`, `Vector4`, `Quaternion`, `Color` |
 | Entity | `uint`, `GameObject` |
 | Components | `MeshComponent`, `CameraComponent`, `LightComponent`, `RigidbodyComponent`, `ColliderComponent`, `AnimationComponent`, `CanvasComponent`, `RectTransformComponent`, `UIImageComponent`, `UITextComponent`, `UIButtonComponent`, `ParticleSystemComponent`, `SoundEmitterComponent` |
 | Assets | `Prefab`, `InputActionMap`, `Material`, `Shader`, `Texture`, `Mesh`, `Model`, `AudioClip`, `SceneAsset`, `Animation`, `AnimationClip`, `AnimationGraph`, `ParticleSystem`, `PostProcessPreset`, `RmlDocumentAsset`, `SurfaceResponseAsset`, `LoadingScreen`, any concrete class derived from `ScriptableObject` |
 | Asset references | `string` with `[AssetReference(AssetType.X)]`, for any project asset type |
-| Asset arrays | `T[]` or `List<T>` of any asset type above, including `ScriptableObject` classes and `string` with `[AssetReference]` |
+| Arrays | `T[]` or `List<T>` of any scalar, vector, enum or asset type above (not entity or component references) |
 
 Examples:
 
@@ -225,9 +225,38 @@ Examples:
 [SerializedField] private List<WeaponSettings?> loadouts = [];
 [SerializedField, AssetReference(AssetType.Audio)] private string[] footsteps = [];
 
+[SerializedField] private DamageType damageType = DamageType.Fire;
+[SerializedField] private Color tint = Color.White;
+[SerializedField] private Quaternion spawnFacing = Quaternion.Identity;
+[SerializedField] private int[] waveSizes = [3, 5, 8];
+[SerializedField] private List<string> barks = ["Over here!", "Found you."];
+
 [SerializedField]
 private string DisplayName { get; set; } = "Player";
 ```
+
+### Inspector attributes
+
+```csharp
+[SerializedField, Header("Movement")]
+[Tooltip("Metres per second while walking.")]
+[Range(0, 10)] public float Speed = 4;
+
+[SerializedField, FormerlySerializedAs("speed")] public float WalkSpeed = 4;
+```
+
+- `[Header("Title")]` starts a titled group above the field.
+- `[Tooltip("text")]` shows text when the pointer rests on the field.
+- `[Range(min, max)]` turns `int`, `float` and `double` fields into sliders.
+- `[FormerlySerializedAs("oldName")]` keeps values saved under an earlier name when you rename a field. Scenes,
+  prefabs and scriptable assets load the old value; the next save writes the new name. Repeat the attribute
+  for several old names.
+
+The Inspector shows field names as readable labels (`walkSpeed` and `m_walkSpeed` both show as "Walk Speed").
+Enums are saved by member name, so you can reorder or insert members without breaking saved data. A saved
+name the enum no longer has is shown as "(missing)" until you choose a member. `Color` is a linear RGBA value
+from 0 to 1; it converts implicitly to and from `Vector4`, and `Color.TryParseHex("#ff8800", out var c)` reads
+design-tool hex. `Quaternion` fields are edited as Euler angles in degrees.
 
 Every asset field shows a dropdown of matching project assets in the Inspector (and in the ScriptableObject
 editor), accepts drag-and-drop from the Content Browser, and is kept as a cook dependency, so the asset
@@ -252,13 +281,17 @@ Important serialization behavior:
 - The attribute works on instance fields and properties, including private members.
 - Static members are ignored.
 - A serialized property must have both a getter and setter.
-- Unsupported types are ignored by reflection. This includes enums, arrays, lists, dictionaries, `Quaternion`, and arbitrary classes that do not derive from `ScriptableObject`.
+- Members of unsupported types (dictionaries, arrays of entity or component references, and classes that do not derive from `ScriptableObject`) are skipped, and the Console shows a warning naming each one when scripts load.
 - Initializers provide editor defaults because PlutoGE creates a default instance during reflection.
 - Component references select an entity containing the matching native component.
 - `GameObject` and component references may be `null`.
 - A `Prefab` stores an asset reference and offers `Instantiate` methods.
 - A `ScriptableObject` reference is loaded from its asset and materialized as the declared derived type.
-- Asset arrays appear as reorderable lists (drag the handle to reorder, add and remove elements). Unassigned elements are kept as `null` (or `""` for strings), so indices stay stable. Arrays of other types (numbers, entities, components) are not serialized yet.
+- Arrays appear as reorderable lists (drag the handle to reorder, add and remove elements). Unassigned asset elements are kept as `null` (or `""` for strings), so indices stay stable.
+- A scriptable object asset saved before a field existed loads with that field's initializer value; you do not
+  need to add the field to the asset file by hand. The ScriptableObject editor shows it and saves it with the
+  asset on the next edit.
+- Saved numbers use the shortest text that reads back exactly (`17.7`, not `17.700001`).
 - An `InputActionMap` is loaded from its `.plutoinput` asset when the script is created; `AssetReference` names its source. A missing or invalid asset logs a warning and leaves the field `null`.
 
 ## GameObject and transforms

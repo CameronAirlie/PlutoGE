@@ -11,6 +11,7 @@
 #include "PlutoGE/scripting/ScriptErrors.h"
 
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -72,6 +73,85 @@ namespace
                 "Repeated OnUpdate exceptions were not throttled to 1, 10: got " + std::to_string(reports.size()) + " reports");
         Require(reports[0].callback == "OnUpdate" && reports[0].exception.find("UpdateFaultProbe.Fail") != std::string::npos,
                 "OnUpdate report lacks its stack trace");
+    }
+
+    const scripting::ScriptFieldDefinition &Field(const scripting::ScriptClassDefinition &type, const char *name)
+    {
+        const auto *field = scripting::FindFieldDefinition(type, name);
+        Require(field != nullptr, std::string("Field not reflected: ") + name);
+        return *field;
+    }
+
+    void FieldTextCodec()
+    {
+        using scripting::ScriptFieldType;
+        Require(scripting::FormatFieldValueText(17.7f) == "17.7", "Floats use the shortest round-trip text");
+        Require(scripting::FormatFieldValueText(glm::vec3(1.0f, 0.5f, -2.0f)) == "1,0.5,-2", "Vector text");
+        Require(std::get<float>(scripting::ParseFieldValueText(ScriptFieldType::Float, "1.500000")) == 1.5f, "Legacy float text");
+        Require(std::get<int32_t>(scripting::ParseFieldValueText(ScriptFieldType::Int32, "abc")) == 0, "Malformed int");
+        Require(std::get<glm::vec4>(scripting::ParseFieldValueText(ScriptFieldType::Color, "")) == glm::vec4(1.0f), "Colour default is white");
+        Require(std::get<glm::vec4>(scripting::ParseFieldValueText(ScriptFieldType::Quaternion, "0,0,0")) == glm::vec4(0, 0, 0, 1),
+                "Missing quaternion component keeps identity");
+        const glm::vec4 color(0.25f, 0.5f, 0.75f, 1.0f);
+        Require(std::get<glm::vec4>(scripting::ParseFieldValueText(ScriptFieldType::Color, scripting::FormatFieldValueText(color))) == color,
+                "Colour round trip");
+        Require(std::get<std::string>(scripting::ParseFieldValueText(ScriptFieldType::Enum, "Attack")) == "Attack", "Enum by name");
+
+        std::vector<scripting::ScriptFieldDefinition> fields(1);
+        fields[0].name = "Count";
+        fields[0].formerNames = {"oldCount"};
+        std::unordered_map<std::string, scripting::ScriptFieldValue> values{{"oldCount", int32_t{5}}};
+        Require(scripting::MigrateRenamedFields(fields, values) && values.size() == 1 && std::get<int32_t>(values.at("Count")) == 5,
+                "Former field names migrate");
+        values = {{"oldCount", int32_t{5}}, {"Count", int32_t{6}}};
+        scripting::MigrateRenamedFields(fields, values);
+        Require(values.size() == 1 && std::get<int32_t>(values.at("Count")) == 6, "The current name wins over a former one");
+    }
+
+    void FieldTypesAndAttributes(scripting::ScriptEngine &scripts, scene::Scene &scene)
+    {
+        const auto *type = scripts.FindClass("PlutoGE.ScriptBehaviourProbe.FieldTypesProbe");
+        Require(type != nullptr, "FieldTypesProbe not reflected");
+
+        const auto &mode = Field(*type, "Mode");
+        Require(mode.type == scripting::ScriptFieldType::Enum && (mode.enumNames == std::vector<std::string>{"Idle", "Patrol", "Attack"}),
+                "Enum field and members");
+        Require(std::get<std::string>(mode.defaultValue) == "Patrol", "Enum default by name");
+        Require(mode.header == "Behaviour" && mode.tooltip == "What the probe does", "Header and tooltip");
+        const auto &speed = Field(*type, "Speed");
+        Require(speed.range && speed.range->x == 0.0 && speed.range->y == 10.0, "Range");
+        Require(Field(*type, "Tint").type == scripting::ScriptFieldType::Color &&
+                    std::get<glm::vec4>(Field(*type, "Tint").defaultValue) == glm::vec4(1.0f, 0.5f, 0.25f, 1.0f),
+                "Colour field");
+        Require(Field(*type, "Weights").type == scripting::ScriptFieldType::Vector4, "Vector4 field");
+        Require(std::get<glm::vec4>(Field(*type, "Facing").defaultValue) == glm::vec4(0, 0, 0, 1), "Quaternion field");
+        const auto &levels = Field(*type, "Levels");
+        Require(levels.isArray && levels.type == scripting::ScriptFieldType::Int32 &&
+                    (std::get<scripting::ScriptReferenceArray>(levels.defaultValue) == scripting::ScriptReferenceArray{"1", "2", "3"}),
+                "Int array");
+        Require(Field(*type, "Names").isArray && Field(*type, "Names").type == scripting::ScriptFieldType::String, "String list");
+        Require((std::get<scripting::ScriptReferenceArray>(Field(*type, "Sequence").defaultValue) == scripting::ScriptReferenceArray{"Idle", "Attack"}),
+                "Enum array");
+        Require((Field(*type, "Count").formerNames == std::vector<std::string>{"oldCount"}), "Former names");
+        Require(scripting::FindFieldDefinition(*type, "Unsupported") == nullptr, "Unsupported members are skipped");
+
+        auto *owner = scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Fields"}));
+        auto instance = Create(scripts, "FieldTypesProbe", owner);
+        instance->ApplyFieldValues({
+            {"Mode", std::string("Attack")},
+            {"Tint", glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
+            {"Facing", glm::vec4(0.0f, 0.70710677f, 0.0f, 0.70710677f)},
+            {"Levels", scripting::ScriptReferenceArray{"7", "8"}},
+            {"Sequence", scripting::ScriptReferenceArray{"Patrol"}},
+            {"oldCount", int32_t{9}},
+        });
+        const auto values = instance->GetFieldValuesSnapshot();
+        Require(std::get<std::string>(values.at("Mode")) == "Attack", "Enum value applied");
+        Require(std::get<glm::vec4>(values.at("Tint")) == glm::vec4(0.0f, 1.0f, 0.0f, 1.0f), "Colour value applied");
+        Require(std::abs(std::get<glm::vec4>(values.at("Facing")).y - 0.70710677f) < 1e-5f, "Quaternion value applied");
+        Require((std::get<scripting::ScriptReferenceArray>(values.at("Levels")) == scripting::ScriptReferenceArray{"7", "8"}), "Int array applied");
+        Require((std::get<scripting::ScriptReferenceArray>(values.at("Sequence")) == scripting::ScriptReferenceArray{"Patrol"}), "Enum array applied");
+        Require(std::get<int32_t>(values.at("Count")) == 9, "Value stored under the former name applied");
     }
 
     scene::ScriptComponent *AddScript(scene::Scene &scene, const char *name, const char *className,
@@ -147,6 +227,8 @@ try
     Require(scripts.LoadAssembly(PLUTOGE_SCRIPT_BEHAVIOUR_PROBE_ASSEMBLY), scripts.GetLastError());
 
     ExceptionsAreReported(scripts, scene);
+    FieldTextCodec();
+    FieldTypesAndAttributes(scripts, scene);
     engine.SetScene(nullptr);
     StartOrderAndSpawning(engine);
 

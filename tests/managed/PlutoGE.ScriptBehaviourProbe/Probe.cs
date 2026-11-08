@@ -85,3 +85,25 @@ public sealed class SpawnedProbe : ScriptBehaviour
         SeenParent = GameObject.Parent?.EntityId ?? 0;
     }
 }
+
+public enum ProbeMode
+{
+    Idle,
+    Patrol,
+    Attack,
+}
+
+// Every serialized field feature: new value types, arrays of plain values and the inspector attributes.
+public sealed class FieldTypesProbe : ScriptBehaviour
+{
+    [SerializedField, Header("Behaviour"), Tooltip("What the probe does")] public ProbeMode Mode = ProbeMode.Patrol;
+    [SerializedField, Range(0, 10)] public float Speed = 2.5f;
+    [SerializedField] public Color Tint = new(1, 0.5f, 0.25f, 1);
+    [SerializedField] public System.Numerics.Vector4 Weights = new(1, 2, 3, 4);
+    [SerializedField] public System.Numerics.Quaternion Facing = System.Numerics.Quaternion.Identity;
+    [SerializedField] public int[] Levels = [1, 2, 3];
+    [SerializedField] public List<string> Names = ["a", "b"];
+    [SerializedField] public ProbeMode[] Sequence = [ProbeMode.Idle, ProbeMode.Attack];
+    [SerializedField, FormerlySerializedAs("oldCount")] public int Count = 1;
+    [SerializedField] public Dictionary<string, int> Unsupported = new();
+}

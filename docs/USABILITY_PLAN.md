@@ -56,7 +56,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   sibling lookups in `OnCreate` succeed. Applies to runtime start and to instantiated prefabs.
 - [x] **T2.2 Instantiate with configuration.** `Prefab.Instantiate<T>(position, rotation, parent, configure)` where
   `configure` runs before `OnCreate`; Quaternion and parent overloads.
-- [ ] **T2.3 Serialized field types and attributes.** Enums, Quaternion, Color, primitive arrays/lists, warning on
+- [x] **T2.3 Serialized field types and attributes.** Enums, Quaternion, Color, primitive arrays/lists, warning on
   unsupported members, `[Range]`, `[Tooltip]`, `[Header]`, `[FormerlySerializedAs]`. Existing `.plutoscriptable` files
   pick up new fields with their C# default values.
 - [ ] **T2.4 Time and timers.** Static `Time` (deltaTime, unscaledDeltaTime, time, unscaledTime, frameCount,
@@ -185,4 +185,22 @@ Record each completed item here with the date, what changed, and how it was veri
 - Verified: `PlutoGEScriptBehaviourTests` runs a scene with Play started: a script created before its partner sees
   the partner's configured field in OnCreate, and a spawned prefab's OnCreate sees the configured value, local
   position and parent.
+
+### 2026-11-08 — T2.3
+
+- Field types appended to `ScriptFieldType`: Enum (stored by member name), Color, Vector4, Quaternion; `glm::vec4`
+  appended to `ScriptFieldValue`. Arrays of any plain value type (bool, numbers, string, vectors, enum, colour).
+- One text codec (`ScriptFieldText.cpp`: `FormatFieldValueText` / `ParseFieldValueText` / `InferFieldType`)
+  replaces the three copies in `HostFxrScriptRuntime`, `ScriptComponent` and `ContentBrowserPanel`. Floats are
+  written shortest-round-trip, which also removes "17.700001" noise from scene and scriptable files.
+- Managed attributes `[Header]`, `[Tooltip]`, `[Range]`, `[FormerlySerializedAs]` (`InspectorAttributes.cs`) and a
+  `Color` struct. They travel as optional metadata columns 9-14, so older hosts ignore them.
+  `MigrateRenamedFields` moves values saved under former names (scenes, prefabs, scriptable assets, live apply).
+- Unsupported `[SerializedField]` members now log a warning when scripts load.
+- `DrawScriptField` (`ScriptFieldEditor.cpp`) is the single field widget for the Inspector and the
+  ScriptableObject editor (nicified labels, sliders, enum combo, colour picker, quaternion as Euler, typed lists).
+- Missing `.plutoscriptable` fields already load with C# defaults at runtime (verified in the bridge); the editor
+  shows and saves them.
+- Verified: `PlutoGEScriptBehaviourTests` (metadata for every new type and attribute, value round trip including
+  a former name, codec), and the existing managed/scripting/prefab suites (15 tests) pass.
 

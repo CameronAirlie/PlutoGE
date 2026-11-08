@@ -86,6 +86,12 @@ namespace PlutoGE::scripting
             return std::holds_alternative<glm::vec2>(value);
         case ScriptFieldType::Vector3:
             return std::holds_alternative<glm::vec3>(value);
+        case ScriptFieldType::Enum:
+            return std::holds_alternative<std::string>(value);
+        case ScriptFieldType::Color:
+        case ScriptFieldType::Vector4:
+        case ScriptFieldType::Quaternion:
+            return std::holds_alternative<glm::vec4>(value);
         case ScriptFieldType::EntityId:
         case ScriptFieldType::GameObject:
         case ScriptFieldType::MeshComponent:
@@ -131,6 +137,14 @@ namespace PlutoGE::scripting
             return glm::vec2{0.0f, 0.0f};
         case ScriptFieldType::Vector3:
             return glm::vec3{0.0f, 0.0f, 0.0f};
+        case ScriptFieldType::Enum:
+            return std::string{};
+        case ScriptFieldType::Color:
+            return glm::vec4{1.0f, 1.0f, 1.0f, 1.0f};
+        case ScriptFieldType::Vector4:
+            return glm::vec4{0.0f};
+        case ScriptFieldType::Quaternion:
+            return glm::vec4{0.0f, 0.0f, 0.0f, 1.0f};
         case ScriptFieldType::EntityId:
         case ScriptFieldType::GameObject:
         case ScriptFieldType::MeshComponent:
@@ -185,13 +199,18 @@ namespace PlutoGE::scripting
 
     ScriptFieldValue NormalizeFieldValue(const ScriptFieldDefinition &field, ScriptFieldValue value)
     {
-        if (const auto *text = std::get_if<std::string>(&value); text && field.isArray)
+        const auto *text = std::get_if<std::string>(&value);
+        if (!text)
+            return value;
+        if (field.isArray)
         {
             if (auto references = DecodeReferenceArray(*text))
-            {
                 return std::move(*references);
-            }
+            return value;
         }
+        // Types without a matching scene property (vector4, colour, quaternion) persist as text.
+        if (!IsFieldValueCompatible(field.type, value) && field.type != ScriptFieldType::None)
+            return ParseFieldValueText(field.type, *text);
         return value;
     }
 

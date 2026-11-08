@@ -591,7 +591,7 @@ namespace PlutoGE::scripting
         {
             int fieldTypeValue = 0;
             std::from_chars(token.data(), token.data() + token.size(), fieldTypeValue);
-            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::Asset))
+            if (fieldTypeValue < static_cast<int>(ScriptFieldType::None) || fieldTypeValue > static_cast<int>(ScriptFieldType::Quaternion))
             {
                 return ScriptFieldType::None;
             }
@@ -599,83 +599,9 @@ namespace PlutoGE::scripting
             return static_cast<ScriptFieldType>(fieldTypeValue);
         }
 
-        float ParseFloat(std::string_view token)
-        {
-            return std::strtof(std::string(token).c_str(), nullptr);
-        }
-
-        double ParseDouble(std::string_view token)
-        {
-            return std::strtod(std::string(token).c_str(), nullptr);
-        }
-
         ScriptFieldValue ParseFieldValue(ScriptFieldType type, const std::string &token)
         {
-            switch (type)
-            {
-            case ScriptFieldType::Boolean:
-                return token == "true";
-            case ScriptFieldType::Int32:
-            {
-                int32_t value = 0;
-                std::from_chars(token.data(), token.data() + token.size(), value);
-                return value;
-            }
-            case ScriptFieldType::Float:
-                return ParseFloat(token);
-            case ScriptFieldType::Double:
-                return ParseDouble(token);
-            case ScriptFieldType::String:
-            case ScriptFieldType::PrefabAsset:
-            case ScriptFieldType::ScriptableObjectAsset:
-            case ScriptFieldType::MaterialAsset:
-            case ScriptFieldType::InputMappingAsset:
-            case ScriptFieldType::Asset:
-                return token;
-            case ScriptFieldType::Vector2:
-            {
-                const auto parts = SplitEscaped(token, ',');
-                if (parts.size() != 2)
-                {
-                    return glm::vec2{0.0f, 0.0f};
-                }
-
-                return glm::vec2{ParseFloat(parts[0]), ParseFloat(parts[1])};
-            }
-            case ScriptFieldType::Vector3:
-            {
-                const auto parts = SplitEscaped(token, ',');
-                if (parts.size() != 3)
-                {
-                    return glm::vec3{0.0f, 0.0f, 0.0f};
-                }
-
-                return glm::vec3{ParseFloat(parts[0]), ParseFloat(parts[1]), ParseFloat(parts[2])};
-            }
-            case ScriptFieldType::EntityId:
-            case ScriptFieldType::GameObject:
-            case ScriptFieldType::MeshComponent:
-            case ScriptFieldType::CameraComponent:
-            case ScriptFieldType::LightComponent:
-            case ScriptFieldType::RigidbodyComponent:
-            case ScriptFieldType::ColliderComponent:
-            case ScriptFieldType::AnimationComponent:
-            case ScriptFieldType::CanvasComponent:
-            case ScriptFieldType::RectTransformComponent:
-            case ScriptFieldType::UIImageComponent:
-            case ScriptFieldType::UITextComponent:
-            case ScriptFieldType::UIButtonComponent:
-            case ScriptFieldType::ParticleSystemComponent:
-            case ScriptFieldType::SoundEmitterComponent:
-            {
-                uint32_t value = 0;
-                std::from_chars(token.data(), token.data() + token.size(), value);
-                return value;
-            }
-            case ScriptFieldType::None:
-            default:
-                return std::monostate{};
-            }
+            return ParseFieldValueText(type, token);
         }
 
         ScriptFieldValue ParseFieldValue(const ScriptFieldDefinition &field, const std::string &token)
@@ -685,51 +611,6 @@ namespace PlutoGE::scripting
                 return ParseFieldValue(field.type, token);
             }
             return DecodeReferenceArray(token).value_or(ScriptReferenceArray{});
-        }
-
-        ScriptFieldType GetFieldTypeForValue(const ScriptFieldValue &value)
-        {
-            if (std::holds_alternative<bool>(value))
-            {
-                return ScriptFieldType::Boolean;
-            }
-
-            if (std::holds_alternative<int32_t>(value))
-            {
-                return ScriptFieldType::Int32;
-            }
-
-            if (std::holds_alternative<float>(value))
-            {
-                return ScriptFieldType::Float;
-            }
-
-            if (std::holds_alternative<double>(value))
-            {
-                return ScriptFieldType::Double;
-            }
-
-            if (std::holds_alternative<std::string>(value))
-            {
-                return ScriptFieldType::String;
-            }
-
-            if (std::holds_alternative<glm::vec2>(value))
-            {
-                return ScriptFieldType::Vector2;
-            }
-
-            if (std::holds_alternative<glm::vec3>(value))
-            {
-                return ScriptFieldType::Vector3;
-            }
-
-            if (std::holds_alternative<uint32_t>(value))
-            {
-                return ScriptFieldType::EntityId;
-            }
-
-            return ScriptFieldType::None;
         }
 
         ScriptFieldType GetSerializedFieldType(std::string_view fieldName,
@@ -744,54 +625,49 @@ namespace PlutoGE::scripting
                 }
             }
 
-            return GetFieldTypeForValue(fieldValue);
+            return InferFieldType(fieldValue);
         }
 
         std::string SerializeFieldValue(const ScriptFieldValue &value)
         {
-            return std::visit(
-                [](const auto &typedValue) -> std::string
-                {
-                    using ValueType = std::decay_t<decltype(typedValue)>;
+            return FormatFieldValueText(value);
+        }
 
-                    if constexpr (std::is_same_v<ValueType, std::monostate>)
-                    {
-                        return {};
-                    }
-                    else if constexpr (std::is_same_v<ValueType, bool>)
-                    {
-                        return typedValue ? "true" : "false";
-                    }
-                    else if constexpr (std::is_same_v<ValueType, int32_t> || std::is_same_v<ValueType, uint32_t>)
-                    {
-                        return std::to_string(typedValue);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, float> || std::is_same_v<ValueType, double>)
-                    {
-                        return std::to_string(typedValue);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, std::string>)
-                    {
-                        return typedValue;
-                    }
-                    else if constexpr (std::is_same_v<ValueType, glm::vec2>)
-                    {
-                        return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, glm::vec3>)
-                    {
-                        return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, ScriptReferenceArray>)
-                    {
-                        return EncodeReferenceArray(typedValue);
-                    }
-                    else
-                    {
-                        return {};
-                    }
-                },
-                value);
+        // Element types a managed T[] or List<T> field may use: assets plus every plain value type.
+        bool IsSupportedArrayElementType(ScriptFieldType type)
+        {
+            switch (type)
+            {
+            case ScriptFieldType::Boolean:
+            case ScriptFieldType::Int32:
+            case ScriptFieldType::Float:
+            case ScriptFieldType::Double:
+            case ScriptFieldType::String:
+            case ScriptFieldType::Vector2:
+            case ScriptFieldType::Vector3:
+            case ScriptFieldType::Enum:
+            case ScriptFieldType::Color:
+            case ScriptFieldType::Vector4:
+            case ScriptFieldType::Quaternion:
+                return true;
+            default:
+                return IsAssetFieldType(type);
+            }
+        }
+
+        std::vector<std::string> SplitList(std::string_view text)
+        {
+            std::vector<std::string> items;
+            while (!text.empty())
+            {
+                const auto separator = text.find(';');
+                if (separator != 0)
+                    items.emplace_back(text.substr(0, separator));
+                if (separator == std::string_view::npos)
+                    break;
+                text.remove_prefix(separator + 1);
+            }
+            return items;
         }
 
         std::string SerializeFieldData(const std::unordered_map<std::string, ScriptFieldValue> &fieldValues,
@@ -877,11 +753,23 @@ namespace PlutoGE::scripting
                                 fieldDefinition.type = fieldDefinition.referenceTypeName == "System.String" && !fieldDefinition.isArray
                                                            ? ScriptFieldType::String : ScriptFieldType::None;
                             }
-                            if (fieldDefinition.isArray && !IsAssetFieldType(fieldDefinition.type))
+                            if (fieldDefinition.isArray && !IsSupportedArrayElementType(fieldDefinition.type))
                             {
                                 fieldDefinition.type = ScriptFieldType::None;
                                 fieldDefinition.isArray = false;
                             }
+                            // Optional presentation columns (bridges that predate them stop at token 8).
+                            if (tokens.size() >= 10)
+                                fieldDefinition.header = tokens[9];
+                            if (tokens.size() >= 11)
+                                fieldDefinition.tooltip = tokens[10];
+                            if (tokens.size() >= 13 && !tokens[11].empty() && !tokens[12].empty())
+                                fieldDefinition.range = glm::dvec2(std::strtod(tokens[11].c_str(), nullptr),
+                                                                   std::strtod(tokens[12].c_str(), nullptr));
+                            if (tokens.size() >= 14)
+                                fieldDefinition.enumNames = SplitList(tokens[13]);
+                            if (tokens.size() >= 15)
+                                fieldDefinition.formerNames = SplitList(tokens[14]);
                             // The default's shape depends on every token above.
                             fieldDefinition.defaultValue = ParseFieldValue(fieldDefinition, tokens[4]);
                             currentClass->fields.push_back(std::move(fieldDefinition));

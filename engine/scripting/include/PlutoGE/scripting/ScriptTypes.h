@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 #include <algorithm>
@@ -48,6 +49,14 @@ namespace PlutoGE::scripting
         InputMappingAsset,
         // A reference to a project asset of ScriptFieldDefinition::assetType.
         Asset,
+        // A managed enum, stored by member name (ScriptFieldDefinition::enumNames lists the members) so that
+        // reordering or inserting members keeps saved values.
+        Enum,
+        // RGBA, stored as glm::vec4.
+        Color,
+        Vector4,
+        // x, y, z, w; edited as Euler angles in degrees.
+        Quaternion,
     };
 
     enum class ScriptClassKind
@@ -56,11 +65,13 @@ namespace PlutoGE::scripting
         ScriptableObject,
     };
 
-    // The value of an array field: one asset reference per element, empty for an unassigned slot.
+    // The value of an array field: one element per entry in its text form (FormatFieldValueText). For asset
+    // arrays that is the reference, empty for an unassigned slot.
     using ScriptReferenceArray = std::vector<std::string>;
 
+    // Alternatives are only ever appended.
     using ScriptFieldValue = std::variant<std::monostate, bool, int32_t, float, double, std::string, glm::vec2, glm::vec3, uint32_t,
-                                          ScriptReferenceArray>;
+                                          ScriptReferenceArray, glm::vec4>;
 
     struct ScriptFieldDefinition
     {
@@ -74,8 +85,17 @@ namespace PlutoGE::scripting
         bool defaultValueIsNull = false;
         // The referenced asset type of an Asset field; Unknown otherwise.
         assets::ProjectAssetType assetType = assets::ProjectAssetType::Unknown;
-        // A managed T[] or List<T>; its value is a ScriptReferenceArray. Only asset element types are supported.
+        // A managed T[] or List<T>; its value is a ScriptReferenceArray of element texts.
         bool isArray = false;
+
+        // Inspector presentation from managed attributes ([Header], [Tooltip], [Range]).
+        std::string header;
+        std::string tooltip;
+        std::optional<glm::dvec2> range;
+        // Enum members in declaration order, for Enum fields.
+        std::vector<std::string> enumNames;
+        // Earlier names of this field ([FormerlySerializedAs]); stored values under them are migrated.
+        std::vector<std::string> formerNames;
     };
 
     // The asset type a field (or each of its elements) references, for Asset and
@@ -139,4 +159,20 @@ namespace PlutoGE::scripting
     [[nodiscard]] bool IsFieldValueCompatible(ScriptFieldType type, const ScriptFieldValue &value);
     [[nodiscard]] ScriptFieldValue MakeDefaultFieldValue(ScriptFieldType type);
     [[nodiscard]] const ScriptFieldDefinition *FindFieldDefinition(const ScriptClassDefinition &scriptClass, std::string_view fieldName);
+
+    // The one text form of a field value, shared by the managed bridge, scene properties and scriptable assets.
+    // Numbers use the shortest text that reads back to the same value ("17.7", not "17.700001"); vectors are
+    // comma-separated components; arrays use EncodeReferenceArray.
+    [[nodiscard]] std::string FormatFieldValueText(const ScriptFieldValue &value);
+    // Parses `text` as a value of `type` (a single element for arrays). Malformed text gives the type's default.
+    [[nodiscard]] ScriptFieldValue ParseFieldValueText(ScriptFieldType type, std::string_view text);
+    // The field type a value most naturally has, for values whose definition is unknown.
+    [[nodiscard]] ScriptFieldType InferFieldType(const ScriptFieldValue &value);
+    // The value types a field type stores; used to keep enum and array handling in one place.
+    [[nodiscard]] bool IsVector4FieldType(ScriptFieldType type);
+
+    // Moves values stored under a field's former names ([FormerlySerializedAs]) to its current name, unless a
+    // value under the current name exists. Returns true when anything moved.
+    bool MigrateRenamedFields(const std::vector<ScriptFieldDefinition> &fields,
+                              std::unordered_map<std::string, ScriptFieldValue> &values);
 }

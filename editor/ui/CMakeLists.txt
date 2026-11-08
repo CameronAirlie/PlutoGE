@@ -2,6 +2,7 @@ add_library(PlutoGEEditorUI
     src/BuiltinAuthoring.cpp
     src/AuthoringUI.cpp
     src/ScriptSourceWatch.cpp
+    src/ScriptFieldEditor.cpp
     src/ConsoleLog.cpp
     src/EntityNaming.cpp
     src/EditorDocument.cpp

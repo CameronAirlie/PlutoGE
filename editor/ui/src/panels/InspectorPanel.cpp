@@ -13,6 +13,7 @@
 #include "PlutoGE/ui/PropertyEditor.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/ScriptAssetFieldPicker.h"
+#include "PlutoGE/ui/ScriptFieldEditor.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 #include "PlutoGE/ui/postprocess/PostProcessPresetField.h"
@@ -1008,6 +1009,25 @@ namespace PlutoGE::ui
                 const auto vector = std::get<glm::vec3>(value);
                 return "new Vector3(" + FormatFloatLiteral(vector.x) + ", " + FormatFloatLiteral(vector.y) + ", " + FormatFloatLiteral(vector.z) + ")";
             }
+            case scripting::ScriptFieldType::Enum:
+            {
+                const auto &member = std::get<std::string>(value);
+                if (field.referenceTypeName.empty() || member.empty())
+                    return std::nullopt;
+                std::string typeName = field.referenceTypeName;
+                std::replace(typeName.begin(), typeName.end(), '+', '.');
+                return "global::" + typeName + "." + member;
+            }
+            case scripting::ScriptFieldType::Color:
+            case scripting::ScriptFieldType::Vector4:
+            case scripting::ScriptFieldType::Quaternion:
+            {
+                const auto vector = std::get<glm::vec4>(value);
+                const char *type = field.type == scripting::ScriptFieldType::Color ? "Color"
+                                   : field.type == scripting::ScriptFieldType::Vector4 ? "Vector4" : "Quaternion";
+                return std::string("new ") + type + "(" + FormatFloatLiteral(vector.x) + ", " + FormatFloatLiteral(vector.y) + ", " +
+                       FormatFloatLiteral(vector.z) + ", " + FormatFloatLiteral(vector.w) + ")";
+            }
             case scripting::ScriptFieldType::EntityId:
                 return std::to_string(std::get<uint32_t>(value)) + "u";
             case scripting::ScriptFieldType::GameObject:
@@ -1640,227 +1660,124 @@ namespace PlutoGE::ui
         }
 
         std::optional<std::vector<scene::Entity *>> sceneEntities;
-        int fieldIndex = 0;
-        for (const auto &field : serializedFields)
+        ScriptFieldEditorContext fieldContext;
+        fieldContext.project = editorShell.GetProject();
+        fieldContext.drawEntityReference = [&](const char *label, const scripting::ScriptFieldDefinition &field, uint32_t &selectedEntityId)
         {
-            std::optional<scripting::ScriptFieldValue> fieldValue;
-            if (const auto fieldIterator = fieldValues.find(field.name); fieldIterator != fieldValues.end())
+            scene::Scene *scene = entity.GetScene();
+            if (!sceneEntities.has_value())
             {
-                fieldValue = scripting::NormalizeFieldValue(field, fieldIterator->second);
-            }
-            // A stored value of the wrong shape (for example after a field became an array) shows the default.
-            if (!fieldValue.has_value() || !scripting::IsFieldValueCompatible(field, *fieldValue))
-            {
-                fieldValue = scripting::ResolveFieldDefault(field);
-            }
-
-            ImGui::PushID(fieldIndex++);
-            if (field.isArray)
-            {
-                auto references = std::get<scripting::ScriptReferenceArray>(*fieldValue);
-                if (RenderScriptAssetArrayField(field.name.c_str(), editorShell.GetProject(), field, references))
-                    changed |= scriptComponent.SetFieldValue(field.name, references);
-                ImGui::PopID();
-                continue;
-            }
-            switch (field.type)
-            {
-            case scripting::ScriptFieldType::Boolean:
-            {
-                bool value = std::get<bool>(*fieldValue);
-                if (ImGui::Checkbox(field.name.c_str(), &value))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::Int32:
-            {
-                int value = std::get<int32_t>(*fieldValue);
-                if (ImGui::DragInt(field.name.c_str(), &value))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, static_cast<int32_t>(value));
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::Float:
-            {
-                float value = std::get<float>(*fieldValue);
-                if (ImGui::DragFloat(field.name.c_str(), &value, 0.01f))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::Double:
-            {
-                double value = std::get<double>(*fieldValue);
-                if (ImGui::InputDouble(field.name.c_str(), &value))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::String:
-            {
-                char buffer[256];
-                const auto &value = std::get<std::string>(*fieldValue);
-                strncpy_s(buffer, sizeof(buffer), value.c_str(), _TRUNCATE);
-                if (ImGui::InputText(field.name.c_str(), buffer, sizeof(buffer)))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, std::string(buffer));
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::PrefabAsset:
-            case scripting::ScriptFieldType::ScriptableObjectAsset:
-            case scripting::ScriptFieldType::MaterialAsset:
-            case scripting::ScriptFieldType::InputMappingAsset:
-            case scripting::ScriptFieldType::Asset:
-            {
-                auto value = std::get<std::string>(*fieldValue);
-                if (RenderScriptAssetField(field.name.c_str(), editorShell.GetProject(), field, value))
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                break;
-            }
-            case scripting::ScriptFieldType::Vector2:
-            {
-                auto value = std::get<glm::vec2>(*fieldValue);
-                if (ImGui::DragFloat2(field.name.c_str(), &value.x, 0.01f))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::Vector3:
-            {
-                auto value = std::get<glm::vec3>(*fieldValue);
-                if (ImGui::DragFloat3(field.name.c_str(), &value.x, 0.01f))
-                {
-                    changed |= scriptComponent.SetFieldValue(field.name, value);
-                }
-                break;
-            }
-            case scripting::ScriptFieldType::EntityId:
-            case scripting::ScriptFieldType::GameObject:
-            case scripting::ScriptFieldType::MeshComponent:
-            case scripting::ScriptFieldType::CameraComponent:
-            case scripting::ScriptFieldType::LightComponent:
-            case scripting::ScriptFieldType::RigidbodyComponent:
-            case scripting::ScriptFieldType::ColliderComponent:
-            case scripting::ScriptFieldType::AnimationComponent:
-            case scripting::ScriptFieldType::CanvasComponent:
-            case scripting::ScriptFieldType::RectTransformComponent:
-            case scripting::ScriptFieldType::UIImageComponent:
-            case scripting::ScriptFieldType::UITextComponent:
-            case scripting::ScriptFieldType::UIButtonComponent:
-            case scripting::ScriptFieldType::ParticleSystemComponent:
-            case scripting::ScriptFieldType::SoundEmitterComponent:
-            {
-                uint32_t selectedEntityId = std::get<uint32_t>(*fieldValue);
-                scene::Scene *scene = entity.GetScene();
-                if (!sceneEntities.has_value())
-                {
-                    sceneEntities.emplace();
-                    if (scene)
-                    {
-                        for (auto *rootEntity : scene->GetRootEntities())
-                        {
-                            CollectEntitiesRecursive(rootEntity, *sceneEntities);
-                        }
-                    }
-                }
-                const auto &entities = *sceneEntities;
-
-                auto isCompatibleEntity = [field](const scene::Entity &candidate) -> bool
-                {
-                    switch (field.type)
-                    {
-                    case scripting::ScriptFieldType::MeshComponent:
-                        return candidate.HasComponent<scene::MeshComponent>();
-                    case scripting::ScriptFieldType::CameraComponent:
-                        return candidate.HasComponent<scene::CameraComponent>();
-                    case scripting::ScriptFieldType::LightComponent:
-                        return candidate.HasComponent<scene::LightComponent>();
-                    case scripting::ScriptFieldType::RigidbodyComponent:
-                        return candidate.HasComponent<scene::RigidbodyComponent>();
-                    case scripting::ScriptFieldType::ColliderComponent:
-                        return candidate.HasComponent<scene::ColliderComponent>();
-                    case scripting::ScriptFieldType::AnimationComponent:
-                        return candidate.HasComponent<scene::AnimationComponent>();
-                    case scripting::ScriptFieldType::CanvasComponent:
-                        return candidate.HasComponent<scene::CanvasComponent>();
-                    case scripting::ScriptFieldType::RectTransformComponent:
-                        return candidate.HasComponent<scene::RectTransformComponent>();
-                    case scripting::ScriptFieldType::UIImageComponent:
-                        return candidate.HasComponent<scene::UIImageComponent>();
-                    case scripting::ScriptFieldType::UITextComponent:
-                        return candidate.HasComponent<scene::UITextComponent>();
-                    case scripting::ScriptFieldType::UIButtonComponent:
-                        return candidate.HasComponent<scene::UIButtonComponent>();
-                    case scripting::ScriptFieldType::ParticleSystemComponent:
-                        return candidate.HasComponent<scene::ParticleSystemComponent>();
-                    case scripting::ScriptFieldType::SoundEmitterComponent:
-                        return candidate.HasComponent<scene::SoundEmitterComponent>();
-                    case scripting::ScriptFieldType::EntityId:
-                    case scripting::ScriptFieldType::GameObject:
-                    default:
-                        return true;
-                    }
-                };
-
-                std::string previewLabel = "<None>";
+                sceneEntities.emplace();
                 if (scene)
                 {
-                    if (auto *selectedEntity = scene->FindEntityByID(selectedEntityId))
+                    for (auto *rootEntity : scene->GetRootEntities())
                     {
-                        previewLabel = selectedEntity->GetName().empty()
-                                           ? ("Entity " + std::to_string(selectedEntityId))
-                                           : selectedEntity->GetName();
+                        CollectEntitiesRecursive(rootEntity, *sceneEntities);
                     }
                 }
+            }
+            const auto &entities = *sceneEntities;
 
-                if (ImGui::BeginCombo(field.name.c_str(), previewLabel.c_str()))
+                auto isCompatibleEntity = [&field](const scene::Entity &candidate) -> bool
+            {
+                switch (field.type)
                 {
-                    const bool isNoneSelected = selectedEntityId == 0;
-                    if (ImGui::Selectable("<None>", isNoneSelected))
+                case scripting::ScriptFieldType::MeshComponent:
+                    return candidate.HasComponent<scene::MeshComponent>();
+                case scripting::ScriptFieldType::CameraComponent:
+                    return candidate.HasComponent<scene::CameraComponent>();
+                case scripting::ScriptFieldType::LightComponent:
+                    return candidate.HasComponent<scene::LightComponent>();
+                case scripting::ScriptFieldType::RigidbodyComponent:
+                    return candidate.HasComponent<scene::RigidbodyComponent>();
+                case scripting::ScriptFieldType::ColliderComponent:
+                    return candidate.HasComponent<scene::ColliderComponent>();
+                case scripting::ScriptFieldType::AnimationComponent:
+                    return candidate.HasComponent<scene::AnimationComponent>();
+                case scripting::ScriptFieldType::CanvasComponent:
+                    return candidate.HasComponent<scene::CanvasComponent>();
+                case scripting::ScriptFieldType::RectTransformComponent:
+                    return candidate.HasComponent<scene::RectTransformComponent>();
+                case scripting::ScriptFieldType::UIImageComponent:
+                    return candidate.HasComponent<scene::UIImageComponent>();
+                case scripting::ScriptFieldType::UITextComponent:
+                    return candidate.HasComponent<scene::UITextComponent>();
+                case scripting::ScriptFieldType::UIButtonComponent:
+                    return candidate.HasComponent<scene::UIButtonComponent>();
+                case scripting::ScriptFieldType::ParticleSystemComponent:
+                    return candidate.HasComponent<scene::ParticleSystemComponent>();
+                case scripting::ScriptFieldType::SoundEmitterComponent:
+                    return candidate.HasComponent<scene::SoundEmitterComponent>();
+                case scripting::ScriptFieldType::EntityId:
+                case scripting::ScriptFieldType::GameObject:
+                default:
+                    return true;
+                }
+            };
+
+            std::string previewLabel = "<None>";
+            if (scene)
+            {
+                if (auto *selectedEntity = scene->FindEntityByID(selectedEntityId))
+                {
+                    previewLabel = selectedEntity->GetName().empty()
+                                       ? ("Entity " + std::to_string(selectedEntityId))
+                                       : selectedEntity->GetName();
+                }
+            }
+
+            bool picked = false;
+            if (ImGui::BeginCombo(label, previewLabel.c_str()))
+            {
+                const bool isNoneSelected = selectedEntityId == 0;
+                if (ImGui::Selectable("<None>", isNoneSelected) && !isNoneSelected)
+                {
+                    selectedEntityId = 0;
+                    picked = true;
+                }
+                for (auto *candidate : entities)
+                {
+                    if (!candidate || !isCompatibleEntity(*candidate))
                     {
-                        changed |= scriptComponent.SetFieldValue(field.name, uint32_t{0});
+                        continue;
                     }
-                    if (isNoneSelected)
+                    const bool isSelected = candidate->GetID() == selectedEntityId;
+                    const std::string candidateLabel = candidate->GetName().empty()
+                                                           ? ("Entity " + std::to_string(candidate->GetID()))
+                                                           : (candidate->GetName() + "##" + std::to_string(candidate->GetID()));
+                    if (ImGui::Selectable(candidateLabel.c_str(), isSelected) && !isSelected)
+                    {
+                        selectedEntityId = candidate->GetID();
+                        picked = true;
+                    }
+                    if (isSelected)
                     {
                         ImGui::SetItemDefaultFocus();
                     }
-
-                    for (auto *candidate : entities)
-                    {
-                        if (!candidate || !isCompatibleEntity(*candidate))
-                        {
-                            continue;
-                        }
-
-                        const bool isSelected = candidate->GetID() == selectedEntityId;
-                        std::string label = candidate->GetName().empty()
-                                                ? ("Entity " + std::to_string(candidate->GetID()))
-                                                : (candidate->GetName() + "##" + std::to_string(candidate->GetID()));
-                        if (ImGui::Selectable(label.c_str(), isSelected))
-                        {
-                            changed |= scriptComponent.SetFieldValue(field.name, candidate->GetID());
-                        }
-                        if (isSelected)
-                        {
-                            ImGui::SetItemDefaultFocus();
-                        }
-                    }
-
-                    ImGui::EndCombo();
                 }
-                break;
+                ImGui::EndCombo();
             }
-            case scripting::ScriptFieldType::None:
-            default:
-                ImGui::TextDisabled("Unsupported field: %s", field.name.c_str());
-                break;
+            return picked;
+        };
+
+        int fieldIndex = 0;
+        for (const auto &field : serializedFields)
+        {
+            scripting::ScriptFieldValue fieldValue = scripting::ResolveFieldDefault(field);
+            if (const auto fieldIterator = fieldValues.find(field.name); fieldIterator != fieldValues.end())
+            {
+                // A stored value of the wrong shape (for example after a field became an array) shows the default.
+                auto stored = scripting::NormalizeFieldValue(field, fieldIterator->second);
+                if (scripting::IsFieldValueCompatible(field, stored))
+                {
+                    fieldValue = std::move(stored);
+                }
+            }
+
+            ImGui::PushID(fieldIndex++);
+            if (DrawScriptField(field, fieldValue, fieldContext))
+            {
+                changed |= scriptComponent.SetFieldValue(field.name, fieldValue);
             }
             ImGui::PopID();
         }

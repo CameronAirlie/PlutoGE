@@ -8,6 +8,7 @@
 #include "PlutoGE/ui/theme/UIThemeDocument.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/ScriptAssetFieldPicker.h"
+#include "PlutoGE/ui/ScriptFieldEditor.h"
 #include "PlutoGE/ui/ModelImportDependenciesInspector.h"
 #include "PlutoGE/ui/ModelHierarchyInspector.h"
 #include "PlutoGE/ui/StaticModelHierarchyDialog.h"
@@ -47,6 +48,7 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/SurfacePlacement.h"
 #include "PlutoGE/ui/postprocess/PostProcessPresetSession.h"
+#include <charconv>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -904,52 +906,12 @@ namespace PlutoGE::ui
 
         std::string SerializeScriptableValue(const scripting::ScriptFieldValue &value)
         {
-            return std::visit([](const auto &typedValue) -> std::string
-            {
-                using T = std::decay_t<decltype(typedValue)>;
-                if constexpr (std::is_same_v<T, std::monostate>) return {};
-                else if constexpr (std::is_same_v<T, bool>) return typedValue ? "true" : "false";
-                else if constexpr (std::is_same_v<T, std::string>) return typedValue;
-                else if constexpr (std::is_same_v<T, scripting::ScriptReferenceArray>) return scripting::EncodeReferenceArray(typedValue);
-                else if constexpr (std::is_same_v<T, glm::vec2>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y);
-                else if constexpr (std::is_same_v<T, glm::vec3>) return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
-                else return std::to_string(typedValue);
-            }, value);
+            return scripting::FormatFieldValueText(value);
         }
 
         scripting::ScriptFieldValue ParseScriptableValue(scripting::ScriptFieldType type, const std::string &text)
         {
-            try
-            {
-                if (scripting::IsAssetFieldType(type)) return text;
-                switch (type)
-                {
-                case scripting::ScriptFieldType::Boolean: return text == "true" || text == "1";
-                case scripting::ScriptFieldType::Int32: return static_cast<int32_t>(std::stoi(text));
-                case scripting::ScriptFieldType::Float: return std::stof(text);
-                case scripting::ScriptFieldType::Double: return std::stod(text);
-                case scripting::ScriptFieldType::String: return text;
-                case scripting::ScriptFieldType::Vector2:
-                {
-                    glm::vec2 value{};
-                    char comma{};
-                    std::istringstream(text) >> value.x >> comma >> value.y;
-                    return value;
-                }
-                case scripting::ScriptFieldType::Vector3:
-                {
-                    glm::vec3 value{};
-                    char comma1{}, comma2{};
-                    std::istringstream(text) >> value.x >> comma1 >> value.y >> comma2 >> value.z;
-                    return value;
-                }
-                default: return scripting::MakeDefaultFieldValue(type);
-                }
-            }
-            catch (...)
-            {
-                return scripting::MakeDefaultFieldValue(type);
-            }
+            return scripting::ParseFieldValueText(type, text);
         }
 
         bool SaveScriptableObjectAsset(const std::filesystem::path &path,
@@ -989,7 +951,9 @@ namespace PlutoGE::ui
                 auto tokens = SplitScriptableLine(line);
                 if (tokens.size() >= 4 && tokens[0] == "FIELD")
                 {
-                    values[tokens[1]] = ParseScriptableValue(static_cast<scripting::ScriptFieldType>(std::stoi(tokens[2])), tokens[3]);
+                    int type = 0;
+                    std::from_chars(tokens[2].data(), tokens[2].data() + tokens[2].size(), type);
+                    values[tokens[1]] = ParseScriptableValue(static_cast<scripting::ScriptFieldType>(type), tokens[3]);
                 }
             }
             return true;
@@ -2288,14 +2252,16 @@ namespace PlutoGE::ui
                 else if (const auto *definition = scriptEngine.FindClass(className))
                 {
                     ImGui::SeparatorText(className.c_str());
-                    bool changed = false;
+                    // Values saved under a field's former name follow it, and are saved under the new name.
+                    bool changed = scripting::MigrateRenamedFields(definition->fields, values);
+                    const ScriptFieldEditorContext fieldContext{.project = editorShell.GetProject()};
                     int fieldIndex = 0;
                     for (const auto &field : definition->fields)
                     {
                         auto iterator = values.find(field.name);
                         if (iterator != values.end())
                         {
-                            // The asset stores arrays as encoded text; restore their shape.
+                            // The asset stores arrays and some value types as text; restore their shape.
                             iterator->second = scripting::NormalizeFieldValue(field, std::move(iterator->second));
                         }
                         if (iterator == values.end() || !scripting::IsFieldValueCompatible(field, iterator->second))
@@ -2303,71 +2269,7 @@ namespace PlutoGE::ui
                             iterator = values.insert_or_assign(field.name, scripting::ResolveFieldDefault(field)).first;
                         }
                         ImGui::PushID(fieldIndex++);
-                        if (field.isArray)
-                        {
-                            auto &references = std::get<scripting::ScriptReferenceArray>(iterator->second);
-                            changed |= RenderScriptAssetArrayField(field.name.c_str(), editorShell.GetProject(), field, references);
-                            ImGui::PopID();
-                            continue;
-                        }
-                        switch (field.type)
-                        {
-                        case scripting::ScriptFieldType::Boolean:
-                        {
-                            bool value = std::get<bool>(iterator->second);
-                            if (ImGui::Checkbox(field.name.c_str(), &value)) { iterator->second = value; changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::Int32:
-                        {
-                            int value = std::get<int32_t>(iterator->second);
-                            if (ImGui::DragInt(field.name.c_str(), &value)) { iterator->second = static_cast<int32_t>(value); changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::Float:
-                        {
-                            float value = std::get<float>(iterator->second);
-                            if (ImGui::DragFloat(field.name.c_str(), &value, 0.01f)) { iterator->second = value; changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::Double:
-                        {
-                            double value = std::get<double>(iterator->second);
-                            if (ImGui::InputDouble(field.name.c_str(), &value)) { iterator->second = value; changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::Vector2:
-                        {
-                            auto value = std::get<glm::vec2>(iterator->second);
-                            if (ImGui::DragFloat2(field.name.c_str(), &value.x, 0.01f)) { iterator->second = value; changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::Vector3:
-                        {
-                            auto value = std::get<glm::vec3>(iterator->second);
-                            if (ImGui::DragFloat3(field.name.c_str(), &value.x, 0.01f)) { iterator->second = value; changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::String:
-                        {
-                            auto &value = std::get<std::string>(iterator->second);
-                            if (InputTextString(field.name.c_str(), value)) { changed = true; }
-                            break;
-                        }
-                        case scripting::ScriptFieldType::PrefabAsset:
-                        case scripting::ScriptFieldType::ScriptableObjectAsset:
-                        case scripting::ScriptFieldType::MaterialAsset:
-                        case scripting::ScriptFieldType::InputMappingAsset:
-                        case scripting::ScriptFieldType::Asset:
-                        {
-                            auto &value = std::get<std::string>(iterator->second);
-                            if (RenderScriptAssetField(field.name.c_str(), editorShell.GetProject(), field, value)) { changed = true; }
-                            break;
-                        }
-                        default:
-                            ImGui::TextDisabled("%s (unsupported asset field)", field.name.c_str());
-                            break;
-                        }
+                        changed |= DrawScriptField(field, iterator->second, fieldContext);
                         ImGui::PopID();
                     }
                     if (changed)

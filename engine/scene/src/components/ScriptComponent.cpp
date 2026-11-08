@@ -41,6 +41,12 @@ namespace PlutoGE::scene
                 return scene::PropertyType::Vec2;
             case scripting::ScriptFieldType::Vector3:
                 return scene::PropertyType::Vec3;
+            case scripting::ScriptFieldType::Enum:
+                return scene::PropertyType::String;
+            case scripting::ScriptFieldType::Color:
+            case scripting::ScriptFieldType::Vector4:
+            case scripting::ScriptFieldType::Quaternion:
+                return scene::PropertyType::Vec4;
             case scripting::ScriptFieldType::EntityId:
             case scripting::ScriptFieldType::GameObject:
             case scripting::ScriptFieldType::MeshComponent:
@@ -65,138 +71,37 @@ namespace PlutoGE::scene
 
         scripting::ScriptFieldType GetScriptFieldType(const scripting::ScriptFieldValue &value)
         {
-            if (std::holds_alternative<bool>(value))
-            {
-                return scripting::ScriptFieldType::Boolean;
-            }
-
-            if (std::holds_alternative<int32_t>(value))
-            {
-                return scripting::ScriptFieldType::Int32;
-            }
-
-            if (std::holds_alternative<float>(value))
-            {
-                return scripting::ScriptFieldType::Float;
-            }
-
-            if (std::holds_alternative<double>(value))
-            {
-                return scripting::ScriptFieldType::Double;
-            }
-
-            if (std::holds_alternative<std::string>(value))
-            {
-                return scripting::ScriptFieldType::String;
-            }
-
-            if (std::holds_alternative<glm::vec2>(value))
-            {
-                return scripting::ScriptFieldType::Vector2;
-            }
-
-            if (std::holds_alternative<glm::vec3>(value))
-            {
-                return scripting::ScriptFieldType::Vector3;
-            }
-
-            if (std::holds_alternative<uint32_t>(value))
-            {
-                return scripting::ScriptFieldType::EntityId;
-            }
-
-            return scripting::ScriptFieldType::None;
+            return scripting::InferFieldType(value);
         }
 
         std::string SerializeFieldValue(const scripting::ScriptFieldValue &value)
         {
-            return std::visit(
-                [](const auto &typedValue) -> std::string
-                {
-                    using ValueType = std::decay_t<decltype(typedValue)>;
-
-                    if constexpr (std::is_same_v<ValueType, std::monostate>)
-                    {
-                        return {};
-                    }
-                    else if constexpr (std::is_same_v<ValueType, bool>)
-                    {
-                        return typedValue ? "true" : "false";
-                    }
-                    else if constexpr (std::is_same_v<ValueType, int32_t> || std::is_same_v<ValueType, uint32_t>)
-                    {
-                        return std::to_string(typedValue);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, float> || std::is_same_v<ValueType, double>)
-                    {
-                        return std::to_string(typedValue);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, std::string>)
-                    {
-                        return typedValue;
-                    }
-                    else if constexpr (std::is_same_v<ValueType, glm::vec2>)
-                    {
-                        return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, glm::vec3>)
-                    {
-                        return std::to_string(typedValue.x) + "," + std::to_string(typedValue.y) + "," + std::to_string(typedValue.z);
-                    }
-                    else if constexpr (std::is_same_v<ValueType, scripting::ScriptReferenceArray>)
-                    {
-                        return scripting::EncodeReferenceArray(typedValue);
-                    }
-                    else
-                    {
-                        return {};
-                    }
-                },
-                value);
+            return scripting::FormatFieldValueText(value);
         }
 
-        glm::vec2 ParseVec2(const std::string &value)
-        {
-            glm::vec2 parsedValue{0.0f};
-#ifdef _WIN32
-            std::sscanf(value.c_str(), "%f,%f", &parsedValue.x, &parsedValue.y);
-#else
-            std::sscanf(value.c_str(), "%f,%f", &parsedValue.x, &parsedValue.y);
-#endif
-            return parsedValue;
-        }
-
-        glm::vec3 ParseVec3(const std::string &value)
-        {
-            glm::vec3 parsedValue{0.0f};
-#ifdef _WIN32
-            std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
-#else
-            std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
-#endif
-            return parsedValue;
-        }
-
+        // Scene properties carry a coarse type; the script class definition restores the exact shape later
+        // (NormalizeFieldValue), so this only needs to read each property type's text.
         scripting::ScriptFieldValue DeserializeFieldValue(scene::PropertyType propertyType, const std::string &value)
         {
             switch (propertyType)
             {
             case scene::PropertyType::Bool:
-                return value == "true";
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Boolean, value);
             case scene::PropertyType::Int:
-                return static_cast<int32_t>(std::stoi(value));
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Int32, value);
             case scene::PropertyType::Float:
-                return std::stof(value);
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Float, value);
             case scene::PropertyType::Double:
-                return std::stod(value);
-            case scene::PropertyType::String:
-                return value;
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Double, value);
             case scene::PropertyType::Vec2:
-                return ParseVec2(value);
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Vector2, value);
             case scene::PropertyType::Vec3:
-                return ParseVec3(value);
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Vector3, value);
+            case scene::PropertyType::Vec4:
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::Vector4, value);
             case scene::PropertyType::Entity:
-                return static_cast<uint32_t>(std::stoul(value));
+                return scripting::ParseFieldValueText(scripting::ScriptFieldType::EntityId, value);
+            case scene::PropertyType::String:
             case scene::PropertyType::Color:
             case scene::PropertyType::Enum:
             default:
@@ -520,6 +425,10 @@ namespace PlutoGE::scene
             fieldValues[property.name] = std::move(value);
         }
 
+        // Values saved under a field's former name follow the field ([FormerlySerializedAs]).
+        if (const auto *scriptClass = core::Engine::GetInstance().GetScriptEngine().FindClass(source))
+            scripting::MigrateRenamedFields(scriptClass->fields, fieldValues);
+
         const bool sourceChanged = m_scriptClass != source;
         m_fieldValues = std::move(fieldValues);
 
@@ -706,6 +615,7 @@ namespace PlutoGE::scene
         auto &scriptEngine = core::Engine::GetInstance().GetScriptEngine();
         if (const auto *scriptClass = scriptEngine.FindClass(m_scriptClass))
         {
+            scripting::MigrateRenamedFields(scriptClass->fields, m_fieldValues);
             for (const auto &field : scriptClass->fields)
             {
                 if (!field.serialized)

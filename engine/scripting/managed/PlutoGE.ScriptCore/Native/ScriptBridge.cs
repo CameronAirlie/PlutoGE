@@ -191,9 +191,15 @@ internal static unsafe partial class ScriptBridge
         }
     }
 
-    // ElementType is set for T[] and List<T> members; Type then describes each element.
+    // ElementType is set for T[] and List<T> members; Type then describes each element. The trailing members carry
+    // inspector attributes and [FormerlySerializedAs] names to the engine.
     private sealed record ScriptFieldMetadata(string Name, int Type, string ReferenceTypeName, object? DefaultValue, MemberInfo Member,
-        string AssetTypeId, Type? ElementType);
+        string AssetTypeId, Type? ElementType, string Header = "", string Tooltip = "", RangeAttribute? Range = null,
+        IReadOnlyList<string>? EnumNames = null, IReadOnlyList<string>? FormerNames = null)
+    {
+        public bool Matches(string storedName) =>
+            Name == storedName || (FormerNames?.Contains(storedName, StringComparer.Ordinal) ?? false);
+    }
 
     // Mirrors PlutoGE::scripting::ScriptCallback: native skips transitions for unset bits.
     [Flags]
@@ -3311,6 +3317,10 @@ internal static unsafe partial class ScriptBridge
                 {
                     fields.Add(metadata);
                 }
+                else
+                {
+                    WarnUnsupportedField(type, field.Name, field.FieldType);
+                }
             }
 
             foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -3323,6 +3333,10 @@ internal static unsafe partial class ScriptBridge
                 if (CreateFieldMetadata(property, property.PropertyType, property.GetValue(defaultInstance)) is { } metadata)
                 {
                     fields.Add(metadata);
+                }
+                else
+                {
+                    WarnUnsupportedField(type, property.Name, property.PropertyType);
                 }
             }
 
@@ -3339,6 +3353,10 @@ internal static unsafe partial class ScriptBridge
     }
 
     private const int AssetFieldType = 27;
+    private const int EnumFieldType = 28;
+    private const int ColorFieldType = 29;
+    private const int Vector4FieldType = 30;
+    private const int QuaternionFieldType = 31;
 
     // Collections describe their elements: Type, ReferenceTypeName and AssetTypeId all refer to T.
     private static ScriptFieldMetadata? CreateFieldMetadata(MemberInfo member, Type memberType, object? defaultValue)
@@ -3347,17 +3365,40 @@ internal static unsafe partial class ScriptBridge
         var valueType = elementType ?? memberType;
         var assetType = GetAssetType(member, valueType);
         var fieldType = assetType is null ? MapFieldType(valueType) : AssetFieldType;
-        if (fieldType is null || (elementType is not null && !IsAssetReferenceFieldType(fieldType.Value)))
+        if (fieldType is null || (elementType is not null && !IsArrayElementFieldType(fieldType.Value)))
         {
             return null;
         }
 
+        var range = member.GetCustomAttribute<RangeAttribute>();
         return new ScriptFieldMetadata(member.Name, fieldType.Value, GetReferenceTypeName(valueType, fieldType.Value),
-            defaultValue, member, assetType?.ToString() ?? string.Empty, elementType);
+            defaultValue, member, assetType?.ToString() ?? string.Empty, elementType,
+            member.GetCustomAttribute<HeaderAttribute>()?.Title ?? string.Empty,
+            member.GetCustomAttribute<TooltipAttribute>()?.Text ?? string.Empty,
+            range,
+            valueType.IsEnum ? Enum.GetNames(valueType) : null,
+            member.GetCustomAttributes<FormerlySerializedAsAttribute>().Select(attribute => attribute.OldName).ToArray());
     }
 
-    // Collections are supported for asset references (prefabs, scriptable objects and Asset fields).
-    private static bool IsAssetReferenceFieldType(int fieldType) => fieldType is 23 or 24 or AssetFieldType;
+    // Collections hold asset references (prefabs, scriptable objects and Asset fields) or plain values.
+    private static bool IsArrayElementFieldType(int fieldType) =>
+        fieldType is >= 1 and <= 7 or 23 or 24 or AssetFieldType or EnumFieldType or ColorFieldType or Vector4FieldType or QuaternionFieldType;
+
+    private static readonly HashSet<string> WarnedFields = new(StringComparer.Ordinal);
+
+    // A [SerializedField] the engine cannot store is otherwise silently missing from the inspector.
+    private static void WarnUnsupportedField(Type owner, string memberName, Type memberType)
+    {
+        if (!WarnedFields.Add(owner.FullName + "." + memberName))
+        {
+            return;
+        }
+
+        Debug.LogWarning($"{owner.Name}.{memberName}: [SerializedField] of type {memberType.Name} cannot be saved, so it is not shown " +
+                         "in the inspector. Supported: bool, int, float, double, string, enums, Vector2/3/4, Quaternion, Color, " +
+                         "GameObject and component references, prefabs, scriptable objects, asset references, and arrays or " +
+                         "lists of these (except references to scene objects).");
+    }
 
     private static object? ParseFieldValue(ScriptFieldMetadata field, string text, Type memberType)
     {
@@ -3510,13 +3551,34 @@ internal static unsafe partial class ScriptBridge
             return 24;
         }
 
+        if (type.IsEnum)
+        {
+            return EnumFieldType;
+        }
+
+        if (type == typeof(Color))
+        {
+            return ColorFieldType;
+        }
+
+        if (type == typeof(Vector4))
+        {
+            return Vector4FieldType;
+        }
+
+        if (type == typeof(Quaternion))
+        {
+            return QuaternionFieldType;
+        }
+
         return null;
     }
 
-    // Scriptable objects filter assignable assets; asset fields tell the editor whether the member is a string.
+    // Scriptable objects filter assignable assets; asset fields tell the editor whether the member is a string; enums
+    // name their type so the editor can write defaults back as C# literals.
     private static string GetReferenceTypeName(Type memberType, int fieldType)
     {
-        return fieldType is 24 or AssetFieldType ? memberType.FullName ?? memberType.Name : string.Empty;
+        return fieldType is 24 or AssetFieldType or EnumFieldType ? memberType.FullName ?? memberType.Name : string.Empty;
     }
 
     private static IReadOnlyList<string> GetAssignableTypeNames(Type type)
@@ -3591,7 +3653,13 @@ internal static unsafe partial class ScriptBridge
                     .Append(Escape(field.ReferenceTypeName)).Append('\t')
                     .Append(field.DefaultValue is null ? '1' : '0').Append('\t')
                     .Append(Escape(field.AssetTypeId)).Append('\t')
-                    .Append(field.ElementType is null ? '0' : '1').Append('\n');
+                    .Append(field.ElementType is null ? '0' : '1').Append('\t')
+                    .Append(Escape(field.Header)).Append('\t')
+                    .Append(Escape(field.Tooltip)).Append('\t')
+                    .Append(field.Range is null ? string.Empty : field.Range.Min.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                    .Append(field.Range is null ? string.Empty : field.Range.Max.ToString(CultureInfo.InvariantCulture)).Append('\t')
+                    .Append(Escape(string.Join(';', field.EnumNames ?? []))).Append('\t')
+                    .Append(Escape(string.Join(';', field.FormerNames ?? []))).Append('\n');
             }
 
             builder.Append("END\n");
@@ -3612,7 +3680,8 @@ internal static unsafe partial class ScriptBridge
 
             var fieldName = tokens[1];
             var fieldType = int.Parse(tokens[2], CultureInfo.InvariantCulture);
-            var member = scriptClass.Fields.FirstOrDefault(candidate => candidate.Name == fieldName);
+            var member = scriptClass.Fields.FirstOrDefault(candidate => candidate.Name == fieldName) ??
+                         scriptClass.Fields.FirstOrDefault(candidate => candidate.Matches(fieldName));
             if (member is null)
             {
                 continue;
@@ -3693,9 +3762,45 @@ internal static unsafe partial class ScriptBridge
             25 => value,
             26 => value,
             AssetFieldType => memberType == typeof(string) ? value : SerializedAssetTypes.Load(memberType, value),
+            EnumFieldType => ParseEnum(memberType, value),
+            ColorFieldType => (Color)ParseVector4(value, Vector4.One),
+            Vector4FieldType => ParseVector4(value, Vector4.Zero),
+            QuaternionFieldType => ToQuaternion(ParseVector4(value, new Vector4(0, 0, 0, 1))),
             _ => null,
         };
     }
+
+    // Enums are stored by member name so reordering members keeps saved values; numbers from older data still parse.
+    private static object ParseEnum(Type enumType, string value)
+    {
+        if (!enumType.IsEnum)
+        {
+            return 0;
+        }
+
+        return Enum.TryParse(enumType, value, ignoreCase: true, out var parsed) && parsed is not null
+            ? parsed
+            : Enum.ToObject(enumType, 0);
+    }
+
+    private static Vector4 ParseVector4(string value, Vector4 fallback)
+    {
+        var parts = SplitEscaped(value, ',');
+        if (parts.Count != 4)
+        {
+            return fallback;
+        }
+
+        static float Component(string text, float fallback) =>
+            float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed) ? parsed : fallback;
+        return new Vector4(Component(parts[0], fallback.X), Component(parts[1], fallback.Y), Component(parts[2], fallback.Z),
+            Component(parts[3], fallback.W));
+    }
+
+    private static Quaternion ToQuaternion(Vector4 value) => new(value.X, value.Y, value.Z, value.W);
+
+    private static string SerializeVector4(Vector4 vector) =>
+        string.Create(CultureInfo.InvariantCulture, $"{vector.X},{vector.Y},{vector.Z},{vector.W}");
 
     private static string SerializeValue(int fieldType, object? value)
     {
@@ -3728,6 +3833,12 @@ internal static unsafe partial class ScriptBridge
             25 => value as string ?? string.Empty,
             26 => value as string ?? string.Empty,
             AssetFieldType => value as string ?? SerializedAssetTypes.GetReference(value),
+            EnumFieldType => value is Enum enumValue ? enumValue.ToString() : string.Empty,
+            ColorFieldType => SerializeVector4(value is Color color ? color : Vector4.One),
+            Vector4FieldType => SerializeVector4(value is Vector4 vector ? vector : Vector4.Zero),
+            QuaternionFieldType => SerializeVector4(value is Quaternion rotation
+                ? new Vector4(rotation.X, rotation.Y, rotation.Z, rotation.W)
+                : new Vector4(0, 0, 0, 1)),
             _ => string.Empty,
         };
     }

@@ -88,6 +88,9 @@ namespace PlutoGE::ui
         std::string error;
         std::string attemptedReference;
         bool waitForRelease = false;
+        // The drag was released over the viewport: place once at the ghost. Holding Shift on release keeps the
+        // tool armed for further clicks instead.
+        bool placeOnDrop = false;
         bool repeat = true;
         bool snap = false;
         float gridSize = 1.0f;
@@ -1921,6 +1924,8 @@ namespace PlutoGE::ui
                         m_placement->parentId = 0;
                         m_placement->waitForRelease = true;
                     }
+                    if (payload->IsDelivery() && m_placement->session.IsActive())
+                        m_placement->placeOnDrop = true;
                 }
 
             }
@@ -2526,8 +2531,8 @@ namespace PlutoGE::ui
             state.error.clear();
             return true;
         }
-        // Releasing a browser drag arms the persistent placement tool. The
-        // release is never a stamp or cancellation, including over this window.
+        // Releasing a browser drag over the viewport places once (placeOnDrop) or, with Shift held, arms the
+        // placement tool for further clicks. The release itself never counts as a click.
         if (state.waitForRelease && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::GetDragDropPayload())
             state.waitForRelease = false;
 
@@ -2634,8 +2639,10 @@ namespace PlutoGE::ui
         if (editingControls && state.lastSurfaceHit && (!state.parentId || parent))
             if (state.session.Update(*state.lastSurfaceHit, parent, state.options, state.error)) state.error.clear();
         if (state.parentId && !parent) state.error = "Placement parent was deleted. Choose a new parent or Scene root.";
-        const bool stamp = viewportClicked && !state.waitForRelease &&
-            !editingControls && !ImGui::GetIO().KeyAlt;
+        const bool dropped = std::exchange(state.placeOnDrop, false);
+        const bool keepArmed = dropped && ImGui::GetIO().KeyShift;
+        const bool stamp = (dropped && !keepArmed) ||
+            (viewportClicked && !state.waitForRelease && !editingControls && !ImGui::GetIO().KeyAlt);
         if (stamp && state.session.GetPose())
         {
             scene::Entity *created = nullptr;
@@ -2643,7 +2650,8 @@ namespace PlutoGE::ui
             if (created)
             {
                 shell.SetSelectedEntity(created);
-                if (!state.repeat) state.session.Cancel();
+                // A plain drop is a single placement; clicks in an armed tool follow "Repeat placement".
+                if (dropped || !state.repeat) state.session.Cancel();
             }
         }
         return true;

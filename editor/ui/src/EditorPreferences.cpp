@@ -1,5 +1,7 @@
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/ExternalScriptEditor.h"
+#include "PlutoGE/ui/ConsoleLog.h"
+#include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/EditorWidgets.h"
@@ -24,6 +26,7 @@ namespace PlutoGE::ui
             Interface,
             Advanced,
             ExternalTools,
+            Behaviour,
         };
 
         struct PreferencesState
@@ -544,6 +547,33 @@ namespace PlutoGE::ui
             widgets::EndCard();
         }
 
+        // A per-user on/off setting row.
+        void SettingToggle(const char *label, const char *description, std::string_view key, bool fallback)
+        {
+            auto &settings = EditorSettings::Get();
+            widgets::SettingsRow(label, description);
+            bool value = settings.GetBool(key, fallback);
+            if (widgets::ToggleSwitch((std::string("##") + std::string(key)).c_str(), &value))
+                settings.SetBool(key, value);
+        }
+
+        void RenderBehaviourPage()
+        {
+            widgets::PageTitle("Behaviour", "How the editor reacts while you work. Saved for your user account, not the project.");
+
+            widgets::SectionHeading("Play mode");
+            widgets::BeginCard("##PlayMode");
+            if (widgets::BeginSettingsTable("##PlayModeTable"))
+            {
+                SettingToggle("Focus Game view on Play", "Keyboard and mouse input go to the game as soon as Play starts.",
+                              kFocusGameViewOnPlayKey, true);
+                SettingToggle("Pause on script error", "Pause Play when a script throws an exception. Also in the Console toolbar.",
+                              kPauseOnScriptErrorKey, false);
+                widgets::EndSettingsTable();
+            }
+            widgets::EndCard();
+        }
+
         void RenderAdvancedPage()
         {
             widgets::PageTitle("Advanced", "Pin individual ImGui style colours. Overrides take priority over the palette and are saved with the theme.");
@@ -668,6 +698,7 @@ namespace PlutoGE::ui
             ImGui::TextUnformatted("TOOLS");
             ImGui::PopStyleColor();
             ImGui::Dummy(ImVec2(0.0f, 6.0f));
+            nav(icons::Settings, "Behaviour", PreferencesPage::Behaviour);
             nav(icons::ScriptAsset, "External Tools", PreferencesPage::ExternalTools);
             ImGui::EndChild();
             ImGui::PopStyleVar(2);
@@ -689,6 +720,7 @@ namespace PlutoGE::ui
             case PreferencesPage::Interface: RenderInterfacePage(); break;
             case PreferencesPage::Advanced: RenderAdvancedPage(); break;
             case PreferencesPage::ExternalTools: RenderExternalToolsPreferences(); break;
+            case PreferencesPage::Behaviour: RenderBehaviourPage(); break;
             }
             ImGui::EndChild();
         }

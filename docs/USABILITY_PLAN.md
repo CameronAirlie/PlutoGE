@@ -42,7 +42,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T1.5 Asset editor documents.** An `IEditorDocument` interface (title, dirty, save, revert) implemented by the
   asset editors; the shell asks all dirty documents before closing / switching project; editors prompt before
   discarding edits when switching asset; Ctrl+S saves the focused document. Save / Don't Save / Cancel modal.
-- [ ] **T1.6 Small editor fixes.**
+- [x] **T1.6 Small editor fixes.**
   - New root entities spawn in front of the editor camera.
   - Viewport drag-drop places on release (Shift keeps stamping).
   - Frame Selected uses combined world bounds of the selection and descendants.
@@ -155,4 +155,21 @@ Record each completed item here with the date, what changed, and how it was veri
 - Not done here: undo/redo for the Material, Particle and Loading Screen editors (still revert-only).
 - Verified: `PlutoGEEditorWorkflowTests` covers the resolver (cancel, save failure, save all, discard, nothing
   dirty) and the guard's follow rules; `PlutoGEEditorUI` builds.
+
+### 2026-11-08 — T1.6
+
+- Spawn in view: `EditorShell::GetSpawnPointInView()` (physics raycast along the view centre, 50 m, else 8 m
+  ahead). Hierarchy presets opt out with `EntityPresetDefinition::placeInView = false` (sky, ocean, terrain,
+  directional light).
+- Drop to place: `PlacementState::placeOnDrop` stamps once on drag delivery; Shift on release keeps the existing
+  persistent placement tool.
+- Frame Selected: world AABB over mesh bounds of the selection and descendants; `EditorViewportCamera::flyTarget`
+  glides the camera (cancelled by look/pan); `focusPoint` recorded for orbiting (T4.2).
+- Clipboard holds every selected root; paste re-selects them all. `NextDuplicateName` ("Crate (1)").
+- Game view focused on Play (`play.focusGameView`, new **Preferences > Behaviour** page, which also exposes
+  Pause on script error). `Panel::Focus()` added.
+- Recovery: `SceneRecovery::BeginSession/EndSession` session marker; the window auto-opens only after an
+  unclean exit.
+- Verified: `PlutoGEEditorWorkflowTests` (duplicate naming, session marker) pass; `PlutoGEEditorUI` builds.
+  Editor binary still locked by the running editor, so Tier 1 still needs an interactive pass.
 

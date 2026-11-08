@@ -30,6 +30,22 @@ belong to that panel.
 - Undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) and Play (F5) work everywhere except in text fields.
 - Backspace does not delete entities, so it is safe to press after leaving a text field. Use Delete.
 
+## Creating, placing and framing
+
+- **New objects appear in view.** Objects from the Scene Hierarchy's Create menu appear on the first surface
+  under the centre of the Editor Viewport (within 50 m), or 8 m in front of the camera. Sky, Ocean, Terrain and
+  Directional Light keep their usual origin placement. Children are created at their parent.
+- **Drag to place.** Dropping a prefab, model or mesh from the Content Browser onto the Editor Viewport places it
+  at the preview position in one step. Hold **Shift** when releasing to keep the placement tool armed and click
+  to place more copies; **Esc** or **Finish / Cancel** ends it.
+- **Frame Selected (F)** fits every selected entity and the meshes under it, so imported models and
+  multi-selections frame correctly. The camera glides to the new view; looking or panning interrupts it.
+- **Copy and paste** take the whole selection. Pasted entities keep their names and become siblings of the
+  current selection.
+- **Duplicates** are named `Crate (1)`, `Crate (2)` and so on, skipping numbers a sibling already uses.
+- **Play** focuses the Game view so input reaches the game immediately. Turn this off in
+  **Preferences > Behaviour**.
+
 ## Unsaved changes
 
 Closing the editor, opening another project or scene, or restoring a recovery backup first asks about every
@@ -185,6 +201,9 @@ a reachable asset has scan errors, to avoid silently dropping dependencies;
 include-all cooking remains available.
 
 ## Autosave and recovery
+
+The recovery window opens by itself only when the previous editor session did not close normally (a crash, or
+the process was killed) and backups exist. Open it any time from the menu to browse backups.
 
 Open **File > Autosave and Recovery...** to configure autosave or recover a backup.
 Autosave defaults to every 120 seconds with ten backups retained per project.

@@ -19,6 +19,7 @@
 #include "PlutoGE/ui/ProjectLauncher.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorSettings.h"
+#include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/EditorTheme.h"
@@ -692,6 +693,23 @@ namespace PlutoGE::ui
             static bool isPanActive = false;
             static double lastPanCursorX = 0.0;
             static double lastPanCursorY = 0.0;
+
+            // Frame Selected glides instead of jumping; looking or panning takes control back.
+            if (camera.flyTarget)
+            {
+                if (isLookActive || isPanActive)
+                    camera.flyTarget.reset();
+                else
+                {
+                    const float blend = 1.0f - std::exp(-14.0f * (std::max)(deltaTime, 0.0f));
+                    camera.position = glm::mix(camera.position, *camera.flyTarget, blend);
+                    if (glm::distance(camera.position, *camera.flyTarget) < 0.005f)
+                    {
+                        camera.position = *camera.flyTarget;
+                        camera.flyTarget.reset();
+                    }
+                }
+            }
 
             if (!windowHandle)
             {
@@ -1697,6 +1715,10 @@ namespace PlutoGE::ui
             return false;
         }
         m_statusMessage = "Runtime started.";
+        m_scriptErrorPauseRequested = false;
+        // Input reaches the game only through a focused Game view; focus it so keys work without a click first.
+        if (EditorSettings::Get().GetBool(kFocusGameViewOnPlayKey, true))
+            gameViewport.Focus();
         return true;
     }
 
@@ -1895,21 +1917,22 @@ namespace PlutoGE::ui
 
     bool EditorShell::CopySelectedEntity()
     {
-        if (!m_selectedEntity)
-        {
+        const auto roots = GetSelectedEntities(true);
+        if (roots.empty())
             return false;
-        }
 
         auto clipboardScene = std::make_unique<scene::Scene>();
-        auto *copiedRoot = scene::Prefab::DuplicateEntity(*clipboardScene, *m_selectedEntity, nullptr, true);
-        if (!copiedRoot)
-        {
+        std::vector<scene::EntityID> copiedRoots;
+        for (const auto *source : roots)
+            if (auto *copy = scene::Prefab::DuplicateEntity(*clipboardScene, *source, nullptr, true))
+                copiedRoots.push_back(copy->GetID());
+        if (copiedRoots.empty())
             return false;
-        }
 
-        m_entityClipboardRootId = copiedRoot->GetID();
+        m_entityClipboardRootIds = std::move(copiedRoots);
         m_entityClipboardScene = std::move(clipboardScene);
-        Log(ConsoleSeverity::Info, "Copied entity: " + m_selectedEntity->GetName());
+        m_statusMessage = roots.size() == 1 ? "Copied " + roots.front()->GetName() + "."
+                                            : "Copied " + std::to_string(roots.size()) + " entities.";
         return true;
     }
 
@@ -1920,32 +1943,22 @@ namespace PlutoGE::ui
             return false;
         }
 
-        auto *sourceRoot = m_entityClipboardScene->FindEntityByID(m_entityClipboardRootId);
-        if (!sourceRoot)
+        // Pasted entities become siblings of the current selection (or scene roots) and keep their names and
+        // transforms, so copy and paste between scenes lands where the originals were.
+        scene::Entity *parent = GetSelectedEntity() ? m_selectedEntity->GetParent() : nullptr;
+        std::vector<std::uint32_t> created;
+        ExecuteSceneEdit(m_entityClipboardRootIds.size() == 1 ? "Paste Entity" : "Paste Entities", [&]()
         {
+            for (const auto id : m_entityClipboardRootIds)
+                if (const auto *source = m_entityClipboardScene->FindEntityByID(id))
+                    if (auto *copy = scene::Prefab::DuplicateEntity(*m_scene, *source, parent, true))
+                        created.push_back(copy->GetID());
+        }, SceneEditScope::Additive());
+
+        if (created.empty())
             return false;
-        }
-
-        scene::Entity *createdEntity = nullptr;
-        scene::Entity *parent = m_selectedEntity ? m_selectedEntity->GetParent() : nullptr;
-        ExecuteSceneEdit("Paste Entity",
-                         [&]()
-                         {
-                             createdEntity = scene::Prefab::DuplicateEntity(*m_scene, *sourceRoot, parent, true);
-                             if (createdEntity)
-                             {
-                                 createdEntity->SetPosition(createdEntity->GetPosition() + glm::vec3(0.0f, 0.0f, 0.0f));
-                             }
-                         },
-                         SceneEditScope::Additive());
-
-        if (createdEntity)
-        {
-            SetSelectedEntity(createdEntity);
-            return true;
-        }
-
-        return false;
+        SetSelectedEntities(created);
+        return true;
     }
 
     bool EditorShell::DuplicateSelectedEntity()
@@ -1958,7 +1971,13 @@ namespace PlutoGE::ui
             for (auto *source : roots)
                 if (auto *copy = scene::Prefab::DuplicateEntity(*m_scene, *source, source->GetParent(), true))
                 {
-                    copy->SetName(source->GetName() + " Copy");
+                    // "Crate" -> "Crate (1)", numbered past whatever siblings already use.
+                    std::vector<std::string> siblingNames;
+                    const auto &siblings = source->GetParent() ? source->GetParent()->GetChildren() : m_scene->GetRootEntities();
+                    for (const auto *sibling : siblings)
+                        if (sibling && sibling != copy)
+                            siblingNames.push_back(sibling->GetName());
+                    copy->SetName(NextDuplicateName(source->GetName(), siblingNames));
                     created.push_back(copy->GetID());
                 }
         }, SceneEditScope::Additive());
@@ -2252,14 +2271,31 @@ namespace PlutoGE::ui
         return m_contentBrowser ? m_contentBrowser->GetAssetThumbnail(reference) : 0;
     }
 
+    glm::vec3 EditorShell::GetEditorCameraForward() const
+    {
+        const auto &camera = m_editorCamera;
+        glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
+        rotation = glm::rotate(rotation, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
+        return glm::normalize(-glm::vec3(rotation[2]));
+    }
+
+    glm::vec3 EditorShell::GetSpawnPointInView() const
+    {
+        constexpr float kMaxSurfaceDistance = 50.0f;
+        constexpr float kFallbackDistance = 8.0f;
+        const glm::vec3 origin = m_editorCamera.position;
+        const glm::vec3 forward = GetEditorCameraForward();
+        scene::PhysicsRaycastHit hit;
+        if (m_scene && m_scene->Raycast(origin, forward, kMaxSurfaceDistance, hit))
+            return hit.point;
+        return origin + forward * kFallbackDistance;
+    }
+
     void EditorShell::FrameWorldSphere(const glm::vec3 &center, float radius)
     {
         auto &camera = m_editorCamera;
-        glm::mat4 cameraTransform = glm::translate(glm::mat4(1.0f), camera.position);
-        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.yawDegrees), glm::vec3(0.0f, 1.0f, 0.0f));
-        cameraTransform = glm::rotate(cameraTransform, glm::radians(camera.pitchDegrees), glm::vec3(1.0f, 0.0f, 0.0f));
-        const glm::vec3 forward = glm::normalize(-glm::vec3(cameraTransform[2]));
-        camera.position = center - forward * (std::max)(radius * 2.5f, 2.0f);
+        camera.flyTarget = center - GetEditorCameraForward() * (std::max)(radius * 2.5f, 2.0f);
+        camera.focusPoint = center;
     }
 
     void EditorShell::FrameSelectedEntity()
@@ -2289,18 +2325,44 @@ namespace PlutoGE::ui
             }
         }
 
-        float radius = 2.5f;
-        if (auto *meshComponent = selectedEntity->GetComponent<scene::MeshComponent>())
+        // Frame everything selected, including the meshes under each selected entity (an imported model's root
+        // has none of its own). Entities without meshes count as a small sphere around their position.
+        glm::vec3 low((std::numeric_limits<float>::max)());
+        glm::vec3 high(-(std::numeric_limits<float>::max)());
+        bool foundMesh = false;
+        const auto include = [&](const glm::vec3 &center, float radius)
         {
-            if (auto *mesh = meshComponent->GetMesh())
+            low = (glm::min)(low, center - glm::vec3(radius));
+            high = (glm::max)(high, center + glm::vec3(radius));
+        };
+        const std::function<void(const scene::Entity &)> visit = [&](const scene::Entity &entity)
+        {
+            if (const auto *meshComponent = entity.GetComponent<scene::MeshComponent>())
             {
-                const glm::vec3 worldScale = selectedEntity->GetWorldScale();
-                const float maxScale = (std::max)(worldScale.x, (std::max)(worldScale.y, worldScale.z));
-                radius = (std::max)(mesh->GetBounds().radius * maxScale, 0.5f);
+                if (const auto *mesh = meshComponent->GetMesh())
+                {
+                    const glm::mat4 world = entity.GetWorldTransform();
+                    const glm::vec3 scale = entity.GetWorldScale();
+                    const float maxScale = (std::max)(std::abs(scale.x), (std::max)(std::abs(scale.y), std::abs(scale.z)));
+                    include(glm::vec3(world * glm::vec4(mesh->GetBounds().center, 1.0f)), mesh->GetBounds().radius * maxScale);
+                    foundMesh = true;
+                }
             }
-        }
-
-        FrameWorldSphere(selectedEntity->GetWorldPosition(), radius);
+            for (const auto *child : entity.GetChildren())
+                if (child)
+                    visit(*child);
+        };
+        const auto selection = GetSelectedEntities(true);
+        for (const auto *entity : selection)
+            if (entity)
+                visit(*entity);
+        if (!foundMesh)
+            for (const auto *entity : selection)
+                if (entity)
+                    include(entity->GetWorldPosition(), 2.5f);
+        if (low.x > high.x)
+            return;
+        FrameWorldSphere((low + high) * 0.5f, (std::max)(glm::length(high - low) * 0.5f, 0.5f));
     }
 
     scene::Entity *EditorShell::GetSelectedEntity()
@@ -5661,6 +5723,7 @@ namespace PlutoGE::ui
         scripting::ClearScriptLogSink();
         scripting::ClearScriptErrorListener();
         EditorSettings::Get().Flush();
+        SceneRecovery::EndSession(m_recoveryDirectory);
         m_panelManager.ShutdownPanels();
         m_gameSceneRenderService.reset();
         m_editorSceneRenderService.reset();

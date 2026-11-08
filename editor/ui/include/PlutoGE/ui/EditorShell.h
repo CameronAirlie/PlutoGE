@@ -105,6 +105,10 @@ namespace PlutoGE::ui
             float speedAdjustment = 1.0f;
             float yawDegrees = 0.0f;
             float pitchDegrees = 0.0f;
+            // Frame Selected moves the camera here over a few frames; any navigation input cancels it.
+            std::optional<glm::vec3> flyTarget;
+            // The point the camera was last framed on, used as the orbit pivot.
+            glm::vec3 focusPoint{0.0f};
             bool orthographic = false;
             bool renderRuntimeUI = false;
             float orthographicSize = 10.0f;
@@ -166,6 +170,10 @@ namespace PlutoGE::ui
         [[nodiscard]] std::uint64_t GetSelectionRevision() const override { return m_entitySelection.Revision(); }
         // Moves the editor camera so the primary selected entity, or the foliage instances selected in it, fill the view.
         void FrameSelectedEntity();
+        // Where a new scene object should appear: the first surface under the centre of the editor view within
+        // 50 m, otherwise a point a few metres in front of the camera.
+        [[nodiscard]] glm::vec3 GetSpawnPointInView() const;
+        [[nodiscard]] glm::vec3 GetEditorCameraForward() const;
         [[nodiscard]] FoliageEditTool &GetFoliageTool() { return m_foliageTool; }
         // Selects an asset in the Content Browser and shows its details. Returns false if there is no browser.
         bool RevealAsset(const std::string &reference);
@@ -367,7 +375,7 @@ namespace PlutoGE::ui
         bool PasteCopiedEntity();
         bool DuplicateSelectedEntity();
         bool DeleteSelectedEntity();
-        bool HasCopiedEntity() const { return m_entityClipboardScene != nullptr && m_entityClipboardRootId != 0; }
+        bool HasCopiedEntity() const { return m_entityClipboardScene != nullptr && !m_entityClipboardRootIds.empty(); }
 
     private:
         EditorShell();
@@ -501,7 +509,8 @@ namespace PlutoGE::ui
         std::uint64_t m_sceneRevision = 0;
         std::unique_ptr<scene::Scene> m_scene;
         std::unique_ptr<scene::Scene> m_entityClipboardScene;
-        scene::EntityID m_entityClipboardRootId = 0;
+        // Copied selection roots, in selection order, inside m_entityClipboardScene.
+        std::vector<scene::EntityID> m_entityClipboardRootIds;
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::Final();
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;

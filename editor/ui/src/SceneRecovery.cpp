@@ -92,6 +92,24 @@ namespace PlutoGE::ui
         out << "PLUTORECOVERYSETTINGS1 " << settings.enabled << ' ' << settings.intervalSeconds << ' ' << settings.retainedBackups << '\n';
         return AtomicWrite(directory / "settings", out.str(), error);
     }
+    bool SceneRecovery::BeginSession(const std::filesystem::path &directory)
+    {
+        std::error_code ec;
+        const auto marker = directory / "session.lock";
+        const bool previousSessionOpen = std::filesystem::exists(marker, ec);
+        std::filesystem::create_directories(directory, ec);
+        std::ofstream(marker, std::ios::trunc) << "PlutoGE editor session\n";
+        return previousSessionOpen;
+    }
+
+    void SceneRecovery::EndSession(const std::filesystem::path &directory)
+    {
+        if (directory.empty())
+            return;
+        std::error_code ec;
+        std::filesystem::remove(directory / "session.lock", ec);
+    }
+
     std::vector<RecoveryBackup> SceneRecovery::List(const std::filesystem::path &directory, std::vector<std::string> &errors)
     {
         errors.clear();

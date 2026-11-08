@@ -788,7 +788,12 @@ namespace PlutoGE::ui
             .sceneHasCamera = SceneHasAnyCamera(*scene),
         };
         scene::Entity *createdEntity = nullptr;
-        shell.ExecuteSceneEdit(preset.editLabel, [&]() { createdEntity = preset.create(context); }, SceneEditScope::Additive());
+        shell.ExecuteSceneEdit(preset.editLabel, [&]()
+        {
+            createdEntity = preset.create(context);
+            if (createdEntity && !parent && preset.placeInView)
+                createdEntity->SetPosition(createdEntity->GetPosition() + shell.GetSpawnPointInView());
+        }, SceneEditScope::Additive());
         if (createdEntity)
         {
             shell.SetSelectedEntity(createdEntity);

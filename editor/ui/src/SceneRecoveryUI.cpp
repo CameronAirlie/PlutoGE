@@ -30,6 +30,7 @@ namespace PlutoGE::ui
         const auto now = std::chrono::steady_clock::now();
         if (directory != m_recoveryDirectory)
         {
+            SceneRecovery::EndSession(m_recoveryDirectory);
             m_recoveryDirectory = directory;
             m_lastRecoveryState.clear();
             m_recoveryBackups.clear();
@@ -41,7 +42,10 @@ namespace PlutoGE::ui
             {
                 if (!SceneRecovery::ReadSettings(directory, m_recoverySettings, m_recoveryError)) m_recoverySettings.enabled = false;
                 m_recoveryBackups = SceneRecovery::List(directory, m_recoveryScanErrors);
-                m_showSceneRecovery = !m_recoveryBackups.empty() || !m_recoveryScanErrors.empty() || !m_recoveryError.empty();
+                // Backups are kept after normal exits too; offer them only when the last session ended abnormally.
+                const bool uncleanExit = SceneRecovery::BeginSession(directory);
+                m_showSceneRecovery = (uncleanExit && !m_recoveryBackups.empty()) || !m_recoveryScanErrors.empty() ||
+                                      !m_recoveryError.empty();
             }
             m_nextRecovery = now + std::chrono::seconds(m_recoverySettings.intervalSeconds);
         }

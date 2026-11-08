@@ -31,6 +31,9 @@ namespace PlutoGE::ui
         const char *editLabel;
         bool separatorBefore;
         scene::Entity *(*create)(const EntityPresetContext &context);
+        // New scene roots appear where the user is looking. World-level objects (sky, terrain, ocean, sun)
+        // keep their authored position instead.
+        bool placeInView = true;
     };
 
     // Menu order. Add a preset by appending a definition in HierarchyEntityPresets.cpp.

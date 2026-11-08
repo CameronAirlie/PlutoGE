@@ -6,7 +6,9 @@
 #include "PlutoGE/ui/ConsoleLog.h"
 #include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EditorSettings.h"
+#include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/ExternalScriptEditor.h"
+#include "PlutoGE/ui/SceneRecovery.h"
 #include "PlutoGE/ui/ScriptDiagnostics.h"
 #include "PlutoGE/ui/UnsavedSwitchGuard.h"
 
@@ -248,6 +250,32 @@ namespace
         Check(!guard.IsPromptPending() && guard.Follow("b", "", false) == std::optional<std::string>("b"), "Reset re-follows");
     }
 
+    void DuplicateNames()
+    {
+        const std::vector<std::string> none;
+        Check(NextDuplicateName("Crate", none) == "Crate (1)", "First duplicate");
+        const std::vector<std::string> siblings{"Crate", "Crate (1)", "Crate (3)"};
+        Check(NextDuplicateName("Crate", siblings) == "Crate (2)", "Fills the first free number");
+        Check(NextDuplicateName("Crate (1)", siblings) == "Crate (2)", "Numbered names keep their base");
+        Check(NextDuplicateName("Crate Copy Copy", siblings) == "Crate (2)", "Legacy Copy suffixes fold");
+        Check(NextDuplicateName("Level (Night)", none) == "Level (Night) (1)", "Non-numeric brackets are part of the name");
+        Check(NextDuplicateName("Wall (12)", none) == "Wall (1)", "Number replaced");
+    }
+
+    void RecoverySessionMarker()
+    {
+        const auto directory = std::filesystem::temp_directory_path() / "PlutoGEEditorWorkflowTests" / "recovery";
+        std::filesystem::remove_all(directory);
+        Check(!SceneRecovery::BeginSession(directory), "First session is clean");
+        Check(SceneRecovery::BeginSession(directory), "Session left open reads as an unclean exit");
+        SceneRecovery::EndSession(directory);
+        Check(!SceneRecovery::BeginSession(directory), "Ended session is clean");
+        SceneRecovery::EndSession(directory);
+        std::vector<std::string> errors;
+        Check(SceneRecovery::List(directory, errors).empty() && errors.empty(), "Marker is not listed as a backup");
+        std::filesystem::remove_all(directory.parent_path());
+    }
+
     void ScriptErrorThrottling()
     {
         scripting::ScriptErrorThrottle throttle;
@@ -293,6 +321,8 @@ int main()
         ScriptErrorThrottling();
         UnsavedDocumentsResolve();
         SwitchGuardFollowsSelection();
+        DuplicateNames();
+        RecoverySessionMarker();
     }
     catch (const std::exception &error)
     {

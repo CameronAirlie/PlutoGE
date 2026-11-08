@@ -29,5 +29,11 @@ namespace PlutoGE::ui
                          int retain, std::string &error);
         static std::vector<RecoveryBackup> List(const std::filesystem::path &directory, std::vector<std::string> &errors);
         static bool Read(const RecoveryBackup &backup, std::string &scene, std::string &error);
+
+        // Marks the project as open in an editor session. Returns true when the previous session never ended,
+        // meaning the editor crashed or was killed, so its backups are worth offering.
+        static bool BeginSession(const std::filesystem::path &directory);
+        // Clears the marker on a normal close.
+        static void EndSession(const std::filesystem::path &directory);
     };
 }

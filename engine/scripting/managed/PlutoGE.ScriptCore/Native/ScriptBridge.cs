@@ -255,6 +255,163 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, uint, uint> _instantiatePrefabPrepared;
     private static delegate* unmanaged[Cdecl]<uint, void> _startEntityScripts;
     private static delegate* unmanaged[Cdecl]<NativeRuntimeClock*, void> _getRuntimeClock;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, float, uint, byte*, uint*, int, int> _overlapSphere;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, NativeQuaternion, uint, byte*, uint*, int, int> _overlapBox;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, byte*, NativeRaycastHit*, int, int> _raycastAll;
+    private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, float, uint, NativeRaycastHit*, int> _sphereCast;
+
+    /// <summary>Optional: hosts without it report no overlaps or multi-hits (see <see cref="Physics"/>).</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterPhysicsQueryApi")]
+    public static int RegisterPhysicsQueryApi(
+        delegate* unmanaged[Cdecl]<NativeVector3, float, uint, byte*, uint*, int, int> overlapSphere,
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, NativeQuaternion, uint, byte*, uint*, int, int> overlapBox,
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, byte*, NativeRaycastHit*, int, int> raycastAll,
+        delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, float, uint, NativeRaycastHit*, int> sphereCast)
+    {
+        if (overlapSphere == null || overlapBox == null || raycastAll == null || sphereCast == null)
+        {
+            SetError("Managed physics query API registration received a null function pointer.");
+            return 0;
+        }
+
+        _overlapSphere = overlapSphere;
+        _overlapBox = overlapBox;
+        _raycastAll = raycastAll;
+        _sphereCast = sphereCast;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    // Retries once with a buffer of the reported size when the first was too small.
+    private static uint[] CollectEntityIds(Func<IntPtr, int, int> query)
+    {
+        var buffer = new uint[16];
+        int count;
+        fixed (uint* pointer = buffer)
+            count = query((IntPtr)pointer, buffer.Length);
+        if (count > buffer.Length)
+        {
+            buffer = new uint[count];
+            fixed (uint* pointer = buffer)
+                count = Math.Min(query((IntPtr)pointer, buffer.Length), buffer.Length);
+        }
+
+        return buffer[..Math.Max(count, 0)];
+    }
+
+    private static byte[] TagBytes(string? tag) => Encoding.UTF8.GetBytes((tag ?? string.Empty) + '\0');
+
+    internal static uint[] PhysicsOverlapSphere(Vector3 center, float radius, uint ignoredEntityId, string? tag)
+    {
+        if (_overlapSphere == null)
+            return [];
+        var tagBytes = TagBytes(tag);
+        return CollectEntityIds((buffer, capacity) =>
+        {
+            fixed (byte* tagPointer = tagBytes)
+                return _overlapSphere(NativeVector3.FromManaged(center), radius, ignoredEntityId, tagPointer, (uint*)buffer, capacity);
+        });
+    }
+
+    internal static uint[] PhysicsOverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, uint ignoredEntityId, string? tag)
+    {
+        if (_overlapBox == null)
+            return [];
+        var tagBytes = TagBytes(tag);
+        var nativeRotation = new NativeQuaternion { X = rotation.X, Y = rotation.Y, Z = rotation.Z, W = rotation.W };
+        return CollectEntityIds((buffer, capacity) =>
+        {
+            fixed (byte* tagPointer = tagBytes)
+                return _overlapBox(NativeVector3.FromManaged(center), NativeVector3.FromManaged(halfExtents), nativeRotation,
+                    ignoredEntityId, tagPointer, (uint*)buffer, capacity);
+        });
+    }
+
+    internal static NativeRaycastHit[] PhysicsRaycastAll(Vector3 origin, Vector3 direction, float maxDistance, uint ignoredEntityId, string? tag)
+    {
+        if (_raycastAll == null)
+            return [];
+        var tagBytes = TagBytes(tag);
+        var hits = new NativeRaycastHit[16];
+        int count;
+        fixed (byte* tagPointer = tagBytes)
+        {
+            fixed (NativeRaycastHit* pointer = hits)
+                count = _raycastAll(NativeVector3.FromManaged(origin), NativeVector3.FromManaged(direction), maxDistance,
+                    ignoredEntityId, tagPointer, pointer, hits.Length);
+            if (count > hits.Length)
+            {
+                hits = new NativeRaycastHit[count];
+                fixed (NativeRaycastHit* pointer = hits)
+                    count = Math.Min(_raycastAll(NativeVector3.FromManaged(origin), NativeVector3.FromManaged(direction), maxDistance,
+                        ignoredEntityId, tagPointer, pointer, hits.Length), hits.Length);
+            }
+        }
+
+        return hits[..Math.Max(count, 0)];
+    }
+
+    internal static bool PhysicsSphereCast(Vector3 origin, Vector3 direction, float radius, float maxDistance, uint ignoredEntityId,
+                                           out NativeRaycastHit hit)
+    {
+        hit = default;
+        if (_sphereCast == null)
+            return false;
+        fixed (NativeRaycastHit* pointer = &hit)
+            return _sphereCast(NativeVector3.FromManaged(origin), NativeVector3.FromManaged(direction), radius, maxDistance,
+                ignoredEntityId, pointer) != 0;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnCollisionContact")]
+    public static int InvokeOnCollisionContact(long handle, uint otherEntityId, NativeVector3 point, NativeVector3 normal, float impulse)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            if (instance.Enabled)
+            {
+                instance.OnCollisionEnter(new Collision(new GameObject(otherEntityId), point.ToManaged(), normal.ToManaged(), impulse));
+            }
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnTrigger")]
+    public static int InvokeOnTrigger(long handle, uint otherEntityId, int entered)
+    {
+        try
+        {
+            if (!Instances.TryGetValue(handle, out var instance))
+            {
+                SetError($"Unknown managed script instance handle '{handle}'.");
+                return 0;
+            }
+
+            if (instance.Enabled)
+            {
+                if (entered != 0)
+                    instance.OnTriggerEnter(new GameObject(otherEntityId));
+                else
+                    instance.OnTriggerExit(new GameObject(otherEntityId));
+            }
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
 
     // Mirrors RuntimeClockData in HostFxrScriptRuntime.cpp.
     [StructLayout(LayoutKind.Sequential)]

@@ -277,7 +277,25 @@ namespace PlutoGE::scene
         m_instance->OnFixedUpdate(fixedDeltaTime);
     }
 
-    void ScriptComponent::OnCollisionEnter(uint32_t otherEntityId)
+    void ScriptComponent::OnTriggerEnter(uint32_t otherEntityId)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
+            return;
+        Start();
+        if (HasLiveInstance())
+            m_instance->OnTriggerEnter(otherEntityId);
+    }
+
+    void ScriptComponent::OnTriggerExit(uint32_t otherEntityId)
+    {
+        if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
+            return;
+        Start();
+        if (HasLiveInstance())
+            m_instance->OnTriggerExit(otherEntityId);
+    }
+
+    void ScriptComponent::OnCollisionEnter(uint32_t otherEntityId, const CollisionContact &contact)
     {
         if (!core::Engine::GetInstance().IsRuntimeRunning() || m_scriptClass.empty())
         {
@@ -287,7 +305,7 @@ namespace PlutoGE::scene
         Start();
         if (HasLiveInstance())
         {
-            m_instance->OnCollisionEnter(otherEntityId);
+            m_instance->OnCollisionEnter(otherEntityId, contact);
         }
     }
 

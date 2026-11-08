@@ -397,6 +397,20 @@ namespace PlutoGE::scene
             return false;
         }
 
+        // Solid colliders that pass PhysicsQueryOptions (tags, ignored hierarchy).
+        bool PassesQueryOptions(const btCollisionObject *object, const PhysicsQueryOptions &options)
+        {
+            if (!object || !object->hasContactResponse())
+                return false;
+            const auto *entity = static_cast<const Entity *>(object->getUserPointer());
+            if (!entity || IsEntityOrDescendantOf(entity, options.ignoredEntityId))
+                return false;
+            const auto matchesTag = [entity](const std::string &tag) { return entity->HasTag(tag); };
+            if (std::any_of(options.excludeTags.begin(), options.excludeTags.end(), matchesTag))
+                return false;
+            return options.includeTags.empty() || std::any_of(options.includeTags.begin(), options.includeTags.end(), matchesTag);
+        }
+
         struct DecomposedTransform
         {
             glm::vec3 position{0.0f};
@@ -1226,7 +1240,7 @@ namespace PlutoGE::scene
             };
         }
 
-        void NotifyCollision(Entity *entity, EntityID otherEntityId, bool entered)
+        void NotifyCollision(Entity *entity, EntityID otherEntityId, bool entered, const CollisionContact &contact = {})
         {
             if (!entity || !entity->IsActive())
             {
@@ -1242,12 +1256,27 @@ namespace PlutoGE::scene
 
                 if (entered)
                 {
-                    scriptComponent->OnCollisionEnter(otherEntityId);
+                    scriptComponent->OnCollisionEnter(otherEntityId, contact);
                 }
                 else
                 {
                     scriptComponent->OnCollisionExit(otherEntityId);
                 }
+            }
+        }
+
+        void NotifyTrigger(Entity *entity, EntityID otherEntityId, bool entered)
+        {
+            if (!entity || !entity->IsActive())
+                return;
+            for (auto *scriptComponent : entity->GetComponents<ScriptComponent>())
+            {
+                if (!scriptComponent || !scriptComponent->IsEnabled())
+                    continue;
+                if (entered)
+                    scriptComponent->OnTriggerEnter(otherEntityId);
+                else
+                    scriptComponent->OnTriggerExit(otherEntityId);
             }
         }
 
@@ -1699,6 +1728,7 @@ namespace PlutoGE::scene
                     ragdoll.animation->ClearRagdollPhysicsPose();
         m_runtimePhysicsState.reset();
         m_activeCollisionPairs.clear();
+        m_triggerState.reset();
     }
 
     void Scene::RestoreRuntimePhysicsTransforms()
@@ -4938,7 +4968,7 @@ namespace PlutoGE::scene
             }
         }
 
-        std::unordered_set<uint64_t> currentCollisionPairs;
+        std::unordered_map<uint64_t, CollisionContact> currentCollisionPairs;
         const int manifoldCount = runtimeWorld.dynamicsWorld.getDispatcher()->getNumManifolds();
         for (int manifoldIndex = 0; manifoldIndex < manifoldCount; ++manifoldIndex)
         {
@@ -4957,19 +4987,34 @@ namespace PlutoGE::scene
                 continue;
             }
 
+            // The deepest touching point describes the contact; impulses add up over the manifold.
             bool hasContact = false;
+            CollisionContact contact;
+            float deepest = 0.0f;
             for (int contactIndex = 0; contactIndex < manifold->getNumContacts(); ++contactIndex)
             {
-                if (manifold->getContactPoint(contactIndex).getDistance() <= 0.0f)
+                const auto &point = manifold->getContactPoint(contactIndex);
+                if (point.getDistance() > 0.0f)
+                    continue;
+                contact.impulse += static_cast<float>(point.getAppliedImpulse());
+                if (!hasContact || point.getDistance() < deepest)
                 {
-                    hasContact = true;
-                    break;
+                    deepest = point.getDistance();
+                    contact.point = FromBullet(point.getPositionWorldOnB());
+                    // m_normalWorldOnB points from B towards A: B's surface normal as seen by A.
+                    contact.normal = FromBullet(point.m_normalWorldOnB);
                 }
+                hasContact = true;
             }
 
             if (hasContact)
             {
-                currentCollisionPairs.insert(MakeCollisionPairKey(entityA->GetID(), entityB->GetID()));
+                // Stored from the lower ID's point of view (MakeCollisionPairKey orders the pair that way).
+                if (entityA->GetID() > entityB->GetID())
+                    contact.normal = -contact.normal;
+                auto [existing, inserted] = currentCollisionPairs.try_emplace(MakeCollisionPairKey(entityA->GetID(), entityB->GetID()), contact);
+                if (!inserted)
+                    existing->second.impulse += contact.impulse;
             }
         }
 
@@ -4981,25 +5026,31 @@ namespace PlutoGE::scene
         }
 
         DispatchCollisionEvents(std::move(currentCollisionPairs));
+        UpdateTriggers();
     }
 
-    void Scene::DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs)
+    void Scene::DispatchCollisionEvents(std::unordered_map<uint64_t, CollisionContact> currentCollisionPairs)
     {
-        for (const auto pairKey : currentCollisionPairs)
+        std::unordered_set<uint64_t> currentKeys;
+        currentKeys.reserve(currentCollisionPairs.size());
+        for (const auto &[pairKey, contact] : currentCollisionPairs)
         {
+            currentKeys.insert(pairKey);
             if (m_activeCollisionPairs.contains(pairKey))
             {
                 continue;
             }
 
             const auto [firstId, secondId] = DecodeCollisionPairKey(pairKey);
-            NotifyCollision(FindEntityByID(firstId), secondId, true);
-            NotifyCollision(FindEntityByID(secondId), firstId, true);
+            NotifyCollision(FindEntityByID(firstId), secondId, true, contact);
+            CollisionContact mirrored = contact;
+            mirrored.normal = -contact.normal;
+            NotifyCollision(FindEntityByID(secondId), firstId, true, mirrored);
         }
 
         for (const auto pairKey : m_activeCollisionPairs)
         {
-            if (currentCollisionPairs.contains(pairKey))
+            if (currentKeys.contains(pairKey))
             {
                 continue;
             }
@@ -5009,7 +5060,222 @@ namespace PlutoGE::scene
             NotifyCollision(FindEntityByID(secondId), firstId, false);
         }
 
-        m_activeCollisionPairs = std::move(currentCollisionPairs);
+        m_activeCollisionPairs = std::move(currentKeys);
+    }
+
+    struct Scene::TriggerState
+    {
+        struct Shape
+        {
+            BulletShapeData data;
+            uint64_t signature = 0;
+        };
+        std::unordered_map<EntityID, Shape> shapes;
+        // (trigger << 32) | other: ordered, unlike collision pairs.
+        std::unordered_set<uint64_t> activePairs;
+    };
+
+    void Scene::UpdateTriggers()
+    {
+        if (!m_runtimePhysicsState || !m_runtimePhysicsState->world)
+            return;
+        if (!m_triggerState)
+            m_triggerState = std::make_unique<TriggerState>();
+        auto &state = *m_triggerState;
+        auto &world = m_runtimePhysicsState->world->dynamicsWorld;
+
+        std::unordered_set<uint64_t> currentPairs;
+        std::unordered_set<EntityID> liveTriggers;
+        for (auto *collider : m_runtimeComponents->colliders)
+        {
+            if (!RuntimeComponentIndex::Active(collider) || !collider->IsTrigger())
+                continue;
+            auto *trigger = collider->GetOwner();
+            if (!trigger)
+                continue;
+            liveTriggers.insert(trigger->GetID());
+            auto &shape = state.shapes[trigger->GetID()];
+            const auto signature = ComputeRuntimePhysicsBodySignature(*trigger, *collider, trigger->GetComponent<RigidbodyComponent>());
+            if (!shape.data.shape || shape.signature != signature)
+            {
+                shape.data = CreateBulletShapeForEntity(*trigger, *collider);
+                shape.signature = signature;
+            }
+            if (!shape.data.shape)
+                continue;
+
+            btCollisionObject probe;
+            probe.setCollisionShape(shape.data.shape.get());
+            btTransform transform;
+            transform.setIdentity();
+            transform.setOrigin(ToBullet(trigger->GetWorldPosition()));
+            transform.setRotation(ToBulletRotation(trigger->GetWorldTransform()));
+            probe.setWorldTransform(transform);
+
+            // Moving bodies only (dynamic or kinematic): level geometry resting inside a volume is not an event.
+            class Overlaps final : public btCollisionWorld::ContactResultCallback
+            {
+            public:
+                Overlaps(EntityID triggerId, const btCollisionObject *probe) : triggerId(triggerId), probe(probe) {}
+                bool needsCollision(btBroadphaseProxy *proxy) const override
+                {
+                    if (!ContactResultCallback::needsCollision(proxy))
+                        return false;
+                    const auto *object = static_cast<const btCollisionObject *>(proxy->m_clientObject);
+                    return object && object != probe && !object->isStaticObject() &&
+                           !IsEntityOrDescendantOf(static_cast<const Entity *>(object->getUserPointer()), triggerId);
+                }
+                btScalar addSingleResult(btManifoldPoint &point, const btCollisionObjectWrapper *a, int, int,
+                                         const btCollisionObjectWrapper *b, int, int) override
+                {
+                    if (point.getDistance() > 0.0f)
+                        return 0;
+                    const auto *other = a->getCollisionObject() == probe ? b->getCollisionObject() : a->getCollisionObject();
+                    if (const auto *entity = static_cast<const Entity *>(other->getUserPointer()))
+                        others.insert(entity->GetID());
+                    return 0;
+                }
+                EntityID triggerId;
+                const btCollisionObject *probe;
+                std::unordered_set<EntityID> others;
+            } overlaps(trigger->GetID(), &probe);
+            world.contactTest(&probe, overlaps);
+            for (const auto otherId : overlaps.others)
+                currentPairs.insert((static_cast<uint64_t>(trigger->GetID()) << 32) | otherId);
+        }
+        std::erase_if(state.shapes, [&](const auto &entry) { return !liveTriggers.contains(entry.first); });
+
+        const auto split = [](uint64_t key) { return std::pair{static_cast<EntityID>(key >> 32), static_cast<EntityID>(key & 0xffffffffu)}; };
+        for (const auto key : currentPairs)
+        {
+            if (state.activePairs.contains(key))
+                continue;
+            const auto [triggerId, otherId] = split(key);
+            NotifyTrigger(FindEntityByID(triggerId), otherId, true);
+            NotifyTrigger(FindEntityByID(otherId), triggerId, true);
+        }
+        for (const auto key : state.activePairs)
+        {
+            if (currentPairs.contains(key))
+                continue;
+            const auto [triggerId, otherId] = split(key);
+            NotifyTrigger(FindEntityByID(triggerId), otherId, false);
+            NotifyTrigger(FindEntityByID(otherId), triggerId, false);
+        }
+        state.activePairs = std::move(currentPairs);
+    }
+
+    std::vector<EntityID> Scene::OverlapShape(const void *bulletShape, const glm::vec3 &position, const glm::quat &rotation,
+                                             const PhysicsQueryOptions &options) const
+    {
+        auto &world = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world
+            ? static_cast<btCollisionWorld &>(m_runtimePhysicsState->world->dynamicsWorld)
+            : GetPhysicsQueryCache().world->collisionWorld;
+        btCollisionObject probe;
+        probe.setCollisionShape(const_cast<btCollisionShape *>(static_cast<const btCollisionShape *>(bulletShape)));
+        btTransform transform;
+        transform.setIdentity();
+        transform.setOrigin(ToBullet(position));
+        transform.setRotation(btQuaternion(rotation.x, rotation.y, rotation.z, rotation.w));
+        probe.setWorldTransform(transform);
+
+        class Overlaps final : public btCollisionWorld::ContactResultCallback
+        {
+        public:
+            Overlaps(const PhysicsQueryOptions &options, const btCollisionObject *probe) : options(options), probe(probe) {}
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                if (!ContactResultCallback::needsCollision(proxy))
+                    return false;
+                const auto *object = static_cast<const btCollisionObject *>(proxy->m_clientObject);
+                return object != probe && PassesQueryOptions(object, options);
+            }
+            btScalar addSingleResult(btManifoldPoint &point, const btCollisionObjectWrapper *a, int, int,
+                                     const btCollisionObjectWrapper *b, int, int) override
+            {
+                if (point.getDistance() > 0.0f)
+                    return 0;
+                const auto *other = a->getCollisionObject() == probe ? b->getCollisionObject() : a->getCollisionObject();
+                if (const auto *entity = static_cast<const Entity *>(other->getUserPointer());
+                    entity && std::find(found.begin(), found.end(), entity->GetID()) == found.end())
+                    found.push_back(entity->GetID());
+                return 0;
+            }
+            const PhysicsQueryOptions &options;
+            const btCollisionObject *probe;
+            std::vector<EntityID> found;
+        } overlaps(options, &probe);
+        world.contactTest(&probe, overlaps);
+        return std::move(overlaps.found);
+    }
+
+    std::vector<EntityID> Scene::OverlapSphere(const glm::vec3 &center, float radius, const PhysicsQueryOptions &options) const
+    {
+        if (!std::isfinite(radius) || radius <= 0.0f || !std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(center.z))
+            return {};
+        btSphereShape shape(radius);
+        return OverlapShape(&shape, center, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), options);
+    }
+
+    std::vector<EntityID> Scene::OverlapBox(const glm::vec3 &center, const glm::vec3 &halfExtents, const glm::quat &rotation,
+                                           const PhysicsQueryOptions &options) const
+    {
+        if (!(halfExtents.x > 0.0f && halfExtents.y > 0.0f && halfExtents.z > 0.0f) || !std::isfinite(center.x) ||
+            !std::isfinite(center.y) || !std::isfinite(center.z))
+            return {};
+        btBoxShape shape(ToBullet(halfExtents));
+        return OverlapShape(&shape, center, glm::normalize(rotation), options);
+    }
+
+    std::vector<PhysicsRaycastHit> Scene::RaycastAll(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance,
+                                                     const PhysicsQueryOptions &options) const
+    {
+        btVector3 from;
+        btVector3 to;
+        if (!BuildRaycastEndpoints(origin, direction, maxDistance, from, to))
+            return {};
+        class AllHits final : public btCollisionWorld::AllHitsRayResultCallback
+        {
+        public:
+            AllHits(const btVector3 &from, const btVector3 &to, const PhysicsQueryOptions &options)
+                : AllHitsRayResultCallback(from, to), options(options) {}
+            bool needsCollision(btBroadphaseProxy *proxy) const override
+            {
+                return AllHitsRayResultCallback::needsCollision(proxy) &&
+                       PassesQueryOptions(static_cast<const btCollisionObject *>(proxy->m_clientObject), options);
+            }
+            const PhysicsQueryOptions &options;
+        } callback(from, to, options);
+        const bool useRuntimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
+        if (useRuntimeWorld)
+            m_runtimePhysicsState->world->dynamicsWorld.rayTest(from, to, callback);
+        else
+            GetPhysicsQueryCache().world->collisionWorld.rayTest(from, to, callback);
+
+        // A collider with several triangles or children reports one hit: its nearest.
+        std::vector<std::pair<btScalar, int>> order;
+        for (int index = 0; index < callback.m_collisionObjects.size(); ++index)
+            order.emplace_back(callback.m_hitFractions[index], index);
+        std::sort(order.begin(), order.end());
+        std::vector<PhysicsRaycastHit> hits;
+        std::vector<const btCollisionObject *> seen;
+        for (const auto &[fraction, index] : order)
+        {
+            const auto *object = callback.m_collisionObjects[index];
+            if (std::find(seen.begin(), seen.end(), object) != seen.end())
+                continue;
+            seen.push_back(object);
+            const auto *entity = static_cast<const Entity *>(object->getUserPointer());
+            if (!entity)
+                continue;
+            PhysicsRaycastHit hit;
+            hit.entityId = entity->GetID();
+            hit.point = FromBullet(callback.m_hitPointWorld[index]);
+            hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld[index]);
+            hit.distance = glm::length(hit.point - origin);
+            hits.push_back(hit);
+        }
+        return hits;
     }
 
     void SearchEntityByNameRecursive(Entity *current, const std::string &name, Entity **result)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/scene/PhysicsContact.h"
 #include "PlutoGE/scripting/ScriptTypes.h"
 
 #include <filesystem>
@@ -33,7 +34,15 @@ namespace PlutoGE::scripting
         [[nodiscard]] virtual bool IsFaulted() const { return false; }
         virtual bool OnServerCommand(std::string_view command) { (void)command; return false; }
         virtual void OnCollisionEnter(uint32_t otherEntityId) { (void)otherEntityId; }
+        // With the contact; runtimes that cannot pass it on fall back to the plain form.
+        virtual void OnCollisionEnter(uint32_t otherEntityId, const scene::CollisionContact &contact)
+        {
+            (void)contact;
+            OnCollisionEnter(otherEntityId);
+        }
         virtual void OnCollisionExit(uint32_t otherEntityId) { (void)otherEntityId; }
+        virtual void OnTriggerEnter(uint32_t otherEntityId) { (void)otherEntityId; }
+        virtual void OnTriggerExit(uint32_t otherEntityId) { (void)otherEntityId; }
         virtual void OnAnimationEvent(std::string_view name, std::string_view stringParameter,
                                       float floatParameter, int intParameter)
         {

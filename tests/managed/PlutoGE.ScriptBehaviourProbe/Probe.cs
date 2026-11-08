@@ -167,3 +167,56 @@ public sealed class EnableControllerProbe : ScriptBehaviour
         }
     }
 }
+
+// Physics queries against a ground slab and a tagged crate.
+public sealed class PhysicsQueryProbe : ScriptBehaviour
+{
+    [SerializedField] public string Failure = string.Empty;
+
+    public override void OnCreate()
+    {
+        var crate = System.Numerics.Vector3.UnitX * 3 + System.Numerics.Vector3.UnitY * 0.5f;
+        var near = Physics.OverlapSphere(crate, 0.6f);
+        if (!near.Any(hit => hit.Name == "Crate"))
+            Failure += "OverlapSphere missed the crate. ";
+        if (Physics.OverlapSphere(crate, 0.6f, tag: "Missing").Length != 0)
+            Failure += "Tag filter let an untagged collider through. ";
+        if (!Physics.OverlapBox(crate, new(0.2f, 0.2f, 0.2f), System.Numerics.Quaternion.Identity, tag: "Crate").Any(hit => hit.Name == "Crate"))
+            Failure += "OverlapBox missed the crate. ";
+        var hits = Physics.RaycastAll(new(-5, 0.5f, 0), System.Numerics.Vector3.UnitX, 20);
+        if (hits.Length == 0 || hits[0].Entity.Name != "Crate" || hits.Any(hit => hit.Entity.Name == "Zone"))
+            Failure += $"RaycastAll returned {hits.Length} hits. ";
+        if (!Physics.SphereCast(new(3, 0.5f, -5), System.Numerics.Vector3.UnitZ, 0.25f, 10, out var cast) ||
+            cast.Entity.Name != "Crate" || MathF.Abs(cast.Distance - 4.25f) > 0.05f)
+            Failure += $"SphereCast hit {cast.Entity?.Name} at {cast.Distance}. ";
+    }
+}
+
+// Collision contact data and trigger callbacks on a falling ball.
+public sealed class FallingBallProbe : ScriptBehaviour
+{
+    [SerializedField] public string HitName = string.Empty;
+    [SerializedField] public float NormalY;
+    [SerializedField] public float Impulse;
+    [SerializedField] public int TriggerEnters;
+    [SerializedField] public int TriggerExits;
+
+    public override void OnCollisionEnter(Collision collision)
+    {
+        HitName = collision.Other.Name;
+        NormalY = collision.Normal.Y;
+        Impulse = collision.Impulse;
+    }
+
+    public override void OnTriggerEnter(GameObject other) => TriggerEnters++;
+    public override void OnTriggerExit(GameObject other) => TriggerExits++;
+}
+
+public sealed class TriggerZoneProbe : ScriptBehaviour
+{
+    [SerializedField] public string Entered = string.Empty;
+    [SerializedField] public int Exits;
+
+    public override void OnTriggerEnter(GameObject other) => Entered = other.Name;
+    public override void OnTriggerExit(GameObject other) => Exits++;
+}

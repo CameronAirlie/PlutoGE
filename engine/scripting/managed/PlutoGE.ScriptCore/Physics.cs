@@ -58,6 +58,64 @@ public static class Physics
         return true;
     }
 
+    /// <summary>
+    /// Every entity whose solid collider overlaps the sphere, each once. Triggers are never included.
+    /// <paramref name="tag"/>, when given, keeps only colliders whose entity has that tag.
+    /// </summary>
+    /// <example><code>foreach (var hit in Physics.OverlapSphere(explosion, 4.0f, tag: "Damageable")) ...</code></example>
+    public static GameObject[] OverlapSphere(Vector3 center, float radius, GameObject? ignoredEntity = null, string? tag = null)
+    {
+        if (!Finite(center) || !float.IsFinite(radius) || radius <= 0.0f)
+            return [];
+        return ToGameObjects(ScriptBridge.PhysicsOverlapSphere(center, radius, ignoredEntity?.EntityId ?? 0, tag));
+    }
+
+    /// <summary>Every entity whose solid collider overlaps the box (half sizes, rotated by <paramref name="rotation"/>).</summary>
+    public static GameObject[] OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, GameObject? ignoredEntity = null,
+                                          string? tag = null)
+    {
+        if (!Finite(center) || !Finite(halfExtents) || halfExtents.X <= 0 || halfExtents.Y <= 0 || halfExtents.Z <= 0)
+            return [];
+        return ToGameObjects(ScriptBridge.PhysicsOverlapBox(center, halfExtents, rotation, ignoredEntity?.EntityId ?? 0, tag));
+    }
+
+    /// <summary>Every solid collider along the ray, nearest first, one hit per collider.</summary>
+    public static RaycastHit[] RaycastAll(Vector3 origin, Vector3 direction, float maxDistance, GameObject? ignoredEntity = null,
+                                          string? tag = null)
+    {
+        if (!Finite(origin) || direction.LengthSquared() <= 0.000001f || !(maxDistance > 0.0f))
+            return [];
+        var hits = ScriptBridge.PhysicsRaycastAll(origin, Vector3.Normalize(direction), maxDistance, ignoredEntity?.EntityId ?? 0, tag);
+        var result = new RaycastHit[hits.Length];
+        for (var index = 0; index < hits.Length; index++)
+            result[index] = new RaycastHit(hits[index].EntityId, hits[index].Point.ToManaged(), hits[index].Normal.ToManaged(), hits[index].Distance);
+        return result;
+    }
+
+    /// <summary>
+    /// Moves a sphere along the ray and reports the first solid collider it touches; <see cref="RaycastHit.Distance"/>
+    /// is how far the sphere's centre travelled. Use it for thick projectiles and ledge or step checks.
+    /// </summary>
+    public static bool SphereCast(Vector3 origin, Vector3 direction, float radius, float maxDistance, out RaycastHit hit,
+                                  GameObject? ignoredEntity = null)
+    {
+        hit = default;
+        if (!Finite(origin) || direction.LengthSquared() <= 0.000001f || !(radius > 0.0f) || !(maxDistance > 0.0f))
+            return false;
+        if (!ScriptBridge.PhysicsSphereCast(origin, direction, radius, maxDistance, ignoredEntity?.EntityId ?? 0, out var native))
+            return false;
+        hit = new RaycastHit(native.EntityId, native.Point.ToManaged(), native.Normal.ToManaged(), native.Distance);
+        return true;
+    }
+
+    private static GameObject[] ToGameObjects(uint[] entityIds)
+    {
+        var objects = new GameObject[entityIds.Length];
+        for (var index = 0; index < entityIds.Length; index++)
+            objects[index] = new GameObject(entityIds[index]);
+        return objects;
+    }
+
     private static bool Finite(Vector3 value) => float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
 
     public static Vector3 MoveKinematic(GameObject gameObject, Vector3 displacement, float skinWidth = 0.02f)

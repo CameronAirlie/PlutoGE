@@ -63,7 +63,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   timeScale) and `Timers.After/Every` bound to the owning behaviour's lifetime.
 - [x] **T2.5 Behaviour enable/disable.** `ScriptBehaviour.Enabled`, `OnEnable/OnDisable`, callbacks skipped while
   disabled.
-- [ ] **T2.6 Physics queries and triggers.** Overlap sphere/box, SphereCast, RaycastAll, layer masks, trigger callbacks,
+- [x] **T2.6 Physics queries and triggers.** Overlap sphere/box, SphereCast, RaycastAll, layer masks, trigger callbacks,
   contact data on collisions.
 - [ ] **T2.7 GameObject ergonomics.** Value equality, `IsAlive`, public `GameObject` on behaviours, quaternion world
   rotation, `GetComponentInParent/InChildren`.
@@ -224,4 +224,20 @@ Record each completed item here with the date, what changed, and how it was veri
   scripts with their own `Enabled` member keep working (the compiler warns that it hides the base member).
 - Verified: `PlutoGEScriptBehaviourTests` (self-disable after two updates, re-enable from another script,
   OnEnable/OnDisable counts).
+
+### 2026-11-08 — T2.6
+
+- `Scene::OverlapSphere/OverlapBox/RaycastAll` with `PhysicsQueryOptions` (ignored hierarchy, include/exclude
+  tags); C# `Physics.OverlapSphere/OverlapBox/RaycastAll/SphereCast` (SphereCast over the existing
+  `SweepSphere`). There is no separate layer system; tags fill that role.
+- Collision events carry `CollisionContact` (deepest point, normal towards the receiver, summed impulse);
+  `ScriptBehaviour.OnCollisionEnter(Collision)` defaults to the old GameObject form.
+- Triggers: `Scene::UpdateTriggers` after each physics step contact-tests every active trigger collider against
+  moving bodies in the runtime world (shapes cached per trigger by body signature) and raises
+  `OnTriggerEnter/Exit` on both entities.
+- New bridge entry points are optional (`RegisterPhysicsQueryApi`, `InvokeOnCollisionContact`, `InvokeOnTrigger`).
+- Verified: `PlutoGEScriptBehaviourTests` builds ground, crate, trigger zone and a falling ball: overlap, tag
+  filter, box, ray-all and sphere-cast results; ground contact normal and impulse; trigger enter/exit on both sides.
+  Existing physics suites (foliage collision, surface response, spline road, navigation, ragdoll, surface
+  placement, component registry, scene cache) pass.
 

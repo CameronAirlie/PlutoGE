@@ -80,7 +80,7 @@ public override void OnCollisionExit(GameObject other) {}
   most eight substeps per render frame. A frame may contain zero or multiple fixed
   callbacks. Capture button edges in `OnUpdate` and consume queued physics actions
   once in `OnFixedUpdate`; see the [impulse example](guide/gameplay.md#example-apply-one-impulse-per-press).
-- There are no separate public trigger-enter or trigger-exit callbacks.
+- Trigger colliders call `OnTriggerEnter` and `OnTriggerExit`; see [Collisions and triggers](#collisions-and-triggers).
 - The engine skips `OnUpdate`, `OnFixedUpdate` and `OnLateUpdate` for classes
   that do not override them, so leaving an empty callback out costs nothing per
   frame. Override only the callbacks a script needs.
@@ -676,6 +676,42 @@ Vector3 Physics.MoveKinematic(
 `RaycastHit` has read-only `Entity`, `Point`, `Normal`, and `Distance`. Directions are normalized by the wrapper. Zero-length directions and non-positive distances return `false`.
 
 `MoveKinematic` performs collision-aware movement and returns the displacement actually applied. There is also a `uint entityId` overload.
+
+Area and multi-hit queries:
+
+```csharp
+GameObject[] Physics.OverlapSphere(Vector3 center, float radius, GameObject? ignoredEntity = null, string? tag = null)
+GameObject[] Physics.OverlapBox(Vector3 center, Vector3 halfExtents, Quaternion rotation, GameObject? ignoredEntity = null, string? tag = null)
+RaycastHit[] Physics.RaycastAll(Vector3 origin, Vector3 direction, float maxDistance, GameObject? ignoredEntity = null, string? tag = null)
+bool Physics.SphereCast(Vector3 origin, Vector3 direction, float radius, float maxDistance, out RaycastHit hit, GameObject? ignoredEntity = null)
+```
+
+- Overlaps report each entity once. `RaycastAll` is ordered nearest first, with one hit per collider.
+- `tag` keeps only colliders whose entity has that tag, so it can act as a layer: tag enemies `"Damageable"` and
+  pass that tag to an explosion's `OverlapSphere`.
+- `ignoredEntity` skips that entity and its children, usually the caller's own character.
+- Trigger colliders are never returned by queries.
+- `SphereCast` reports how far the sphere's centre travelled before it touched something.
+
+### Collisions and triggers
+
+```csharp
+public override void OnCollisionEnter(Collision collision)
+{
+    if (collision.Impulse > 5.0f)
+        PlayImpactSound(collision.Point);
+}
+
+public override void OnTriggerEnter(GameObject other) { if (other.HasTag("Player")) OpenDoor(); }
+public override void OnTriggerExit(GameObject other) { }
+```
+
+- `Collision` carries `Other`, the contact `Point`, the other surface's `Normal` (pointing towards this entity),
+  and the solver `Impulse`. Overriding the older `OnCollisionEnter(GameObject other)` still works.
+- A collider marked **Is Trigger** reports `OnTriggerEnter` and `OnTriggerExit` when a moving body (a dynamic or
+  kinematic rigidbody) starts or stops overlapping it. Both the trigger's scripts and the body's scripts receive
+  the call. Static level geometry inside a trigger never produces events.
+- A polling volume script is no longer needed for this.
 
 ## Navigation
 

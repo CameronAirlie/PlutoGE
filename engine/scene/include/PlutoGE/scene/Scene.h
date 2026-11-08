@@ -7,6 +7,8 @@
 #include "PlutoGE/assets/SurfaceResponseAsset.h"
 #include "PlutoGE/scene/AssetReconciliation.h"
 #include "PlutoGE/scene/ModelInstance.h"
+#include "PlutoGE/scene/PhysicsContact.h"
+#include <glm/gtc/quaternion.hpp>
 #include <algorithm>
 #include <cstdint>
 #include <glm/glm.hpp>
@@ -76,6 +78,16 @@ namespace PlutoGE::scene
         glm::vec3 normal{0.0f, 1.0f, 0.0f};
         float distance = 0.0f;
         std::uint64_t foliageInstanceId = 0;
+    };
+
+    // Filters shared by the overlap and multi-hit queries. Triggers never take part in queries.
+    struct PhysicsQueryOptions
+    {
+        // This entity and its descendants are ignored (usually the caller's own character).
+        EntityID ignoredEntityId = 0;
+        // When non-empty, only colliders whose entity has one of these tags count. Excludes win over includes.
+        std::vector<std::string> includeTags;
+        std::vector<std::string> excludeTags;
     };
 
     struct PhysicsRaycastRequest
@@ -225,6 +237,14 @@ namespace PlutoGE::scene
         // Distance is sphere-center travel to contact; ignores both entity hierarchies and triggers.
         bool SweepSphere(const glm::vec3 &from, const glm::vec3 &to, float radius,
                          PhysicsRaycastHit &hit, EntityID ignoredEntityId = 0, EntityID secondIgnoredEntityId = 0) const;
+        // Entities whose solid colliders overlap the sphere or box, each reported once.
+        [[nodiscard]] std::vector<EntityID> OverlapSphere(const glm::vec3 &center, float radius,
+                                                          const PhysicsQueryOptions &options = {}) const;
+        [[nodiscard]] std::vector<EntityID> OverlapBox(const glm::vec3 &center, const glm::vec3 &halfExtents,
+                                                       const glm::quat &rotation, const PhysicsQueryOptions &options = {}) const;
+        // Every solid collider the ray passes through, nearest first, one hit per collider.
+        [[nodiscard]] std::vector<PhysicsRaycastHit> RaycastAll(const glm::vec3 &origin, const glm::vec3 &direction, float maxDistance,
+                                                                const PhysicsQueryOptions &options = {}) const;
         // Upright capsule, total height including caps. Zero displacement tests overlap;
         // otherwise reports the first contact (including an initial overlap). Ignores triggers.
         bool QueryCapsule(const glm::vec3 &center, const glm::vec3 &displacement, float radius, float height,
@@ -403,6 +423,8 @@ namespace PlutoGE::scene
         bool m_detailedTimingEnabled = true;
         std::vector<IblCaptureVolume> m_iblCaptureVolumes;
         std::unordered_set<uint64_t> m_activeCollisionPairs;
+        struct TriggerState;
+        std::unique_ptr<TriggerState> m_triggerState;
         std::vector<EntityID> m_pendingDestroyEntities;
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
@@ -436,6 +458,11 @@ namespace PlutoGE::scene
                                         const std::vector<Entity *> &activeEntities);
         void SyncPhysicsQueryTransform(const Entity &entity) const;
         void StepPhysics(float deltaTime);
-        void DispatchCollisionEvents(std::unordered_set<uint64_t> currentCollisionPairs);
+        // Keys are MakeCollisionPairKey pairs; contacts are seen from the pair's lower entity ID.
+        void DispatchCollisionEvents(std::unordered_map<uint64_t, CollisionContact> currentCollisionPairs);
+        // Trigger colliders against moving bodies, after each fixed step: OnTriggerEnter/Exit on both entities.
+        void UpdateTriggers();
+        [[nodiscard]] std::vector<EntityID> OverlapShape(const void *bulletShape, const glm::vec3 &position, const glm::quat &rotation,
+                                                         const PhysicsQueryOptions &options) const;
     };
 }

@@ -131,6 +131,28 @@ public abstract class ScriptBehaviour
     {
     }
 
+    /// <summary>
+    /// The first frame two solid colliders touch, with where and how hard. The default implementation calls
+    /// <see cref="OnCollisionEnter(GameObject)"/>, so override whichever form you need.
+    /// </summary>
+    public virtual void OnCollisionEnter(Collision collision)
+    {
+        OnCollisionEnter(collision.Other);
+    }
+
+    /// <summary>
+    /// A moving body (dynamic or kinematic rigidbody) started overlapping a trigger collider. Both the trigger's
+    /// scripts and the body's scripts receive it, each with the other entity.
+    /// </summary>
+    public virtual void OnTriggerEnter(GameObject other)
+    {
+    }
+
+    /// <summary>The body and the trigger stopped overlapping (also when either is disabled or destroyed).</summary>
+    public virtual void OnTriggerExit(GameObject other)
+    {
+    }
+
     public virtual void OnCollisionExit(GameObject other)
     {
     }

@@ -135,6 +135,7 @@ namespace PlutoGE::scripting
         using register_mesh_geometry_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_prefab_spawn_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_time_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_physics_query_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -3247,6 +3248,78 @@ namespace PlutoGE::scripting
             core::Engine::GetInstance().GetWindow().SetCursorLocked(locked != 0);
         }
 
+        scene::PhysicsQueryOptions MakeQueryOptions(uint32_t ignoredEntityId, const char *tag)
+        {
+            scene::PhysicsQueryOptions options;
+            options.ignoredEntityId = ignoredEntityId;
+            if (tag && tag[0] != '\0')
+                options.includeTags.emplace_back(tag);
+            return options;
+        }
+
+        // Overlap and multi-hit queries fill up to `capacity` results and return how many there were in total,
+        // so the caller can retry with a larger buffer.
+        int32_t PhysicsOverlapSphere(NativeVector3 center, float radius, uint32_t ignoredEntityId, const char *tag,
+                                     uint32_t *results, int32_t capacity)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene || !IsFiniteVector3(center))
+                return 0;
+            const auto found = scene->OverlapSphere(glm::vec3(center.x, center.y, center.z), radius, MakeQueryOptions(ignoredEntityId, tag));
+            for (int32_t index = 0; results && index < capacity && index < static_cast<int32_t>(found.size()); ++index)
+                results[index] = found[static_cast<std::size_t>(index)];
+            return static_cast<int32_t>(found.size());
+        }
+
+        int32_t PhysicsOverlapBox(NativeVector3 center, NativeVector3 halfExtents, NativeQuaternion rotation, uint32_t ignoredEntityId,
+                                  const char *tag, uint32_t *results, int32_t capacity)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene || !IsFiniteVector3(center) || !IsFiniteVector3(halfExtents))
+                return 0;
+            const auto found = scene->OverlapBox(glm::vec3(center.x, center.y, center.z), glm::vec3(halfExtents.x, halfExtents.y, halfExtents.z),
+                                                 glm::quat(rotation.w, rotation.x, rotation.y, rotation.z), MakeQueryOptions(ignoredEntityId, tag));
+            for (int32_t index = 0; results && index < capacity && index < static_cast<int32_t>(found.size()); ++index)
+                results[index] = found[static_cast<std::size_t>(index)];
+            return static_cast<int32_t>(found.size());
+        }
+
+        int32_t PhysicsRaycastAll(NativeVector3 origin, NativeVector3 direction, float maxDistance, uint32_t ignoredEntityId,
+                                  const char *tag, NativeRaycastHit *results, int32_t capacity)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene || !IsFiniteVector3(origin) || !IsFiniteVector3(direction) || !std::isfinite(maxDistance))
+                return 0;
+            const auto hits = scene->RaycastAll(glm::vec3(origin.x, origin.y, origin.z), glm::vec3(direction.x, direction.y, direction.z),
+                                                maxDistance, MakeQueryOptions(ignoredEntityId, tag));
+            for (int32_t index = 0; results && index < capacity && index < static_cast<int32_t>(hits.size()); ++index)
+            {
+                const auto &hit = hits[static_cast<std::size_t>(index)];
+                results[index] = NativeRaycastHit{hit.entityId, NativeVector3{hit.point.x, hit.point.y, hit.point.z},
+                                                  NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z}, hit.distance};
+            }
+            return static_cast<int32_t>(hits.size());
+        }
+
+        int32_t PhysicsSphereCast(NativeVector3 origin, NativeVector3 direction, float radius, float maxDistance,
+                                  uint32_t ignoredEntityId, NativeRaycastHit *nativeHit)
+        {
+            auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene || !nativeHit || !IsFiniteVector3(origin) || !IsFiniteVector3(direction) || !std::isfinite(maxDistance))
+                return 0;
+            const glm::vec3 from(origin.x, origin.y, origin.z);
+            glm::vec3 heading(direction.x, direction.y, direction.z);
+            if (glm::dot(heading, heading) <= 1e-12f || maxDistance <= 0.0f)
+                return 0;
+            heading = glm::normalize(heading);
+            scene::PhysicsRaycastHit hit;
+            if (!scene->SweepSphere(from, from + heading * maxDistance, radius, hit, ignoredEntityId))
+                return 0;
+            *nativeHit = NativeRaycastHit{hit.entityId, NativeVector3{hit.point.x, hit.point.y, hit.point.z},
+                                          NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z}, hit.distance};
+            return 1;
+        }
+
         int32_t PhysicsRaycast(NativeVector3 origin,
                                NativeVector3 direction,
                                float maxDistance,
@@ -3791,6 +3864,9 @@ namespace PlutoGE::scripting
         invoke_on_destroy_fn invokeOnDestroy = nullptr;
         invoke_on_collision_fn invokeOnCollisionEnter = nullptr;
         invoke_on_collision_fn invokeOnCollisionExit = nullptr;
+        // Optional (older ScriptCore builds lack them): collisions with contact data, trigger enter/exit.
+        int(PLUTO_HOST_CALL *invokeOnCollisionContact)(int64_t, uint32_t, NativeVector3, NativeVector3, float) = nullptr;
+        int(PLUTO_HOST_CALL *invokeOnTrigger)(int64_t, uint32_t, int32_t) = nullptr;
         invoke_on_animation_event_fn invokeOnAnimationEvent = nullptr;
         int(PLUTO_HOST_CALL *invokeServerCommand)(int64_t, const char *) = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
@@ -3819,6 +3895,7 @@ namespace PlutoGE::scripting
         register_mesh_geometry_api_fn registerMeshGeometryApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
         register_time_api_fn registerTimeApi = nullptr;                  // Optional: older ScriptCore builds lack it.
+        register_physics_query_api_fn registerPhysicsQueryApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
@@ -3924,6 +4001,8 @@ namespace PlutoGE::scripting
             impl.invokeOnDestroy = nullptr;
             impl.invokeOnCollisionEnter = nullptr;
             impl.invokeOnCollisionExit = nullptr;
+            impl.invokeOnCollisionContact = nullptr;
+            impl.invokeOnTrigger = nullptr;
             impl.applyFieldData = nullptr;
             impl.setEntityId = nullptr;
             impl.registerGameObjectApi = nullptr;
@@ -3950,6 +4029,7 @@ namespace PlutoGE::scripting
             impl.registerMeshGeometryApi = nullptr;
             impl.registerPrefabSpawnApi = nullptr;
             impl.registerTimeApi = nullptr;
+            impl.registerPhysicsQueryApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
@@ -4368,6 +4448,21 @@ namespace PlutoGE::scripting
                 impl.registerTimeApi = nullptr;
                 impl.lastError.clear();
             }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsQueryApi"), impl.registerPhysicsQueryApi))
+            {
+                impl.registerPhysicsQueryApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionContact"), impl.invokeOnCollisionContact))
+            {
+                impl.invokeOnCollisionContact = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("InvokeOnTrigger"), impl.invokeOnTrigger))
+            {
+                impl.invokeOnTrigger = nullptr;
+                impl.lastError.clear();
+            }
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterMeshGeometryApi"), impl.registerMeshGeometryApi))
             {
                 impl.registerMeshGeometryApi = nullptr;
@@ -4532,6 +4627,20 @@ namespace PlutoGE::scripting
                 }
             }
 
+            void OnCollisionEnter(uint32_t otherEntityId, const scene::CollisionContact &contact) override
+            {
+                if (!m_impl || !m_impl->invokeOnCollisionContact)
+                {
+                    OnCollisionEnter(otherEntityId);
+                    return;
+                }
+                if (!m_impl->invokeOnCollisionContact(m_instanceHandle, otherEntityId,
+                                                      NativeVector3{contact.point.x, contact.point.y, contact.point.z},
+                                                      NativeVector3{contact.normal.x, contact.normal.y, contact.normal.z},
+                                                      contact.impulse))
+                    ReportFailure("OnCollisionEnter");
+            }
+
             void OnCollisionExit(uint32_t otherEntityId) override
             {
                 if (m_impl && m_impl->invokeOnCollisionExit)
@@ -4539,6 +4648,18 @@ namespace PlutoGE::scripting
                     if (!m_impl->invokeOnCollisionExit(m_instanceHandle, otherEntityId))
                         ReportFailure("OnCollisionExit");
                 }
+            }
+
+            void OnTriggerEnter(uint32_t otherEntityId) override
+            {
+                if (m_impl && m_impl->invokeOnTrigger && !m_impl->invokeOnTrigger(m_instanceHandle, otherEntityId, 1))
+                    ReportFailure("OnTriggerEnter");
+            }
+
+            void OnTriggerExit(uint32_t otherEntityId) override
+            {
+                if (m_impl && m_impl->invokeOnTrigger && !m_impl->invokeOnTrigger(m_instanceHandle, otherEntityId, 0))
+                    ReportFailure("OnTriggerExit");
             }
 
             bool OnServerCommand(std::string_view command) override
@@ -4866,6 +4987,14 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshEmission))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (m_impl->registerPhysicsQueryApi &&
+            m_impl->registerPhysicsQueryApi(reinterpret_cast<void *>(&PhysicsOverlapSphere), reinterpret_cast<void *>(&PhysicsOverlapBox),
+                                            reinterpret_cast<void *>(&PhysicsRaycastAll), reinterpret_cast<void *>(&PhysicsSphereCast)) == 0)
+        {
+            setManagedBridgeFailure("RegisterPhysicsQueryApi");
             return false;
         }
 

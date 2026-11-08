@@ -6,6 +6,8 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptErrors.h"
@@ -218,6 +220,46 @@ namespace
         Require(LiveField<int32_t>(*toggled, "Updates") >= 4, "A re-enabled script updates again");
     }
 
+    scene::Entity *AddBox(scene::Scene &scene, const char *name, glm::vec3 position, glm::vec3 size, bool trigger = false)
+    {
+        auto *entity = scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = name}));
+        entity->SetPosition(position);
+        entity->CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{.size = size, .isTrigger = trigger});
+        return entity;
+    }
+
+    void PhysicsQueriesAndTriggers(core::Engine &engine)
+    {
+        scene::Scene scene;
+        AddBox(scene, "Ground", {0.0f, -0.5f, 0.0f}, {20.0f, 1.0f, 20.0f});
+        AddBox(scene, "Crate", {3.0f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f})->AddTag("Crate");
+        auto *zone = AddBox(scene, "Zone", {0.0f, 1.5f, 0.0f}, {2.0f, 1.0f, 2.0f}, true);
+        auto *zoneScript = zone->CreateComponent<scene::ScriptComponent>(
+            scene::ScriptComponentConfig{.scriptClass = "PlutoGE.ScriptBehaviourProbe.TriggerZoneProbe"});
+        auto *ball = scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Ball"}));
+        ball->SetPosition({0.0f, 3.0f, 0.0f});
+        ball->CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{.shape = scene::ColliderShape::Sphere, .radius = 0.25f});
+        ball->CreateComponent<scene::RigidbodyComponent>();
+        auto *ballScript = ball->CreateComponent<scene::ScriptComponent>(
+            scene::ScriptComponentConfig{.scriptClass = "PlutoGE.ScriptBehaviourProbe.FallingBallProbe"});
+        auto *queries = AddScript(scene, "Queries", "PhysicsQueryProbe");
+
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+        Require(LiveField<std::string>(*queries, "Failure").empty(), "Physics queries: " + LiveField<std::string>(*queries, "Failure"));
+
+        for (int frame = 0; frame < 120; ++frame)
+            scene.Update(1.0f / 60.0f);
+        Require(LiveField<std::string>(*ballScript, "HitName") == "Ground", "Ball collision with the ground was not reported");
+        Require(LiveField<float>(*ballScript, "NormalY") > 0.9f, "Contact normal should point up at the ball");
+        Require(LiveField<float>(*ballScript, "Impulse") > 0.0f, "Landing applied no impulse");
+        Require(LiveField<std::string>(*zoneScript, "Entered") == "Ball" && LiveField<int32_t>(*zoneScript, "Exits") == 1,
+                "The trigger zone did not see the ball pass through");
+        Require(LiveField<int32_t>(*ballScript, "TriggerEnters") == 1 && LiveField<int32_t>(*ballScript, "TriggerExits") == 1,
+                "The ball did not receive trigger enter and exit");
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -281,6 +323,7 @@ try
     StartOrderAndSpawning(engine);
     TimeAndTimers(engine);
     EnableAndDisable(engine);
+    PhysicsQueriesAndTriggers(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

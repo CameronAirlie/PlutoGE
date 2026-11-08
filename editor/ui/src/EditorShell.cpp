@@ -5807,6 +5807,7 @@ namespace PlutoGE::ui
         // Compiler logging captures this editor; join before tearing down its sink.
         if (m_scriptBuildFuture.valid()) m_scriptBuildFuture.wait();
         if (m_scriptWatchFuture.valid()) m_scriptWatchFuture.wait();
+        if (m_assetWatchFuture.valid()) m_assetWatchFuture.wait();
         if (m_activeBakeTask)
         {
             m_activeBakeTask->Cancel();

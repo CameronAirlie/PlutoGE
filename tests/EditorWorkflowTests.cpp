@@ -3,6 +3,7 @@
 
 #include "PlutoGE/scripting/ScriptErrors.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
+#include "PlutoGE/ui/AssetHotReload.h"
 #include "PlutoGE/ui/ConsoleLog.h"
 #include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EditorSettings.h"
@@ -312,6 +313,28 @@ namespace
         std::filesystem::remove_all(root.parent_path());
     }
 
+    void AssetHotReloadWatch()
+    {
+        Check(ClassifyHotReloadPath("Textures/Rock.PNG") == HotReloadKind::Texture, "Texture classified");
+        Check(ClassifyHotReloadPath("Materials/Rock.plutomaterial") == HotReloadKind::Material, "Material classified");
+        Check(ClassifyHotReloadPath("Audio/Hit.wav") == HotReloadKind::Audio, "Audio classified");
+        Check(!ClassifyHotReloadPath("Scripts/Player.cs"), "Scripts are not hot reloaded here");
+
+        using Clock = AssetFileWatch::Clock;
+        const auto t0 = Clock::time_point{} + std::chrono::seconds(10);
+        const auto stamp = [](std::uintmax_t size) { return AssetFileWatch::Stamp{std::filesystem::file_time_type{}, size}; };
+        AssetFileWatch watch;
+        Check(watch.Observe({{"a.png", stamp(1)}}, t0).empty(), "Baseline reports nothing");
+        Check(watch.Observe({{"a.png", stamp(2)}}, t0 + std::chrono::milliseconds(100)).empty(), "A change waits for the quiet period");
+        Check(watch.Observe({{"a.png", stamp(3)}}, t0 + std::chrono::milliseconds(300)).empty(), "A file still being written waits");
+        Check(watch.Observe({{"a.png", stamp(3)}}, t0 + std::chrono::milliseconds(500)).empty(), "Quiet period restarts on each change");
+        const auto changed = watch.Observe({{"a.png", stamp(3)}, }, t0 + std::chrono::milliseconds(800));
+        Check(changed.size() == 1 && changed[0] == "a.png", "Stable change reported once");
+        Check(watch.Observe({{"a.png", stamp(3)}}, t0 + std::chrono::seconds(2)).empty(), "No repeat report");
+        Check(watch.Observe({}, t0 + std::chrono::seconds(3)).empty() && watch.Observe({}, t0 + std::chrono::seconds(4)).empty(),
+              "Deletions are not reported");
+    }
+
     void ScriptErrorThrottling()
     {
         scripting::ScriptErrorThrottle throttle;
@@ -360,6 +383,7 @@ int main()
         DuplicateNames();
         RecoverySessionMarker();
         ProjectScaffolding();
+        AssetHotReloadWatch();
     }
     catch (const std::exception &error)
     {

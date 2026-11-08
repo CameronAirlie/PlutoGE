@@ -97,6 +97,9 @@ namespace PlutoGE::audio
         void Shutdown();
         void Update(const ListenerState &listener, const std::vector<EmitterState> &emitters, float deltaTime);
         bool PreloadClip(const std::string &clipPath);
+        // Drops a cached clip after its file changed on disk; voices playing it stop and the next play decodes the
+        // new file. Returns true when the clip was cached.
+        bool ForgetClip(const std::string &clipPath);
         void PrewarmVoicePool(std::size_t voiceCount);
         // Player output volume (0-1), applied at the output stage on top of every listener and emitter gain.
         // It belongs to the application rather than a scene, so it survives scene changes.

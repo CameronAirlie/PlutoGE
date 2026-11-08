@@ -4,6 +4,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -708,6 +709,32 @@ namespace PlutoGE::audio
 #else
         (void)voiceCount;
 #endif
+    }
+
+    bool AudioSystem::ForgetClip(const std::string &clipPath)
+    {
+        // Callers may spell the path differently from the cache key (separators, relative parts).
+        const auto wanted = std::filesystem::path(clipPath).lexically_normal();
+        const auto clip = std::find_if(m_clipCache.begin(), m_clipCache.end(),
+                                       [&](const auto &entry) { return std::filesystem::path(entry.first).lexically_normal() == wanted; });
+        if (clip == m_clipCache.end())
+            return false;
+        std::vector<std::uint64_t> playing;
+        for (const auto &[key, voice] : m_activeVoices)
+            if (voice.clipPath == clip->first)
+                playing.push_back(key);
+        for (const auto key : playing)
+            DestroyVoice(key);
+#if defined(PLUTOGE_USE_OPENAL_SOFT)
+        const ALuint backendBuffer = static_cast<ALuint>(clip->second.backendBuffer);
+        const ALuint monoBackendBuffer = static_cast<ALuint>(clip->second.monoBackendBuffer);
+        if (clip->second.backendBuffer != 0)
+            alDeleteBuffers(1, &backendBuffer);
+        if (clip->second.monoBackendBuffer != 0 && monoBackendBuffer != backendBuffer)
+            alDeleteBuffers(1, &monoBackendBuffer);
+#endif
+        m_clipCache.erase(clip);
+        return true;
     }
 
     void AudioSystem::DestroyVoice(std::uint64_t key, bool stopPlayback)

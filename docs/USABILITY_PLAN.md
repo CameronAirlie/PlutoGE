@@ -87,7 +87,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   a property, keeps a user-owned import for customisation.
 - [x] **T3.5 Build settings and profiles.** Development / Shipping profiles, Release scripts for shipping, remembered
   output folder, product name / version / icon, every failure logged to the Console.
-- [ ] **T3.6 Hot reload beyond models.** File watching for textures, materials and audio with live reload.
+- [x] **T3.6 Hot reload beyond models.** File watching for textures, materials and audio with live reload.
 
 ## Tier 4 — Comfort and discoverability
 
@@ -368,4 +368,15 @@ the numeric parts of scene text.
   in the command-line `--export` path (it needs the editor's catalog and model-instance verification setup, which
   would otherwise reject linked-model projects). The editor's build already validates.
 - Verified: `PlutoGEProjectFileTests` (profile/output round trip); `PlutoGEEditorUI` builds.
+
+### 2026-11-08 — T3.6
+
+- `AssetHotReload` (`ClassifyHotReloadPath`, `AssetFileWatch` with a quiet period, IO-free observe) polled from
+  `EditorShell::PollAssetHotReload` on a worker every second; `ReloadChangedAssets` routes textures and materials
+  to `AssetManager::RefreshImportedAssets` (+ `Scene::RefreshMaterialAsset`) and sounds to the new
+  `AudioSystem::ForgetClip` (stops voices, frees backend buffers, next play decodes the new file). Works in Play.
+- Still polling rather than OS notifications: the scan is a worker-thread directory walk once a second, matching
+  the existing script and model watchers; a native watcher backend remains an optimisation.
+- Verified: `PlutoGEEditorWorkflowTests` (classification, quiet period, single report, deletions ignored); audio
+  suites pass; `PlutoGEEditorUI` builds.
 

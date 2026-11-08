@@ -8,6 +8,7 @@
 #include "PlutoGE/ui/FoliageEditTool.h"
 #include "PlutoGE/ui/AuthoringRegistry.h"
 #include "PlutoGE/ui/ScriptSourceWatch.h"
+#include "PlutoGE/ui/AssetHotReload.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptBuildProcess.h"
 #include "PlutoGE/scripting/ScriptErrors.h"
@@ -88,7 +89,7 @@ namespace PlutoGE::ui
         AuthoringRegistry &GetAuthoringRegistry() { return m_authoring; }
         void RenderExtensionInspectors();
         void RenderScriptBuildDiagnostics();
-        void UpdateAuthoring() { PollModelImport(); PollScriptSources(); }
+        void UpdateAuthoring() { PollModelImport(); PollScriptSources(); PollAssetHotReload(); }
         bool IsScriptBuildRunning() const { return m_scriptBuildFuture.valid(); }
         using ConsoleSeverity = ui::ConsoleSeverity;
         using ConsoleMessage = ui::ConsoleEntry;
@@ -414,6 +415,13 @@ namespace PlutoGE::ui
         void RenderAuthoringMenuItems();
         AuthoringRegistry m_authoring;
         ScriptSourceWatch m_scriptWatch;
+        // Textures, materials and sounds changed outside the editor (EditorHotReload.cpp).
+        void PollAssetHotReload();
+        void ReloadChangedAssets(const std::vector<std::string> &paths);
+        AssetFileWatch m_assetWatch;
+        std::future<AssetFileWatch::Snapshot> m_assetWatchFuture;
+        AssetFileWatch::Clock::time_point m_nextAssetScan{};
+        std::filesystem::path m_assetWatchRoot;
         std::future<ScriptSourceWatch::Snapshot> m_scriptWatchFuture;
         std::filesystem::path m_scriptWatchRoot;
         ScriptSourceWatch::Clock::time_point m_nextScriptScan{};

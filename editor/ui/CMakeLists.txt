@@ -4,6 +4,8 @@ add_library(PlutoGEEditorUI
     src/ScriptSourceWatch.cpp
     src/ScriptFieldEditor.cpp
     src/ConsoleLog.cpp
+    src/AssetHotReload.cpp
+    src/EditorHotReload.cpp
     src/ProjectScaffold.cpp
     src/EntityNaming.cpp
     src/EditorDocument.cpp

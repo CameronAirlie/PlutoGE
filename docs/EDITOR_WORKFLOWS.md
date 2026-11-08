@@ -62,6 +62,18 @@ that editor and reports why. **Don't Save** discards them, and **Cancel** goes b
 - On Linux the dialog uses zenity or kdialog. Without either, the editor refuses to continue and says so rather
   than discarding anything.
 
+## Live reload of edited assets
+
+Textures (PNG, JPG, TGA, BMP, HDR, PSD, GIF), materials and sounds (WAV, OGG, MP3, FLAC) changed outside the
+editor are reloaded in place within about a second, while editing and during Play:
+
+- Changed textures update everywhere they are used.
+- Changed materials rebind on every object that uses them.
+- Changed sounds stop any voice playing the old version, and the next play decodes the new file.
+
+The Console lists what was reloaded. A file is reloaded only after it stops changing, so a save that takes a moment
+is not picked up half-written. Models keep using the import watch described above.
+
 ## Build profiles
 
 **Project Settings > Build > Profile** chooses what **Build Project** produces:

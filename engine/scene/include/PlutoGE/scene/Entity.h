@@ -111,6 +111,9 @@ namespace PlutoGE::scene
 
         Component *AddComponent(Component *component);
         bool RemoveComponent(Component *component);
+        // Moves a component among the components of its own type (several scripts, say); the order is saved.
+        // Components of different types are grouped by type and are not ordered against each other.
+        bool MoveComponentWithinType(Component *component, int offset);
 
         const std::vector<std::vector<Component *>> &GetComponentBuckets() const { return m_componentBuckets; }
         // Changes whenever components are attached or detached; not persisted.

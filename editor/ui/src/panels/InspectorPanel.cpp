@@ -3,6 +3,8 @@
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
+#include "PlutoGE/ui/ComponentActions.h"
+#include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/IKInspector.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 
@@ -1839,6 +1841,58 @@ namespace PlutoGE::ui
         // saved with the project's editor layout. Components start collapsed.
         std::map<std::string, bool> componentHeaderOpenStates;
 
+        // Copied with the component header's Copy Values; shared by every entity until replaced.
+        std::optional<ComponentValues> &GetComponentClipboard()
+        {
+            static std::optional<ComponentValues> clipboard;
+            return clipboard;
+        }
+
+        enum class ComponentAction
+        {
+            None,
+            PasteValues,
+            PasteAsNew,
+            Reset,
+            MoveUp,
+            MoveDown,
+        };
+
+        // Each action is one undoable scene edit. Changed values become prefab overrides like Inspector edits do.
+        void ApplyComponentAction(EditorShell &editorShell, scene::Entity &entity, scene::Component &component, ComponentAction action)
+        {
+            const auto scope = SceneEditScope::Entities({entity.GetID()});
+            const auto typeName = GetComponentPrefabTypeName(component);
+            const auto addOverrides = [&](const std::vector<std::string> &changed)
+            {
+                if (!typeName.empty())
+                    for (const auto &name : changed)
+                        entity.AddPrefabOverride("Component:" + typeName + ":" + name);
+            };
+            const auto clipboard = GetComponentClipboard();
+            switch (action)
+            {
+            case ComponentAction::PasteValues:
+                if (clipboard)
+                    editorShell.ExecuteSceneEdit("Paste Component Values", [&] { addOverrides(PasteComponentValues(*clipboard, component)); }, scope);
+                break;
+            case ComponentAction::PasteAsNew:
+                if (clipboard)
+                    editorShell.ExecuteSceneEdit("Paste Component", [&] { AddComponentFromValues(*clipboard, entity); }, scope);
+                break;
+            case ComponentAction::Reset:
+                editorShell.ExecuteSceneEdit("Reset Component", [&] { addOverrides(ResetComponentValues(component)); }, scope);
+                break;
+            case ComponentAction::MoveUp:
+            case ComponentAction::MoveDown:
+                editorShell.ExecuteSceneEdit("Move Component",
+                                             [&] { entity.MoveComponentWithinType(&component, action == ComponentAction::MoveUp ? -1 : 1); }, scope);
+                break;
+            case ComponentAction::None:
+                break;
+            }
+        }
+
         std::string GetScriptDisplayName(const scene::ScriptComponent &script)
         {
             std::string_view name = script.GetScriptClass();
@@ -2482,7 +2536,9 @@ namespace PlutoGE::ui
                 }
 
                 static ImGuiTextFilter componentFilter;
-                componentFilter.Draw("Filter", -50.0f);
+                componentFilter.Draw("Search", -60.0f);
+                ImGui::SetItemTooltip("Shows components whose name or property names match, e.g. \"shadow\".\n"
+                                      "Components found by a property open with only the matching properties.");
                 int componentExpansion = 0;
                 if (ImGui::SmallButton("Expand all"))
                     componentExpansion = 1;
@@ -2491,14 +2547,26 @@ namespace PlutoGE::ui
                     componentExpansion = -1;
                 int componentIndex = 0;
                 scene::Component *componentToRemove = nullptr;
+                // Header menu actions run after the loop, which must not change the components it walks.
+                ComponentAction pendingAction = ComponentAction::None;
+                scene::Component *actionTarget = nullptr;
+                const auto passesSearch = [&](const std::string &text) { return componentFilter.PassFilter(text.c_str()); };
+                const auto propertyPassesSearch = [&](const std::string &name)
+                { return passesSearch(name) || passesSearch(NicifyFieldName(name)); };
                 for (const auto &component : entity->GetComponentBuckets())
                 {
                     for (auto *componentPtr : component)
                     {
                         ++componentIndex;
                         const std::string headerLabel = GetComponentHeaderLabel(*componentPtr);
-                        if (!componentFilter.PassFilter(headerLabel.c_str()) &&
-                            !componentFilter.PassFilter(GetComponentDisplayName(*componentPtr).c_str()))
+                        const bool nameMatches = !componentFilter.IsActive() || passesSearch(headerLabel) ||
+                                                 passesSearch(GetComponentDisplayName(*componentPtr));
+                        bool propertyMatches = false;
+                        if (!nameMatches)
+                            for (const auto &property : componentPtr->SerializeForInspector())
+                                if (propertyMatches = propertyPassesSearch(property.name); propertyMatches)
+                                    break;
+                        if (!nameMatches && !propertyMatches)
                             continue;
                         ImGui::PushID(componentPtr);
                         ImGui::Separator();
@@ -2517,19 +2585,58 @@ namespace PlutoGE::ui
                         const std::string headerStateKey = GetComponentHeaderStateKey(*componentPtr);
                         const auto storedOpenState = componentHeaderOpenStates.find(headerStateKey);
                         const bool wasComponentOpen = storedOpenState != componentHeaderOpenStates.end() && storedOpenState->second;
-                        ImGui::SetNextItemOpen(componentExpansion ? componentExpansion > 0 : wasComponentOpen);
+                        // A component found by one of its properties opens for the search without remembering it.
+                        ImGui::SetNextItemOpen(componentExpansion ? componentExpansion > 0 : (propertyMatches || wasComponentOpen));
                         // "###" keeps the ID stable when a script is renamed or reassigned.
                         // A component's body is a form, not a hierarchy: without opting out of the theme's tree lines, a
                         // vertical line would run from this header down to the last header or tree node in the body.
                         const bool isComponentOpen = ImGui::TreeNodeEx((headerLabel + "###ComponentHeader").c_str(),
                                                                        ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_DrawLinesNone);
-                        if (isComponentOpen != wasComponentOpen)
+                        if (isComponentOpen != wasComponentOpen && !propertyMatches)
                         {
                             componentHeaderOpenStates[headerStateKey] = isComponentOpen;
                             ImGui::MarkIniSettingsDirty();
                         }
                         if (ImGui::BeginPopupContextItem("ComponentActions"))
                         {
+                            const auto &clipboard = GetComponentClipboard();
+                            if (ImGui::MenuItem("Copy Values"))
+                                GetComponentClipboard() = CopyComponentValues(*componentPtr);
+                            const bool canPaste = clipboard && CanPasteComponentValues(*clipboard, *componentPtr);
+                            if (ImGui::MenuItem("Paste Values", nullptr, false, canPaste))
+                            {
+                                pendingAction = ComponentAction::PasteValues;
+                                actionTarget = componentPtr;
+                            }
+                            if (clipboard && !canPaste)
+                                ImGui::SetItemTooltip("The copied values are from a %s.", clipboard->displayName.c_str());
+                            if (ImGui::MenuItem("Paste as New Component", nullptr, false, clipboard.has_value()))
+                            {
+                                pendingAction = ComponentAction::PasteAsNew;
+                                actionTarget = componentPtr;
+                            }
+                            if (ImGui::MenuItem("Reset", nullptr, false, CanResetComponent(*componentPtr)))
+                            {
+                                pendingAction = ComponentAction::Reset;
+                                actionTarget = componentPtr;
+                            }
+                            if (!CanResetComponent(*componentPtr))
+                                ImGui::SetItemTooltip("Scripts take their defaults from the script class.");
+                            if (const auto slot = GetComponentSlot(*componentPtr); slot.count > 1)
+                            {
+                                ImGui::Separator();
+                                if (ImGui::MenuItem("Move Up", nullptr, false, slot.index > 0))
+                                {
+                                    pendingAction = ComponentAction::MoveUp;
+                                    actionTarget = componentPtr;
+                                }
+                                if (ImGui::MenuItem("Move Down", nullptr, false, slot.index + 1 < slot.count))
+                                {
+                                    pendingAction = ComponentAction::MoveDown;
+                                    actionTarget = componentPtr;
+                                }
+                            }
+                            ImGui::Separator();
                             if (ImGui::MenuItem("Remove Component"))
                                 componentToRemove = componentPtr;
                             ImGui::EndPopup();
@@ -3349,6 +3456,8 @@ namespace PlutoGE::ui
                         int propertyIndex = 0;
                         for (auto &property : properties)
                         {
+                            if (propertyMatches && !propertyPassesSearch(property.name))
+                                continue;
                             if (dynamic_cast<scene::IKComponent *>(componentPtr) && property.name=="ConstraintCount") continue;
                             if (dynamic_cast<scene::SkeletonAttachmentComponent *>(componentPtr) && property.name=="TargetNodeIndex") continue;
                             if (property.name == "PostProcessEffectCount" || property.name == "MainCamera" || property.name == "Primary" || property.name == "TargetTexture" || property.name.rfind("PostProcessEffects.", 0) == 0)
@@ -3580,6 +3689,9 @@ namespace PlutoGE::ui
                         break;
                     }
                 }
+
+                if (pendingAction != ComponentAction::None && actionTarget)
+                    ApplyComponentAction(editorShell, *entity, *actionTarget, pendingAction);
 
                 if (componentToRemove)
                 {

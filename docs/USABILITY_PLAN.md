@@ -95,7 +95,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   rebinding in Preferences, Help > Keyboard Shortcuts, Ctrl+P palette with quick-open.
 - [x] **T4.2 Viewport navigation.** Alt+LMB orbit around the selection, wheel dolly in perspective, hold-Ctrl snap,
   speed toast, persisted gizmo/snap settings.
-- [ ] **T4.3 Inspector component actions.** Copy / Paste values, Reset, Move Up / Down, property search.
+- [x] **T4.3 Inspector component actions.** Copy / Paste values, Reset, Move Up / Down, property search.
 - [ ] **T4.4 Docs reorganisation.** First-game guide rewritten around templates; engineering notes moved to
   `docs/dev/`; orphan guides linked from the manual.
 
@@ -411,3 +411,20 @@ the numeric parts of scene text.
   snapping during gizmo drags (`IsSnapActive`), for entity, multi-selection, foliage and the other gizmos.
 - Verified: `PlutoGEEditorWorkflowTests` (orbit geometry, pivot checks, dolly behaviour, settings round trip and
   sanitising, snap inversion); viewport tests and `PlutoGEAuthoringIntegrationTests` pass.
+
+### 2026-11-08 — T4.3
+
+- `ComponentActions` (editor/ui): `CopyComponentValues`, `PasteComponentValues` and `ResetComponentValues` return
+  the names of changed properties (diffed through Serialize), so the Inspector records prefab overrides the same
+  way as edits; `AddComponentFromValues`; `GetComponentSlot`.
+- `Entity::MoveComponentWithinType`. Components are positional within their type bucket everywhere (serializer,
+  undo capture, play-mode changes), so reordering is offered within a type only; cross-type order is not a concept
+  in the engine and adding it would change the scene format and undo capture for little gain.
+- Inspector header menu: Copy Values, Paste Values, Paste as New Component, Reset, Move Up/Down, Remove. Actions
+  run after the component loop as one `ExecuteSceneEdit` each.
+- Search matches property names (raw and nicified); a component found that way opens for the search without
+  changing its remembered state and lists only matching generic properties. Custom inspectors draw their own
+  controls and are shown whole.
+- Verified: new `PlutoGEComponentActionsTests` (paste, refusal across types, reset, scripts excluded, paste as
+  new, reorder bounds and revision, order saved and loaded); scene history, edit history, prefab variant, scene
+  loading, hierarchy and authoring integration suites pass.

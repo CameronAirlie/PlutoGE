@@ -75,6 +75,22 @@ Alt + left drag looks around as before.
 Holding **Ctrl** while dragging a gizmo switches snapping for that drag (on when off, off when on). The chosen
 tool (Move, Rotate, Scale), space, snapping, snap increments and grid are remembered per user.
 
+## Component actions and Inspector search
+
+Right-click a component header in the Inspector for:
+
+- **Copy Values / Paste Values.** Copies every value of the component; pastes onto a component of the same type on
+  any entity. Pasted values count as prefab overrides, like edits.
+- **Paste as New Component.** Adds a copy of the copied component to this entity.
+- **Reset.** Restores the values of a newly added component. Not available for scripts, whose defaults come from
+  the script class.
+- **Move Up / Move Down.** Shown when an entity has several components of one type (for example several
+  scripts); orders them, and the order is saved. Components of different types stay grouped by type.
+- **Remove Component.**
+
+Each action is one undo step. The **Search** box above the components matches component names and property
+names: searching "shadow" shows lights and meshes with only their shadow properties, opened for the search.
+
 ## Unsaved changes
 
 Closing the editor, opening another project or scene, or restoring a recovery backup first asks about every

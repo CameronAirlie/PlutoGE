@@ -13,6 +13,7 @@ add_library(PlutoGEEditorUI
     src/EditorConsole.cpp
     src/EditorSettings.cpp
     src/EditorCommands.cpp
+    src/ComponentActions.cpp
     src/EditorCameraNavigation.cpp
     src/ViewportToolPreferences.cpp
     src/EditorCommandsUI.cpp

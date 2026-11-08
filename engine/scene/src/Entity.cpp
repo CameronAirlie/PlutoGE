@@ -504,6 +504,31 @@ namespace PlutoGE::scene
         return component;
     }
 
+    bool Entity::MoveComponentWithinType(Component *component, int offset)
+    {
+        if (!component || component->GetOwner() != this || component->GetTypeID() >= m_componentBuckets.size())
+            return false;
+        auto &bucket = m_componentBuckets[component->GetTypeID()];
+        const auto it = std::find(bucket.begin(), bucket.end(), component);
+        if (it == bucket.end())
+            return false;
+        const auto index = static_cast<std::ptrdiff_t>(it - bucket.begin());
+        const auto target = index + offset;
+        if (offset == 0 || target < 0 || target >= static_cast<std::ptrdiff_t>(bucket.size()))
+            return false;
+        Component *other = bucket[static_cast<std::size_t>(target)];
+        std::swap(bucket[static_cast<std::size_t>(index)], bucket[static_cast<std::size_t>(target)]);
+        // Keep ownership in the same relative order, so anything walking storage agrees with the buckets.
+        const auto owned = [&](Component *wanted)
+        { return std::find_if(m_componentStorage.begin(), m_componentStorage.end(), [&](const auto &stored) { return stored.get() == wanted; }); };
+        const auto first = owned(component);
+        const auto second = owned(other);
+        if (first != m_componentStorage.end() && second != m_componentStorage.end())
+            std::iter_swap(first, second);
+        ++m_componentRevision;
+        return true;
+    }
+
     bool Entity::RemoveComponent(Component *component)
     {
         if (!component || component->GetOwner() != this)

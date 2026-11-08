@@ -2,8 +2,8 @@
 
 > Historical migration plan. The OpenGL-owned readback bridge described below
 > has been superseded by backend-specific editor compositors, including Vulkan
-> presentation. See [Rendering support](RENDERING.md) and
-> [EditorCompositor.cpp](../editor/ui/src/EditorCompositor.cpp) for the current path.
+> presentation. See [Rendering support](../RENDERING.md) and
+> [EditorCompositor.cpp](../../editor/ui/src/EditorCompositor.cpp) for the current path.
 
 ## Goal
 

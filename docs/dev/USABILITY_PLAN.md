@@ -96,7 +96,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T4.2 Viewport navigation.** Alt+LMB orbit around the selection, wheel dolly in perspective, hold-Ctrl snap,
   speed toast, persisted gizmo/snap settings.
 - [x] **T4.3 Inspector component actions.** Copy / Paste values, Reset, Move Up / Down, property search.
-- [ ] **T4.4 Docs reorganisation.** First-game guide rewritten around templates; engineering notes moved to
+- [x] **T4.4 Docs reorganisation.** First-game guide rewritten around templates; engineering notes moved to
   `docs/dev/`; orphan guides linked from the manual.
 
 ---
@@ -428,3 +428,19 @@ the numeric parts of scene text.
 - Verified: new `PlutoGEComponentActionsTests` (paste, refusal across types, reset, scripts excluded, paste as
   new, reorder bounds and revision, order saved and loaded); scene history, edit history, prefab variant, scene
   loading, hierarchy and authoring integration suites pass.
+
+### 2026-11-08 — T4.4
+
+- `docs/guide/first-game.md` rewritten around the Third-person template: create, play, tune with Inspector search,
+  insert gameplay kits, write a `Coin` trigger script with `[Range]`/`[Tooltip]`, prefab it, build and run. The
+  previous from-scratch walkthrough is kept as "From an empty project". Claims checked against the code (template
+  contents, menu names, Save As Prefab, Error Pause, startup scene and build profile in Project Settings).
+- 71 engineering notes (plans, roadmaps, performance passes, investigations, handoffs, this plan) moved to
+  `docs/dev/` with `git mv`; every Markdown link and `docs/...` mention in the repository (including source
+  comments) was rewritten, and a link check over all tracked Markdown finds no broken links. `docs/dev/README.md`
+  indexes them by area.
+- `docs/README.md` now links every user guide: added Faster authoring workflows, Content browser, Scene hierarchy,
+  Animation graphs, Skeletal IK, Audio output volume, Controller vibration, Headless servers, Scene loading,
+  Graphics presets and TAA; the showcase-scene plan moved out of the user table.
+
+All tiers are complete except T3.2 (`[-]`, design recorded above).

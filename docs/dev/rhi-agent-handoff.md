@@ -1,7 +1,7 @@
 # RHI Implementation Agent Handoff
 
 > Historical migration handoff. The Vulkan editor compositor and many of the
-> rendering features discussed below are now implemented. Use [Rendering support](RENDERING.md)
+> rendering features discussed below are now implemented. Use [Rendering support](../RENDERING.md)
 > and current source for availability; unfinished checklists below record the
 > handoff's original state.
 
@@ -11,8 +11,8 @@ Continue migrating PlutoGE rendering to the backend-neutral RHI, with Vulkan sce
 
 Read these documents first:
 
-- `docs/rhi-implementation-plan.md`
-- `docs/rhi-editor-migration.md`
+- `docs/dev/rhi-implementation-plan.md`
+- `docs/dev/rhi-editor-migration.md`
 
 ## Current user-visible state
 

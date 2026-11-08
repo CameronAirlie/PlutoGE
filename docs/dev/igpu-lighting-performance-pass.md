@@ -197,7 +197,7 @@ HDR colour, where its range limiter fails at bright/dark edges.
   rotation instead of zero motion (0.02 ms at the 360p input, 0.06–0.08 ms at
   720p). This is a correctness gap; it matters most for detailed clouds.
 - **Reactive mask** for translucent surfaces and particles (see
-  [FSR2.md](FSR2.md)). The settlement has none. The synthetic translucent-pane
+  [FSR2.md](../FSR2.md)). The settlement has none. The synthetic translucent-pane
   test showed no trail with or without the mask, so its benefit here is AMD's
   guidance, not a measurement.
 

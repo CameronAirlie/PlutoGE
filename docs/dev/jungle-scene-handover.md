@@ -260,7 +260,7 @@ need no manual registration.
      - Drop the editor's redundant scratch-array instance culling (§3.9).
      - Bin shadows by instance.
    - Exit at under 33 ms at High at the trailhead.
-4. **E1 wind**: done ([Foliage wind](FOLIAGE_WIND.md)).
+4. **E1 wind**: done ([Foliage wind](../FOLIAGE_WIND.md)).
    - To enable it in Verdant, add a `WindComponent`, then turn on each vegetation type's wind with the presets.
      `levelkit.vegetation` can write the `Type.N.Wind*` keys.
    - Swaying casters redraw their VSM pages every frame. Keep ground cover on contact shadows, as Wind Fields does,

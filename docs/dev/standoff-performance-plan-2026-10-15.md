@@ -147,7 +147,7 @@ be re-measured.
 **P1-4. Main opaque geometry (~1.0 ms GPU, 3066 indexed draws, 2207 descriptor binds).**
 - **Change:**
   - Try occlusion mode 1 (measure), then 2 (cull), on Standoff. It is currently 0 (off);
-    see [occlusion culling](OCCLUSION_CULLING.md). The village blocks long sightlines.
+    see [occlusion culling](../OCCLUSION_CULLING.md). The village blocks long sightlines.
   - Audit LOD selection: 264 visible commands have several LODs, while 271 k triangles are
     submitted at 0.87 MP.
   - Reduce descriptor rebinds by sorting draws by material and descriptor set.

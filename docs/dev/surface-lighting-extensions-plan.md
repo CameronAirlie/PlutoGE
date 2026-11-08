@@ -1,10 +1,10 @@
 # Surface lighting extensions: implementation plan
 
-Status (2026-11-02): all four phases implemented; [SURFACE_LIGHTING.md](SURFACE_LIGHTING.md) and [DDGI.md](DDGI.md)
+Status (2026-11-02): all four phases implemented; [SURFACE_LIGHTING.md](../SURFACE_LIGHTING.md) and [DDGI.md](../DDGI.md)
 document the result. Hardware ray tracing is compiled and fallback-tested on the development machine (Vega 8, no ray
 queries); its traced path (`--ray-tracing`, DDGI with Ray Source Hardware) still needs a run on RT hardware.
 
-Implements the four items under "Not implemented" in [SURFACE_LIGHTING.md](SURFACE_LIGHTING.md):
+Implements the four items under "Not implemented" in [SURFACE_LIGHTING.md](../SURFACE_LIGHTING.md):
 
 1. Material ambient occlusion maps and micro-shadowing.
 2. Clear coat and sheen layers.

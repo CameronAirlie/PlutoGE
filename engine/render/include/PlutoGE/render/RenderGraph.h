@@ -25,7 +25,7 @@ namespace PlutoGE::render
         rhi::BarrierAccess access = rhi::BarrierAccess::None;
     };
 
-    // A frame region as an ordered list of passes that declare the buffers they use (docs/renderer-modernisation.md,
+    // A frame region as an ordered list of passes that declare the buffers they use (docs/dev/renderer-modernisation.md,
     // Phase 4). Execute records the passes in order and derives their synchronisation from the declarations:
     //  - one merged pipeline barrier before a pass whose accesses conflict (either writes) with earlier ones;
     //  - async compute sections: the first async pass forks one (it follows all earlier work), and the first

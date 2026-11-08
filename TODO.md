@@ -1,6 +1,6 @@
-Feature roadmap: [Feature milestones](docs/FEATURE_MILESTONES.md).
+Feature roadmap: [Feature milestones](docs/dev/FEATURE_MILESTONES.md).
 
-Environment design: [Environment milestones](docs/ENVIRONMENT_DESIGN_MILESTONES.md).
+Environment design: [Environment milestones](docs/dev/ENVIRONMENT_DESIGN_MILESTONES.md).
 
 1. [x] - Discrete mesh, material and animation assets
     a. [x] - Imported gltf/fbx creates meshes, animations, materials, textures

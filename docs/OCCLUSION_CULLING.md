@@ -24,7 +24,7 @@ The hierarchy stores minimum depth for reverse Z. Each level covers 2x2 cells of
 
 An inconclusive coarse depth test retries progressively finer levels, including original depth texels, with a maximum budget of 256 depth reads per draw. Budget exhaustion leaves the draw visible. This can recover hidden objects whose coarse cells overlapped sky outside their actual projected bounds. Diagnostics partition draws into tested, unsupported, invalid-bound, and clipped/offscreen categories; additional counters report tight bounds, refinement attempts, recovered rejections, and budget limits.
 
-Each single-instance draw has a stable indirect slot for the current input span. GPU-driven opaque draws ([renderer modernisation](renderer-modernisation.md)) copy their visibility from these slots on the GPU. Instanced, transparent, and outline rendering keeps its existing submission path. No readback controls drawing, and no prior-frame visibility is trusted. Resource lifetime and upload versioning are provided by the RHI.
+Each single-instance draw has a stable indirect slot for the current input span. GPU-driven opaque draws ([renderer modernisation](dev/renderer-modernisation.md)) copy their visibility from these slots on the GPU. Instanced, transparent, and outline rendering keeps its existing submission path. No readback controls drawing, and no prior-frame visibility is trusted. Resource lifetime and upload versioning are provided by the RHI.
 
 ## Limits and follow-up work
 

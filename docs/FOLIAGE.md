@@ -94,7 +94,7 @@ and `PickInstance`.
 
 While a gizmo drags, the component's render commands rebuild every frame, so a component
 with very many instances may drag slowly until local updates arrive
-([environment milestone E06](ENVIRONMENT_DESIGN_MILESTONES.md)).
+([environment milestone E06](dev/ENVIRONMENT_DESIGN_MILESTONES.md)).
 
 ## Painting strokes
 
@@ -118,7 +118,7 @@ finish the current stroke and require mouse release before starting another.
 Scene replacement and play transitions discard obsolete stroke state.
 
 Stroke undo still stores whole-component instance snapshots; compact history and
-local cache updates are planned in [environment milestone E06](ENVIRONMENT_DESIGN_MILESTONES.md).
+local cache updates are planned in [environment milestone E06](dev/ENVIRONMENT_DESIGN_MILESTONES.md).
 Existing scenes and serialized density values remain compatible. Old scenes are
 not repainted or moved automatically.
 
@@ -395,7 +395,7 @@ geometry is dropped and unused vertices compacted, so the import is also smaller
 - The artifact settings include the budget and `TriangleBudgetVersion`, so changing either reimports affected
   models only.
 
-The plan's asset rules (`docs/JUNGLE_SCENE_PLAN.md` section 2) set the budgets the Verdant level kit uses: 60,000 for
+The plan's asset rules (`docs/dev/JUNGLE_SCENE_PLAN.md` section 2) set the budgets the Verdant level kit uses: 60,000 for
 canopy trees and 40,000 for understorey (the plan's upper limits, since scanned canopies need room for leaves),
 12,000 for deadwood, 6,000 for shrubs, plants, rocks and roots, 800 for ground cover.
 

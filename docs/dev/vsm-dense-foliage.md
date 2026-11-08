@@ -1,6 +1,6 @@
 # VSM in dense foliage
 
-Status: November 2026. Four changes to [virtual shadow maps](virtual-shadow-maps.md), found on Verdant Gorge
+Status: November 2026. Four changes to [virtual shadow maps](../virtual-shadow-maps.md), found on Verdant Gorge
 (`ThirdPersonProject`, `Scenes/Verdant.plutoscene`):
 
 1. per-instance page planning;

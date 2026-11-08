@@ -4,7 +4,7 @@ Grass, flowers, shrubs and trees placed with a `FoliageComponent` sway in the sc
 the wind for the whole scene. Each foliage type sets how it answers: stiffness, flutter, bend height and pivot
 height. The vertex shader deforms the plants in every pass that draws them, so their shadows sway with them.
 
-This is work package E1 of the [jungle scene plan](JUNGLE_SCENE_PLAN.md). The [Wind Fields sample](../samples/WindFields/README.md)
+This is work package E1 of the [jungle scene plan](dev/JUNGLE_SCENE_PLAN.md). The [Wind Fields sample](../samples/WindFields/README.md)
 shows it on a procedural grassland.
 
 ## Quick guide
@@ -110,7 +110,7 @@ is swaying:
   without the wind parameters, so they stay cached. The test is per page (`pageSways` in `VirtualShadowCompute`) and
   measured in the light's view, because a page is the unit of cost: one tree can reach hundreds of pages. A page
   crossing the distance redraws once. Coarse levels always hold the rest pose, and cascades sway at every distance.
-  See [VSM in dense foliage](vsm-dense-foliage.md).
+  See [VSM in dense foliage](dev/vsm-dense-foliage.md).
 - **Shadow bounds.** VSM pads caster bounds with `FoliageWindMaxDisplacement(wind, response, localTop)`: the bound
   under the current wind's strength and gustiness, for the geometry's actual height. It is far tighter than the
   any-wind bound that culling uses (about 3 m against 30 m for Verdant's canopy at 6 m/s), and VSM rebuilds its chunk
@@ -160,7 +160,7 @@ and out-of-range values are clamped.
 ### Measured on Wind Fields (2026-11-05, Vega 8, 1080p)
 
 The content fixes below were measured with the editor open, which inflates GPU timings (see "Contention" in
-[rendering-performance.md](rendering-performance.md)); their direction holds, but compare absolute numbers only with
+[rendering-performance.md](dev/rendering-performance.md)); their direction holds, but compare absolute numbers only with
 runs made alone.
 
 | Change | Effect |

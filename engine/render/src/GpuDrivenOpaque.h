@@ -109,7 +109,7 @@ namespace PlutoGE::render
         std::uint64_t m_frame = 0;
     };
 
-    // GPU-driven opaque geometry (docs/renderer-modernisation.md, Phase 3). Standard opaque draws become instance and
+    // GPU-driven opaque geometry (docs/dev/renderer-modernisation.md, Phase 3). Standard opaque draws become instance and
     // material records in storage buffers and draw as one multi-draw-indirect call per pipeline and geometry
     // buffer pair, sampling material textures from the bindless table. A compute pass copies GPU occlusion results
     // into the commands. Every other draw keeps the bound-material path.

@@ -2,7 +2,7 @@
 
 This plan records the migration design, not current feature availability. Both
 RHI backends, the Vulkan editor compositor and many advanced effects now exist.
-Use [Rendering support](RENDERING.md) for the current implementation and limits.
+Use [Rendering support](../RENDERING.md) for the current implementation and limits.
 
 Target Architecture
 Scene / Renderer / Render Passes

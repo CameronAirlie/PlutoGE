@@ -18,18 +18,18 @@ For cloud shadows on the ground and overcast lighting from cloud cover, see
 
 For clustered local lights, scoped Vulkan synchronisation, bindless GPU-driven
 opaque draws and the frame graph with async compute, and their switches, see
-[renderer modernisation](renderer-modernisation.md).
+[renderer modernisation](dev/renderer-modernisation.md).
 SSR and SSAO run as screen-space passes over a shared surface guide; their stages,
 costs and rejected alternatives are in
-[screen-space effects optimisation](screen-space-effects-optimisation.md). The
+[screen-space effects optimisation](dev/screen-space-effects-optimisation.md). The
 reference SSR technique's **Adaptive Rays** setting is described in
-[SSR adaptive rays and filtering](ssr-adaptive-rays-and-filter.md).
+[SSR adaptive rays and filtering](dev/ssr-adaptive-rays-and-filter.md).
 
 The render hardware interface (RHI) has Vulkan and OpenGL implementations.
 Both backends render scenes through `RhiSceneRenderer`/`BasicRenderer`, in the
 editor and the standalone runtime. It is the only renderer: the legacy
 OpenGL render-pass pipeline has been removed (see the
-[legacy OpenGL removal plan](legacy-opengl-removal-plan.md)).
+[legacy OpenGL removal plan](dev/legacy-opengl-removal-plan.md)).
 
 CMake finds `slangc` and builds `PlutoGERhiShaders`, generating GLSL and SPIR-V
 from shared Slang sources. Without the compiler, configure warns and skips
@@ -40,7 +40,7 @@ graphics driver is still required at runtime.
 | Area | Current implementation and scope |
 | --- | --- |
 | Scene rendering | Meshes/instances, LODs, indirect submissions, frustum and occlusion culling, transparent/glass materials, shader graphs, decals, particles, sky/clouds and oceans |
-| Animation | Skeletal deformation, including the [Vulkan GPU skinning path](vulkan-skinning.md) |
+| Animation | Skeletal deformation, including the [Vulkan GPU skinning path](dev/vulkan-skinning.md) |
 | Directional shadows | VSM by default in RHI lighting; explicit Cascaded mode remains available |
 | Local lights | Point/spot lighting and shadow paths; see [physical local lights](physical-local-lights.md) and [point filtering](point-shadow-filtering.md) |
 | RHI post-processing | Tone mapping, gamma, FXAA, color grading, chromatic aberration, bloom, lens flare, motion blur, depth of field, TAA, auto exposure, SSAO (including the LSAO alias), [SSGI](SSGI.md), SSR, volumetric fog, scene composite, VCTGI and [DDGI](DDGI.md) |

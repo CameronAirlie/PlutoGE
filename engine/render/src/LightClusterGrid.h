@@ -29,7 +29,7 @@ namespace PlutoGE::render
 
     // Clustered local-light culling: a froxel grid fitted to the lights' view-depth range, filled with per-cluster
     // light masks by a compute pass (LightClusterCulling.slang). Culling is conservative and keeps light order, so
-    // shading equals the unculled loop. See docs/renderer-modernisation.md.
+    // shading equals the unculled loop. See docs/dev/renderer-modernisation.md.
     class LightClusterGrid
     {
     public:

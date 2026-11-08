@@ -16,7 +16,7 @@
 //
 // Tile classification feeding an indirect trace dispatch was measured and removed: with one ray per pixel, pixels
 // without a ray leave the trace almost at once, so the classification pass cost more than it saved
-// (docs/screen-space-effects-optimisation.md).
+// (docs/dev/screen-space-effects-optimisation.md).
 #include "Fullscreen.slang"
 #include "PostProcessParameters.slang"
 #include "ScreenSpaceCommon.slang"

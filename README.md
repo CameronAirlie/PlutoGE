@@ -612,7 +612,7 @@ Open **Project Settings**, verify the startup scene, save the project, and ensur
 
 - [Game developer manual and feature index](docs/README.md)
 - [Build your first playable game](docs/guide/first-game.md)
-- [Feature milestones](docs/FEATURE_MILESTONES.md)
+- [Feature milestones](docs/dev/FEATURE_MILESTONES.md)
 - [Editor iteration tools](docs/EDITOR_WORKFLOWS.md)
 - [Visual Fidelity Lab sample and material/lighting test guide](samples/VisualFidelityLab/README.md)
 - [Foliage, spatial cells, and tree collision](docs/FOLIAGE.md)

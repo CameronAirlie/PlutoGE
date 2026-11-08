@@ -2,63 +2,143 @@
 
 [Manual](../README.md) · Next: [Editor, assets, and worlds](world-building.md)
 
-This exercise builds a small room with a keyboard-controlled capsule and a fixed
-game camera. It establishes a working project before adding imported characters,
-animation, navigation, or advanced lighting.
+Start from a template so you have something playable within a minute, then tune it, add ready-made gameplay
+pieces and write your first script. The last section builds movement from an empty project, for when you want to
+understand every piece.
 
-## 1. Create the project
+## 1. Create a project from a template
 
-Build and launch the editor using the [engine build instructions](../../README.md#build-and-run).
-Install the .NET 8 SDK for gameplay authoring. Choose **File > New Project…** and
-save `MyGame.plutoproject` in a dedicated directory. The editor generates a script
-project and an `Assets` directory, including the initial scene and managed output.
+Build and launch the editor using the [engine build instructions](../../README.md#build-and-run), and install the
+.NET 8 SDK for scripts. Without a project open, the editor shows the project launcher; otherwise choose
+**File > New Project from Template**. Pick **Third-person game** and save `MyGame.plutoproject` in an empty
+folder. The editor creates the project, builds its scripts once and opens the starter scene.
 
-Keep the manifest, script project, and Assets together when moving the project.
-Use this additional folder organization as your game grows:
+| Entity | What it does |
+| --- | --- |
+| Floor, Wall | Static boxes with colliders to walk on and bump into |
+| Sun | Directional light |
+| Player | Capsule collider, kinematic rigidbody and the `ThirdPersonController` script, plus health, inventory and save support |
+| Camera | Child of Player; the controller drives it from the mouse |
+| Project menu | Escape opens a pause and settings menu; F6 and F9 save and load |
 
-```text
-Assets/
-  Scenes/       Main.plutoscene
-  Scripts/      SimpleWalker.cs
-  Prefabs/
-  Materials/
-  Meshes/
-  Audio/
-  UI/
-  Managed/      (compiled scripts)
+The other templates start other kinds of game the same way:
+
+| Template | Starts with |
+| --- | --- |
+| First-person game | The same room with a first-person controller and hitscan |
+| Vehicle game | A raycast-suspension car, chase camera and menu |
+| Object viewer | A camera that orbits, zooms and pans around a model |
+| UI application | A camera and a localized settings interface |
+| Empty | An empty scene and the C# project, for building from scratch (section 6) |
+
+Keep the `.plutoproject` file, the script project and `Assets` together; the folder can go into version control
+as it is (see [projects in version control](../EDITOR_WORKFLOWS.md#projects-in-version-control)).
+
+## 2. Play it
+
+Press **F5**. The Game view takes the keyboard and mouse straight away: **WASD** moves, the mouse turns the camera,
+**Shift** sprints, **Space** jumps and **Escape** opens the menu. Press **Shift+F5** to stop.
+
+Stopping restores the scene as it was before Play, so experiments are safe. To keep values you tuned during Play,
+use **Play > Stop and Keep Changes...** and choose which changes to keep.
+
+## 3. Tune the player
+
+Select **Player** in the Scene Hierarchy. In the Inspector, the `ThirdPersonController` script lists its settings:
+Walk Speed, Sprint Speed, Jump Height, Camera Distance and so on. Change **Jump Height** to `3` and play again.
+
+Useful while you explore:
+
+- Type in the Inspector's **Search** box to find a setting: "jump" shows only the jump settings.
+- Press **F** to frame the selection in the Editor Viewport, **Alt + left drag** to orbit around it and the mouse
+  wheel to move closer. Hold the right mouse button and use **WASD** to fly.
+- Press **Ctrl+P** to find any editor command by name, or to open an asset by typing part of its name.
+- Every edit can be undone with **Ctrl+Z**. Unsaved scenes are recovered after a crash.
+
+## 4. Add gameplay pieces
+
+**Scene > Insert Gameplay Kit** adds ready-made pieces to the open scene, each as one undoable step:
+
+| Kit | Use |
+| --- | --- |
+| Inventory pickup | Walk into it to add an item to the Player's inventory |
+| Interactive door | Press **E** near it to open it |
+| Checkpoint | A trigger volume that becomes the respawn point |
+| Pause and settings menu | The same menu the template already has, for other scenes |
+
+Insert an **Inventory pickup**, move it with the gizmo (**W**, **E** and **R** switch between move, rotate and
+scale) and play. The kits are ordinary entities with scripts, so their settings are in the Inspector.
+[Faster authoring workflows](../EDITOR_AUTHORING.md) describes each kit's settings.
+
+## 5. Write a script
+
+Make a coin that spins and disappears when the player touches it.
+
+1. Create the coin: in the Scene Hierarchy choose **Create > Cube**, rename it `Coin`, set its scale to
+   `(0.4, 0.4, 0.1)` and place it above the floor near the player.
+2. Add a **Collider** component and tick **Is Trigger**, so the player passes through it and the script is told.
+3. Add a **Script** component, choose **New**, name it `Coin` and choose **Create**. This writes
+   `Assets/Scripts/Coin.cs`. **Open** opens it in your code editor (set yours in
+   **Edit > Preferences > External Tools**).
+
+Replace the file's contents with:
+
+```csharp
+using System.Numerics;
+using PlutoGE.ScriptCore;
+
+public sealed class Coin : ScriptBehaviour
+{
+    [SerializedField, Range(0, 720), Tooltip("Turn speed in degrees per second")]
+    private float spinSpeed = 180.0f;
+
+    [SerializedField] private int value = 1;
+
+    public override void OnUpdate(float deltaTime)
+    {
+        GameObject.Rotation += new Vector3(0.0f, spinSpeed * deltaTime, 0.0f);
+    }
+
+    public override void OnTriggerEnter(GameObject other)
+    {
+        if (!other.HasTag("Player"))
+            return;
+        Debug.Log($"Collected a coin worth {value}", GameObject);
+        GameObject.Destroy();
+    }
+}
 ```
 
-The folders are a convention; asset references are relative to Assets. For
-example, `project://Scenes/Main.plutoscene` identifies the scene without embedding
-a developer's machine path. Save scenes through the editor instead of writing
-their serialized records by hand.
+Save the file. The editor rebuilds changed scripts automatically (**Scripts > Automatically Build Changed
+Scripts**); compiler errors appear in the Console, and double-clicking one opens the file at that line. Select the
+coin, check that its Script component shows `Coin` with Spin Speed and Value, and play. Walk into the coin: it
+disappears and the Console shows the message. Double-clicking the message selects the coin that logged it.
 
-## 2. Assemble a test room
+Duplicate the coin with **Ctrl+D** to place more. To reuse it across scenes, right-click it in the Scene Hierarchy
+and choose **Save As Prefab** (it goes to `Assets/Prefabs`); edits to the prefab then reach every placed coin
+([prefab variants](../PREFAB_VARIANTS.md)).
 
-Use the hierarchy to create entities and the Inspector to add components. The
-following positions and dimensions are example authoring values, in world units.
-Leave these entities unparented, with zero rotation and unit scale initially.
+If a script throws an exception during Play, the Console shows the script, the entity and the line, and
+**Error Pause** in the Console toolbar pauses Play at the first one. The full API is in
+[C# scripting](../CSHARP_SCRIPTING.md).
+
+## 6. From an empty project
+
+Building the same kind of game from the **Empty** template shows what the template set up for you. Create these
+entities with the Scene Hierarchy's **Create** menu and the Inspector (positions and sizes in metres):
 
 | Entity | Components | Setup |
 | --- | --- | --- |
-| Floor | Mesh, Collider | Cube mesh; scale `(12, 1, 12)`; position `(0, -0.5, 0)`; Box collider with local size `(1, 1, 1)` |
-| Player | Mesh, Collider, Rigidbody, Script | Capsule visual if available, or a cube placeholder; position `(0, 1.1, 0)`; Capsule collider radius `0.4`, height `2`; Rigidbody kinematic, gravity off |
-| Wall | Mesh, Collider | Cube mesh; position `(0, 1, -4)`; scale `(6, 2, 0.5)`; Box collider with local size `(1, 1, 1)` |
-| Camera | Camera | Position `(0, 6, 8)`; rotate downward toward the origin; enable Main Camera |
-| Sun | Light | Directional light; rotate to illuminate the floor and wall |
+| Floor | Mesh, Collider | Cube; scale `(12, 1, 12)`; position `(0, -0.5, 0)`; Box collider size `(1, 1, 1)` |
+| Player | Mesh, Collider, Rigidbody, Script | Cube placeholder; position `(0, 1.1, 0)`; Capsule collider radius `0.4`, height `2`; Rigidbody kinematic, gravity off; tag `Player` |
+| Wall | Mesh, Collider | Cube; position `(0, 1, -4)`; scale `(6, 2, 0.5)`; Box collider size `(1, 1, 1)` |
+| Camera | Camera | Position `(0, 6, 8)`, tilted down toward the origin; Main Camera on |
+| Sun | Light | Directional; rotate it to light the floor |
 
-The floor and wall need no Rigidbody for this static level. Scale multiplies
-collider dimensions: setting both the Floor scale and its collider size to
-`(12, 1, 12)` would make its collision much larger than intended. Match the
-Player's visible mesh to its collider without changing the root scale.
+Scale multiplies collider sizes, so leave collider sizes at `(1, 1, 1)` on scaled boxes. The game camera looks
+down its local `-Z`; the Editor Viewport's camera is separate and does not affect the game.
 
-The game camera looks down local `-Z`; the editor's free camera is separate and
-does not determine what the player sees. Adjust the Camera while watching the
-Game viewport until the floor, player, and wall are visible.
-
-## 3. Add movement
-
-Create `Assets/Scripts/SimpleWalker.cs` with this complete class:
+Give the Player a new script named `SimpleWalker`:
 
 ```csharp
 using System.Numerics;
@@ -70,8 +150,6 @@ public sealed class SimpleWalker : ScriptBehaviour
 
     public override void OnUpdate(float deltaTime)
     {
-        if (deltaTime <= 0.0f) return;
-
         Vector3 direction = Vector3.Zero;
         if (Input.IsKeyDown(KeyCode.W)) direction.Z -= 1.0f;
         if (Input.IsKeyDown(KeyCode.S)) direction.Z += 1.0f;
@@ -79,74 +157,33 @@ public sealed class SimpleWalker : ScriptBehaviour
         if (Input.IsKeyDown(KeyCode.D)) direction.X += 1.0f;
 
         if (direction.LengthSquared() > 0.0f)
-            Physics.MoveKinematic(GameObject,
-                Vector3.Normalize(direction) * speed * deltaTime);
+            Physics.MoveKinematic(GameObject, Vector3.Normalize(direction) * speed * deltaTime);
     }
 }
 ```
 
-Choose **Scripts > Build Scripts**. Resolve Console build errors, select Player,
-and choose `SimpleWalker` in its Script component. Set Speed to `4`.
+`MoveKinematic` sweeps against colliders and returns the movement actually applied, so the wall stops the player.
+It has no gravity, jumping or stairs; compare the template's
+[ThirdPersonController](../../engine/scripting/managed/PlutoGE.ScriptCore/Examples/ThirdPersonController.cs) or
+[KinematicFpsController](../../engine/scripting/managed/PlutoGE.ScriptCore/Examples/KinematicFpsController.cs) for
+those. For a following camera, add a **Camera Rig** to the Camera and set Player as its target
+([camera rigs](../CAMERA_RIGS.md)).
 
-This example moves horizontally in world space. Normalizing direction prevents
-diagonal movement from being faster. `MoveKinematic` sweeps against collision
-geometry and returns the movement actually applied. It is a movement primitive;
-this example deliberately supplies no gravity, jumping, stair handling, or ground
-snapping. For a fuller controller, study the engine's
-[KinematicFpsController](../../engine/scripting/managed/PlutoGE.ScriptCore/Examples/KinematicFpsController.cs).
+## 7. Run outside the editor
 
-## 4. Play and verify
-
-Save the scene and project. Press **F5**, focus the Game viewport, and use WASD.
-You should move at a consistent speed and stop at the wall. Press **Shift+F5** to
-stop: normal stopping restores the authoring scene.
-
-Verify these separately before adding more content:
-
-1. The Game viewport renders through the authored camera.
-2. WASD moves Player, including diagonally.
-3. The wall blocks movement from both sides.
-4. Stopping and starting returns Player to the authored spawn position.
-5. Editing Speed, rebuilding when needed, and playing again changes movement.
-
-For tuning during Play, **Play > Stop and Keep Changes...** lets you review
-supported serialized property changes before keeping them. Save afterward. It
-does not retain spawned entities or arbitrary managed state; see
-[retention rules](../EDITOR_WORKFLOWS.md#keep-selected-play-mode-changes).
-
-## 5. Add a follow camera
-
-Once the fixed view works, add Camera Rig to Camera and assign Player as Target
-Entity. Choose Follow mode, a Focus Offset around `(0, 0.5, 0)`, an Offset around
-`(0, 4, 6)`, and Smoothing Seconds `0.15`. These are starting values to tune in
-your room. The rig updates during Play, so a stationary edit-mode camera does
-not mean it is broken.
-
-Enable collision avoidance with a small positive Collision Radius if the camera
-can move behind walls. Keep its focus outside solid geometry. See
-[camera rigs](../CAMERA_RIGS.md) for orbit input, blending, and shake. Use one
-transform driver on the camera; a follow script and a rig can fight each other.
-
-## 6. Run outside the editor
-
-Set the saved scene as the startup scene in Project Settings. With the development
-runtime built, launch from the engine repository root:
-
-```powershell
-.\out\build\msvc\runtime\Debug\PlutoGERuntime.exe `
-  "C:\Projects\MyGame\MyGame.plutoproject"
-```
-
-Replace the example project path with yours. Test the same movement and camera
-checks here before proceeding to [shipping](game-systems.md#export-and-release-checks).
+Choose the startup scene in **File > Project Settings**, then **Build > Build and Run Project...** (Ctrl+Shift+B).
+The build is checked before it is written, and the location is remembered for next time. Development builds keep
+logging and diagnostics; switch to Shipping in Project Settings for release. See
+[shipping](game-systems.md#export-and-release-checks) before you share a build.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| Script class missing | Build output, inheritance from `ScriptBehaviour`, parameterless construction, and the configured managed assembly |
-| Player does not move | Play mode, Game viewport input focus, active Player, enabled Script, and script assignment |
-| Player passes through wall | Enabled non-trigger wall collider, collider dimensions, and Player collider/kinematic body setup |
-| Black Game view | Enabled main camera on an active hierarchy, camera aim, visible mesh, light, and material |
-| Edits disappear after Play | Normal Stop restores the scene; use the supported keep-changes workflow for tuning |
-| Runtime differs from editor | Save the scene, verify startup scene, rebuild scripts, and compare project/render settings |
+| Script missing from the Script component | The Console for compiler errors; the class derives from `ScriptBehaviour` and has a parameterless constructor |
+| Player does not move | The Game view has focus (click it), the Player and its Script are enabled |
+| Trigger does nothing | The collider has Is Trigger ticked; the player has a rigidbody (kinematic is fine) and the `Player` tag |
+| Player passes through a wall | The wall has a collider that is not a trigger, sized `(1, 1, 1)` on a scaled box |
+| Black Game view | An active camera with Main Camera on, pointed at something lit |
+| Edits vanish after Play | Stop restores the scene; use Stop and Keep Changes to keep tuned values |
+| The build differs from the editor | Save the scene, check the startup scene and build again |

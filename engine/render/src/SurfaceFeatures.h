@@ -1,6 +1,6 @@
 #pragma once
 
-// Lighting paths a geometry pipeline compiles out (shaders/SurfaceFeatures.slang, docs/rendering-performance.md
+// Lighting paths a geometry pipeline compiles out (shaders/SurfaceFeatures.slang, docs/dev/rendering-performance.md
 // "Surface specialisation"). BasicLit is one uber shader: every light type, reflection captures, probe volumes, both
 // directional shadow methods and the surface layers. The driver allocates registers for its heaviest path, so on GCN an
 // ordinary surface ran one wave per SIMD and could not hide its texture latency. A Vulkan geometry pipeline therefore

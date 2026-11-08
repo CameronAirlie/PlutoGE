@@ -132,7 +132,7 @@ The list is ordered by priority. P0 packages block the target and P1 packages ar
 
 ### E1 Foliage wind (P0)
 
-**Status: done (2026-11-05).** See [Foliage wind](FOLIAGE_WIND.md). Differences from the design below:
+**Status: done (2026-11-05).** See [Foliage wind](../FOLIAGE_WIND.md). Differences from the design below:
 - The wind constants travel in each pass's material or draw block, not the instance-storage block. Instance storage
   needs no change.
 - VSM receives wind; graph vertex deformation still disables VSM.
@@ -188,7 +188,7 @@ The list is ordered by priority. P0 packages block the target and P1 packages ar
 
 ### E5 Foliage translucency (P0)
 
-**Done, with E11's purpose:** see [Foliage transmission](FOLIAGE_TRANSMISSION.md). It goes further than this outline, into both GI ray
+**Done, with E11's purpose:** see [Foliage transmission](../FOLIAGE_TRANSMISSION.md). It goes further than this outline, into both GI ray
 sources. Hardware rays pass leaves by chance rather than sampling alpha, so E11's texture any-hit is no longer needed for them to let light through.
 
 - **What:**

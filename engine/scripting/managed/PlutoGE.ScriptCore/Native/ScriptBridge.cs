@@ -774,6 +774,37 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, float, NativeVector3*, int> _navigationProjectPoint;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> _navigationFindPath;
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
+    private static delegate* unmanaged[Cdecl]<int, byte*, uint, byte*, int, void> _logMessageWithContext;
+
+    /// <summary>Optional: without it, messages are logged without their entity or source line.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterLogContextApi")]
+    public static int RegisterLogContextApi(delegate* unmanaged[Cdecl]<int, byte*, uint, byte*, int, void> logMessageWithContext)
+    {
+        if (logMessageWithContext == null)
+        {
+            SetError("Managed log context API registration received a null function pointer.");
+            return 0;
+        }
+
+        _logMessageWithContext = logMessageWithContext;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    internal static void LogMessage(int severity, string? message, uint entityId, string? file, int line)
+    {
+        if (_logMessageWithContext == null)
+        {
+            LogMessage(severity, message);
+            return;
+        }
+
+        var messageBytes = Encoding.UTF8.GetBytes((message ?? string.Empty) + '\0');
+        var fileBytes = Encoding.UTF8.GetBytes((file ?? string.Empty) + '\0');
+        fixed (byte* messagePointer = messageBytes)
+        fixed (byte* filePointer = fileBytes)
+            _logMessageWithContext(severity, messagePointer, entityId, filePointer, line);
+    }
 
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "LoadScriptAssembly")]
     public static int LoadScriptAssembly(nint assemblyPathPtr, nint sourceAssemblyPathPtr)

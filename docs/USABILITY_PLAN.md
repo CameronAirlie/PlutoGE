@@ -72,7 +72,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   map updates.
 - [x] **T2.10 Play session hygiene.** `Application.PlayStarted/PlayStopped` events, engine statics reset on stop,
   `[ResetOnPlay]` for user statics.
-- [ ] **T2.11 Debugging.** `Debug.LogException(ex, context)`, context entity on logs (click to select), documented
+- [x] **T2.11 Debugging.** `Debug.LogException(ex, context)`, context entity on logs (click to select), documented
   debugger attach, ScriptCore XML docs for IntelliSense.
 
 ## Tier 3 — Project data and pipeline
@@ -283,4 +283,16 @@ Record each completed item here with the date, what changed, and how it was veri
   sample's 25 static registries without the reload cost.
 - Verified: `PlutoGEScriptBehaviourTests` runs two sessions (reset int and list, unmarked static kept, event
   counts across sessions); managed and scripting suites pass.
+
+### 2026-11-08 — T2.11
+
+- `Debug.Log/LogWarning/LogError(message, context, [CallerFilePath], [CallerLineNumber])` and
+  `Debug.LogException(exception, context)`; optional bridge `RegisterLogContextApi` ->
+  `DispatchScriptLog(severity, message, ScriptLogContext)`; hosts without a context sink get plain messages.
+- Editor `OnScriptLog`: Console entries carry the entity and the calling line (or the first project stack frame
+  for exceptions).
+- ScriptCore generates `PlutoGE.ScriptCore.xml` (CS1591/CS1573 suppressed); debugger attach documented for
+  Visual Studio, VS Code and Rider.
+- Verified: `PlutoGEScriptBehaviourTests` LogProbe (context entity, caller file/line, LogException severity, trace
+  and context); XML file produced.
 

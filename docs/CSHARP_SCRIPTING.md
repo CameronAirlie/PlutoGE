@@ -932,11 +932,33 @@ Assets may be read-only in installed or exported builds.
 
 ```csharp
 Debug.Log("Information");
-Debug.LogWarning("Warning");
+Debug.LogWarning("Low ammo", GameObject);   // optional context entity
 Debug.LogError("Error");
+try { Load(); } catch (Exception exception) { Debug.LogException(exception, GameObject); }
 ```
 
-Messages are routed to the PlutoGE script log/editor console, labelled **Script**.
+- Messages appear in the editor Console labelled **Script**, and in the log of a built game.
+- Every message records the line that logged it, so double-clicking it in the Console opens that line.
+  `LogException` opens the exception's own line instead: the first frame in your code.
+- With a context entity, **Select Entity** in the Console's details selects it.
+
+## Debugging scripts
+
+Scripts run in the editor process (and in the game executable of a build), so any .NET debugger can attach:
+
+- **Visual Studio:** **Debug > Attach to Process**, choose `PlutoGEEditor.exe`, and set **Attach to** to
+  **Managed (.NET Core, .NET 5+)**.
+- **VS Code** (C# Dev Kit or the C# extension): add this configuration to `.vscode/launch.json`, then run it:
+
+  ```json
+  { "name": "Attach to PlutoGE", "type": "coreclr", "request": "attach", "processName": "PlutoGEEditor.exe" }
+  ```
+
+- **Rider:** **Run > Attach to Process**, then pick `PlutoGEEditor.exe`.
+
+Breakpoints bind once the script assembly loads. Scripts are built in Debug, so stepping and variable
+inspection work. PlutoGE.ScriptCore ships its XML documentation beside the DLL, so IntelliSense shows API
+descriptions.
 
 ## Common patterns
 

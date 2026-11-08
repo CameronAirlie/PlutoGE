@@ -138,6 +138,7 @@ namespace PlutoGE::scripting
         using register_physics_query_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_entity_lifetime_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_sound_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_log_context_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -3250,6 +3251,15 @@ namespace PlutoGE::scripting
             core::Engine::GetInstance().GetWindow().SetCursorLocked(locked != 0);
         }
 
+        void LogMessageWithContext(int32_t severity, const char *message, uint32_t entityId, const char *file, int32_t line)
+        {
+            if (!message)
+                return;
+            const auto level = severity == 2 ? ScriptLogSeverity::Error : severity == 1 ? ScriptLogSeverity::Warning : ScriptLogSeverity::Info;
+            DispatchScriptLog(level, message, ScriptLogContext{.entityId = entityId, .file = file ? std::string_view(file) : std::string_view{},
+                                                               .line = line});
+        }
+
         uint64_t PlaySceneSound(const char *clipReference, NativeVector3 position, float volume, float pitch, int32_t spatial,
                                 float minDistance, float maxDistance)
         {
@@ -3930,6 +3940,7 @@ namespace PlutoGE::scripting
         register_physics_query_api_fn registerPhysicsQueryApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_entity_lifetime_api_fn registerEntityLifetimeApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_sound_api_fn registerSoundApi = nullptr;                // Optional: older ScriptCore builds lack it.
+        register_log_context_api_fn registerLogContextApi = nullptr;     // Optional: older ScriptCore builds lack it.
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
@@ -4067,6 +4078,7 @@ namespace PlutoGE::scripting
             impl.registerPhysicsQueryApi = nullptr;
             impl.registerEntityLifetimeApi = nullptr;
             impl.registerSoundApi = nullptr;
+            impl.registerLogContextApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
@@ -4498,6 +4510,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterSoundApi"), impl.registerSoundApi))
             {
                 impl.registerSoundApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterLogContextApi"), impl.registerLogContextApi))
+            {
+                impl.registerLogContextApi = nullptr;
                 impl.lastError.clear();
             }
             if (!LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionContact"), impl.invokeOnCollisionContact))
@@ -5057,6 +5074,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshEmission))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (m_impl->registerLogContextApi &&
+            m_impl->registerLogContextApi(reinterpret_cast<void *>(&LogMessageWithContext)) == 0)
+        {
+            setManagedBridgeFailure("RegisterLogContextApi");
             return false;
         }
 

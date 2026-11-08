@@ -10,6 +10,30 @@ namespace PlutoGE::scripting
     {
         std::mutex g_scriptLogMutex;
         ScriptLogSink g_scriptLogSink;
+        ScriptLogContextSink g_scriptLogContextSink;
+    }
+
+    void SetScriptLogContextSink(ScriptLogContextSink sink)
+    {
+        std::lock_guard lock(g_scriptLogMutex);
+        g_scriptLogContextSink = std::move(sink);
+    }
+
+    void DispatchScriptLog(ScriptLogSeverity severity, std::string_view message, const ScriptLogContext &context)
+    {
+        if (message.empty())
+            return;
+        ScriptLogContextSink sink;
+        {
+            std::lock_guard lock(g_scriptLogMutex);
+            sink = g_scriptLogContextSink;
+        }
+        if (sink)
+        {
+            sink(severity, message, context);
+            return;
+        }
+        DispatchScriptLog(severity, message);
     }
 
     void SetScriptLogSink(ScriptLogSink sink)
@@ -21,6 +45,7 @@ namespace PlutoGE::scripting
     void ClearScriptLogSink()
     {
         SetScriptLogSink({});
+        SetScriptLogContextSink({});
     }
 
     void DispatchScriptLog(ScriptLogSeverity severity, std::string_view message)

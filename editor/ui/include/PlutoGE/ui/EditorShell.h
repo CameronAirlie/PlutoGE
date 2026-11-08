@@ -468,6 +468,8 @@ namespace PlutoGE::ui
         void StepRuntime();
         // A script callback threw: log it with its entity and source line, and pause play when the user asked to.
         void OnScriptError(const scripting::ScriptErrorReport &report);
+        // Debug.Log and friends: the message with its entity and calling line.
+        void OnScriptLog(ConsoleSeverity severity, std::string_view message, uint32_t entityId, std::string_view file, int line);
         // Logs compiler errors and warnings from a script build as navigable Console entries.
         void ReportScriptBuildDiagnostics(std::string_view output, bool succeeded);
         void ApplyPlayModeActions(const PlayModeToolbarActions &actions);

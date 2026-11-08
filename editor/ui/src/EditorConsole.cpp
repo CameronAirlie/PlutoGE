@@ -66,6 +66,27 @@ namespace PlutoGE::ui
             m_scriptErrorPauseRequested = true;
     }
 
+    void EditorShell::OnScriptLog(ConsoleSeverity severity, std::string_view message, uint32_t entityId, std::string_view file, int line)
+    {
+        ConsoleEntry entry;
+        entry.severity = severity;
+        entry.source = ConsoleSource::Script;
+        entry.entityId = entityId;
+        // Multi-line messages (exceptions with stack traces) show their first line; the rest is in the details.
+        const auto firstLine = FirstLineOf(message);
+        entry.text = std::string(firstLine);
+        if (firstLine.size() != message.size())
+            entry.details = std::string(message);
+        if (!file.empty())
+            entry.location = ConsoleFileLocation{.file = std::filesystem::path(std::string(file)), .line = line};
+        else if (m_project)
+        {
+            if (auto location = FindExceptionSourceLocation(message, m_project->GetRootDirectory()))
+                entry.location = std::move(*location);
+        }
+        Log(std::move(entry));
+    }
+
     void EditorShell::ReportScriptBuildDiagnostics(std::string_view output, bool succeeded)
     {
         // A build supersedes the last one's messages, as fixed errors should disappear.

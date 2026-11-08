@@ -13,6 +13,7 @@
 #include "PlutoGE/scripting/ScriptErrors.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -352,6 +353,37 @@ namespace
                     std::to_string(LiveField<int32_t>(*probe, "Stops")));
     }
 
+    void LogsCarryContext(core::Engine &engine)
+    {
+        struct Logged
+        {
+            scripting::ScriptLogSeverity severity;
+            std::string message;
+            uint32_t entityId;
+            std::string file;
+            int line;
+        };
+        std::vector<Logged> logs;
+        scripting::SetScriptLogContextSink([&](scripting::ScriptLogSeverity severity, std::string_view message, const scripting::ScriptLogContext &context)
+                                           { logs.push_back({severity, std::string(message), context.entityId, std::string(context.file), context.line}); });
+        struct ClearSink { ~ClearSink() { scripting::ClearScriptLogSink(); } } clearSink;
+
+        scene::Scene scene;
+        auto *owner = AddScript(scene, "Logger", "LogProbe")->GetOwner();
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+
+        const auto message = std::find_if(logs.begin(), logs.end(), [](const Logged &log) { return log.message == "probe context message"; });
+        Require(message != logs.end(), "Debug.Log message missing");
+        Require(message->entityId == owner->GetID(), "Debug.Log context entity missing");
+        Require(message->file.ends_with("Probe.cs") && message->line > 0, "Debug.Log caller line missing: " + message->file);
+        const auto exception = std::find_if(logs.begin(), logs.end(), [](const Logged &log) { return log.message.find("probe logged exception") != std::string::npos; });
+        Require(exception != logs.end() && exception->severity == scripting::ScriptLogSeverity::Error &&
+                    exception->message.find("LogProbe.OnCreate") != std::string::npos && exception->entityId == owner->GetID(),
+                "Debug.LogException should log an error with the stack trace and context");
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -420,6 +452,7 @@ try
     FireAndForgetAudio(engine);
     InputMapsAdvanceThemselves(engine);
     PlaySessionsStartClean(engine);
+    LogsCarryContext(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

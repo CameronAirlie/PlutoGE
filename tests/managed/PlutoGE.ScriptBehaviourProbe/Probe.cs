@@ -338,3 +338,20 @@ public sealed class SessionProbe : ScriptBehaviour
         SessionState.Untouched = 7;
     }
 }
+
+// Debug logging with an entity context and the caller's line.
+public sealed class LogProbe : ScriptBehaviour
+{
+    public override void OnCreate()
+    {
+        Debug.Log("probe context message", GameObject);
+        try
+        {
+            throw new InvalidOperationException("probe logged exception");
+        }
+        catch (Exception exception)
+        {
+            Debug.LogException(exception, GameObject);
+        }
+    }
+}

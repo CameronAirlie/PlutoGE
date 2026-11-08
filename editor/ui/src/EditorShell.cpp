@@ -3506,6 +3506,14 @@ namespace PlutoGE::ui
                 Log(ConsoleEntry{.severity = consoleSeverity, .source = ConsoleSource::Script, .text = std::string(message)});
             });
         scripting::SetScriptErrorListener([this](const scripting::ScriptErrorReport &report) { OnScriptError(report); });
+        scripting::SetScriptLogContextSink(
+            [this](scripting::ScriptLogSeverity severity, std::string_view message, const scripting::ScriptLogContext &context)
+            {
+                const auto consoleSeverity = severity == scripting::ScriptLogSeverity::Error     ? ConsoleSeverity::Error
+                                             : severity == scripting::ScriptLogSeverity::Warning ? ConsoleSeverity::Warning
+                                                                                                 : ConsoleSeverity::Info;
+                OnScriptLog(consoleSeverity, message, context.entityId, context.file, context.line);
+            });
 
         InitializeEditorCamera();
         LoadRecentProjects();

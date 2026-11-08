@@ -69,6 +69,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_opengl3.h>
 
@@ -2022,6 +2023,7 @@ namespace PlutoGE::ui
             return;
         }
         const bool command = io.KeyCtrl || io.KeySuper;
+        const bool sceneContext = IsSceneShortcutContext();
         if (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_C))
         {
             if (profilerPanel)
@@ -2034,8 +2036,8 @@ namespace PlutoGE::ui
         {
             return;
         }
-        const bool foliageToolHandledKey = HandleFoliageToolKeys();
-        if (!foliageToolHandledKey && ImGui::IsKeyPressed(ImGuiKey_Escape))
+        const bool foliageToolHandledKey = sceneContext && HandleFoliageToolKeys();
+        if (sceneContext && !foliageToolHandledKey && ImGui::IsKeyPressed(ImGuiKey_Escape))
         {
             SetSelectedEntity(nullptr);
         }
@@ -2047,6 +2049,10 @@ namespace PlutoGE::ui
             (command && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z)))
         {
             Redo();
+        }
+        if (!sceneContext)
+        {
+            return;
         }
         if (command && ImGui::IsKeyPressed(ImGuiKey_C))
         {
@@ -2060,10 +2066,22 @@ namespace PlutoGE::ui
         {
             DuplicateSelectedEntity();
         }
-        if (!foliageToolHandledKey && (ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace)))
+        // Delete only: Backspace is the text-editing key, and pressing it just after leaving a field must not
+        // remove the selection.
+        if (!foliageToolHandledKey && ImGui::IsKeyPressed(ImGuiKey_Delete))
         {
             DeleteSelectedEntity();
         }
+    }
+
+    bool EditorShell::IsSceneShortcutContext() const
+    {
+        const auto *context = ImGui::GetCurrentContext();
+        if (!context || !context->NavWindow)
+            return true;
+        if (m_sceneHierarchyPanel && m_sceneHierarchyPanel->HasKeyboardFocus())
+            return true;
+        return m_editorViewportPanel && (m_editorViewportPanel->HasKeyboardFocus() || m_editorViewportPanel->IsViewportHovered());
     }
 
     void EditorShell::OpenRmlDocument(std::string reference)
@@ -2193,7 +2211,7 @@ namespace PlutoGE::ui
             else m_foliageTool.SetMode(FoliageToolMode::Off, entity->GetID());
             return true;
         }
-        const bool deletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete) || ImGui::IsKeyPressed(ImGuiKey_Backspace);
+        const bool deletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete);
         if (deletePressed)
         {
             // Never falls through to deleting the entity while the tool is on.
@@ -3538,6 +3556,8 @@ namespace PlutoGE::ui
 
         m_panelManager.AddPanel(viewportPanel);
         m_panelManager.AddPanel(sceneHierarchyPanel);
+        m_editorViewportPanel = viewportPanel;
+        m_sceneHierarchyPanel = sceneHierarchyPanel;
 
         ViewportPanelConfig viewportConfig2;
         viewportConfig2.name = "Game Viewport";

@@ -1947,10 +1947,11 @@ namespace PlutoGE::ui
 
     bool ViewportPanel::RenderViewportSettingsOverlay(const ImVec2 &viewportMin, const ImVec2 &viewportSize)
     {
+        // Hovering the viewport is enough (no click needed first), but tool keys never act while another
+        // panel is being used, such as typing W into a hierarchy search after leaving its text field.
         const bool allowEditorViewportHotkeys =
-            m_config.editorViewport &&
-            // ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
-            !ImGui::GetIO().WantTextInput;
+            m_config.editorViewport && (m_isViewportHovered || m_isViewportFocused) &&
+            !ImGui::GetIO().WantTextInput && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeySuper;
 
         if (allowEditorViewportHotkeys && !m_editorMovementEnabled)
         {

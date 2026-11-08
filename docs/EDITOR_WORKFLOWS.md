@@ -18,6 +18,18 @@ The Console lists editor, script, compiler, import and build messages.
   disappear. **Scripts > Script Build Diagnostics** still shows the full build output.
 - Filter, collapse and Error Pause choices are saved for your user account.
 
+## Where shortcuts apply
+
+Scene shortcuts act on the scene only while you are working in it: when the Scene Hierarchy or Editor Viewport
+has focus, when the pointer is over the Editor Viewport, or when no panel has focus. This covers Esc (clear
+selection), Ctrl+C / Ctrl+V / Ctrl+D, Delete and Ctrl+G. In the Inspector, Console or an asset editor those keys
+belong to that panel.
+
+- Gizmo keys (W, E, R) and F (frame selection) work while the pointer is over the Editor Viewport or it has
+  focus, and never with Ctrl held. F and Enter also frame the selection from the Scene Hierarchy.
+- Undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) and Play (F5) work everywhere except in text fields.
+- Backspace does not delete entities, so it is safe to press after leaving a text field. Use Delete.
+
 ## External script editor
 
 **Preferences > External Tools** chooses the program that opens C# files from the Console and the script

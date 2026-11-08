@@ -75,6 +75,8 @@ namespace PlutoGE::ui
     class FoliageEditorPanel;
     struct UIThemeTarget;
     class ContentBrowserPanel;
+    class SceneHierarchyPanel;
+    class ViewportPanel;
     class ProfilerPanel;
     class ViewportPanel;
     class EditorSceneRenderService;
@@ -290,6 +292,10 @@ namespace PlutoGE::ui
         void ClearConsoleMessages();
         // Selects the entry's entity, reveals its asset or opens its source file, whichever it carries.
         void NavigateToConsoleEntry(const ConsoleEntry &entry);
+        // Scene editing keys (Esc, copy, paste, duplicate, delete, group) act on the scene only while the user is
+        // working in it: the hierarchy or scene viewport has focus, the pointer is over the scene viewport, or no
+        // window has focus. Other panels (Inspector, Console, asset editors) keep those keys for themselves.
+        [[nodiscard]] bool IsSceneShortcutContext() const;
         TimelinePreview &GetTimelinePreview() { return m_timelinePreview; }
         // Reports an edit already made to the scene. Its reach comes from the enclosing SceneEditRegion, and without
         // one it is assumed to be the whole scene; pass one to say otherwise.
@@ -544,6 +550,8 @@ namespace PlutoGE::ui
         FoliageEditorPanel *m_foliageEditor = nullptr;
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
+        SceneHierarchyPanel *m_sceneHierarchyPanel = nullptr;
+        ViewportPanel *m_editorViewportPanel = nullptr;
         TimelinePreview m_timelinePreview;
         SceneSnapshot m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;

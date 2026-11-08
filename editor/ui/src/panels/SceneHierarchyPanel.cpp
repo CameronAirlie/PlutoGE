@@ -980,7 +980,8 @@ namespace PlutoGE::ui
             BeginRename(current);
             return;
         }
-        if (current && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)))
+        if (current && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false) ||
+                        (ImGui::IsKeyPressed(ImGuiKey_F, false) && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper)))
         {
             shell.FrameSelectedEntity();
             return;
@@ -1318,7 +1319,8 @@ namespace PlutoGE::ui
 
         SyncSelectionFromShell();
         RevealSelectionChanges();
-        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput)
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_G, false) && !ImGui::GetIO().WantTextInput &&
+            EditorShell::GetInstance().IsSceneShortcutContext())
         {
             Defer([this]() { GroupSelectedEntities(); });
         }

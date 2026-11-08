@@ -36,7 +36,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T1.3 Compile diagnostics to Console + open at line.** Parse `dotnet build` diagnostics into Console entries with
   file:line; add an "External script editor" preference (VS Code / Visual Studio / Rider / system default) that opens
   at the line.
-- [ ] **T1.4 Panel-scoped hotkeys.** Viewport W/E/R/F only when the viewport is hovered/focused; hierarchy Ctrl+G only
+- [x] **T1.4 Panel-scoped hotkeys.** Viewport W/E/R/F only when the viewport is hovered/focused; hierarchy Ctrl+G only
   when the hierarchy is focused; Backspace no longer deletes entities on Windows; Esc only clears selection from
   scene panels.
 - [ ] **T1.5 Asset editor documents.** An `IEditorDocument` interface (title, dirty, save, revert) implemented by the
@@ -128,4 +128,13 @@ Record each completed item here with the date, what changed, and how it was veri
   OnUpdate reach the listener with entity context and stack trace; faulted state; throttle 1, 10) pass.
   `PlutoGEEditorUI` builds. The editor executable could not be relinked while an editor instance was open, so
   the panel has not yet been checked visually.
+
+### 2026-11-08 — T1.4
+
+- `EditorShell::IsSceneShortcutContext()`: scene keys (Esc, Ctrl+C/V/D, Delete, Ctrl+G) act only when the
+  hierarchy or editor viewport has focus, the pointer is over the editor viewport, or nothing has focus. Undo/redo
+  and F5 stay global. Backspace no longer deletes entities or foliage instances.
+- Viewport W/E/R/F need the viewport hovered or focused (keeps the hover-to-use behaviour from 434a4137) and no
+  Ctrl. F frames from the hierarchy too.
+- Verified: `PlutoGEEditorUI` builds. Interactive check pending until the editor can be relinked.
 

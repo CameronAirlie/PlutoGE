@@ -134,6 +134,7 @@ namespace PlutoGE::scripting
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
         using register_mesh_geometry_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_prefab_spawn_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_time_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -1410,6 +1411,36 @@ namespace PlutoGE::scripting
             if (activeScene->IsRuntimeStarted())
                 scene::ScriptComponent::PrepareHierarchy(*instance);
             return instance->GetID();
+        }
+
+        // Mirrors ScriptBridge.NativeRuntimeClock.
+        struct RuntimeClockData
+        {
+            float deltaTime;
+            float unscaledDeltaTime;
+            float fixedDeltaTime;
+            float timeScale;
+            double time;
+            double unscaledTime;
+            uint64_t frameCount;
+        };
+        static_assert(sizeof(RuntimeClockData) == 40);
+
+        void GetRuntimeClock(RuntimeClockData *clock)
+        {
+            if (!clock)
+                return;
+            const auto *activeScene = core::Engine::GetInstance().GetScene();
+            const scene::Scene::RuntimeClock state = activeScene ? activeScene->GetRuntimeClock() : scene::Scene::RuntimeClock{};
+            *clock = RuntimeClockData{
+                .deltaTime = state.deltaTime,
+                .unscaledDeltaTime = state.unscaledDeltaTime,
+                .fixedDeltaTime = scene::Scene::kFixedTimeStep,
+                .timeScale = activeScene ? activeScene->GetTimeScale() : 1.0f,
+                .time = state.time,
+                .unscaledTime = state.unscaledTime,
+                .frameCount = state.frameCount,
+            };
         }
 
         void StartEntityScripts(uint32_t entityId)
@@ -3787,6 +3818,7 @@ namespace PlutoGE::scripting
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_mesh_geometry_api_fn registerMeshGeometryApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
+        register_time_api_fn registerTimeApi = nullptr;                  // Optional: older ScriptCore builds lack it.
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
@@ -3917,6 +3949,7 @@ namespace PlutoGE::scripting
             impl.registerMeshComponentApi = nullptr;
             impl.registerMeshGeometryApi = nullptr;
             impl.registerPrefabSpawnApi = nullptr;
+            impl.registerTimeApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
@@ -4328,6 +4361,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterPrefabSpawnApi"), impl.registerPrefabSpawnApi))
             {
                 impl.registerPrefabSpawnApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterTimeApi"), impl.registerTimeApi))
+            {
+                impl.registerTimeApi = nullptr;
                 impl.lastError.clear();
             }
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterMeshGeometryApi"), impl.registerMeshGeometryApi))
@@ -4828,6 +4866,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshEmission))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (m_impl->registerTimeApi &&
+            m_impl->registerTimeApi(reinterpret_cast<void *>(&GetRuntimeClock)) == 0)
+        {
+            setManagedBridgeFailure("RegisterTimeApi");
             return false;
         }
 

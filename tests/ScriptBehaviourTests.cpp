@@ -170,6 +170,34 @@ namespace
         return std::get<T>(*value);
     }
 
+    void TimeAndTimers(core::Engine &engine)
+    {
+        scene::Scene scene;
+        auto *timers = AddScript(scene, "Timers", "TimerProbe");
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+
+        constexpr float frame = 1.0f / 60.0f;
+        for (int i = 0; i < 12; ++i)
+            scene.Update(frame);
+        Require(LiveField<int32_t>(*timers, "Frames") == 12, "Time.FrameCount counts runtime updates");
+        Require(std::abs(LiveField<float>(*timers, "SeenTime") - 0.2f) < 0.001f, "Time.TimeSinceStart accumulates");
+        Require(LiveField<int32_t>(*timers, "OnceFired") == 1, "After fires once");
+        const auto repeats = LiveField<int32_t>(*timers, "RepeatFired");
+        Require(repeats >= 3 && repeats <= 4, "Every fires on its interval: " + std::to_string(repeats));
+        Require(!LiveField<bool>(*timers, "CancelledFired"), "A cancelled timer fired");
+        Require(LiveField<int32_t>(*timers, "UnscaledFired") == 0, "Unscaled timer fired early");
+
+        scene.SetTimeScale(0.0f);
+        for (int i = 0; i < 12; ++i)
+            scene.Update(frame);
+        Require(LiveField<int32_t>(*timers, "RepeatFired") == repeats, "Scaled timers stop at time scale 0");
+        Require(std::abs(LiveField<float>(*timers, "SeenTime") - 0.2f) < 0.001f, "Scaled time stops at time scale 0");
+        Require(std::abs(LiveField<float>(*timers, "SeenUnscaledTime") - 0.4f) < 0.001f, "Unscaled time keeps running");
+        Require(LiveField<int32_t>(*timers, "UnscaledFired") == 1, "Unscaled timers run at time scale 0");
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -231,6 +259,7 @@ try
     FieldTypesAndAttributes(scripts, scene);
     engine.SetScene(nullptr);
     StartOrderAndSpawning(engine);
+    TimeAndTimers(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

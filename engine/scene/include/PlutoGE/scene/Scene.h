@@ -179,6 +179,17 @@ namespace PlutoGE::scene
         void RecordAnimationTiming(const char *phase, float elapsedMs, const Entity &entity);
         void RecordScriptTiming(const std::string &scriptClass, float elapsedMs, const Entity &entity, bool lateUpdate);
         [[nodiscard]] uint64_t GetUpdateSequence() const { return m_updateSequence; }
+        // Gameplay time since Play started, advanced by each runtime Update (not while paused).
+        struct RuntimeClock
+        {
+            float deltaTime = 0.0f;         // Scaled by the time scale.
+            float unscaledDeltaTime = 0.0f; // Real frame time, also while the time scale is 0.
+            double time = 0.0;
+            double unscaledTime = 0.0;
+            uint64_t frameCount = 0;
+        };
+        [[nodiscard]] const RuntimeClock &GetRuntimeClock() const { return m_runtimeClock; }
+        static constexpr float kFixedTimeStep = 1.0f / 60.0f;
         // True during Update's component pass, while AnimationComponent::Update leaves poses for one batch after it.
         [[nodiscard]] bool IsBatchingAnimationPoses() const noexcept { return m_batchingAnimationPoses; }
         // Whether that batch samples poses across the shared task pool (on by default; off evaluates them in turn).
@@ -396,6 +407,7 @@ namespace PlutoGE::scene
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
         uint64_t m_updateSequence = 0;
+        RuntimeClock m_runtimeClock;
         bool m_updateInProgress = false;
         std::unique_ptr<RuntimePhysicsState> m_runtimePhysicsState;
         std::vector<PendingRigidbodyForce> m_pendingRigidbodyForces;

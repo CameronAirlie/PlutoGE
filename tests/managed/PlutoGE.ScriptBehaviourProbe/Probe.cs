@@ -107,3 +107,30 @@ public sealed class FieldTypesProbe : ScriptBehaviour
     [SerializedField, FormerlySerializedAs("oldCount")] public int Count = 1;
     [SerializedField] public Dictionary<string, int> Unsupported = new();
 }
+
+// Time and timers across frames at time scale 1, then 0.
+public sealed class TimerProbe : ScriptBehaviour
+{
+    [SerializedField] public int OnceFired;
+    [SerializedField] public int RepeatFired;
+    [SerializedField] public int UnscaledFired;
+    [SerializedField] public int Frames;
+    [SerializedField] public float SeenTime;
+    [SerializedField] public float SeenUnscaledTime;
+    [SerializedField] public bool CancelledFired;
+
+    public override void OnCreate()
+    {
+        After(0.1f, () => OnceFired++);
+        Every(0.05f, () => RepeatFired++);
+        After(0.01f, () => CancelledFired = true).Cancel();
+        Timers.After(0.3f, () => UnscaledFired++, this, unscaled: true);
+    }
+
+    public override void OnUpdate(float deltaTime)
+    {
+        Frames = (int)Time.FrameCount;
+        SeenTime = (float)Time.TimeSinceStart;
+        SeenUnscaledTime = (float)Time.UnscaledTimeSinceStart;
+    }
+}

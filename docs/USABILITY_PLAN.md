@@ -59,7 +59,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T2.3 Serialized field types and attributes.** Enums, Quaternion, Color, primitive arrays/lists, warning on
   unsupported members, `[Range]`, `[Tooltip]`, `[Header]`, `[FormerlySerializedAs]`. Existing `.plutoscriptable` files
   pick up new fields with their C# default values.
-- [ ] **T2.4 Time and timers.** Static `Time` (deltaTime, unscaledDeltaTime, time, unscaledTime, frameCount,
+- [x] **T2.4 Time and timers.** Static `Time` (deltaTime, unscaledDeltaTime, time, unscaledTime, frameCount,
   timeScale) and `Timers.After/Every` bound to the owning behaviour's lifetime.
 - [ ] **T2.5 Behaviour enable/disable.** `ScriptBehaviour.Enabled`, `OnEnable/OnDisable`, callbacks skipped while
   disabled.
@@ -203,4 +203,15 @@ Record each completed item here with the date, what changed, and how it was veri
   shows and saves them.
 - Verified: `PlutoGEScriptBehaviourTests` (metadata for every new type and attribute, value round trip including
   a former name, codec), and the existing managed/scripting/prefab suites (15 tests) pass.
+
+### 2026-11-08 — T2.4
+
+- `Scene::RuntimeClock` (scaled/unscaled delta and elapsed time, frame count) reset at StartRuntime and advanced
+  per runtime Update; `Scene::kFixedTimeStep`.
+- Optional bridge `RegisterTimeApi(GetRuntimeClock)`; managed `Time` static class.
+- `Timers.After/Every/CancelAll` and `ScriptBehaviour.After/Every`; ticked once per frame from the bridge's
+  per-frame dispatch; owned timers stop with their script (`ScriptBehaviour.IsDestroyed`), all timers are
+  scoped to `SceneManager.RuntimeGeneration`.
+- Verified: `PlutoGEScriptBehaviourTests` runs 24 frames (time scale 1 then 0): frame count, scaled/unscaled time,
+  After once, Every on interval, Cancel, scaled timers frozen and unscaled timers running at time scale 0.
 

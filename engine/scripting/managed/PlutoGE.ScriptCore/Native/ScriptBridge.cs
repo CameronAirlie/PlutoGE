@@ -254,6 +254,46 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, uint> _instantiatePrefab;
     private static delegate* unmanaged[Cdecl]<byte*, uint, uint> _instantiatePrefabPrepared;
     private static delegate* unmanaged[Cdecl]<uint, void> _startEntityScripts;
+    private static delegate* unmanaged[Cdecl]<NativeRuntimeClock*, void> _getRuntimeClock;
+
+    // Mirrors RuntimeClockData in HostFxrScriptRuntime.cpp.
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NativeRuntimeClock
+    {
+        public float DeltaTime;
+        public float UnscaledDeltaTime;
+        public float FixedDeltaTime;
+        public float TimeScale;
+        public double Time;
+        public double UnscaledTime;
+        public ulong FrameCount;
+    }
+
+    /// <summary>Optional: hosts without it report zero time (see <see cref="Time"/>).</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterTimeApi")]
+    public static int RegisterTimeApi(delegate* unmanaged[Cdecl]<NativeRuntimeClock*, void> getRuntimeClock)
+    {
+        if (getRuntimeClock == null)
+        {
+            SetError("Managed time API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getRuntimeClock = getRuntimeClock;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    internal static NativeRuntimeClock GetRuntimeClock()
+    {
+        var clock = new NativeRuntimeClock { FixedDeltaTime = 1.0f / 60.0f, TimeScale = 1.0f };
+        if (_getRuntimeClock != null)
+        {
+            _getRuntimeClock(&clock);
+        }
+
+        return clock;
+    }
     private static delegate* unmanaged[Cdecl]<byte*, int> _preloadPrefab;
     private static delegate* unmanaged[Cdecl]<byte*, int> _isPrefabReady;
     private static delegate* unmanaged[Cdecl]<byte*, int> _loadScene;
@@ -1671,6 +1711,7 @@ internal static unsafe partial class ScriptBridge
     {
         if (Instances.TryRemove(handle, out var instance))
         {
+            instance.IsDestroyed = true;
             lock (Gate)
             {
                 RemoveInstanceFromEntityIndex(instance);
@@ -1739,6 +1780,7 @@ internal static unsafe partial class ScriptBridge
                 UIButtonComponent.DispatchRegisteredEvents(uiUpdateSequence);
                 RmlEvent.DispatchRegisteredEvents(uiUpdateSequence);
                 UI.DispatchEvents();
+                Timers.Tick(uiUpdateSequence);
                 RefreshScriptableObjectReferences(instance);
             }
             instance.OnUpdate(deltaTime);
@@ -1804,7 +1846,14 @@ internal static unsafe partial class ScriptBridge
                 return 0;
             }
 
-            instance.OnDestroy();
+            try
+            {
+                instance.OnDestroy();
+            }
+            finally
+            {
+                instance.IsDestroyed = true;
+            }
             return 1;
         }
         catch (Exception exception)

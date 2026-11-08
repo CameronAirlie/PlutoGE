@@ -2421,6 +2421,7 @@ namespace PlutoGE::scene
         // OnCreate may request additive loads or query the scene generation.
         // Publish the runtime lifetime before invoking gameplay callbacks.
         m_runtimeStarted = true;
+        m_runtimeClock = {};
         m_shaderTime = 0.0f;
         render::SetShaderGraphTimeSeconds(0.0f);
         m_runtimeComponents->Refresh(m_rootEntities);
@@ -3053,6 +3054,14 @@ namespace PlutoGE::scene
         const float simulationDeltaTime = m_runtimeStarted
                                               ? std::max(deltaTime, 0.0f) * m_timeScale
                                               : deltaTime;
+        if (m_runtimeStarted)
+        {
+            m_runtimeClock.unscaledDeltaTime = std::max(deltaTime, 0.0f);
+            m_runtimeClock.deltaTime = std::max(simulationDeltaTime, 0.0f);
+            m_runtimeClock.unscaledTime += m_runtimeClock.unscaledDeltaTime;
+            m_runtimeClock.time += m_runtimeClock.deltaTime;
+            ++m_runtimeClock.frameCount;
+        }
         m_shaderTime += std::max(simulationDeltaTime, 0.0f);
         render::SetShaderGraphTimeSeconds(m_shaderTime);
         RestoreRuntimePhysicsTransforms();

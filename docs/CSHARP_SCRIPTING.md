@@ -99,6 +99,42 @@ PlayerInput.OnUpdate on 'Player' (entity 4) threw: System.NullReferenceException
   and the Console shows the total count.
 - Standalone players and dedicated servers print the same report to the error log.
 
+## Time and timers
+
+`Time` reports game time since Play started:
+
+| Member | Meaning |
+|---|---|
+| `Time.DeltaTime` | Seconds since the previous frame, scaled by `TimeScale` (what `OnUpdate` receives) |
+| `Time.UnscaledDeltaTime` | Real seconds since the previous frame, also while `TimeScale` is 0 |
+| `Time.FixedDeltaTime` | Seconds per physics step (what `OnFixedUpdate` receives) |
+| `Time.TimeSinceStart`, `Time.UnscaledTimeSinceStart` | Scaled and real seconds since Play started |
+| `Time.FrameCount` | Frames since Play started |
+| `Time.TimeScale` | Game speed (same as `GamePause.TimeScale`): 1 normal, 0 stopped |
+
+Use unscaled time for anything that must keep moving while the game is paused with `TimeScale = 0`, such as
+pause-menu animation. A `Stopwatch` is no longer needed for that.
+
+Timers run code later without hand-written countdowns:
+
+```csharp
+public override void OnCreate()
+{
+    After(3.0f, () => door.Open());              // once, in 3 s of game time
+    var beacon = Every(0.5f, ToggleBeaconLight); // every 0.5 s
+    After(10.0f, beacon.Cancel);
+    After(1.0f, ShowHint, unscaled: true);       // keeps running while paused
+}
+```
+
+- `After` and `Every` inside a `ScriptBehaviour` are owned by that script and stop when it is destroyed. Outside
+  a script, use `Timers.After(seconds, action, owner, unscaled)` and `Timers.Every(...)`;
+  `Timers.CancelAll(owner)` stops all of a script's timers.
+- Timers fire once per frame before scripts update, in the order they became due. A repeating timer fires at
+  most once per frame, so a long frame does not replay missed ticks.
+- Every timer stops when Play stops or the scene is replaced.
+- A timer that throws is logged and cancelled.
+
 ## Multiplayer networking
 
 Dedicated-server scripts can implement `IServerCommandHandler.HandleServerCommand(string)`
@@ -845,7 +881,7 @@ public override void OnLateUpdate(float deltaTime)
 
 When generating a PlutoGE script:
 
-1. Use only APIs documented here or verified in `PlutoGE.ScriptCore`; do not assume Unity APIs such as `Transform`, `MonoBehaviour`, `Time`, coroutines, or unqualified `Instantiate`/`Destroy` exist. Use `OnFixedUpdate` for fixed-step callbacks and `InputActionMap.GetAxis` for named input axes.
+1. Use only APIs documented here or verified in `PlutoGE.ScriptCore`; do not assume Unity APIs such as `Transform`, `MonoBehaviour`, coroutines, or unqualified `Instantiate`/`Destroy` exist. Use `Time` and `After`/`Every` timers for timing. Use `OnFixedUpdate` for fixed-step callbacks and `InputActionMap.GetAxis` for named input axes.
 2. Derive attachable scripts from `ScriptBehaviour`.
 3. Add `[SerializedField]` to editor-configurable members and use only supported serialized types.
 4. Use nullable references and guard them before access.

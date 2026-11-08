@@ -93,5 +93,7 @@ namespace PlutoGE::scripting
         [[nodiscard]] virtual std::vector<ScriptClassDefinition> GetScriptClasses() const = 0;
         [[nodiscard]] virtual std::unique_ptr<ScriptInstance> CreateInstance(const ScriptClassDefinition &scriptClass) const = 0;
         [[nodiscard]] virtual std::string GetLastError() const = 0;
+        // Play mode began (before any OnCreate) or ended (after every OnDestroy).
+        virtual void OnPlayStateChanged(bool playing) { (void)playing; }
     };
 }

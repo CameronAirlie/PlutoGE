@@ -41,6 +41,8 @@ namespace PlutoGE::scripting
 
         [[nodiscard]] ScriptBuildResult BuildProject(const ScriptBuildConfig &config) const;
         [[nodiscard]] bool LoadAssembly(const std::filesystem::path &assemblyPath);
+        // Tells scripts that play started or stopped (Application.PlayStarted / PlayStopped, [ResetOnPlay] statics).
+        void NotifyPlayStateChanged(bool playing);
 
         void RegisterManagedClass(const ScriptClassDefinition &scriptClass);
         void RegisterNativeClass(const ScriptClassDefinition &scriptClass, ScriptFactory factory);

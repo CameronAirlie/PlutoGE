@@ -19,6 +19,7 @@ namespace PlutoGE::scripting
         [[nodiscard]] std::vector<ScriptClassDefinition> GetScriptClasses() const override;
         [[nodiscard]] std::unique_ptr<ScriptInstance> CreateInstance(const ScriptClassDefinition &scriptClass) const override;
         [[nodiscard]] std::string GetLastError() const override;
+        void OnPlayStateChanged(bool playing) override;
 
     private:
         std::shared_ptr<Impl> m_impl;

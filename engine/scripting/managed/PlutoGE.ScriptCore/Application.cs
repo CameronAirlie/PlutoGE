@@ -3,6 +3,41 @@ namespace PlutoGE.ScriptCore;
 /// <summary>Application window, lifecycle, and project paths.</summary>
 public static class Application
 {
+    /// <summary>True between the start and end of a play session (editor Play, or a running game).</summary>
+    public static bool IsPlaying { get; private set; }
+
+    /// <summary>
+    /// Raised when play starts, before any script's OnCreate, after [ResetOnPlay] statics are reset. Use it to give
+    /// static state its starting values.
+    /// </summary>
+    public static event Action? PlayStarted;
+
+    /// <summary>Raised when play stops, after every script's OnDestroy. Static state survives into the next session
+    /// unless reset here or marked [ResetOnPlay].</summary>
+    public static event Action? PlayStopped;
+
+    internal static void SetPlaying(bool playing) => IsPlaying = playing;
+    internal static void RaisePlayStarted() => Raise(PlayStarted, nameof(PlayStarted));
+    internal static void RaisePlayStopped() => Raise(PlayStopped, nameof(PlayStopped));
+
+    // One failing handler does not stop the others.
+    private static void Raise(Action? handlers, string name)
+    {
+        if (handlers is null)
+            return;
+        foreach (var handler in handlers.GetInvocationList().Cast<Action>())
+        {
+            try
+            {
+                handler();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError($"Application.{name} handler {handler.Method.DeclaringType?.Name}.{handler.Method.Name} threw: {exception}");
+            }
+        }
+    }
+
     public static bool WindowSizeSupported => Native.ScriptBridge.WindowSizeSupported;
     /// <summary>Logical client size; in borderless mode returns the windowed restore size.</summary>
     public static (int Width, int Height) WindowedSize => Native.ScriptBridge.GetWindowedSize(false);

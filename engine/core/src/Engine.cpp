@@ -549,6 +549,8 @@ namespace PlutoGE::core
 
         render::DebugDraw::Get().Clear();
         m_isRuntimeRunning = true;
+        // Before any OnCreate, so [ResetOnPlay] statics and PlayStarted handlers run first.
+        m_scriptEngine->NotifyPlayStateChanged(true);
         if (m_scene)
         {
             m_scene->StartRuntime();
@@ -566,6 +568,8 @@ namespace PlutoGE::core
         {
             m_scene->StopRuntime();
         }
+        // After every OnDestroy.
+        m_scriptEngine->NotifyPlayStateChanged(false);
 
         render::DebugDraw::Get().Clear();
         m_isRuntimeRunning = false;

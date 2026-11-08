@@ -3898,6 +3898,7 @@ namespace PlutoGE::scripting
         // Optional (older ScriptCore builds lack them): collisions with contact data, trigger enter/exit.
         int(PLUTO_HOST_CALL *invokeOnCollisionContact)(int64_t, uint32_t, NativeVector3, NativeVector3, float) = nullptr;
         int(PLUTO_HOST_CALL *invokeOnTrigger)(int64_t, uint32_t, int32_t) = nullptr;
+        int(PLUTO_HOST_CALL *invokePlayStateChanged)(int32_t) = nullptr; // Optional.
         invoke_on_animation_event_fn invokeOnAnimationEvent = nullptr;
         int(PLUTO_HOST_CALL *invokeServerCommand)(int64_t, const char *) = nullptr;
         apply_field_data_fn applyFieldData = nullptr;
@@ -4036,6 +4037,7 @@ namespace PlutoGE::scripting
             impl.invokeOnCollisionExit = nullptr;
             impl.invokeOnCollisionContact = nullptr;
             impl.invokeOnTrigger = nullptr;
+            impl.invokePlayStateChanged = nullptr;
             impl.applyFieldData = nullptr;
             impl.setEntityId = nullptr;
             impl.registerGameObjectApi = nullptr;
@@ -4508,6 +4510,11 @@ namespace PlutoGE::scripting
                 impl.invokeOnTrigger = nullptr;
                 impl.lastError.clear();
             }
+            if (!LoadManagedExport(impl, HOST_TEXT("InvokePlayStateChanged"), impl.invokePlayStateChanged))
+            {
+                impl.invokePlayStateChanged = nullptr;
+                impl.lastError.clear();
+            }
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterMeshGeometryApi"), impl.registerMeshGeometryApi))
             {
                 impl.registerMeshGeometryApi = nullptr;
@@ -4780,6 +4787,24 @@ namespace PlutoGE::scripting
             bool m_loadingScreen = false;
             bool m_faulted = false;
         };
+#endif
+    }
+
+    void HostFxrScriptRuntime::OnPlayStateChanged(bool playing)
+    {
+#if defined(_WIN32) || defined(__linux__)
+        if (!m_impl || !m_impl->loaded || !m_impl->invokePlayStateChanged)
+            return;
+        if (!m_impl->invokePlayStateChanged(playing ? 1 : 0))
+        {
+            ScriptErrorReport report;
+            report.scriptClass = "Application";
+            report.callback = playing ? "PlayStarted" : "PlayStopped";
+            report.exception = TakeManagedString(*m_impl, m_impl->getLastError);
+            DispatchScriptError(report);
+        }
+#else
+        (void)playing;
 #endif
     }
 

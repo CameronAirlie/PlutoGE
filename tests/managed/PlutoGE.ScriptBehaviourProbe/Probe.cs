@@ -299,3 +299,42 @@ public sealed class InputMapProbe : ScriptBehaviour
         Reads++;
     }
 }
+
+// Play session hygiene: [ResetOnPlay] statics and Application events.
+public static class SessionState
+{
+    [ResetOnPlay] public static int Counter;
+    [ResetOnPlay] public static readonly List<string> Registry = [];
+    public static int Untouched;
+    public static int Starts;
+    public static int Stops;
+
+    static SessionState()
+    {
+        Application.PlayStarted += () => Starts++;
+        Application.PlayStopped += () => Stops++;
+    }
+}
+
+public sealed class SessionProbe : ScriptBehaviour
+{
+    [SerializedField] public int CounterAtCreate = -1;
+    [SerializedField] public int RegistryAtCreate = -1;
+    [SerializedField] public int UntouchedAtCreate = -1;
+    [SerializedField] public int Starts;
+    [SerializedField] public int Stops;
+    [SerializedField] public bool Playing;
+
+    public override void OnCreate()
+    {
+        CounterAtCreate = SessionState.Counter;
+        RegistryAtCreate = SessionState.Registry.Count;
+        UntouchedAtCreate = SessionState.Untouched;
+        Starts = SessionState.Starts;
+        Stops = SessionState.Stops;
+        Playing = Application.IsPlaying;
+        SessionState.Counter = 7;
+        SessionState.Registry.Add("leftover");
+        SessionState.Untouched = 7;
+    }
+}

@@ -59,6 +59,15 @@ public static class Timers
         return Schedule(interval, interval, action, owner, unscaled);
     }
 
+    // Play start and stop drop every timer.
+    internal static void Clear()
+    {
+        foreach (var timer in Active)
+            timer.Cancel();
+        Active.Clear();
+        Due.Clear();
+    }
+
     /// <summary>Cancels every timer owned by <paramref name="owner"/>.</summary>
     public static void CancelAll(ScriptBehaviour owner)
     {

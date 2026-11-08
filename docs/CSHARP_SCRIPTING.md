@@ -105,6 +105,30 @@ PlayerInput.OnUpdate on 'Player' (entity 4) threw: System.NullReferenceException
   and the Console shows the total count.
 - Standalone players and dedicated servers print the same report to the error log.
 
+## Play sessions and static state
+
+The script assembly stays loaded between play sessions in the editor, so `static` fields keep last session's
+values. Use these to start each session clean:
+
+```csharp
+public static class EnemyRegistry
+{
+    [ResetOnPlay] public static readonly List<Enemy> Active = [];   // cleared when Play starts
+    [ResetOnPlay] public static int KillCount;                      // back to 0
+
+    static EnemyRegistry() => Application.PlayStarted += () => Difficulty = 1.0f; // non-default starting values
+    public static float Difficulty;
+}
+```
+
+- `[ResetOnPlay]` clears collections in place, so readonly registries work, and returns other fields and
+  settable properties to their type's default.
+- `Application.PlayStarted` runs before any script's `OnCreate`; `Application.PlayStopped` runs after every
+  `OnDestroy`. A handler that throws is logged and does not stop the others.
+- `Application.IsPlaying` reports whether a session is running.
+- The engine also resets its own session state: `GamePause.IsPaused` is cleared and every timer is cancelled
+  when Play starts and stops.
+
 ## Time and timers
 
 `Time` reports game time since Play started:

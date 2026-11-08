@@ -328,6 +328,30 @@ namespace
             Require(warning.find("never updated") == std::string::npos, "Input map was not advanced by the engine: " + warning);
     }
 
+    void PlaySessionsStartClean(core::Engine &engine)
+    {
+        scene::Scene scene;
+        auto *probe = AddScript(scene, "Session", "SessionProbe");
+        engine.SetScene(&scene);
+        struct Clear { core::Engine &engine; ~Clear() { engine.StopRuntime(); engine.SetScene(nullptr); } } clear{engine};
+
+        engine.StartRuntime();
+        Require(LiveField<bool>(*probe, "Playing"), "Application.IsPlaying during OnCreate");
+        // Earlier tests in this process also started play, so compare counts between sessions.
+        const auto starts = LiveField<int32_t>(*probe, "Starts");
+        const auto stops = LiveField<int32_t>(*probe, "Stops");
+        Require(starts >= 1 && stops == starts - 1, "PlayStarted is raised before OnCreate and PlayStopped after each session");
+        engine.StopRuntime();
+
+        engine.StartRuntime();
+        Require(LiveField<int32_t>(*probe, "CounterAtCreate") == 0, "[ResetOnPlay] int kept last session's value");
+        Require(LiveField<int32_t>(*probe, "RegistryAtCreate") == 0, "[ResetOnPlay] list kept last session's items");
+        Require(LiveField<int32_t>(*probe, "UntouchedAtCreate") == 7, "Unmarked statics should survive (control)");
+        Require(LiveField<int32_t>(*probe, "Starts") == starts + 1 && LiveField<int32_t>(*probe, "Stops") == stops + 1,
+                "PlayStarted/PlayStopped counts: " + std::to_string(LiveField<int32_t>(*probe, "Starts")) + "/" +
+                    std::to_string(LiveField<int32_t>(*probe, "Stops")));
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -395,6 +419,7 @@ try
     GameObjectErgonomics(engine);
     FireAndForgetAudio(engine);
     InputMapsAdvanceThemselves(engine);
+    PlaySessionsStartClean(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

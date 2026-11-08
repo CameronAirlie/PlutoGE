@@ -440,6 +440,24 @@ internal static unsafe partial class ScriptBridge
         }
     }
 
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokePlayStateChanged")]
+    public static int InvokePlayStateChanged(int playing)
+    {
+        try
+        {
+            if (playing != 0)
+                PlaySession.Begin(_loadedAssembly);
+            else
+                PlaySession.End();
+            return 1;
+        }
+        catch (Exception exception)
+        {
+            SetError(exception.ToString());
+            return 0;
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "InvokeOnTrigger")]
     public static int InvokeOnTrigger(long handle, uint otherEntityId, int entered)
     {

@@ -25,6 +25,12 @@ namespace PlutoGE::scripting
 
     }
 
+    void ScriptEngine::NotifyPlayStateChanged(bool playing)
+    {
+        if (m_runtime && m_runtime->IsLoaded())
+            m_runtime->OnPlayStateChanged(playing);
+    }
+
     ScriptBuildResult ScriptEngine::BuildProject(const ScriptBuildConfig &config) const
     {
         ScriptBuildResult result;

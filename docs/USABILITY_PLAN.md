@@ -70,7 +70,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T2.8 Fire-and-forget audio.** `Audio.PlayAt / PlayOneShot` on an engine voice pool.
 - [x] **T2.9 Input action gaps.** Unclamped delta axes, scroll binding, `WasReleased`, Vector2 composites, engine-driven
   map updates.
-- [ ] **T2.10 Play session hygiene.** `Application.PlayStarted/PlayStopped` events, engine statics reset on stop,
+- [x] **T2.10 Play session hygiene.** `Application.PlayStarted/PlayStopped` events, engine statics reset on stop,
   `[ResetOnPlay]` for user statics.
 - [ ] **T2.11 Debugging.** `Debug.LogException(ex, context)`, context entity on logs (click to select), documented
   debugger attach, ScriptCore XML docs for IntelliSense.
@@ -271,4 +271,16 @@ Record each completed item here with the date, what changed, and how it was veri
 - Verified: `PlutoGEInputMappingEditorTests` (constants, MouseScroll round trip), `PlutoGEMapBakeTests`, and
   `PlutoGEScriptBehaviourTests` (a hold-trigger map read for 3 frames without calling Update logs no warning).
   Key/scroll values themselves are not simulated (no input injection yet).
+
+### 2026-11-08 — T2.10
+
+- `Engine::StartRuntime/StopRuntime` -> `ScriptEngine::NotifyPlayStateChanged` -> `IScriptRuntime::OnPlayStateChanged`
+  -> optional managed `InvokePlayStateChanged`. Start fires before any OnCreate, stop after every OnDestroy.
+- Managed `PlaySession`: resets `[ResetOnPlay]` statics in the game assembly (collections cleared in place,
+  others to default, read-only non-collections warned), clears `GamePause.IsPaused` and timers, raises
+  `Application.PlayStarted/PlayStopped` (handlers isolated), `Application.IsPlaying`.
+- An optional "reload the assembly on every Play" mode was not added: `[ResetOnPlay]` and the events cover the
+  sample's 25 static registries without the reload cost.
+- Verified: `PlutoGEScriptBehaviourTests` runs two sessions (reset int and list, unmarked static kept, event
+  counts across sessions); managed and scripting suites pass.
 

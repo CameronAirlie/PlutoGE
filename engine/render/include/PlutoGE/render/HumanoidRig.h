@@ -51,6 +51,8 @@ namespace PlutoGE::render
         glm::vec3 rotationOffsetDegrees{0.0f};
         bool copyTranslation = false;
         float translationScale = 1.0f;
+
+        bool operator==(const HumanoidBoneMapping &) const = default;
     };
 
     inline constexpr std::array<const char *, kHumanoidBoneCount> kHumanoidBoneNames = {
@@ -129,21 +131,21 @@ namespace PlutoGE::render
 
         if (IsOneOf(name, {"leftshoulder", "claviclel", "shoulderl", "lclavicle", "lshoulder", "bip01lclavicle"})) return HumanoidBone::LeftShoulder;
         if (IsOneOf(name, {"leftarm", "leftupperarm", "upperarml", "upperarm01l", "lupperarm", "bip01lupperarm"})) return HumanoidBone::LeftUpperArm;
-        if (IsOneOf(name, {"leftforearm", "leftlowerarm", "lowerarml", "lowerarm01l", "lforearm", "bip01lforearm"})) return HumanoidBone::LeftLowerArm;
+        if (IsOneOf(name, {"leftforearm", "leftlowerarm", "lowerarml", "lowerarm01l", "forearml", "lforearm", "bip01lforearm"})) return HumanoidBone::LeftLowerArm;
         if (IsOneOf(name, {"lefthand", "handl", "wristl", "lhand", "bip01lhand"})) return HumanoidBone::LeftHand;
         if (IsOneOf(name, {"rightshoulder", "clavicler", "shoulderr", "rclavicle", "rshoulder", "bip01rclavicle"})) return HumanoidBone::RightShoulder;
         if (IsOneOf(name, {"rightarm", "rightupperarm", "upperarmr", "upperarm01r", "rupperarm", "bip01rupperarm"})) return HumanoidBone::RightUpperArm;
-        if (IsOneOf(name, {"rightforearm", "rightlowerarm", "lowerarmr", "lowerarm01r", "rforearm", "bip01rforearm"})) return HumanoidBone::RightLowerArm;
+        if (IsOneOf(name, {"rightforearm", "rightlowerarm", "lowerarmr", "lowerarm01r", "forearmr", "rforearm", "bip01rforearm"})) return HumanoidBone::RightLowerArm;
         if (IsOneOf(name, {"righthand", "handr", "wristr", "rhand", "bip01rhand"})) return HumanoidBone::RightHand;
 
         if (IsOneOf(name, {"leftupleg", "leftupperleg", "thighl", "upperlegl", "upperleg01l", "lthigh", "lupperleg", "bip01lthigh"})) return HumanoidBone::LeftUpperLeg;
-        if (IsOneOf(name, {"leftleg", "leftlowerleg", "calfl", "lowerlegl", "lowerleg01l", "lcalf", "leftshin", "bip01lcalf"})) return HumanoidBone::LeftLowerLeg;
+        if (IsOneOf(name, {"leftleg", "leftlowerleg", "calfl", "lowerlegl", "lowerleg01l", "shinl", "lcalf", "leftshin", "bip01lcalf"})) return HumanoidBone::LeftLowerLeg;
         if (IsOneOf(name, {"leftfoot", "footl", "lfoot", "bip01lfoot"})) return HumanoidBone::LeftFoot;
-        if (IsOneOf(name, {"lefttoebase", "lefttoes", "balll", "toe11l", "ltoe", "bip01ltoe0"})) return HumanoidBone::LeftToes;
+        if (IsOneOf(name, {"lefttoebase", "lefttoes", "balll", "toe11l", "toel", "ltoe", "bip01ltoe0"})) return HumanoidBone::LeftToes;
         if (IsOneOf(name, {"rightupleg", "rightupperleg", "thighr", "upperlegr", "upperleg01r", "rthigh", "rupperleg", "bip01rthigh"})) return HumanoidBone::RightUpperLeg;
-        if (IsOneOf(name, {"rightleg", "rightlowerleg", "calfr", "lowerlegr", "lowerleg01r", "rcalf", "rightshin", "bip01rcalf"})) return HumanoidBone::RightLowerLeg;
+        if (IsOneOf(name, {"rightleg", "rightlowerleg", "calfr", "lowerlegr", "lowerleg01r", "shinr", "rcalf", "rightshin", "bip01rcalf"})) return HumanoidBone::RightLowerLeg;
         if (IsOneOf(name, {"rightfoot", "footr", "rfoot", "bip01rfoot"})) return HumanoidBone::RightFoot;
-        if (IsOneOf(name, {"righttoebase", "righttoes", "ballr", "toe11r", "rtoe", "bip01rtoe0"})) return HumanoidBone::RightToes;
+        if (IsOneOf(name, {"righttoebase", "righttoes", "ballr", "toe11r", "toer", "rtoe", "bip01rtoe0"})) return HumanoidBone::RightToes;
         return std::nullopt;
     }
 }

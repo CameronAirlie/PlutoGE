@@ -1,630 +1,327 @@
 #include "PlutoGE/ui/panels/MeshEditorPanel.h"
 
-#include "PlutoGE/assets/Project.h"
-#include "PlutoGE/core/Engine.h"
-#include "PlutoGE/render/HumanoidRigAnalysis.h"
-#include "PlutoGE/scene/Entity.h"
-#include "PlutoGE/scene/Scene.h"
-#include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/assets/AssetType.h"
+#include "PlutoGE/ui/AssetReferencePicker.h"
+#include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorShell.h"
-#include "PlutoGE/ui/panels/ContentBrowserPanel.h"
-
-#include <algorithm>
-#include <array>
-#include <cstring>
-#include <filesystem>
-#include <limits>
-#include <unordered_set>
+#include "PlutoGE/ui/EditorTheme.h"
+#include "PlutoGE/ui/EditorWidgets.h"
+#include "PlutoGE/ui/meshedit/MeshAssetSession.h"
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <utility>
+
 namespace PlutoGE::ui
 {
-    namespace
+    using meshedit::MeshEditorPage;
+
+    MeshEditorPanel::MeshEditorPanel(const PanelConfig &config) : Panel(config) {}
+    MeshEditorPanel::~MeshEditorPanel() = default;
+
+    void MeshEditorPanel::OnProjectChanged()
     {
-        render::MeshConfig BuildMeshConfigFromMesh(const render::Mesh &mesh)
-        {
-            render::MeshConfig config;
-            config.data = mesh.GetMeshData();
-            config.hasLightmapUvs = mesh.HasLightmapUvs();
-            config.skeleton = mesh.GetSkeleton();
-            config.animationNodes = mesh.GetAnimationNodes();
-            config.animations = mesh.GetAnimations();
-            config.submeshes.reserve(mesh.GetSubmeshCount());
-            for (size_t submeshIndex = 0; submeshIndex < mesh.GetSubmeshCount(); ++submeshIndex)
-            {
-                config.submeshes.push_back(mesh.GetSubmesh(submeshIndex));
-            }
-            return config;
-        }
-
-        size_t GetMaxLodCount(const render::MeshConfig &config)
-        {
-            size_t maxLodCount = 1;
-            for (const auto &submesh : config.submeshes)
-            {
-                maxLodCount = (std::max)(maxLodCount, (std::max<size_t>)(submesh.lods.size(), 1));
-            }
-            return maxLodCount;
-        }
-
-        uint64_t CountTrianglesForLod(const render::MeshConfig &config, size_t lodIndex)
-        {
-            uint64_t indexCount = 0;
-            for (const auto &submesh : config.submeshes)
-            {
-                if (lodIndex < submesh.lods.size())
-                {
-                    indexCount += submesh.lods[lodIndex].indexCount;
-                }
-                else if (lodIndex == 0)
-                {
-                    indexCount += submesh.indexCount;
-                }
-            }
-            return indexCount / 3;
-        }
-
-        void EnsureBaseLodRanges(render::MeshConfig &config)
-        {
-            for (auto &submesh : config.submeshes)
-            {
-                if (!submesh.lods.empty())
-                {
-                    continue;
-                }
-
-                submesh.lods.push_back(render::Submesh::LodRange{
-                    .indexOffset = submesh.indexOffset,
-                    .indexCount = submesh.indexCount,
-                    .minDistanceFactor = 0.0f,
-                    .maxScreenRadiusPixels = std::numeric_limits<float>::max(),
-                });
-            }
-        }
-
-        render::HumanoidBoneMapping *FindHumanoidMapping(render::Skeleton &skeleton, render::HumanoidBone bone)
-        {
-            for (auto &mapping : skeleton.humanoidBoneMappings)
-            {
-                if (mapping.bone == bone)
-                    return &mapping;
-            }
-            return nullptr;
-        }
-
-        void EnsureHumanoidMappings(render::Skeleton &skeleton)
-        {
-            skeleton.humanoidBoneMappings.erase(
-                std::remove_if(skeleton.humanoidBoneMappings.begin(), skeleton.humanoidBoneMappings.end(),
-                               [](const render::HumanoidBoneMapping &mapping)
-                               {
-                                   return static_cast<std::size_t>(mapping.bone) >= render::kHumanoidBoneCount;
-                               }),
-                skeleton.humanoidBoneMappings.end());
-
-            for (std::size_t index = 0; index < render::kHumanoidBoneCount; ++index)
-            {
-                const auto bone = static_cast<render::HumanoidBone>(index);
-                if (!FindHumanoidMapping(skeleton, bone))
-                {
-                    skeleton.humanoidBoneMappings.push_back(render::HumanoidBoneMapping{
-                        .bone = bone,
-                        .copyTranslation = bone == render::HumanoidBone::Hips,
-                    });
-                }
-            }
-        }
-
-        void AutoMapHumanoidRig(render::Skeleton &skeleton)
-        {
-            EnsureHumanoidMappings(skeleton);
-            for (std::size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
-            {
-                const auto guessedBone = render::GuessHumanoidBone(skeleton.joints[jointIndex].name);
-                if (!guessedBone)
-                    continue;
-
-                if (auto *mapping = FindHumanoidMapping(skeleton, *guessedBone); mapping && mapping->targetJointIndex < 0)
-                {
-                    mapping->targetJointIndex = static_cast<int>(jointIndex);
-                }
-            }
-
-            render::CorrectHumanoidSpineOrder(skeleton);
-            if (auto *hips = FindHumanoidMapping(skeleton, render::HumanoidBone::Hips); hips && hips->targetJointIndex < 0)
-                hips->targetJointIndex = render::InferHumanoidHipsJoint(skeleton);
-        }
-
-        bool IsRequiredHumanoidBone(render::HumanoidBone bone)
-        {
-            switch (bone)
-            {
-            case render::HumanoidBone::Hips:
-            case render::HumanoidBone::Head:
-            case render::HumanoidBone::LeftUpperArm:
-            case render::HumanoidBone::LeftLowerArm:
-            case render::HumanoidBone::LeftHand:
-            case render::HumanoidBone::RightUpperArm:
-            case render::HumanoidBone::RightLowerArm:
-            case render::HumanoidBone::RightHand:
-            case render::HumanoidBone::LeftUpperLeg:
-            case render::HumanoidBone::LeftLowerLeg:
-            case render::HumanoidBone::LeftFoot:
-            case render::HumanoidBone::RightUpperLeg:
-            case render::HumanoidBone::RightLowerLeg:
-            case render::HumanoidBone::RightFoot:
-                return true;
-            default:
-                return false;
-            }
-        }
-
-        void DrawHumanoidRigEditor(render::Skeleton &skeleton, bool readOnly, bool &dirty)
-        {
-            ImGui::SeparatorText("Humanoid Rig");
-            if (skeleton.joints.empty())
-            {
-                ImGui::TextDisabled("This mesh has no skeleton.");
-                return;
-            }
-
-            if (skeleton.humanoidBoneMappings.empty())
-            {
-                ImGui::TextWrapped("Configure a humanoid map to retarget clips whose bone names or joint order differ from this mesh.");
-                ImGui::BeginDisabled(readOnly);
-                if (ImGui::Button("Configure and Auto Map"))
-                {
-                    AutoMapHumanoidRig(skeleton);
-                    dirty = true;
-                }
-                ImGui::EndDisabled();
-                return;
-            }
-
-            EnsureHumanoidMappings(skeleton);
-            ImGui::BeginDisabled(readOnly);
-            if (ImGui::Button("Auto Map Missing"))
-            {
-                AutoMapHumanoidRig(skeleton);
-                dirty = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Disable Retargeting"))
-            {
-                skeleton.humanoidBoneMappings.clear();
-                dirty = true;
-                ImGui::EndDisabled();
-                return;
-            }
-            ImGui::EndDisabled();
-
-            int requiredMapped = 0;
-            int requiredCount = 0;
-            bool duplicateTarget = false;
-            std::unordered_set<int> assignedTargets;
-            for (const auto &mapping : skeleton.humanoidBoneMappings)
-            {
-                if (IsRequiredHumanoidBone(mapping.bone))
-                {
-                    ++requiredCount;
-                    if (mapping.targetJointIndex >= 0 && mapping.targetJointIndex < static_cast<int>(skeleton.joints.size()))
-                        ++requiredMapped;
-                }
-                if (mapping.targetJointIndex >= 0 && !assignedTargets.insert(mapping.targetJointIndex).second)
-                    duplicateTarget = true;
-            }
-
-            if (requiredMapped == requiredCount && !duplicateTarget)
-                ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "Rig Ready (%d/%d required bones)", requiredMapped, requiredCount);
-            else
-                ImGui::TextColored(ImVec4(1.0f, 0.65f, 0.2f, 1.0f), "Needs Attention (%d/%d required bones)%s", requiredMapped, requiredCount, duplicateTarget ? " - duplicate target joints" : "");
-
-            for (const auto &problem : render::FindHumanoidRigProblems(skeleton))
-            {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.2f, 1.0f));
-                ImGui::TextWrapped("%s", problem.c_str());
-                ImGui::PopStyleColor();
-            }
-
-            ImGui::TextWrapped("Source Override is optional. Set it when an animation uses a name the automatic Mixamo/Unreal/common aliases do not recognize.");
-            ImGui::Columns(3, "HumanoidRigColumns", true);
-            ImGui::TextUnformatted("Humanoid Bone"); ImGui::NextColumn();
-            ImGui::TextUnformatted("Target Joint"); ImGui::NextColumn();
-            ImGui::TextUnformatted("Source Override"); ImGui::NextColumn();
-            ImGui::Separator();
-
-            for (std::size_t boneIndex = 0; boneIndex < render::kHumanoidBoneCount; ++boneIndex)
-            {
-                const auto bone = static_cast<render::HumanoidBone>(boneIndex);
-                auto *mapping = FindHumanoidMapping(skeleton, bone);
-                if (!mapping)
-                    continue;
-
-                ImGui::PushID(static_cast<int>(boneIndex));
-                ImGui::Text("%s%s", render::HumanoidBoneName(bone), IsRequiredHumanoidBone(bone) ? " *" : "");
-                ImGui::NextColumn();
-
-                const char *preview = mapping->targetJointIndex >= 0 && mapping->targetJointIndex < static_cast<int>(skeleton.joints.size())
-                                          ? skeleton.joints[static_cast<std::size_t>(mapping->targetJointIndex)].name.c_str()
-                                          : "Unassigned";
-                ImGui::BeginDisabled(readOnly);
-                if (ImGui::BeginCombo("##TargetJoint", preview))
-                {
-                    if (ImGui::Selectable("Unassigned", mapping->targetJointIndex < 0))
-                    {
-                        mapping->targetJointIndex = -1;
-                        dirty = true;
-                    }
-                    for (std::size_t jointIndex = 0; jointIndex < skeleton.joints.size(); ++jointIndex)
-                    {
-                        const bool selected = mapping->targetJointIndex == static_cast<int>(jointIndex);
-                        if (ImGui::Selectable(skeleton.joints[jointIndex].name.c_str(), selected))
-                        {
-                            mapping->targetJointIndex = static_cast<int>(jointIndex);
-                            dirty = true;
-                        }
-                    }
-                    ImGui::EndCombo();
-                }
-                ImGui::EndDisabled();
-                ImGui::NextColumn();
-
-                char sourceName[128]{};
-                strncpy_s(sourceName, mapping->sourceBoneName.c_str(), _TRUNCATE);
-                ImGui::BeginDisabled(readOnly);
-                if (ImGui::InputTextWithHint("##SourceName", "Auto aliases", sourceName, sizeof(sourceName)))
-                {
-                    mapping->sourceBoneName = sourceName;
-                    dirty = true;
-                }
-                if (ImGui::DragFloat3("Rotation Offset", &mapping->rotationOffsetDegrees.x, 0.25f, -180.0f, 180.0f, "%.1f deg"))
-                {
-                    dirty = true;
-                }
-                if (ImGui::Checkbox("Copy Translation", &mapping->copyTranslation))
-                {
-                    dirty = true;
-                }
-                if (mapping->copyTranslation && ImGui::DragFloat("Translation Scale", &mapping->translationScale, 0.01f, 0.0f, 10.0f))
-                {
-                    dirty = true;
-                }
-                ImGui::EndDisabled();
-                ImGui::NextColumn();
-                ImGui::PopID();
-            }
-            ImGui::Columns(1);
-            ImGui::TextDisabled("* Required bone");
-        }
-
-        bool ApplyLodThreshold(render::MeshConfig &config, size_t lodIndex, float maxScreenRadiusPixels)
-        {
-            bool changed = false;
-            for (auto &submesh : config.submeshes)
-            {
-                if (lodIndex >= submesh.lods.size())
-                {
-                    continue;
-                }
-
-                const float sanitized = lodIndex == 0
-                                            ? std::numeric_limits<float>::max()
-                                            : (std::max)(1.0f, maxScreenRadiusPixels);
-                if (submesh.lods[lodIndex].maxScreenRadiusPixels != sanitized)
-                {
-                    submesh.lods[lodIndex].maxScreenRadiusPixels = sanitized;
-                    changed = true;
-                }
-            }
-            return changed;
-        }
-
-        std::filesystem::path FindSourceModelForMesh(const assets::Project &project, const std::string &meshReference)
-        {
-            const auto meshPath = project.ResolveAssetReference(meshReference);
-            const auto meshStem = meshPath.stem().string();
-            for (const auto &asset : project.GetManifest().assetEntries)
-            {
-                if (asset.type != assets::ProjectAssetType::Model)
-                {
-                    continue;
-                }
-
-                const auto sourcePath = project.ResolveAssetReference(asset.reference);
-                if (sourcePath.stem() == meshPath.stem())
-                {
-                    return sourcePath;
-                }
-            }
-
-            const auto guessedSourceDirectory = project.GetAssetDirectoryPath() / "SourceModels" / meshStem;
-            constexpr const char *extensions[] = {".gltf", ".glb", ".fbx"};
-            for (const auto *extension : extensions)
-            {
-                const auto candidate = guessedSourceDirectory / (meshStem + extension);
-                if (std::filesystem::exists(candidate))
-                {
-                    return candidate;
-                }
-            }
-            return {};
-        }
-
-        void RefreshMeshAssetInstances(scene::Entity &entity, const std::string &meshReference, render::Mesh *mesh)
-        {
-            if (!mesh)
-            {
-                return;
-            }
-
-            for (auto *meshComponent : entity.GetComponents<scene::MeshComponent>())
-            {
-                if (meshComponent && meshComponent->GetMeshAssetReference() == meshReference)
-                {
-                    meshComponent->SetMesh(mesh);
-                    // SetMesh normally invalidates cached commands because a
-                    // reloaded asset has a new pointer. Keep the refresh robust
-                    // if asset loading later starts updating meshes in place.
-                    meshComponent->NotifyMeshDataChanged();
-                }
-            }
-
-            for (auto *child : entity.GetChildren())
-            {
-                if (child)
-                {
-                    RefreshMeshAssetInstances(*child, meshReference, mesh);
-                }
-            }
-        }
-
-        void RefreshOpenSceneMeshAssetInstances(core::Engine &engine, const std::string &meshReference)
-        {
-            auto *scene = engine.GetScene();
-            if (!scene)
-            {
-                return;
-            }
-
-            auto *mesh = engine.GetAssetManager().LoadMeshAsset(meshReference);
-            for (auto *root : scene->GetRootEntities())
-            {
-                if (root)
-                {
-                    RefreshMeshAssetInstances(*root, meshReference, mesh);
-                }
-            }
-            scene->MarkShadowLightsDirty();
-        }
+        m_session.reset();
+        m_reference.clear();
+        m_followedReference.clear();
+        m_pendingReference.reset();
+        m_error.clear();
     }
 
-    void MeshEditorPanel::LoadActiveMesh()
+    bool MeshEditorPanel::HasUnsavedChanges() const
     {
-        auto &editorShell = EditorShell::GetInstance();
-        const auto &reference = editorShell.GetActiveMeshAssetReference();
-        m_loadedReference = reference;
-        m_config = {};
-        m_materialReferences.clear();
-        m_metadata = {};
-        m_dirty = false;
+        return m_session && m_session->IsDirty();
+    }
 
-        auto *mesh = core::Engine::GetInstance().GetAssetManager().LoadMeshAsset(reference);
-        if (!mesh)
+    void MeshEditorPanel::ResetViews()
+    {
+        m_rigAnalysis = {};
+        m_rig = {};
+    }
+
+    void MeshEditorPanel::Open(std::unique_ptr<MeshAssetSession> session)
+    {
+        SetOpen(true);
+        m_session = std::move(session);
+        m_reference.clear();
+        m_pendingReference.reset();
+        m_error.clear();
+        ResetViews();
+    }
+
+    void MeshEditorPanel::OpenReference(const std::string &reference)
+    {
+        m_error.clear();
+        m_session = MeshAssetSession::OpenAsset(reference, m_error);
+        m_reference = reference;
+        ResetViews();
+    }
+
+    void MeshEditorPanel::FollowShell()
+    {
+        const auto &reference = EditorShell::GetInstance().GetActiveMeshAssetReference();
+        if (reference == m_followedReference)
+            return;
+        m_followedReference = reference;
+        if (reference.empty() || (reference == m_reference && m_session))
+            return;
+        if (HasUnsavedChanges())
         {
+            m_pendingReference = reference;
+            m_openSavePrompt = true;
             return;
         }
-
-        m_config = BuildMeshConfigFromMesh(*mesh);
-        EnsureBaseLodRanges(m_config);
-        m_materialReferences = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMaterialReferences(reference);
-        m_metadata = core::Engine::GetInstance().GetAssetManager().GetMeshAssetMetadata(reference);
+        OpenReference(reference);
     }
 
     void MeshEditorPanel::Render()
     {
-        auto &editorShell = EditorShell::GetInstance();
-        const auto &reference = editorShell.GetActiveMeshAssetReference();
-        if (reference.empty())
+        FollowShell();
+        DrawSavePrompt();
+        if (!m_session)
         {
-            ImGui::TextDisabled("No mesh selected.");
+            DrawEmptyState();
             return;
         }
 
-        if (reference != m_loadedReference)
-        {
-            LoadActiveMesh();
-        }
+        HandleShortcuts();
+        m_rigAnalysis.Update(*m_session);
+        DrawToolbar();
+        ImGui::Spacing();
 
-        const bool engineMesh = assets::Project::IsEngineAssetReference(reference);
-        ImGui::TextWrapped("Mesh: %s", reference.c_str());
-        if (engineMesh)
-        {
-            ImGui::TextDisabled("Engine mesh assets are read-only.");
-        }
+        const float height = ImGui::GetContentRegionAvail().y;
+        DrawNavigation(height);
+        ImGui::SameLine(0.0f, 0.0f);
+        const ImVec2 dividerTop = ImGui::GetCursorScreenPos();
+        ImGui::GetWindowDrawList()->AddLine(dividerTop, ImVec2(dividerTop.x, dividerTop.y + height), GetEditorColorU32(EditorColor::Border));
 
-        if (m_config.data.vertices.empty() || m_config.data.indices.empty())
+        // The rig page fills the space with its diagram; the others scroll.
+        const bool fill = m_page == MeshEditorPage::HumanoidRig;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(22.0f, 18.0f));
+        ImGui::BeginChild("##MeshEditorPage", ImVec2(0.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding,
+                          fill ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None);
+        ImGui::PopStyleVar();
+        DrawPage();
+        ImGui::EndChild();
+
+        m_session->EndFrame(ImGui::IsAnyItemActive());
+    }
+
+    void MeshEditorPanel::DrawEmptyState()
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *project = shell.GetProject();
+        widgets::PageTitle("Mesh Editor", "Materials, humanoid rig and level of detail for a mesh asset.");
+        if (!project)
         {
-            ImGui::TextDisabled("Mesh asset could not be loaded.");
+            ImGui::TextDisabled("Open a project to edit meshes.");
             return;
         }
+        if (!m_reference.empty() && !m_error.empty())
+        {
+            ImGui::TextColored(GetEditorColor(EditorColor::Error), "%s  %s", icons::Warning, m_reference.c_str());
+            ImGui::TextWrapped("%s", m_error.c_str());
+            if (ImGui::Button("Try Again"))
+                OpenReference(m_reference);
+            ImGui::Separator();
+            ImGui::Spacing();
+        }
+        std::string picked;
+        ImGui::SetNextItemWidth(ImGui::GetFontSize() * 18.0f);
+        if (RenderProjectAssetPicker("Open mesh", project, assets::ProjectAssetType::Mesh, picked, {.includeEngineAssets = true}) && !picked.empty())
+            shell.OpenMeshAsset(picked);
+        ImGui::TextDisabled("Or double-click a mesh in the Content Browser.");
+    }
 
-        ImGui::SeparatorText("Preview");
-        const auto *mesh = core::Engine::GetInstance().GetAssetManager().LoadMeshAsset(reference);
-        if (mesh)
-        {
-            const auto &bounds = mesh->GetBounds();
-            ImGui::Text("Vertices: %zu", mesh->GetVertexCount());
-            ImGui::Text("Triangles: %zu", mesh->GetIndexCount() / 3);
-            ImGui::Text("Submeshes: %zu", mesh->GetSubmeshCount());
-            ImGui::Text("LOD Levels: %zu", GetMaxLodCount(m_config));
-            ImGui::Text("Bounds Center: %.2f, %.2f, %.2f", bounds.center.x, bounds.center.y, bounds.center.z);
-            ImGui::Text("Bounds Radius: %.2f", bounds.radius);
-            ImGui::TextDisabled("Rendered orbit preview can be layered onto this panel next.");
-        }
-
-        ImGui::SeparatorText("Materials");
-        if (m_materialReferences.empty())
-        {
-            ImGui::TextDisabled("No material slots saved on this mesh asset.");
-        }
-        for (size_t slotIndex = 0; slotIndex < m_materialReferences.size(); ++slotIndex)
-        {
-            ImGui::PushID(static_cast<int>(slotIndex));
-            ImGui::Text("Slot %zu", slotIndex);
-            ImGui::SameLine();
-            ImGui::TextWrapped("%s", m_materialReferences[slotIndex].empty() ? "(empty)" : m_materialReferences[slotIndex].c_str());
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string droppedReference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(droppedReference) == assets::ProjectAssetType::Material)
-                        {
-                            m_materialReferences[slotIndex] = droppedReference;
-                            m_dirty = true;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-            if (!m_materialReferences[slotIndex].empty())
-            {
-                ImGui::SameLine();
-                if (ImGui::Button("Open"))
-                {
-                    editorShell.OpenMaterialAsset(m_materialReferences[slotIndex]);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Clear"))
-                {
-                    m_materialReferences[slotIndex].clear();
-                    m_dirty = true;
-                }
-            }
-            ImGui::PopID();
-        }
-
-        DrawHumanoidRigEditor(m_config.skeleton, engineMesh, m_dirty);
-
-        ImGui::SeparatorText("LOD Settings");
-        auto *project = editorShell.GetProject();
-        std::filesystem::path sourcePath;
-        if (project && !engineMesh)
-        {
-            const auto resolvedSourcePath = editorShell.GetEngine().GetAssetManager().ResolveMeshAssetSourcePath(reference);
-            sourcePath = resolvedSourcePath.empty() ? FindSourceModelForMesh(*project, reference) : std::filesystem::path(resolvedSourcePath);
-        }
-        const bool canReimport = project && !engineMesh && !sourcePath.empty();
-        m_dirty |= ImGui::Checkbox("Generate LODs", &m_metadata.importOptions.generateLods);
-        m_dirty |= ImGui::Checkbox("Optimize Vertex Cache", &m_metadata.importOptions.optimizeVertexCache);
-        m_dirty |= ImGui::Checkbox("Optimize Overdraw", &m_metadata.importOptions.optimizeOverdraw);
-        ImGui::BeginDisabled(!canReimport);
-        if (ImGui::Button("Reimport With Settings"))
-        {
-            auto importedMeshAsset = editorShell.GetEngine().ImportMeshAsset(sourcePath.string(), m_metadata.importOptions);
-            if (importedMeshAsset.mesh)
-            {
-                auto humanoidBoneMappings = std::move(m_config.skeleton.humanoidBoneMappings);
-                m_config = BuildMeshConfigFromMesh(*importedMeshAsset.mesh);
-                m_config.skeleton.humanoidBoneMappings = std::move(humanoidBoneMappings);
-                EnsureBaseLodRanges(m_config);
-                std::size_t requiredMaterialSlots = 0;
-                for (const auto &submesh : m_config.submeshes)
-                {
-                    requiredMaterialSlots = (std::max)(requiredMaterialSlots, static_cast<std::size_t>(submesh.materialIndex) + 1);
-                }
-                m_materialReferences.resize(requiredMaterialSlots);
-                if (m_metadata.sourceAssetReference.empty())
-                {
-                    m_metadata.sourceAssetReference = project->MakeAssetReference(sourcePath);
-                }
-                m_dirty = true;
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Reimported mesh asset with saved settings: " + reference);
-            }
-        }
-        ImGui::EndDisabled();
-        if (!canReimport)
-        {
-            ImGui::TextDisabled("Reimport needs a matching Source Model asset.");
-        }
-
-        const size_t maxLodCount = GetMaxLodCount(m_config);
-        const std::uint64_t lod0Triangles = CountTrianglesForLod(m_config, 0);
-        if (m_config.submeshes.size() > 500)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Large draw count: %zu submeshes (recommended maximum: 500).", m_config.submeshes.size());
-        }
-        if (lod0Triangles > 1'000'000)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "Large LOD0: %llu triangles.", static_cast<unsigned long long>(lod0Triangles));
-        }
-        if (maxLodCount <= 1 && lod0Triangles > 100'000)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "This large mesh has no simplified LODs.");
-        }
-        for (size_t lodIndex = 0; lodIndex < maxLodCount; ++lodIndex)
-        {
-            ImGui::PushID(static_cast<int>(lodIndex));
-            const uint64_t triangles = CountTrianglesForLod(m_config, lodIndex);
-            if (lodIndex == 0)
-            {
-                ImGui::Text("LOD 0: %llu triangles", static_cast<unsigned long long>(triangles));
-                ImGui::TextDisabled("LOD 0 is used for the nearest/full-detail view.");
-            }
-            else
-            {
-                float threshold = 0.0f;
-                for (const auto &submesh : m_config.submeshes)
-                {
-                    if (lodIndex < submesh.lods.size())
-                    {
-                        threshold = submesh.lods[lodIndex].maxScreenRadiusPixels;
-                        break;
-                    }
-                }
-
-                ImGui::Text("LOD %zu: %llu triangles", lodIndex, static_cast<unsigned long long>(triangles));
-                if (ImGui::DragFloat("Max Screen Radius", &threshold, 1.0f, 1.0f, 2000.0f, "%.0f px"))
-                {
-                    m_dirty |= ApplyLodThreshold(m_config, lodIndex, threshold);
-                }
-            }
-            ImGui::PopID();
-        }
-
-        ImGui::Separator();
-        const bool importedMesh = editorShell.GetEngine().GetAssetManager().IsImportedAsset(reference);
-        if (importedMesh) ImGui::TextWrapped("Imported mesh: extract an authored copy to edit it.");
-        ImGui::BeginDisabled(engineMesh || importedMesh || !m_dirty);
-        if (ImGui::Button("Save Mesh Asset"))
-        {
-            std::string errorMessage;
-            if (editorShell.GetEngine().GetAssetManager().SaveMeshAsset(reference, m_config, m_materialReferences, &errorMessage, m_metadata))
-            {
-                m_dirty = false;
-                LoadActiveMesh();
-                RefreshOpenSceneMeshAssetInstances(editorShell.GetEngine(), reference);
-                editorShell.MarkProjectDirty();
-                editorShell.MarkSceneDirty();
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved mesh asset: " + reference);
-            }
-            else
-            {
-                editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to save mesh asset." : errorMessage);
-            }
-        }
-        ImGui::EndDisabled();
-
+    void MeshEditorPanel::DrawToolbar()
+    {
+        auto &session = *m_session;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(icons::MeshAsset);
         ImGui::SameLine();
-        ImGui::BeginDisabled(!m_dirty);
-        if (ImGui::Button("Revert"))
+        ImGui::TextUnformatted(session.GetLabel().c_str());
+        if (!session.GetReference().empty())
+            ImGui::SetItemTooltip("%s", session.GetReference().c_str());
+        if (session.IsReadOnly())
         {
-            LoadActiveMesh();
+            ImGui::SameLine();
+            widgets::Pill("Read-only", GetEditorColor(EditorColor::TextMuted));
+            ImGui::SetItemTooltip("%s", session.GetReadOnlyReason().c_str());
         }
+        else if (session.IsDirty())
+        {
+            ImGui::SameLine(0.0f, 4.0f);
+            ImGui::TextDisabled("(unsaved)");
+        }
+
+        // Actions at the right edge.
+        const ImGuiStyle &style = ImGui::GetStyle();
+        const float width = 5.0f * (ImGui::GetFrameHeight() + style.ItemSpacing.x);
+        ImGui::SameLine((std::max)(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width));
+        ImGui::BeginDisabled(!session.CanUndo());
+        if (widgets::IconButton("##Undo", icons::ArrowLeft, "Undo (Ctrl+Z)"))
+            session.Undo();
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!session.CanRedo());
+        if (widgets::IconButton("##Redo", icons::ArrowRight, "Redo (Ctrl+Y)"))
+            session.Redo();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!session.IsDirty() || session.IsReadOnly());
+        if (widgets::IconButton("##Save", icons::Save, "Save and update every instance in the open scene (Ctrl+S)"))
+            Save();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!session.IsDirty());
+        if (widgets::IconButton("##Revert", icons::Revert, "Discard unsaved changes"))
+            Revert();
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (widgets::IconButton("##Close", icons::Close, "Close this mesh"))
+        {
+            if (HasUnsavedChanges())
+            {
+                m_pendingReference = std::string{};
+                m_openSavePrompt = true;
+            }
+            else
+                m_session.reset();
+        }
+        if (!m_error.empty())
+            ImGui::TextColored(GetEditorColor(EditorColor::Error), "%s", m_error.c_str());
+    }
+
+    void MeshEditorPanel::DrawNavigation(float height)
+    {
+        // Sidebar, matching Project Settings and Preferences.
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, GetEditorColor(EditorColor::Background));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 14.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 2.0f));
+        ImGui::BeginChild("##MeshEditorNav", ImVec2(ImGui::GetFontSize() * 12.0f, height), ImGuiChildFlags_AlwaysUseWindowPadding);
+        ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::TextMuted));
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
+        ImGui::TextUnformatted("MESH");
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0.0f, 6.0f));
+        const auto nav = [&](const char *icon, const char *label, MeshEditorPage page)
+        {
+            if (widgets::NavItem(icon, label, m_page == page))
+                m_page = page;
+        };
+        nav(icons::MeshAsset, "Overview", MeshEditorPage::Overview);
+        nav(icons::MaterialAsset, "Materials", MeshEditorPage::Materials);
+        nav(icons::EntitySkinnedMesh, "Humanoid Rig", MeshEditorPage::HumanoidRig);
+        nav(icons::Quality, "Level of Detail", MeshEditorPage::LevelOfDetail);
+
+        // The rig is the page most likely to need attention; say so here.
+        const auto &skeleton = m_session->GetSkeleton();
+        if (!skeleton.humanoidBoneMappings.empty() && !m_rigAnalysis.status.IsReady())
+        {
+            ImGui::Dummy(ImVec2(0.0f, 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(EditorColor::Warning));
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 10.0f);
+            ImGui::TextWrapped("%s  The humanoid rig needs attention.", icons::Warning);
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+    }
+
+    void MeshEditorPanel::DrawPage()
+    {
+        auto &shell = EditorShell::GetInstance();
+        switch (m_page)
+        {
+        case MeshEditorPage::Overview:
+            meshedit::DrawOverviewPage(*m_session, m_rigAnalysis, m_page);
+            break;
+        case MeshEditorPage::Materials:
+            meshedit::DrawMaterialsPage(*m_session, shell.GetProject());
+            break;
+        case MeshEditorPage::HumanoidRig:
+            meshedit::DrawHumanoidRigPage(*m_session, m_rig, m_rigAnalysis);
+            break;
+        case MeshEditorPage::LevelOfDetail:
+            meshedit::DrawLevelOfDetailPage(*m_session, m_error);
+            break;
+        }
+    }
+
+    void MeshEditorPanel::DrawSavePrompt()
+    {
+        if (std::exchange(m_openSavePrompt, false))
+            ImGui::OpenPopup("Unsaved Mesh");
+        if (!ImGui::BeginPopupModal("Unsaved Mesh", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+            return;
+        ImGui::Text("Save changes to %s?", m_session ? m_session->GetLabel().c_str() : "the mesh");
+        const auto proceed = [this]
+        {
+            const auto pending = std::move(m_pendingReference);
+            m_pendingReference.reset();
+            m_session.reset();
+            if (pending && !pending->empty())
+                OpenReference(*pending);
+            ImGui::CloseCurrentPopup();
+        };
+        if (widgets::PrimaryButton("Save"))
+        {
+            m_error.clear();
+            Save();
+            if (m_error.empty())
+                proceed();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Don't Save"))
+            proceed();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            m_pendingReference.reset();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    void MeshEditorPanel::HandleShortcuts()
+    {
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::GetIO().WantTextInput)
+            return;
+        const auto &io = ImGui::GetIO();
+        if (!io.KeyCtrl && !io.KeySuper)
+            return;
+        if (ImGui::IsKeyPressed(ImGuiKey_Z, false))
+            io.KeyShift ? m_session->Redo() : m_session->Undo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+            m_session->Redo();
+        else if (ImGui::IsKeyPressed(ImGuiKey_S, false) && m_session->IsDirty() && !m_session->IsReadOnly())
+            Save();
+    }
+
+    void MeshEditorPanel::Save()
+    {
+        m_error.clear();
+        if (!m_session || !m_session->IsDirty())
+            return;
+        auto &shell = EditorShell::GetInstance();
+        if (!m_session->Save(m_error))
+        {
+            shell.Log(EditorShell::ConsoleSeverity::Error, m_error.empty() ? "Failed to save mesh asset." : m_error);
+            return;
+        }
+        shell.MarkProjectDirty();
+        shell.MarkSceneDirty();
+        shell.Log(EditorShell::ConsoleSeverity::Info, "Saved mesh asset: " + m_session->GetReference());
+    }
+
+    void MeshEditorPanel::Revert()
+    {
+        m_error.clear();
+        if (m_session)
+            m_session->Revert(m_error);
     }
 }

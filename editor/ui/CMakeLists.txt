@@ -83,6 +83,11 @@ add_library(PlutoGEEditorUI
     src/input/InputMappingActionsView.cpp
     src/input/InputMappingOverviewView.cpp
     src/panels/InputMappingEditorPanel.cpp
+    src/meshedit/MeshAssetSession.cpp
+    src/meshedit/HumanoidRigDiagram.cpp
+    src/meshedit/HumanoidRigEditing.cpp
+    src/meshedit/HumanoidRigView.cpp
+    src/meshedit/MeshEditorPages.cpp
     src/postprocess/PostProcessPresetSession.cpp
     src/postprocess/PostProcessStackAnalysis.cpp
     src/postprocess/PostProcessEffectsView.cpp

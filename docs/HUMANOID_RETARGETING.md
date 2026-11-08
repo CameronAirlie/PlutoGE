@@ -79,10 +79,32 @@ When several source bones claim one slot, a Source Override match beats an alias
 beats a shared joint name, and the losers are not retargeted. Clips authored on the rig
 itself have no competing pelvis, so their `root` still drives the hips.
 
-**Split pelvis.** A rig can hang its torso and each leg from separate skeleton roots. Map Hips
-to the root above the spine and leave the leg roots unmapped: they then move rigidly with the
-hips. Spine and the chest slots may stay unassigned on a rig with one torso bone, though that
-bone follows the pelvis and does not receive the source spine's bending.
+**Pelvis joints per side.** `pelvis.L`/`pelvis.R` (or `Hip.L`/`Hip.R`) take no slot. Three layouts
+occur, and `Auto Map` handles each:
+
+- *Rigify* (Blender): `spine` is the real pelvis, with the side bones as children. Generic names
+  would put it in Spine, so `AutoMapRigifyTorso` reads Rigify's numbering (`spine.001`-`.003`
+  torso, `spine.004` neck, `spine.006` head) first. `forearm`, `shin` and `toe` are aliases too.
+- *Pelvis named like a spine* elsewhere: the joint carrying both legs moves from Spine to Hips and
+  the spine slots move down.
+- *Split pelvis*: the torso and each leg hang from separate skeleton roots. Map Hips to the root
+  above the spine and leave the leg roots unmapped: they then move rigidly with the hips
+  (`FindHumanoidHipsFollowers`, shared by the runtime and the editor). Mapping Hips to one side
+  is reported as one problem naming the joint to use. Spine and the chest slots may stay
+  unassigned on a rig with one torso bone, though that bone follows the pelvis and does not
+  receive the source spine's bending.
+
+## Mesh editor
+
+The Mesh Editor's Humanoid Rig page lists the slots by body part beside a diagram of the mesh's
+bind pose (front or side, over its silhouette). Mapped joints are labelled with their slot in the
+body part's colour; split-pelvis roots show as diamonds labelled "Follows Hips". Select a slot,
+then click its joint: the next empty slot is selected, and a joint already used elsewhere moves
+rather than being shared. Joints at the same spot ask which one was meant. `Mirror Sides` fills
+empty slots from the other side by swapping the side in joint names. Mapping logic lives in
+`HumanoidRigAnalysis.h` (engine) and `ui/meshedit/HumanoidRigEditing.h`; the diagram is
+`ui/meshedit/HumanoidRigDiagram.h`. `PlutoGEMeshEditorTests [capture prefix]` covers both and
+writes page screenshots when given a prefix.
 
 ## Validation
 

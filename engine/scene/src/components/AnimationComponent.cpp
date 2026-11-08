@@ -3,6 +3,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/AnimationGraphUtils.h"
+#include "PlutoGE/render/HumanoidRigAnalysis.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
@@ -529,33 +530,13 @@ namespace PlutoGE::scene
             }
         }
 
+        // The mesh editor shows the same followers (render::FindHumanoidHipsFollowers), so what
+        // it reports is what playback does.
         void ResolveHipsFollowers(const render::Skeleton &skeleton, AnimationRetargetClipCache &cache)
         {
-            const auto valid = [&](int joint) { return joint >= 0 && joint < static_cast<int>(skeleton.joints.size()); };
-            const auto isMapped = [&](int joint)
-            {
-                return std::any_of(skeleton.humanoidBoneMappings.begin(), skeleton.humanoidBoneMappings.end(),
-                                   [&](const render::HumanoidBoneMapping &mapping) { return mapping.targetJointIndex == joint; });
-            };
-            int hips = -1;
-            for (const auto &mapping : skeleton.humanoidBoneMappings)
-                if (mapping.bone == render::HumanoidBone::Hips && valid(mapping.targetJointIndex))
-                    hips = mapping.targetJointIndex;
-            if (hips < 0 || valid(skeleton.joints[static_cast<size_t>(hips)].parentJointIndex))
-                return;
-            for (const auto &mapping : skeleton.humanoidBoneMappings)
-            {
-                if (!valid(mapping.targetJointIndex))
-                    continue;
-                int top = mapping.targetJointIndex;
-                for (size_t depth = 0; depth < skeleton.joints.size() && valid(skeleton.joints[static_cast<size_t>(top)].parentJointIndex); ++depth)
-                    top = skeleton.joints[static_cast<size_t>(top)].parentJointIndex;
-                if (top != hips && !isMapped(top) &&
-                    std::find(cache.hipsFollowerJoints.begin(), cache.hipsFollowerJoints.end(), top) == cache.hipsFollowerJoints.end())
-                    cache.hipsFollowerJoints.push_back(top);
-            }
+            cache.hipsFollowerJoints = render::FindHumanoidHipsFollowers(skeleton);
             if (!cache.hipsFollowerJoints.empty())
-                cache.targetHipsJointIndex = hips;
+                cache.targetHipsJointIndex = render::GetHumanoidTargetJoint(skeleton, render::HumanoidBone::Hips);
         }
 
         int ParseIntSafe(const std::string &value, int fallback = 0)

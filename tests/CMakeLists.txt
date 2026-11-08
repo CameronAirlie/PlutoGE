@@ -572,6 +572,10 @@ if (TARGET PlutoGEEditorUI)
     target_link_libraries(PlutoGEPostProcessEditorTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGEPostProcessEditorTests)
     add_test(NAME PlutoGEPostProcessEditorTests COMMAND PlutoGEPostProcessEditorTests)
+    add_executable(PlutoGEMeshEditorTests MeshEditorTests.cpp)
+    target_link_libraries(PlutoGEMeshEditorTests PRIVATE PlutoGE::EditorUI)
+    pluto_link_engine(PlutoGEMeshEditorTests)
+    add_test(NAME PlutoGEMeshEditorTests COMMAND PlutoGEMeshEditorTests)
     add_executable(PlutoGEFoliageEditorTests FoliageEditorTests.cpp)
     target_link_libraries(PlutoGEFoliageEditorTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGEFoliageEditorTests)
@@ -1230,6 +1234,7 @@ foreach(target IN ITEMS
         PlutoGENativeUIRenderTests
         PlutoGEOpenGLRhiTests
         PlutoGEFoliageEditorTests
+        PlutoGEMeshEditorTests
         PlutoGEPostProcessEditorTests
         PlutoGERhiOceanTests
         PlutoGERmlDocumentPreviewTests

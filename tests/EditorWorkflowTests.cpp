@@ -8,12 +8,14 @@
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/ExternalScriptEditor.h"
+#include "PlutoGE/ui/ProjectScaffold.h"
 #include "PlutoGE/ui/SceneRecovery.h"
 #include "PlutoGE/ui/ScriptDiagnostics.h"
 #include "PlutoGE/ui/UnsavedSwitchGuard.h"
 
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <span>
 #include <iostream>
@@ -276,6 +278,40 @@ namespace
         std::filesystem::remove_all(directory.parent_path());
     }
 
+    void ProjectScaffolding()
+    {
+        const ScriptProjectLayout layout{.rootNamespace = "Demo", .sourcePattern = "Assets/**/*.cs", .managedOutputPath = "Assets/Managed",
+                                         .scriptCoreReference = "C:/Engine/PlutoGE.ScriptCore.dll", .scriptCoreRuntimeDirectory = "C:/Engine"};
+        const auto project = BuildScriptProjectText(layout);
+        Check(project.find("C:/Engine") == std::string::npos, "Script project contains a machine path");
+        Check(project.find("$(MSBuildProjectName).engine.props") != std::string::npos &&
+                  project.find("$(MSBuildProjectName).custom.props") != std::string::npos &&
+                  project.find("$(MSBuildProjectName).custom.targets") != std::string::npos,
+              "Script project imports engine and custom files");
+        const auto props = BuildScriptEnginePropsText(layout);
+        Check(props.find("<PlutoGEScriptCore>C:/Engine/PlutoGE.ScriptCore.dll</PlutoGEScriptCore>") != std::string::npos &&
+                  props.find("<PlutoGEScriptCoreIsProject>false</PlutoGEScriptCoreIsProject>") != std::string::npos,
+              "Engine props carry this machine's paths");
+        Check(GetScriptEnginePropsPath("C:/Game/Demo.Scripts.csproj").filename() == "Demo.Scripts.engine.props", "Engine props path");
+
+        const auto root = std::filesystem::temp_directory_path() / "PlutoGEEditorWorkflowTests" / "scaffold";
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+        { std::ofstream(root / ".gitignore") << "mine\n"; }
+        std::string error;
+        Check(WriteNewProjectFiles(root, &error), error.c_str());
+        std::ifstream ignore(root / ".gitignore");
+        std::string firstLine;
+        std::getline(ignore, firstLine);
+        ignore.close();
+        Check(firstLine == "mine", "An existing .gitignore was overwritten");
+        Check(std::filesystem::exists(root / ".gitattributes") && std::filesystem::exists(root / ".vscode" / "launch.json"),
+              "Version control and debugger files written");
+        Check(BuildGitAttributesText().find("*.plutometa text -filter") != std::string::npos, "plutometa kept out of LFS");
+        Check(BuildGitIgnoreText().find("*.engine.props") != std::string::npos, "engine props ignored");
+        std::filesystem::remove_all(root.parent_path());
+    }
+
     void ScriptErrorThrottling()
     {
         scripting::ScriptErrorThrottle throttle;
@@ -323,6 +359,7 @@ int main()
         SwitchGuardFollowsSelection();
         DuplicateNames();
         RecoverySessionMarker();
+        ProjectScaffolding();
     }
     catch (const std::exception &error)
     {

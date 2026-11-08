@@ -12,6 +12,7 @@ add_executable(PlutoGEEditorWorkflowTests EditorWorkflowTests.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/EntityNaming.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ExternalScriptEditor.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/SceneRecovery.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/ProjectScaffold.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/ScriptDiagnostics.cpp
     ${CMAKE_SOURCE_DIR}/editor/ui/src/SystemShell.cpp
     ${CMAKE_SOURCE_DIR}/engine/scripting/src/ScriptErrors.cpp

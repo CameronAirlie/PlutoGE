@@ -62,6 +62,26 @@ that editor and reports why. **Don't Save** discards them, and **Cancel** goes b
 - On Linux the dialog uses zenity or kdialog. Without either, the editor refuses to continue and says so rather
   than discarding anything.
 
+## Projects in version control
+
+New projects come ready for Git:
+
+- `.gitignore` excludes regenerated and per-user files: `Library/`, `Build/`, `Assets/Managed/`, `.plutoge-editor/`,
+  IDE folders and `*.engine.props`.
+- `.gitattributes` sends large binary sources (FBX, glTF binaries, images, audio) to Git LFS when LFS is installed,
+  and keeps `.plutometa` identity files as plain text in Git.
+- `.vscode/launch.json` attaches the debugger to the editor.
+
+Existing files are never overwritten. Older projects can copy these files from a newly created project.
+
+The generated `<Project>.Scripts.csproj` contains no machine-specific paths and can be committed. This machine's
+engine location goes into `<Project>.Scripts.engine.props`, which the editor rewrites and Git ignores. To add
+NuGet packages, analyzers or other MSBuild settings, create `<Project>.Scripts.custom.props` (or
+`.custom.targets`) next to it. The editor imports these files and never changes them.
+
+Personal editor state, such as the editor camera, font and viewport effects, is saved in
+`.plutoge-editor/<Project>.editor-state` rather than in the shared `.plutoproject`.
+
 ## External script editor
 
 **Preferences > External Tools** chooses the program that opens C# files from the Console and the script

@@ -83,7 +83,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   reference; legacy inline data still loads.
 - [x] **T3.3 Diff-friendly scene and project files.** Stable entity IDs, shortest round-trip float formatting, editor
   state moved out of `.plutoproject` into per-user editor storage.
-- [ ] **T3.4 VCS-ready new projects.** Generate `.gitignore` / `.gitattributes`; csproj references the engine through
+- [x] **T3.4 VCS-ready new projects.** Generate `.gitignore` / `.gitattributes`; csproj references the engine through
   a property, keeps a user-owned import for customisation.
 - [ ] **T3.5 Build settings and profiles.** Development / Shipping profiles, Release scripts for shipping, remembered
   output folder, product name / version / icon, every failure logged to the Console.
@@ -345,4 +345,15 @@ the numeric parts of scene text.
 - Full non-GPU run (169 tests): remaining failures are the three window tests (fail silently in this session's
   environment; no platform code changed) and `PlutoGEMaterialReloadTests` ("lost emissive texture or UV set",
   model import code from a0e9cdf2, untouched here).
+
+### 2026-11-08 — T3.4
+
+- `ProjectScaffold` module: `BuildScriptProjectText` (machine-independent .csproj importing
+  `<Name>.engine.props`, `<Name>.custom.props` and `.custom.targets`), `BuildScriptEnginePropsText` (this machine's
+  ScriptCore paths), `WriteNewProjectFiles` (.gitignore, .gitattributes with LFS rules and `*.plutometa text -filter`,
+  `.vscode/launch.json`; never overwrites). `EnsureProjectScriptBuildScaffold` uses it; project creation writes the
+  VCS files.
+- Verified: `PlutoGEEditorWorkflowTests` (no machine path in the csproj, props content, existing .gitignore kept)
+  and `PlutoGEAuthoringIntegrationTests` (a real `dotnet build` of the regenerated project, automatic reload and
+  failure handling) pass.
 

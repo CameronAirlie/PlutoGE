@@ -20,6 +20,7 @@
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EntityNaming.h"
+#include "PlutoGE/ui/ProjectScaffold.h"
 #include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/EditorTheme.h"
@@ -1240,54 +1241,26 @@ namespace PlutoGE::ui
             rootNamespace = "PlutoGEProject";
         }
 
-        std::string scriptProjectContent;
-        scriptProjectContent += "<Project Sdk=\"Microsoft.NET.Sdk\">\n";
-        scriptProjectContent += "  <PropertyGroup>\n";
-        scriptProjectContent += "    <TargetFramework>net8.0</TargetFramework>\n";
-        scriptProjectContent += "    <ImplicitUsings>enable</ImplicitUsings>\n";
-        scriptProjectContent += "    <Nullable>enable</Nullable>\n";
-        scriptProjectContent += "    <EnableDefaultItems>false</EnableDefaultItems>\n";
-        scriptProjectContent += "    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>\n";
-        scriptProjectContent += "    <AssemblyName>" + rootNamespace + ".Scripts</AssemblyName>\n";
-        scriptProjectContent += "    <RootNamespace>" + rootNamespace + ".Scripts</RootNamespace>\n";
-        scriptProjectContent += "    <OutputPath>" + managedOutputPath + "/</OutputPath>\n";
-        scriptProjectContent += "    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>\n";
-        scriptProjectContent += "  </PropertyGroup>\n";
-        scriptProjectContent += "  <ItemGroup>\n";
-        scriptProjectContent += "    <Compile Include=\"" + sourcePattern + "\" />\n";
-        scriptProjectContent += "  </ItemGroup>\n";
-        scriptProjectContent += "  <ItemGroup>\n";
-        if (scriptCoreAssemblyPath.empty())
+        const ScriptProjectLayout layout{
+            .rootNamespace = rootNamespace,
+            .sourcePattern = sourcePattern,
+            .managedOutputPath = managedOutputPath,
+            .scriptCoreReference = scriptCoreReference,
+            .scriptCoreRuntimeDirectory = scriptCoreDirectory,
+            .scriptCoreIsProject = scriptCoreAssemblyPath.empty(),
+        };
+        const std::string scriptProjectContent = BuildScriptProjectText(layout);
+
+        // This machine's engine location lives beside the project file, so the project file itself can be committed.
+        const auto enginePropsPath = GetScriptEnginePropsPath(scriptProjectPath);
+        const auto enginePropsContent = BuildScriptEnginePropsText(layout);
+        std::ifstream existingEngineProps(enginePropsPath);
+        const std::string existingEnginePropsContent((std::istreambuf_iterator<char>(existingEngineProps)), {});
+        existingEngineProps.close();
+        if (existingEnginePropsContent != enginePropsContent && !WriteTextFile(enginePropsPath, enginePropsContent, errorMessage))
         {
-            scriptProjectContent += "    <ProjectReference Include=\"" + scriptCoreReference + "\" />\n";
+            return false;
         }
-        else
-        {
-            // Installed editor SDKs normally live under Program Files and are not
-            // writable by the current user. Referencing the packaged assembly keeps
-            // MSBuild from trying to create bin/obj folders inside the installation.
-            scriptProjectContent += "    <Reference Include=\"PlutoGE.ScriptCore\">\n";
-            scriptProjectContent += "      <HintPath>" + scriptCoreReference + "</HintPath>\n";
-            scriptProjectContent += "      <Private>true</Private>\n";
-            scriptProjectContent += "    </Reference>\n";
-        }
-        scriptProjectContent += "  </ItemGroup>\n";
-        scriptProjectContent += "  <Target Name=\"CopyScriptCoreRuntimeFiles\" AfterTargets=\"Build\">\n";
-        scriptProjectContent += "    <ItemGroup>\n";
-        if (scriptCoreAssemblyPath.empty())
-        {
-            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
-            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" + scriptCoreDirectory + "/bin/$(Configuration)/$(TargetFramework)/PlutoGE.ScriptCore.deps.json')\" />\n";
-        }
-        else
-        {
-            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/PlutoGE.ScriptCore.runtimeconfig.json\" />\n";
-            scriptProjectContent += "      <ScriptCoreRuntimeFiles Include=\"" + scriptCoreDirectory + "/PlutoGE.ScriptCore.deps.json\" Condition=\"Exists('" + scriptCoreDirectory + "/PlutoGE.ScriptCore.deps.json')\" />\n";
-        }
-        scriptProjectContent += "    </ItemGroup>\n";
-        scriptProjectContent += "    <Copy SourceFiles=\"@(ScriptCoreRuntimeFiles)\" DestinationFolder=\"$(OutputPath)\" SkipUnchangedFiles=\"true\" Condition=\"@(ScriptCoreRuntimeFiles) != ''\" />\n";
-        scriptProjectContent += "  </Target>\n";
-        scriptProjectContent += "</Project>\n";
 
         // Preserve the timestamp for unchanged generated inputs; otherwise the
         // source watcher would trigger another build after every build.
@@ -2973,6 +2946,10 @@ namespace PlutoGE::ui
         {
             return false;
         }
+
+        // .gitignore, .gitattributes and a debugger attach configuration; a failure here is not fatal.
+        if (std::string scaffoldError; !WriteNewProjectFiles(manifestPath.parent_path(), &scaffoldError))
+            Log(ConsoleSeverity::Warning, scaffoldError);
 
         if (templateId != "pluto.empty" && !BuildProjectScripts()) return false;
 

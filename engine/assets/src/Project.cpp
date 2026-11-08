@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <cwctype>
 #include <fstream>
+#include <iterator>
+#include <sstream>
 #include <iomanip>
 #include <limits>
 #include <system_error>
@@ -612,12 +614,28 @@ namespace PlutoGE::assets
                                            std::string *errorMessage)
     {
         const auto normalizedManifestPath = NormalizeAbsolutePath(manifestPath);
-        content::InputFile input(normalizedManifestPath);
-        if (!input.is_open())
+        content::InputFile manifestInput(normalizedManifestPath);
+        if (!manifestInput.is_open())
         {
             SetError(errorMessage, "Failed to open project manifest for reading.");
             return nullptr;
         }
+
+        // Editor state (camera, font) lives in a per-user file beside the project. When it exists, editor lines left
+        // in the manifest by older versions are ignored so list-valued state is not read twice.
+        std::string manifestText((std::istreambuf_iterator<char>(manifestInput)), std::istreambuf_iterator<char>());
+        std::ifstream editorStateInput(GetEditorStatePath(normalizedManifestPath));
+        if (editorStateInput.is_open())
+        {
+            std::istringstream lines(manifestText);
+            std::string kept;
+            for (std::string manifestLine; std::getline(lines, manifestLine);)
+                if (!manifestLine.starts_with("EDITOR_"))
+                    kept += manifestLine + '\n';
+            kept.append(std::istreambuf_iterator<char>(editorStateInput), std::istreambuf_iterator<char>());
+            manifestText = std::move(kept);
+        }
+        std::istringstream input(manifestText);
 
         ProjectManifest manifest;
         bool hasValidHeader = false;
@@ -1167,6 +1185,10 @@ namespace PlutoGE::assets
         output << "RAY_TRACED_MIN_INSTANCE_RADIUS\t" << m_manifest.rendering.rayTracedMinimumInstanceRadius << '\n';
         output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';
         output << "RUNTIME_UPSCALE_SHARPNESS\t" << std::clamp(m_manifest.runtimeUpscaleSharpness, 0.0f, 1.0f) << '\n';
+        // Personal editor state goes to its own file so camera moves do not change the shared project file.
+        std::ostringstream editorState;
+        {
+        auto &output = editorState;
         output << "EDITOR_FONT_SIZE\t" << std::clamp(m_manifest.editorFontSize, 10.0f, 24.0f) << '\n';
         output << "EDITOR_FONT\t" << EscapeText(m_manifest.editorFont) << '\n';
         output << "EDITOR_CAMERA_POSITION\t"
@@ -1199,6 +1221,15 @@ namespace PlutoGE::assets
                        << EscapeText(parameter.value) << '\n';
             }
         }
+        }
+        if (m_persistEditorState)
+        {
+            const auto editorStatePath = GetEditorStatePath(m_manifestPath);
+            std::error_code directoryError;
+            std::filesystem::create_directories(editorStatePath.parent_path(), directoryError);
+            std::ofstream editorOutput(editorStatePath, std::ios::out | std::ios::trunc);
+            editorOutput << editorState.str();
+        }
         for (const auto &assetEntry : m_manifest.assetEntries)
         {
             output << "ASSET\t"
@@ -1208,6 +1239,11 @@ namespace PlutoGE::assets
         }
 
         return true;
+    }
+
+    std::filesystem::path Project::GetEditorStatePath(const std::filesystem::path &manifestPath)
+    {
+        return manifestPath.parent_path() / ".plutoge-editor" / (manifestPath.stem().string() + ".editor-state");
     }
 
     void Project::RefreshAssetRegistry()
@@ -1598,6 +1634,7 @@ namespace PlutoGE::assets
 
         if (options.progress) options.progress(.70f);
         Project exportedProject(stagingDirectory / GetRuntimeManifestPathForExecutable(normalizedDestinationExecutablePath).filename(), project.GetManifest());
+        exportedProject.SetPersistEditorState(false);
         exportedProject.RefreshAssetRegistry();
         if (!exportedProject.Save(errorMessage))
         {

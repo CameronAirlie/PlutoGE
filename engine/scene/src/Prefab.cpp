@@ -266,13 +266,21 @@ namespace PlutoGE::scene
             return clone;
         }
 
+        // `preferredIds` maps prefab entity IDs to the scene IDs their previous clones had: reusing them keeps scene
+        // files stable and keeps references from outside the instance valid when an instance is rebuilt.
         Entity *CloneEntityTreeIntoScene(Scene &scene,
                                          const Entity &source,
                                          const std::string &prefabReference,
                                          Entity *parent,
-                                         bool isRoot)
+                                         bool isRoot,
+                                         const std::unordered_map<EntityID, EntityID> *preferredIds = nullptr)
         {
-            auto clone = std::make_unique<Entity>(EntityConfig{.name = source.GetName()});
+            EntityID id = 0;
+            if (preferredIds)
+                if (const auto preferred = preferredIds->find(source.GetID());
+                    preferred != preferredIds->end() && !scene.FindEntityByID(preferred->second))
+                    id = preferred->second;
+            auto clone = std::make_unique<Entity>(id, EntityConfig{.name = source.GetName()});
             auto *clonePtr = clone.get();
             scene.AddEntity(std::move(clone), parent);
             CopyEntityFields(*clonePtr, source);
@@ -282,7 +290,7 @@ namespace PlutoGE::scene
             {
                 if (sourceChild)
                 {
-                    CloneEntityTreeIntoScene(scene, *sourceChild, prefabReference, clonePtr, false);
+                    CloneEntityTreeIntoScene(scene, *sourceChild, prefabReference, clonePtr, false, preferredIds);
                 }
             }
 
@@ -1426,11 +1434,15 @@ namespace PlutoGE::scene
         instanceRoot.SetPrefabLink(prefabReference, prefabRoot->GetID(), true);
         instanceRoot.ClearPrefabOverrides();
 
+        // Rebuilt children keep their previous scene IDs.
+        std::unordered_map<EntityID, EntityID> preferredIds;
+        for (const auto &[previousEntityId, prefabEntityId] : previousInstanceToPrefabId)
+            preferredIds.emplace(prefabEntityId, previousEntityId);
         for (auto *sourceChild : prefabRoot->GetChildren())
         {
             if (sourceChild)
             {
-                CloneEntityTreeIntoScene(*scene, *sourceChild, prefabReference, &instanceRoot, false);
+                CloneEntityTreeIntoScene(*scene, *sourceChild, prefabReference, &instanceRoot, false, &preferredIds);
             }
         }
 
@@ -1481,7 +1493,11 @@ namespace PlutoGE::scene
             for (const auto &[child, parent] : parents)
                 child->SetParent(parent ? parent : &instanceRoot);
         }
-        RemapScriptEntityReferences(instanceRoot, previousToUpdatedEntityId);
+        std::erase_if(previousToUpdatedEntityId, [](const auto &entry) { return entry.first == entry.second; });
+        if (!previousToUpdatedEntityId.empty())
+            for (auto *root : scene->GetRootEntities())
+                if (root)
+                    RemapScriptEntityReferences(*root, previousToUpdatedEntityId);
         instanceRoot.SetPrefabFingerprint(ComputeFingerprint(dependencies));
 
         return true;

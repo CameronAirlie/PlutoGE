@@ -79,9 +79,9 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 
 - [x] **T3.1 Prefab instances by reference.** Store instances as prefab reference + overrides and resolve on load so
   unopened scenes pick up prefab changes.
-- [ ] **T3.2 Bake data out of scene text.** Baked lighting / captures written to binary side files, scene stores a
+- [-] **T3.2 Bake data out of scene text.** Baked lighting / captures written to binary side files, scene stores a
   reference; legacy inline data still loads.
-- [ ] **T3.3 Diff-friendly scene and project files.** Stable entity IDs, shortest round-trip float formatting, editor
+- [x] **T3.3 Diff-friendly scene and project files.** Stable entity IDs, shortest round-trip float formatting, editor
   state moved out of `.plutoproject` into per-user editor storage.
 - [ ] **T3.4 VCS-ready new projects.** Generate `.gitignore` / `.gitattributes`; csproj references the engine through
   a property, keeps a user-owned import for customisation.
@@ -312,4 +312,37 @@ Record each completed item here with the date, what changed, and how it was veri
   component added, position override kept, legacy adoption); 17 scene/prefab/history/model-instance suites pass.
 - Not done: project validation does not yet flag outdated instances (validation lives in the assets library,
   which cannot resolve prefabs); the all-scenes command covers the pre-build case.
+
+### 2026-11-08 — T3.2 deferred
+
+Moving bake data out of scene text needs the data to stay reachable for cooking, content packs, Content Browser
+moves and validation. Sidecar files beside the scene would be invisible to the pruned cook (it follows references
+found in scene text and the asset catalog), so a build could silently ship without lighting. The safe design is a
+new asset type (for example `.plutobake`, binary, content-addressed) written under `<Scene>.bake/` and referenced
+from the property as `project://...`, so the existing reference scan, cook, move and rename paths carry it. That
+touches the asset type table, the managed `AssetType` mirror, cooking and the Content Browser, and needs its own
+tests; it is left as the next storage task rather than done partially. T3.3's number formatting already shortens
+the numeric parts of scene text.
+
+### 2026-11-08 — T3.3
+
+- Stable entity IDs: `UpdateInstance` reuses each rebuilt child's previous scene ID (`CloneEntityTreeIntoScene`
+  preferred IDs); any IDs that still change are remapped scene-wide, not only inside the instance (references from
+  other entities used to break on Update From Prefab).
+- Numbers: `SceneSerializer` writes float/double/vector/colour property values as shortest round-trip text
+  (`17.7,1,0.25` instead of `17.700001,1.000000,0.250000`); only all-numeric values are rewritten. Script fields
+  already use the shared codec (T2.3). Expect a one-time diff when existing scenes are next saved.
+- Project file: `EDITOR_*` lines (editor camera, font, viewport effects) moved to
+  `.plutoge-editor/<project>.editor-state`; legacy lines are read once and dropped on the next save; exports
+  write none. The `ASSET` list is unchanged: hosts that load a source project without scanning (server, runtime)
+  depend on it.
+- Verified: `PlutoGEProjectFileTests` (state file round trip, legacy migration) and `PlutoGEPrefabVariantTests`
+  (child ID kept across update, `17.7,1,0.25` written).
+- Also: `.plutoge-editor/` and `.plutoge-cache/` are now asset-infrastructure paths (projects whose asset
+  directory is the project root no longer scan editor state). `AuthoringIntegrationTests` now checks parsed
+  compiler errors with source lines instead of the raw "Build FAILED." line (raw build output no longer goes to
+  the Console since T1.3).
+- Full non-GPU run (169 tests): remaining failures are the three window tests (fail silently in this session's
+  environment; no platform code changed) and `PlutoGEMaterialReloadTests` ("lost emissive texture or UV set",
+  model import code from a0e9cdf2, untouched here).
 

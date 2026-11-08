@@ -892,7 +892,8 @@ target_compile_definitions(PlutoGEViewportOverlayLayoutTests PRIVATE
 add_test(NAME PlutoGEViewportOverlayLayoutTests COMMAND PlutoGEViewportOverlayLayoutTests)
 
 add_executable(PlutoGEEditorThemeTests EditorThemeTests.cpp
-    ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorTheme.cpp)
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorTheme.cpp
+    ${CMAKE_SOURCE_DIR}/editor/ui/src/EditorSettings.cpp)
 target_include_directories(PlutoGEEditorThemeTests PRIVATE ${CMAKE_SOURCE_DIR}/editor/ui/include)
 target_link_libraries(PlutoGEEditorThemeTests PRIVATE PlutoGE::imgui)
 target_compile_features(PlutoGEEditorThemeTests PRIVATE cxx_std_20)
@@ -1210,6 +1211,10 @@ if (PLUTOGE_TEST_DOTNET)
         add_dependencies(PlutoGENativeUIScriptingTests PlutoGETestOpenAL)
     endif()
     add_test(NAME PlutoGENativeUIScriptingTests COMMAND PlutoGENativeUIScriptingTests)
+
+    add_executable(PlutoGEProjectFileTests ProjectFileTests.cpp)
+    pluto_link_engine(PlutoGEProjectFileTests)
+    add_test(NAME PlutoGEProjectFileTests COMMAND PlutoGEProjectFileTests)
 
     # ScriptBehaviour lifecycle (errors, start order, timing, enable state) against a real managed assembly.
     set(PLUTO_BEHAVIOUR_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ScriptBehaviourProbe")

@@ -74,6 +74,54 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        // Components write floats with std::to_string, which pads to six decimals and exposes the float's rounding
+        // ("17.700001"). Writing the shortest text that reads back to the same value keeps saves stable and diffs
+        // readable. Only text made entirely of numbers separated by commas or spaces is rewritten.
+        std::string NormalizeNumberList(const std::string &text, bool doublePrecision)
+        {
+            std::string result;
+            result.reserve(text.size());
+            std::size_t index = 0;
+            while (index < text.size())
+            {
+                const char c = text[index];
+                if (c == ',' || c == ' ')
+                {
+                    result += c;
+                    ++index;
+                    continue;
+                }
+                std::size_t end = index;
+                while (end < text.size() && text[end] != ',' && text[end] != ' ')
+                    ++end;
+                const char *first = text.data() + index;
+                const char *last = text.data() + end;
+                std::array<char, 64> buffer{};
+                std::to_chars_result written{};
+                if (doublePrecision)
+                {
+                    double value = 0.0;
+                    const auto parsed = std::from_chars(first, last, value);
+                    if (parsed.ec != std::errc{} || parsed.ptr != last)
+                        return text;
+                    written = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+                }
+                else
+                {
+                    float value = 0.0f;
+                    const auto parsed = std::from_chars(first, last, value);
+                    if (parsed.ec != std::errc{} || parsed.ptr != last)
+                        return text;
+                    written = std::to_chars(buffer.data(), buffer.data() + buffer.size(), value);
+                }
+                if (written.ec != std::errc{})
+                    return text;
+                result.append(buffer.data(), written.ptr);
+                index = end;
+            }
+            return result;
+        }
+
         std::string EscapeText(std::string_view text)
         {
             std::string escaped;
@@ -463,6 +511,10 @@ namespace PlutoGE::scene
                                 if (const auto catalog = componentAssets.GetAssetCatalog())
                                     if (const auto identity = catalog->FindIdentityByLocation(serializedValue))
                                         assets::SerializeAssetReference(*identity, serializedValue);
+                            if (property.type == PropertyType::Float || property.type == PropertyType::Vec2 ||
+                                property.type == PropertyType::Vec3 || property.type == PropertyType::Vec4 ||
+                                property.type == PropertyType::Color || property.type == PropertyType::Double)
+                                serializedValue = NormalizeNumberList(serializedValue, property.type == PropertyType::Double);
                             output << "PROPERTY\t"
                                    << EscapeText(property.name) << '\t'
                                    << static_cast<int>(property.type) << '\t'

@@ -138,17 +138,24 @@ public sealed class FailingCommand : EditorCommand {
         throw std::runtime_error("Automatic source build did not reload new class");
     }
     std::ofstream(autoSource) << "this is invalid C#";
-    const auto failures = [&]
+    // Compiler errors reach the Console as parsed entries that point at the source line.
+    const auto compilerErrors = [&]
     {
         int count = 0;
-        for (const auto &message : editor.GetConsoleMessages()) if (message.text.find("Build FAILED.") != std::string::npos) ++count;
+        for (const auto &message : editor.GetConsoleMessages())
+            if (message.source == ui::ConsoleSource::ScriptBuild && message.severity == ui::ConsoleSeverity::Error) ++count;
         return count;
     };
     const auto failureDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
-    while ((failures() == 0 || editor.IsScriptBuildRunning()) && std::chrono::steady_clock::now() < failureDeadline) pump(std::chrono::milliseconds(50));
-    Check(failures() == 1 && scripts.HasClass("AutoProbe"), "Failed automatic build did not retain loaded assembly");
-    pump(std::chrono::milliseconds(2200));
-    Check(failures() == 1 && !editor.IsScriptBuildRunning(), "Compiler failure triggered a rebuild loop");
+    while ((compilerErrors() == 0 || editor.IsScriptBuildRunning()) && std::chrono::steady_clock::now() < failureDeadline) pump(std::chrono::milliseconds(50));
+    Check(compilerErrors() > 0 && scripts.HasClass("AutoProbe"), "Failed automatic build did not retain loaded assembly");
+    bool locatedError = false;
+    for (const auto &message : editor.GetConsoleMessages())
+        locatedError |= message.source == ui::ConsoleSource::ScriptBuild && message.location.file.filename() == "AutoProbe.cs" && message.location.line > 0;
+    Check(locatedError, "Compiler error did not carry its source line");
+    // A failed build must not start another one by itself.
+    pump(std::chrono::milliseconds(2500));
+    Check(!editor.IsScriptBuildRunning() && scripts.HasClass("AutoProbe"), "A failed build retriggered itself");
     std::cout << "Authoring integration tests passed.\n";
     return 0;
 }

@@ -144,6 +144,10 @@ namespace PlutoGE::assets
 
         bool Save(std::string *errorMessage = nullptr) const;
         void RefreshAssetRegistry();
+        // Per-user editor state (camera, font) beside the manifest: <root>/.plutoge-editor/<name>.editor-state.
+        [[nodiscard]] static std::filesystem::path GetEditorStatePath(const std::filesystem::path &manifestPath);
+        // Exported runtime manifests carry no editor state.
+        void SetPersistEditorState(bool persist) { m_persistEditorState = persist; }
         // Update one known changed file without enumerating unrelated assets.
         // Missing files are removed; I/O failures leave the registry unchanged.
         bool RefreshAssetEntry(const std::filesystem::path &filePath, std::string *errorMessage = nullptr);
@@ -161,6 +165,7 @@ namespace PlutoGE::assets
 
     private:
         std::filesystem::path m_manifestPath;
+        bool m_persistEditorState = true;
         std::filesystem::path m_rootDirectory;
         ProjectManifest m_manifest;
     };

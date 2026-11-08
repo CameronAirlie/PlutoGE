@@ -326,6 +326,29 @@ int main()
             Require(updated->GetPosition() == glm::vec3(4.0f, 0.0f, 2.0f), "Instance override was lost while updating");
             Require(scene::Prefab::FindOutdatedInstances(*reloaded).empty(), "Updated instance still reads as outdated");
 
+            // Rebuilt children keep their scene IDs, so references from elsewhere in the scene stay valid.
+            scene::Scene doorAuthoring;
+            auto *door = doorAuthoring.AddEntity(std::make_unique<scene::Entity>());
+            door->SetName("Door");
+            auto *hinge = doorAuthoring.AddEntity(std::make_unique<scene::Entity>(), door);
+            hinge->SetName("Hinge");
+            Require(scene::Prefab::SaveFromEntity(*door, assetsPath / "Door.plutoprefab", &error), error);
+            auto *doorInstance = scene::Prefab::Instantiate(*reloaded, "project://Door.plutoprefab", nullptr, &error);
+            Require(doorInstance && doorInstance->GetChildren().size() == 1, "Door instance missing its child");
+            const auto hingeId = doorInstance->GetChildren().front()->GetID();
+            hinge->CreateComponent<scene::ColliderComponent>(scene::ColliderComponentConfig{.size = {17.7f, 1.0f, 0.25f}});
+            Require(scene::Prefab::SaveFromEntity(*door, assetsPath / "Door.plutoprefab", &error), error);
+            Require(scene::Prefab::UpdateInstance(*doorInstance, &error), error);
+            Require(doorInstance->GetChildren().size() == 1 && doorInstance->GetChildren().front()->GetID() == hingeId &&
+                        doorInstance->GetChildren().front()->HasComponent<scene::ColliderComponent>(),
+                    "Updating an instance renumbered its children");
+
+            // Float properties are saved as the shortest text that reads back exactly.
+            std::string doorText;
+            Require(scene::SceneSerializer::SaveToString(*reloaded, doorText, &error), error);
+            Require(doorText.find("17.7,1,0.25") != std::string::npos && doorText.find("17.700001") == std::string::npos,
+                    "Collider size was not written as 17.7,1,0.25");
+
             updated->SetPrefabFingerprint(0);
             Require(scene::Prefab::AdoptFingerprints(*reloaded) == 1 && updated->GetPrefabFingerprint() != 0 &&
                         scene::Prefab::FindOutdatedInstances(*reloaded).empty(),

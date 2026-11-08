@@ -43,7 +43,8 @@ namespace PlutoGE::assets
         constexpr const char *snapshots = "ModelSnapshots";
         constexpr const char *build = "Build";
 #endif
-        if (first == snapshots || first == library || first == build || first == ".git" || first == ".pluto-import-transactions" || first == ".pluto-import.lock" || first == ".pluto-migration-backups") return true;
+        if (first == snapshots || first == library || first == build || first == ".git" || first == ".pluto-import-transactions" || first == ".pluto-import.lock" || first == ".pluto-migration-backups" ||
+            first == ".plutoge-editor" || first == ".plutoge-cache") return true; // per-user editor state and caches
         for (const auto &component : relative)
             if (text(component) == ".pluto-generations" || text(component).starts_with(".pluto-metadata-") || text(component).starts_with(".pluto-scene-")) return true;
         return false;

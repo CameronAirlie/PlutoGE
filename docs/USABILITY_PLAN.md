@@ -67,7 +67,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   contact data on collisions.
 - [x] **T2.7 GameObject ergonomics.** Value equality, `IsAlive`, public `GameObject` on behaviours, quaternion world
   rotation, `GetComponentInParent/InChildren`.
-- [ ] **T2.8 Fire-and-forget audio.** `Audio.PlayAt / PlayOneShot` on an engine voice pool.
+- [x] **T2.8 Fire-and-forget audio.** `Audio.PlayAt / PlayOneShot` on an engine voice pool.
 - [ ] **T2.9 Input action gaps.** Unclamped delta axes, scroll binding, `WasReleased`, Vector2 composites, engine-driven
   map updates.
 - [ ] **T2.10 Play session hygiene.** `Application.PlayStarted/PlayStopped` events, engine statics reset on stop,
@@ -248,4 +248,14 @@ Record each completed item here with the date, what changed, and how it was veri
   as dead), `WorldRotationQuaternion`, `GetComponentInParent/InChildren/GetComponentsInChildren`.
   `ScriptBehaviour.GameObject` is public.
 - Verified: `PlutoGEScriptBehaviourTests` GameObjectProbe; managed suites (11) pass.
+
+### 2026-11-08 — T2.8
+
+- `Scene::PlayOneShotSound/StopOneShotSound` (named to avoid the Win32 `PlaySound` macro): transient emitter states
+  added to the scene's audio update, kept while the audio system reports the voice active, occlusion measured
+  once at start, cleared on StopRuntime. Keys use the top bit to stay apart from emitter keys.
+- C# `Audio.PlayAt` / `Audio.Play2D` returning `SoundHandle` (optional `RegisterSoundApi`). Mixer buses are not
+  part of this item.
+- Verified: `PlutoGEScriptBehaviourTests` writes a WAV into a temp project: PlayAt starts, Stop removes, an empty
+  reference is rejected, nothing survives StopRuntime.
 

@@ -2517,6 +2517,7 @@ namespace PlutoGE::scene
         }
 
         core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
+        m_sceneSounds.clear();
 
         if (m_streaming)
             m_streaming->Reset();
@@ -2908,6 +2909,30 @@ namespace PlutoGE::scene
 
         for (const auto id : removedInstanceRoots)
             m_staticModelInstances.erase(id);
+    }
+
+    uint64_t Scene::PlayOneShotSound(const SoundPlayback &playback)
+    {
+        auto &engine = core::Engine::GetInstance();
+        if (!m_runtimeStarted || playback.clipReference.empty() || engine.GetConfig().headless)
+            return 0;
+        std::string clipPath = engine.GetAssetManager().ResolveAssetPath(playback.clipReference);
+        if (clipPath.empty())
+            return 0;
+        // The top bit keeps these keys apart from SoundEmitterComponent's hashed keys.
+        const uint64_t key = (uint64_t{1} << 63) | m_nextSceneSoundSerial++;
+        SoundPlayback clamped = playback;
+        clamped.volume = std::max(playback.volume, 0.0f);
+        clamped.pitch = std::clamp(playback.pitch, 0.25f, 4.0f);
+        clamped.minDistance = std::max(playback.minDistance, 0.01f);
+        clamped.maxDistance = std::max(playback.maxDistance, clamped.minDistance);
+        m_sceneSounds.push_back(SceneSound{.key = key, .clipPath = std::move(clipPath), .playback = std::move(clamped)});
+        return key;
+    }
+
+    void Scene::StopOneShotSound(uint64_t handle)
+    {
+        std::erase_if(m_sceneSounds, [handle](const SceneSound &sound) { return sound.key == handle; });
     }
 
     bool Scene::IsEntityAlive(EntityID entityId) const
@@ -3464,6 +3489,35 @@ namespace PlutoGE::scene
                         emitter->MarkOneShotPlaybackStarted(oneShotPlayback.key);
                     }
                 }
+            }
+
+            // Scene one-shots: started once, then kept while their voice plays. A stopped sound simply leaves the
+            // list, and the audio system ends voices it no longer receives.
+            std::erase_if(m_sceneSounds, [&](const SceneSound &sound)
+                          { return !sound.pending && !engine.GetAudioSystem().IsEmitterActive(sound.key); });
+            for (auto &sound : m_sceneSounds)
+            {
+                if (sound.pending && listenerState.active && sound.playback.spatial)
+                {
+                    const EntityID listenerEntityId = listenerComponent && listenerComponent->GetOwner() ? listenerComponent->GetOwner()->GetID() : 0;
+                    sound.occlusion = std::clamp(MeasureAudioOcclusion(*this, listenerState.position, listenerState.forward, listenerState.up,
+                                                                       sound.playback.position, 0, listenerEntityId, occlusionSampleCount) *
+                                                     listenerState.occlusionStrength,
+                                                 0.0f, 1.0f);
+                }
+                audio::EmitterState state;
+                state.key = sound.key;
+                state.clipPath = sound.clipPath;
+                state.position = sound.playback.position;
+                state.playing = true;
+                state.spatialized = sound.playback.spatial;
+                state.volume = sound.playback.volume;
+                state.pitch = sound.playback.pitch;
+                state.minDistance = sound.playback.minDistance;
+                state.maxDistance = sound.playback.maxDistance;
+                state.occlusion = sound.occlusion;
+                emitterStates.push_back(std::move(state));
+                sound.pending = false;
             }
 
             engine.GetAudioSystem().Update(listenerState, emitterStates, simulationDeltaTime);

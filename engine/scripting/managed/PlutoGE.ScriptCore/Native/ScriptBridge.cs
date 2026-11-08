@@ -256,6 +256,41 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, void> _startEntityScripts;
     private static delegate* unmanaged[Cdecl]<NativeRuntimeClock*, void> _getRuntimeClock;
     private static delegate* unmanaged[Cdecl]<uint, int> _isEntityAlive;
+    private static delegate* unmanaged[Cdecl]<byte*, NativeVector3, float, float, int, float, float, ulong> _playSceneSound;
+    private static delegate* unmanaged[Cdecl]<ulong, void> _stopSceneSound;
+
+    /// <summary>Optional: without it, <see cref="Audio.PlayAt"/> plays nothing.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterSoundApi")]
+    public static int RegisterSoundApi(delegate* unmanaged[Cdecl]<byte*, NativeVector3, float, float, int, float, float, ulong> playSceneSound,
+                                       delegate* unmanaged[Cdecl]<ulong, void> stopSceneSound)
+    {
+        if (playSceneSound == null || stopSceneSound == null)
+        {
+            SetError("Managed sound API registration received a null function pointer.");
+            return 0;
+        }
+
+        _playSceneSound = playSceneSound;
+        _stopSceneSound = stopSceneSound;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    internal static ulong PlaySceneSound(string clipReference, Vector3 position, float volume, float pitch, bool spatial,
+                                         float minDistance, float maxDistance)
+    {
+        if (_playSceneSound == null || string.IsNullOrWhiteSpace(clipReference))
+            return 0;
+        var bytes = Encoding.UTF8.GetBytes(clipReference + '\0');
+        fixed (byte* reference = bytes)
+            return _playSceneSound(reference, NativeVector3.FromManaged(position), volume, pitch, spatial ? 1 : 0, minDistance, maxDistance);
+    }
+
+    internal static void StopSceneSound(ulong handle)
+    {
+        if (_stopSceneSound != null && handle != 0)
+            _stopSceneSound(handle);
+    }
 
     /// <summary>Optional: without it, <see cref="GameObject.IsAlive"/> falls back to checking the entity's name lookup.</summary>
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterEntityLifetimeApi")]

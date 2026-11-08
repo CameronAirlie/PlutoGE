@@ -597,6 +597,26 @@ void Pause()
 void Stop()
 ```
 
+#### Sounds without an emitter
+
+For impacts, footsteps, pickups and interface clicks, play a clip directly; no emitter entity or pool is
+needed:
+
+```csharp
+[SerializedField, AssetReference(AssetType.Audio)] private string impactSound = "";
+
+Audio.PlayAt(impactSound, collision.Point, volume: 0.8f, pitch: 0.9f + Random.Shared.NextSingle() * 0.2f);
+var click = Audio.Play2D(uiClick);   // not positional
+click.Stop();                        // optional
+```
+
+- `PlayAt` is positional and uses the same distance attenuation (`minDistance`, `maxDistance`), occlusion and
+  voice pool as sound emitters. Occlusion is measured once, when the sound starts.
+- `Play2D` plays at full volume wherever the listener is.
+- Both return a `SoundHandle`. `IsValid` is false when nothing started: the game is not running, or the
+  reference is empty or missing.
+- Every sound stops when Play stops.
+
 ### TerrainComponent
 
 The ground under a point, and its [material layers](TERRAIN_LAYERS.md) (dust, grass, rock...): use it to pick

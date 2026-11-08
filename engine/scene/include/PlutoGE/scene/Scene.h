@@ -143,6 +143,23 @@ namespace PlutoGE::scene
         bool DetachStaticModelInstance(EntityID rootEntityId, std::string *errorMessage = nullptr);
         const std::unordered_map<EntityID, StaticModelSceneInstance> &GetStaticModelInstances() const { return m_staticModelInstances; }
         bool DestroyEntity(EntityID entityId);
+
+        // A sound played once without an emitter entity (impacts, footsteps, UI clicks) while the runtime runs.
+        struct SoundPlayback
+        {
+            std::string clipReference;
+            glm::vec3 position{0.0f};
+            bool spatial = true; // false: plays at full volume regardless of the listener (UI, music stingers)
+            float volume = 1.0f;
+            float pitch = 1.0f;
+            float minDistance = 1.0f;
+            float maxDistance = 25.0f;
+        };
+        // Returns a handle for StopOneShotSound, or 0 when nothing will play (not running, empty or unknown clip).
+        [[nodiscard]] uint64_t PlayOneShotSound(const SoundPlayback &playback);
+        void StopOneShotSound(uint64_t handle);
+        // Sounds started with PlayOneShotSound that are still playing (or about to start).
+        [[nodiscard]] std::size_t GetPlayingSoundCount() const { return m_sceneSounds.size(); }
         // The entity exists and is not about to be removed by a DestroyEntity earlier this frame (on it or an ancestor).
         [[nodiscard]] bool IsEntityAlive(EntityID entityId) const;
         // Rebind imported geometry while retaining explicit instance overrides.
@@ -427,6 +444,16 @@ namespace PlutoGE::scene
         std::unordered_set<uint64_t> m_activeCollisionPairs;
         struct TriggerState;
         std::unique_ptr<TriggerState> m_triggerState;
+        struct SceneSound
+        {
+            uint64_t key = 0;
+            std::string clipPath;
+            SoundPlayback playback;
+            float occlusion = 0.0f;
+            bool pending = true;
+        };
+        std::vector<SceneSound> m_sceneSounds;
+        uint64_t m_nextSceneSoundSerial = 1;
         std::vector<EntityID> m_pendingDestroyEntities;
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;

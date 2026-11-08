@@ -259,3 +259,19 @@ public sealed class GameObjectProbe : ScriptBehaviour
             Failure += "ScriptBehaviour.GameObject is not public. ";
     }
 }
+
+// Fire-and-forget audio handles.
+public sealed class SoundProbe : ScriptBehaviour
+{
+    [SerializedField] public string Clip = string.Empty;
+    [SerializedField] public bool Started;
+    [SerializedField] public bool EmptyRejected;
+
+    public override void OnCreate()
+    {
+        Started = Audio.PlayAt(Clip, new System.Numerics.Vector3(1, 0, 0)).IsValid;
+        var stopped = Audio.Play2D(Clip, 0.5f);
+        stopped.Stop();
+        EmptyRejected = !Audio.PlayAt(string.Empty, System.Numerics.Vector3.Zero).IsValid;
+    }
+}

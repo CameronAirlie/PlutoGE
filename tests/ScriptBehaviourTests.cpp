@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -273,6 +274,40 @@ namespace
         Require(LiveField<std::string>(*probe, "Failure").empty(), "GameObject: " + LiveField<std::string>(*probe, "Failure"));
     }
 
+    void WriteTestWave(const std::filesystem::path &path)
+    {
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream out(path, std::ios::binary);
+        const auto u32 = [&](uint32_t value) { out.write(reinterpret_cast<const char *>(&value), 4); };
+        const auto u16 = [&](uint16_t value) { out.write(reinterpret_cast<const char *>(&value), 2); };
+        constexpr uint32_t samples = 800;
+        out.write("RIFF", 4); u32(36 + samples * 2); out.write("WAVE", 4);
+        out.write("fmt ", 4); u32(16); u16(1); u16(1); u32(8000); u32(16000); u16(2); u16(16);
+        out.write("data", 4); u32(samples * 2);
+        for (uint32_t i = 0; i < samples; ++i) u16(static_cast<uint16_t>((i % 40) < 20 ? 3000 : -3000));
+    }
+
+    void FireAndForgetAudio(core::Engine &engine)
+    {
+        const auto root = std::filesystem::temp_directory_path() /
+                          ("PlutoGE-audio-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        struct Cleanup { std::filesystem::path root; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(root, ec); } } cleanup{root};
+        WriteTestWave(root / "Assets" / "Click.wav");
+        engine.GetAssetManager().SetProjectContext(root.string());
+
+        scene::Scene scene;
+        auto *probe = AddScript(scene, "Sound", "SoundProbe", {{"Clip", std::string("project://Click.wav")}});
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+        Require(LiveField<bool>(*probe, "Started"), "Audio.PlayAt did not start a sound");
+        Require(LiveField<bool>(*probe, "EmptyRejected"), "An empty clip reference returned a valid handle");
+        Require(scene.GetPlayingSoundCount() == 1, "Stopped sound was kept, or the started one was lost: " +
+                                                       std::to_string(scene.GetPlayingSoundCount()));
+        engine.StopRuntime();
+        Require(scene.GetPlayingSoundCount() == 0, "Sounds outlived Play");
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -338,6 +373,7 @@ try
     EnableAndDisable(engine);
     PhysicsQueriesAndTriggers(engine);
     GameObjectErgonomics(engine);
+    FireAndForgetAudio(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

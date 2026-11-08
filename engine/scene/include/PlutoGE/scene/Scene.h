@@ -143,6 +143,8 @@ namespace PlutoGE::scene
         bool DetachStaticModelInstance(EntityID rootEntityId, std::string *errorMessage = nullptr);
         const std::unordered_map<EntityID, StaticModelSceneInstance> &GetStaticModelInstances() const { return m_staticModelInstances; }
         bool DestroyEntity(EntityID entityId);
+        // The entity exists and is not about to be removed by a DestroyEntity earlier this frame (on it or an ancestor).
+        [[nodiscard]] bool IsEntityAlive(EntityID entityId) const;
         // Rebind imported geometry while retaining explicit instance overrides.
         AssetReconciliationReport ApplyModelAssetGeneration(const std::string &sourceAssetId,
             const std::string &sourceReference, assets::AssetManager &manager, const ModelAssetSnapshot &previous);

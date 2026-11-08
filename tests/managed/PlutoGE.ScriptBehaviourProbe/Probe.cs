@@ -220,3 +220,42 @@ public sealed class TriggerZoneProbe : ScriptBehaviour
     public override void OnTriggerEnter(GameObject other) => Entered = other.Name;
     public override void OnTriggerExit(GameObject other) => Exits++;
 }
+
+// GameObject equality, liveness, hierarchy component lookup and world rotation.
+public sealed class GameObjectProbe : ScriptBehaviour
+{
+    [SerializedField] public string Failure = string.Empty;
+
+    public override void OnCreate()
+    {
+        var first = GameObject.Find("Holder");
+        var second = GameObject.Find("Holder");
+        if (first is null || first != second || !first.Equals(second) || new HashSet<GameObject> { first, second! }.Count != 1)
+            Failure += "Equality. ";
+        if (GameObject.Find("Leaf")?.GetComponentInParent<PartnerProbe>()?.Configured != 5)
+            Failure += "GetComponentInParent. ";
+        if (first?.GetComponentInChildren<PartnerProbe>(includeSelf: false) is not null)
+            Failure += "GetComponentInChildren found something it should not. ";
+        if (first?.GetComponentsInChildren<PartnerProbe>().Count != 1)
+            Failure += "GetComponentsInChildren. ";
+
+        var leaf = GameObject.Find("Leaf")!;
+        var expected = System.Numerics.Quaternion.CreateFromAxisAngle(System.Numerics.Vector3.UnitY, MathF.PI / 2);
+        first!.RotationQuaternion = expected;
+        if (MathF.Abs(System.Numerics.Quaternion.Dot(leaf.WorldRotationQuaternion, expected)) < 0.999f)
+            Failure += "WorldRotationQuaternion get. ";
+        leaf.WorldRotationQuaternion = System.Numerics.Quaternion.Identity;
+        if (MathF.Abs(System.Numerics.Quaternion.Dot(leaf.WorldRotationQuaternion, System.Numerics.Quaternion.Identity)) < 0.999f)
+            Failure += "WorldRotationQuaternion set. ";
+
+        var doomed = GameObject.Find("Doomed")!;
+        if (!doomed.IsAlive)
+            Failure += "IsAlive before destroy. ";
+        doomed.Destroy();
+        if (doomed.IsAlive)
+            Failure += "IsAlive after destroy. ";
+        ScriptBehaviour asBase = this;
+        if (asBase.GameObject.EntityId != EntityId)
+            Failure += "ScriptBehaviour.GameObject is not public. ";
+    }
+}

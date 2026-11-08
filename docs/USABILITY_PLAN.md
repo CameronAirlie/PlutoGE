@@ -65,7 +65,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
   disabled.
 - [x] **T2.6 Physics queries and triggers.** Overlap sphere/box, SphereCast, RaycastAll, layer masks, trigger callbacks,
   contact data on collisions.
-- [ ] **T2.7 GameObject ergonomics.** Value equality, `IsAlive`, public `GameObject` on behaviours, quaternion world
+- [x] **T2.7 GameObject ergonomics.** Value equality, `IsAlive`, public `GameObject` on behaviours, quaternion world
   rotation, `GetComponentInParent/InChildren`.
 - [ ] **T2.8 Fire-and-forget audio.** `Audio.PlayAt / PlayOneShot` on an engine voice pool.
 - [ ] **T2.9 Input action gaps.** Unclamped delta axes, scroll binding, `WasReleased`, Vector2 composites, engine-driven
@@ -240,4 +240,12 @@ Record each completed item here with the date, what changed, and how it was veri
   filter, box, ray-all and sphere-cast results; ground contact normal and impulse; trigger enter/exit on both sides.
   Existing physics suites (foliage collision, surface response, spline road, navigation, ragdoll, surface
   placement, component registry, scene cache) pass.
+
+### 2026-11-08 — T2.7
+
+- `GameObject : IEquatable<GameObject>` (==, Equals, GetHashCode by entity), `IsAlive` (optional
+  `RegisterEntityLifetimeApi` -> `Scene::IsEntityAlive`, which treats pending destroys, including an ancestor's,
+  as dead), `WorldRotationQuaternion`, `GetComponentInParent/InChildren/GetComponentsInChildren`.
+  `ScriptBehaviour.GameObject` is public.
+- Verified: `PlutoGEScriptBehaviourTests` GameObjectProbe; managed suites (11) pass.
 

@@ -136,6 +136,7 @@ namespace PlutoGE::scripting
         using register_prefab_spawn_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_time_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_physics_query_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
+        using register_entity_lifetime_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_animation_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_rigidbody_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
         using register_collider_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *, void *);
@@ -3248,6 +3249,12 @@ namespace PlutoGE::scripting
             core::Engine::GetInstance().GetWindow().SetCursorLocked(locked != 0);
         }
 
+        int32_t IsEntityAlive(uint32_t entityId)
+        {
+            const auto *activeScene = core::Engine::GetInstance().GetScene();
+            return activeScene && activeScene->IsEntityAlive(entityId) ? 1 : 0;
+        }
+
         scene::PhysicsQueryOptions MakeQueryOptions(uint32_t ignoredEntityId, const char *tag)
         {
             scene::PhysicsQueryOptions options;
@@ -3896,6 +3903,7 @@ namespace PlutoGE::scripting
         register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
         register_time_api_fn registerTimeApi = nullptr;                  // Optional: older ScriptCore builds lack it.
         register_physics_query_api_fn registerPhysicsQueryApi = nullptr; // Optional: older ScriptCore builds lack it.
+        register_entity_lifetime_api_fn registerEntityLifetimeApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_animation_component_api_fn registerAnimationComponentApi = nullptr;
         register_rigidbody_component_api_fn registerRigidbodyComponentApi = nullptr;
         register_collider_component_api_fn registerColliderComponentApi = nullptr;
@@ -4030,6 +4038,7 @@ namespace PlutoGE::scripting
             impl.registerPrefabSpawnApi = nullptr;
             impl.registerTimeApi = nullptr;
             impl.registerPhysicsQueryApi = nullptr;
+            impl.registerEntityLifetimeApi = nullptr;
             impl.registerAnimationComponentApi = nullptr;
             impl.registerRigidbodyComponentApi = nullptr;
             impl.registerColliderComponentApi = nullptr;
@@ -4451,6 +4460,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterPhysicsQueryApi"), impl.registerPhysicsQueryApi))
             {
                 impl.registerPhysicsQueryApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterEntityLifetimeApi"), impl.registerEntityLifetimeApi))
+            {
+                impl.registerEntityLifetimeApi = nullptr;
                 impl.lastError.clear();
             }
             if (!LoadManagedExport(impl, HOST_TEXT("InvokeOnCollisionContact"), impl.invokeOnCollisionContact))
@@ -4987,6 +5001,13 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<set_mesh_color_fn>(&SetMeshEmission))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshComponentApi");
+            return false;
+        }
+
+        if (m_impl->registerEntityLifetimeApi &&
+            m_impl->registerEntityLifetimeApi(reinterpret_cast<void *>(&IsEntityAlive)) == 0)
+        {
+            setManagedBridgeFailure("RegisterEntityLifetimeApi");
             return false;
         }
 

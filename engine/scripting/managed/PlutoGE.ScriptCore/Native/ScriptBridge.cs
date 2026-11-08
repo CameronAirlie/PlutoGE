@@ -255,6 +255,25 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<byte*, uint, uint> _instantiatePrefabPrepared;
     private static delegate* unmanaged[Cdecl]<uint, void> _startEntityScripts;
     private static delegate* unmanaged[Cdecl]<NativeRuntimeClock*, void> _getRuntimeClock;
+    private static delegate* unmanaged[Cdecl]<uint, int> _isEntityAlive;
+
+    /// <summary>Optional: without it, <see cref="GameObject.IsAlive"/> falls back to checking the entity's name lookup.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterEntityLifetimeApi")]
+    public static int RegisterEntityLifetimeApi(delegate* unmanaged[Cdecl]<uint, int> isEntityAlive)
+    {
+        if (isEntityAlive == null)
+        {
+            SetError("Managed entity lifetime API registration received a null function pointer.");
+            return 0;
+        }
+
+        _isEntityAlive = isEntityAlive;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    internal static bool IsEntityAlive(uint entityId) =>
+        entityId != 0 && (_isEntityAlive != null ? _isEntityAlive(entityId) != 0 : !string.IsNullOrEmpty(GetEntityName(entityId)));
     private static delegate* unmanaged[Cdecl]<NativeVector3, float, uint, byte*, uint*, int, int> _overlapSphere;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, NativeQuaternion, uint, byte*, uint*, int, int> _overlapBox;
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, float, uint, byte*, NativeRaycastHit*, int, int> _raycastAll;

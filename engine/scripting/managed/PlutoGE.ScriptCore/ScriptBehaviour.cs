@@ -22,7 +22,8 @@ public abstract class ScriptBehaviour
         }
     }
 
-    protected GameObject GameObject => _gameObject ??= new GameObject(EntityId);
+    /// <summary>The entity this script is attached to.</summary>
+    public GameObject GameObject => _gameObject ??= new GameObject(EntityId);
 
     /// <summary>Set once OnDestroy has run or the engine released this script; timers it owns stop.</summary>
     internal bool IsDestroyed { get; set; }

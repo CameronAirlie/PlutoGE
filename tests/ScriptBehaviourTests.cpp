@@ -260,6 +260,19 @@ namespace
                 "The ball did not receive trigger enter and exit");
     }
 
+    void GameObjectErgonomics(core::Engine &engine)
+    {
+        scene::Scene scene;
+        auto *holder = AddScript(scene, "Holder", "PartnerProbe", {{"Configured", int32_t{5}}})->GetOwner();
+        scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Leaf"}), holder);
+        scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Doomed"}));
+        auto *probe = AddScript(scene, "Probe", "GameObjectProbe");
+        engine.SetScene(&scene);
+        engine.StartRuntime();
+        struct Stop { core::Engine &engine; ~Stop() { engine.StopRuntime(); engine.SetScene(nullptr); } } stop{engine};
+        Require(LiveField<std::string>(*probe, "Failure").empty(), "GameObject: " + LiveField<std::string>(*probe, "Failure"));
+    }
+
     // Two-phase start (every OnCreate can see every script) and configured spawning (position, parent and
     // configure callback in place before the spawned script's OnCreate).
     void StartOrderAndSpawning(core::Engine &engine)
@@ -324,6 +337,7 @@ try
     TimeAndTimers(engine);
     EnableAndDisable(engine);
     PhysicsQueriesAndTriggers(engine);
+    GameObjectErgonomics(engine);
 
     std::cout << "ScriptBehaviourTests passed\n";
     return 0;

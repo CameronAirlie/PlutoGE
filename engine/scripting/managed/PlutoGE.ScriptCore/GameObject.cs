@@ -4,7 +4,12 @@ using PlutoGE.ScriptCore.Native;
 
 namespace PlutoGE.ScriptCore;
 
-public sealed class GameObject
+/// <summary>
+/// A handle to a scene entity. Two handles to the same entity are equal (== and Equals compare the entity), so
+/// GameObjects work as dictionary keys. A handle outlives its entity: check <see cref="IsAlive"/> after the entity
+/// may have been destroyed.
+/// </summary>
+public sealed class GameObject : IEquatable<GameObject>
 {
     internal GameObject(uint entityId)
     {
@@ -13,6 +18,68 @@ public sealed class GameObject
 
     public uint EntityId { get; }
     public bool IsValid => EntityId != 0;
+
+    /// <summary>True while the entity exists and has not been destroyed (including by <see cref="Destroy()"/> this frame).</summary>
+    public bool IsAlive => ScriptBridge.IsEntityAlive(EntityId);
+
+    public bool Equals(GameObject? other) => other is not null && other.EntityId == EntityId;
+    public override bool Equals(object? obj) => obj is GameObject other && Equals(other);
+    public override int GetHashCode() => EntityId.GetHashCode();
+    public static bool operator ==(GameObject? left, GameObject? right) => left is null ? right is null : left.Equals(right);
+    public static bool operator !=(GameObject? left, GameObject? right) => !(left == right);
+
+    /// <summary>
+    /// World rotation as a quaternion, free of the Euler-angle flips near ±90° pitch. Assumes uniformly scaled parents.
+    /// </summary>
+    public Quaternion WorldRotationQuaternion
+    {
+        get => Parent is { } parent ? Quaternion.Normalize(parent.WorldRotationQuaternion * RotationQuaternion) : RotationQuaternion;
+        set => RotationQuaternion = Parent is { } parent
+            ? Quaternion.Normalize(Quaternion.Inverse(parent.WorldRotationQuaternion) * value)
+            : Quaternion.Normalize(value);
+    }
+
+    /// <summary>The first <typeparamref name="T"/> on this entity (unless <paramref name="includeSelf"/> is false) or its ancestors.</summary>
+    public T? GetComponentInParent<T>(bool includeSelf = true) where T : class
+    {
+        for (var current = includeSelf ? this : Parent; current is not null; current = current.Parent)
+        {
+            if (current.GetComponent<T>() is { } component)
+                return component;
+        }
+
+        return null;
+    }
+
+    /// <summary>The first <typeparamref name="T"/> on this entity or a descendant, searched depth first.</summary>
+    public T? GetComponentInChildren<T>(bool includeSelf = true) where T : class
+    {
+        if (includeSelf && GetComponent<T>() is { } own)
+            return own;
+        foreach (var child in Children)
+        {
+            if (child.GetComponentInChildren<T>() is { } found)
+                return found;
+        }
+
+        return null;
+    }
+
+    /// <summary>Every <typeparamref name="T"/> on this entity and its descendants, depth first.</summary>
+    public List<T> GetComponentsInChildren<T>(bool includeSelf = true) where T : class
+    {
+        var results = new List<T>();
+        CollectComponents(this, includeSelf, results);
+        return results;
+    }
+
+    private static void CollectComponents<T>(GameObject gameObject, bool includeSelf, List<T> results) where T : class
+    {
+        if (includeSelf && gameObject.GetComponent<T>() is { } component)
+            results.Add(component);
+        foreach (var child in gameObject.Children)
+            CollectComponents(child, true, results);
+    }
     public string Name => ScriptBridge.GetEntityName(EntityId);
 
     public Vector3 Position

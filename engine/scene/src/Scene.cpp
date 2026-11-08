@@ -2910,6 +2910,15 @@ namespace PlutoGE::scene
             m_staticModelInstances.erase(id);
     }
 
+    bool Scene::IsEntityAlive(EntityID entityId) const
+    {
+        const auto *entity = entityId != 0 ? FindEntityByID(entityId) : nullptr;
+        for (const auto *current = entity; current; current = current->GetParent())
+            if (m_pendingDestroyEntityIds.contains(current->GetID()))
+                return false;
+        return entity != nullptr;
+    }
+
     bool Scene::DestroyEntity(EntityID entityId)
     {
         if (entityId == 0 || m_pendingDestroyEntityIds.contains(entityId))

@@ -233,7 +233,7 @@ provided by these classes.
 `ScriptBehaviour` provides:
 
 - `public uint EntityId { get; }` — native entity ID.
-- `protected GameObject GameObject` — the entity owning this script.
+- `public GameObject GameObject` — the entity owning this script.
 - `protected Vector3 Rotation` — shorthand for the owner's local Euler rotation. Prefer `GameObject` for the full transform API.
 
 ## Serialized fields
@@ -338,7 +338,18 @@ Important serialization behavior:
 
 ## GameObject and transforms
 
-The owning object is available through the protected `GameObject` property. Other entities can be found or referenced as `GameObject`.
+The owning object is available through the public `GameObject` property, so other scripts can reach it as
+`otherScript.GameObject`. Other entities can be found or referenced as `GameObject`.
+
+- **Equality.** Two `GameObject` handles to the same entity are equal (`==`, `Equals`, `GetHashCode`), so
+  they work as dictionary and set keys; there is no need to compare `EntityId`.
+- **Liveness.** `IsAlive` is false once the entity has been destroyed, including by `Destroy()` earlier in the
+  same frame. `IsValid` only checks that the handle is not empty.
+- **World rotation.** `WorldRotationQuaternion` gets and sets world rotation without the Euler-angle flips
+  near ±90° pitch.
+- **Hierarchy lookups.** `GetComponentInParent<T>()`, `GetComponentInChildren<T>()` and
+  `GetComponentsInChildren<T>()` search up or down the hierarchy (including this entity unless
+  `includeSelf: false`).
 
 Properties:
 

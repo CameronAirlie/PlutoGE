@@ -762,6 +762,7 @@ namespace PlutoGE::scene
         m_prefabSource.clear();
         m_prefabEntityId = 0;
         m_isPrefabInstanceRoot = false;
+        m_prefabFingerprint = 0;
         m_prefabOverrides.clear();
 
         for (auto *child : m_children)

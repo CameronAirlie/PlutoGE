@@ -86,7 +86,26 @@ namespace PlutoGE::scene
             unsigned projectFormatVersion = 1;
             std::unique_ptr<Scene> scene;
             std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
+            std::uint64_t fingerprint = 0;
         };
+
+        // Order-independent mix of every dependency file's content hash.
+        std::uint64_t ComputeFingerprint(
+            const std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> &dependencies)
+        {
+            std::vector<std::pair<std::string, std::uint64_t>> sorted;
+            sorted.reserve(dependencies.size());
+            for (const auto &[path, stamp] : dependencies)
+                sorted.emplace_back(path, stamp.second);
+            std::sort(sorted.begin(), sorted.end());
+            std::uint64_t hash = 0xcbf29ce484222325ull;
+            for (const auto &[path, contentHash] : sorted)
+            {
+                hash ^= contentHash + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+                hash *= 0x100000001b3ull;
+            }
+            return hash == 0 ? 1 : hash;
+        }
 
         std::unordered_map<std::string, CachedPrefab> &PrefabCache()
         {
@@ -546,7 +565,8 @@ namespace PlutoGE::scene
 
         Scene *LoadCachedPrefabScene(std::string_view prefabReference, std::string *errorMessage,
                                      bool *cacheHit = nullptr, double *resolutionMs = nullptr,
-                                     double *parsingMs = nullptr, std::string *resolvedPathOut = nullptr)
+                                     double *parsingMs = nullptr, std::string *resolvedPathOut = nullptr,
+                                     std::uint64_t *fingerprintOut = nullptr)
         {
             const auto resolutionStart = ProfileClock::now();
             const std::string resolvedPath = ResolvePrefabPath(prefabReference);
@@ -565,6 +585,7 @@ namespace PlutoGE::scene
             {
                 if (cacheHit) *cacheHit = true;
                 if (parsingMs) *parsingMs = 0.0;
+                if (fingerprintOut) *fingerprintOut = cached->second.fingerprint;
                 return cached->second.scene.get();
             }
 
@@ -585,8 +606,10 @@ namespace PlutoGE::scene
                 .scene = std::move(loadedScene),
                 .dependencies = std::move(dependencies),
             };
+            entry.fingerprint = ComputeFingerprint(entry.dependencies);
             auto [iterator, inserted] = cache.insert_or_assign(resolvedPath, std::move(entry));
             (void)inserted;
+            if (fingerprintOut) *fingerprintOut = iterator->second.fingerprint;
             return iterator->second.scene.get();
         }
 
@@ -1204,10 +1227,11 @@ namespace PlutoGE::scene
         core::CpuScope instantiateScope("Prefab instantiation", core::CpuCategory::Other);
         const auto totalStart = ProfileClock::now();
         bool cacheHit = false;
+        std::uint64_t fingerprint = 0;
         core::CpuScope loadScope("Prefab asset resolution", core::CpuCategory::Other);
         auto *prefabScene = LoadCachedPrefabScene(prefabReference, errorMessage, &cacheHit,
                                                   &profile.fileResolutionMs, &profile.parsingMs,
-                                                  &profile.prefabPath);
+                                                  &profile.prefabPath, &fingerprint);
         profile.parsedPrefabCacheMiss = !cacheHit;
         loadScope.End();
         profile.synchronousLoadCount = cacheHit ? 0u : 1u;
@@ -1240,6 +1264,7 @@ namespace PlutoGE::scene
         {
             const auto remapStart = ProfileClock::now();
             RemapClonedScriptEntityReferences(*roots.front(), *instanceRoot);
+            instanceRoot->SetPrefabFingerprint(fingerprint);
             profile.referenceRemappingMs = ElapsedMs(remapStart);
             profile.rootEntityName = instanceRoot->GetName();
             profile.rootEntityId = instanceRoot->GetID();
@@ -1292,7 +1317,8 @@ namespace PlutoGE::scene
         }
 
         const std::string prefabReference = instanceRoot.GetPrefabSource();
-        auto prefabScene = LoadPrefabScene(prefabReference, errorMessage);
+        std::unordered_map<std::string, std::pair<std::filesystem::file_time_type, std::uint64_t>> dependencies;
+        auto prefabScene = LoadPrefabScene(prefabReference, errorMessage, &dependencies);
         if (!prefabScene)
         {
             return false;
@@ -1456,8 +1482,105 @@ namespace PlutoGE::scene
                 child->SetParent(parent ? parent : &instanceRoot);
         }
         RemapScriptEntityReferences(instanceRoot, previousToUpdatedEntityId);
+        instanceRoot.SetPrefabFingerprint(ComputeFingerprint(dependencies));
 
         return true;
+    }
+
+    uint64_t Prefab::GetFingerprint(std::string_view prefabReference, std::string *errorMessage)
+    {
+        std::uint64_t fingerprint = 0;
+        return LoadCachedPrefabScene(prefabReference, errorMessage, nullptr, nullptr, nullptr, nullptr, &fingerprint) ? fingerprint : 0;
+    }
+
+    namespace
+    {
+        std::vector<EntityID> CollectInstanceRoots(Scene &scene)
+        {
+            std::vector<EntityID> roots;
+            const auto collect = [&](Entity &entity, const auto &self) -> void
+            {
+                if (entity.IsPrefabInstanceRoot() && !entity.GetPrefabSource().empty())
+                    roots.push_back(entity.GetID());
+                for (auto *child : entity.GetChildren())
+                    if (child)
+                        self(*child, self);
+            };
+            for (auto *root : scene.GetRootEntities())
+                if (root)
+                    collect(*root, collect);
+            return roots;
+        }
+    }
+
+    int Prefab::AdoptFingerprints(Scene &scene)
+    {
+        int adopted = 0;
+        std::unordered_map<std::string, std::uint64_t> current;
+        for (const auto rootId : CollectInstanceRoots(scene))
+        {
+            auto *root = scene.FindEntityByID(rootId);
+            if (!root || root->GetPrefabFingerprint() != 0)
+                continue;
+            auto found = current.find(root->GetPrefabSource());
+            if (found == current.end())
+                found = current.emplace(root->GetPrefabSource(), GetFingerprint(root->GetPrefabSource())).first;
+            if (found->second == 0)
+                continue;
+            root->SetPrefabFingerprint(found->second);
+            ++adopted;
+        }
+        return adopted;
+    }
+
+    std::vector<EntityID> Prefab::FindOutdatedInstances(Scene &scene)
+    {
+        std::vector<EntityID> outdated;
+        std::unordered_map<std::string, std::uint64_t> current;
+        for (const auto rootId : CollectInstanceRoots(scene))
+        {
+            const auto *root = scene.FindEntityByID(rootId);
+            if (!root || root->GetPrefabFingerprint() == 0)
+                continue;
+            auto found = current.find(root->GetPrefabSource());
+            if (found == current.end())
+                found = current.emplace(root->GetPrefabSource(), GetFingerprint(root->GetPrefabSource())).first;
+            if (found->second != 0 && found->second != root->GetPrefabFingerprint())
+                outdated.push_back(rootId);
+        }
+        return outdated;
+    }
+
+    Prefab::InstanceSyncResult Prefab::UpdateOutdatedInstances(Scene &scene, const std::vector<EntityID> &instanceRoots)
+    {
+        InstanceSyncResult result;
+        if (scene.IsRuntimeStarted())
+            return result;
+        // IDs, not pointers: updating an outer instance rebuilds its children, including nested instance roots.
+        for (const auto rootId : instanceRoots)
+        {
+            auto *root = scene.FindEntityByID(rootId);
+            if (!root || !root->IsPrefabInstanceRoot())
+                continue;
+            const std::string name = root->GetName();
+            const std::string reference = root->GetPrefabSource();
+            std::string error;
+            if (UpdateInstance(*root, &error))
+                ++result.updated;
+            else
+                result.errors.push_back(name + " (" + reference + "): " + error);
+        }
+        return result;
+    }
+
+    Prefab::InstanceSyncResult Prefab::SyncInstances(Scene &scene)
+    {
+        if (scene.IsRuntimeStarted())
+            return {};
+        const int adopted = AdoptFingerprints(scene);
+        auto result = UpdateOutdatedInstances(scene, FindOutdatedInstances(scene));
+        result.adopted = adopted;
+        return result;
     }
 
     int Prefab::UpdateInstances(Scene &scene,

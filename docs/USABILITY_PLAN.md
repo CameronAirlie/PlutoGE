@@ -77,7 +77,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 
 ## Tier 3 — Project data and pipeline
 
-- [ ] **T3.1 Prefab instances by reference.** Store instances as prefab reference + overrides and resolve on load so
+- [x] **T3.1 Prefab instances by reference.** Store instances as prefab reference + overrides and resolve on load so
   unopened scenes pick up prefab changes.
 - [ ] **T3.2 Bake data out of scene text.** Baked lighting / captures written to binary side files, scene stores a
   reference; legacy inline data still loads.
@@ -295,4 +295,21 @@ Record each completed item here with the date, what changed, and how it was veri
   Visual Studio, VS Code and Rider.
 - Verified: `PlutoGEScriptBehaviourTests` LogProbe (context entity, caller file/line, LogException severity, trace
   and context); XML file produced.
+
+### 2026-11-08 — T3.1
+
+- Design choice: rather than a new "reference + overrides" scene format, instance roots record a content
+  fingerprint of their resolved prefab chain (`Entity::GetPrefabFingerprint`, serialized as a trailing `SYNC=`
+  token on the existing `PREFAB` record, which older readers ignore). The existing `UpdateInstance` (which keeps
+  overrides and added children) rebuilds outdated instances. Same user-facing result, no format migration.
+- `Prefab::GetFingerprint/AdoptFingerprints/FindOutdatedInstances/UpdateOutdatedInstances/SyncInstances`;
+  fingerprints come from the prefab cache's existing per-dependency content hashes, so instantiation reads no
+  extra files.
+- Editor: opening a scene adopts fingerprints for legacy instances (scene stays clean), then updates outdated
+  instances as one undoable "Update Prefab Instances" edit with a Console summary.
+  **Scene > Update Prefab Instances in All Scenes** updates and saves every scene file.
+- Verified: `PlutoGEPrefabVariantTests` (fingerprint recorded, survives save/load, prefab edit detected,
+  component added, position override kept, legacy adoption); 17 scene/prefab/history/model-instance suites pass.
+- Not done: project validation does not yet flag outdated instances (validation lives in the assets library,
+  which cannot resolve prefabs); the all-scenes command covers the pre-build case.
 

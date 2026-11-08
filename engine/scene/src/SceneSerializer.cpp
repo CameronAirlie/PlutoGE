@@ -51,6 +51,7 @@
 #include "PlutoGE/render/Camera.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <array>
 #include <atomic>
 #include <charconv>
@@ -386,6 +387,14 @@ namespace PlutoGE::scene
                     for (const auto &overridePath : entity->GetPrefabOverrides())
                     {
                         output << '\t' << EscapeText(overridePath);
+                    }
+                    // After the counted overrides, so older readers ignore it.
+                    if (entity->IsPrefabInstanceRoot() && entity->GetPrefabFingerprint() != 0)
+                    {
+                        char fingerprint[32];
+                        std::snprintf(fingerprint, sizeof(fingerprint), "SYNC=%016llx",
+                                      static_cast<unsigned long long>(entity->GetPrefabFingerprint()));
+                        output << '\t' << fingerprint;
                     }
                     output << '\n';
                 }
@@ -883,6 +892,9 @@ namespace PlutoGE::scene
                             {
                                 entityIt->second->AddPrefabOverride(tokens[6 + overrideIndex]);
                             }
+                            const std::size_t syncIndex = 6 + static_cast<std::size_t>(std::max(overrideCount, 0));
+                            if (syncIndex < tokens.size() && tokens[syncIndex].starts_with("SYNC="))
+                                entityIt->second->SetPrefabFingerprint(std::strtoull(tokens[syncIndex].c_str() + 5, nullptr, 16));
                         }
                     }
                     continue;

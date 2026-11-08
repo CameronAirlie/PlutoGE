@@ -78,5 +78,22 @@ namespace PlutoGE::scene
                                    std::string_view prefabReference = {},
                                    std::string *errorMessage = nullptr);
         static bool ApplyInstanceToPrefab(const Entity &instanceRoot, std::string *errorMessage = nullptr);
+
+        // Content fingerprint of a prefab and its variant bases; 0 when it cannot be read.
+        [[nodiscard]] static uint64_t GetFingerprint(std::string_view prefabReference, std::string *errorMessage = nullptr);
+        struct InstanceSyncResult
+        {
+            int updated = 0;   // Instances rebuilt from a changed prefab (overrides and added children kept).
+            int adopted = 0;   // Instances without a fingerprint that now record the current one.
+            std::vector<std::string> errors; // One line per instance that could not be updated.
+        };
+        // Brings every prefab instance root in `scene` up to date with its prefab: instances whose prefab changed
+        // since they were built are updated; instances from scenes saved before fingerprints adopt the current one
+        // without changing (use UpdateInstance for those). Never runs while the runtime is started.
+        static InstanceSyncResult SyncInstances(Scene &scene);
+        // The steps of SyncInstances, for hosts that record the update as an undoable edit.
+        static int AdoptFingerprints(Scene &scene);
+        [[nodiscard]] static std::vector<EntityID> FindOutdatedInstances(Scene &scene);
+        static InstanceSyncResult UpdateOutdatedInstances(Scene &scene, const std::vector<EntityID> &instanceRoots);
     };
 }

@@ -99,6 +99,10 @@ namespace PlutoGE::scene
         bool IsPrefabInstanceRoot() const { return m_isPrefabInstanceRoot; }
         const std::vector<std::string> &GetPrefabOverrides() const { return m_prefabOverrides; }
         void SetPrefabLink(std::string source, EntityID prefabEntityId, bool isRoot);
+        // On an instance root: the prefab (and variant chain) content this instance was last built from, so stale
+        // instances can be found when the prefab changes. 0 = unknown (scenes saved before fingerprints).
+        [[nodiscard]] uint64_t GetPrefabFingerprint() const { return m_prefabFingerprint; }
+        void SetPrefabFingerprint(uint64_t fingerprint) { m_prefabFingerprint = fingerprint; }
         void ClearPrefabLinkRecursive();
         void AddPrefabOverride(std::string propertyPath);
         void ClearPrefabOverrides() { m_prefabOverrides.clear(); }
@@ -262,6 +266,7 @@ namespace PlutoGE::scene
         std::string m_prefabSource;
         EntityID m_prefabEntityId = 0;
         bool m_isPrefabInstanceRoot = false;
+        uint64_t m_prefabFingerprint = 0;
         std::vector<std::string> m_prefabOverrides;
         Scene *m_scene = nullptr;
     };

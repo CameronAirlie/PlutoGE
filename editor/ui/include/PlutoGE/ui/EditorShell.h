@@ -305,6 +305,12 @@ namespace PlutoGE::ui
         // working in it: the hierarchy or scene viewport has focus, the pointer is over the scene viewport, or no
         // window has focus. Other panels (Inspector, Console, asset editors) keep those keys for themselves.
         [[nodiscard]] bool IsSceneShortcutContext() const;
+        // Rebuilds prefab instances in the open scene whose prefab changed since they were saved (keeping overrides),
+        // as one undoable edit. Runs when a scene opens.
+        void UpdateOutdatedPrefabInstances();
+        // Brings prefab instances up to date in every scene of the project: the open scene as an undoable edit,
+        // other scene files are loaded, updated and saved when anything changed.
+        void UpdatePrefabInstancesInAllScenes();
         TimelinePreview &GetTimelinePreview() { return m_timelinePreview; }
         // Reports an edit already made to the scene. Its reach comes from the enclosing SceneEditRegion, and without
         // one it is assumed to be the whole scene; pass one to say otherwise.

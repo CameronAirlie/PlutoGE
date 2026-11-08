@@ -287,6 +287,50 @@ int main()
             auto *fresh = scene::Prefab::Instantiate(emptyScene, "project://Hud.plutoprefab", nullptr, &error);
             Require(fresh && entityField(*fresh) == 0, "Apply wrote a scene entity ID into the prefab");
         }
+        {
+            // Fingerprints: an instance saved in a scene follows later prefab edits when the scene is loaded again,
+            // keeping its overrides; instances from older scenes adopt the current prefab without changing.
+            scene::Scene authoring;
+            auto *crate = authoring.AddEntity(std::make_unique<scene::Entity>());
+            crate->SetName("Crate");
+            crate->CreateComponent<scene::ColliderComponent>();
+            Require(scene::Prefab::SaveFromEntity(*crate, assetsPath / "Crate.plutoprefab", &error), error);
+
+            scene::Scene level;
+            auto *instance = scene::Prefab::Instantiate(level, "project://Crate.plutoprefab", nullptr, &error);
+            Require(instance && instance->GetPrefabFingerprint() != 0, "Instantiate did not record the prefab fingerprint");
+            const auto savedFingerprint = instance->GetPrefabFingerprint();
+            instance->SetPosition({4.0f, 0.0f, 2.0f});
+            instance->AddPrefabOverride("Transform.Position");
+            std::string sceneText;
+            Require(scene::SceneSerializer::SaveToString(level, sceneText, &error), error);
+
+            crate->CreateComponent<scene::ParticleSystemComponent>();
+            Require(scene::Prefab::SaveFromEntity(*crate, assetsPath / "Crate.plutoprefab", &error), error);
+            Require(scene::Prefab::GetFingerprint("project://Crate.plutoprefab") != savedFingerprint, "Prefab edit did not change the fingerprint");
+
+            auto reloaded = scene::SceneSerializer::LoadFromString(sceneText, &error);
+            Require(reloaded != nullptr, error);
+            const auto findCrate = [&]() -> scene::Entity * {
+                for (auto *root : reloaded->GetRootEntities())
+                    if (root->IsPrefabInstanceRoot())
+                        return root;
+                return nullptr;
+            };
+            Require(findCrate() && findCrate()->GetPrefabFingerprint() == savedFingerprint, "Fingerprint did not survive save and load");
+            Require(scene::Prefab::FindOutdatedInstances(*reloaded).size() == 1, "Changed prefab was not detected");
+            const auto result = scene::Prefab::SyncInstances(*reloaded);
+            Require(result.updated == 1 && result.errors.empty(), "Outdated instance was not updated");
+            auto *updated = findCrate();
+            Require(updated && updated->HasComponent<scene::ParticleSystemComponent>(), "Instance did not receive the prefab's new component");
+            Require(updated->GetPosition() == glm::vec3(4.0f, 0.0f, 2.0f), "Instance override was lost while updating");
+            Require(scene::Prefab::FindOutdatedInstances(*reloaded).empty(), "Updated instance still reads as outdated");
+
+            updated->SetPrefabFingerprint(0);
+            Require(scene::Prefab::AdoptFingerprints(*reloaded) == 1 && updated->GetPrefabFingerprint() != 0 &&
+                        scene::Prefab::FindOutdatedInstances(*reloaded).empty(),
+                    "Instance without a fingerprint was not adopted");
+        }
         core::Engine::GetInstance().GetAssetManager().ClearProjectContext();
         std::cout << "Prefab variant tests passed\n";
     }

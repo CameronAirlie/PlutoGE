@@ -23,8 +23,28 @@ scene-format prefab files continue to load through the same API.
    the resolved prefab/variant. Scene undo restores the previous instance state.
 
 Asset creation and Apply write shared files. Scene undo covers the scene changes,
-not those shared files. External asset edits propagate on the next instance update
-or instantiation; live scene instances are not polled and replaced automatically.
+not those shared files.
+
+## Keeping instances up to date
+
+Each prefab instance root records a fingerprint of the prefab (and its variant
+bases) it was built from, saved with the scene. When a scene is opened in the
+editor, every instance whose prefab has changed since is rebuilt with **Update From
+Prefab** semantics:
+
+- Overrides and added children are kept.
+- Components and children added to the prefab appear in the instance.
+- The update is one undoable edit, and the Console reports how many instances changed.
+
+Save the scene to keep the result. **Scene > Update Prefab Instances in All
+Scenes** does the same for every scene file in the project and saves the files it
+changes; run it before a build so scenes you have not opened recently are current
+too.
+
+Instances in scenes saved before fingerprints existed are treated as current: they
+adopt the prefab's present fingerprint, and later prefab edits then propagate. Use
+**Update From Prefab** once on such an instance if it already differs from its prefab.
+Instances inside a running game are never changed.
 
 ## Scope and failure behavior
 

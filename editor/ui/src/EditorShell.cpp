@@ -2093,6 +2093,68 @@ namespace PlutoGE::ui
         }
     }
 
+    void EditorShell::UpdateOutdatedPrefabInstances()
+    {
+        if (!m_scene || m_engine.IsRuntimeRunning())
+            return;
+        const auto outdated = scene::Prefab::FindOutdatedInstances(*m_scene);
+        if (outdated.empty())
+            return;
+        scene::Prefab::InstanceSyncResult result;
+        // One undoable edit, so Ctrl+Z restores the instances as they were saved.
+        ExecuteSceneEdit("Update Prefab Instances", [&] { result = scene::Prefab::UpdateOutdatedInstances(*m_scene, outdated); });
+        if (result.updated > 0)
+        {
+            m_statusMessage = "Updated " + std::to_string(result.updated) + (result.updated == 1 ? " prefab instance" : " prefab instances") +
+                              " whose prefab changed. Save the scene to keep the update.";
+            Log(ConsoleSeverity::Info, m_statusMessage);
+        }
+        for (const auto &error : result.errors)
+            Log(ConsoleSeverity::Warning, "Could not update prefab instance " + error);
+    }
+
+    void EditorShell::UpdatePrefabInstancesInAllScenes()
+    {
+        if (!m_project || m_engine.IsRuntimeRunning())
+            return;
+        const auto openScenePath = m_scene ? std::filesystem::path(m_scene->GetFilePath()).lexically_normal() : std::filesystem::path{};
+        int scenesChanged = 0;
+        int instancesUpdated = 0;
+        for (const auto &entry : m_project->GetManifest().assetEntries)
+        {
+            if (entry.type != assets::ProjectAssetType::Scene)
+                continue;
+            const auto path = m_project->ResolveAssetReference(entry.reference).lexically_normal();
+            if (!openScenePath.empty() && path == openScenePath)
+            {
+                UpdateOutdatedPrefabInstances();
+                continue;
+            }
+            std::string error;
+            auto scene = scene::SceneSerializer::Load(path.string(), &error);
+            if (!scene)
+            {
+                Log(ConsoleSeverity::Warning, "Skipped " + entry.reference + ": " + error);
+                continue;
+            }
+            const auto result = scene::Prefab::SyncInstances(*scene);
+            for (const auto &instanceError : result.errors)
+                Log(ConsoleSeverity::Warning, "Could not update prefab instance in " + entry.reference + ": " + instanceError);
+            if (result.updated == 0 && result.adopted == 0)
+                continue;
+            if (!scene::SceneSerializer::Save(*scene, path.string(), &error))
+            {
+                Log(ConsoleSeverity::Error, "Could not save " + entry.reference + ": " + error);
+                continue;
+            }
+            ++scenesChanged;
+            instancesUpdated += result.updated;
+        }
+        m_statusMessage = "Prefab instances: updated " + std::to_string(instancesUpdated) + " in " + std::to_string(scenesChanged) +
+                          " saved scene" + (scenesChanged == 1 ? "" : "s") + ".";
+        Log(ConsoleSeverity::Info, m_statusMessage);
+    }
+
     bool EditorShell::IsSceneShortcutContext() const
     {
         const auto *context = ImGui::GetCurrentContext();
@@ -2567,6 +2629,11 @@ namespace PlutoGE::ui
             returnScenePath = IsEditingPrefab() || !m_scene ? m_prefabReturnScenePath
                                                             : std::filesystem::path(m_scene->GetFilePath());
 
+        // Instances saved before prefab fingerprints adopt the current prefab as their baseline. This is part of
+        // the loaded state, so the scene still opens clean.
+        if (!IsPrefabEditingPath(scenePath))
+            scene::Prefab::AdoptFingerprints(*loadedScene);
+
         SetScene(std::move(loadedScene));
         m_prefabReturnScenePath = std::move(returnScenePath);
         m_sceneHistory.Clear();
@@ -2578,6 +2645,8 @@ namespace PlutoGE::ui
             m_statusMessage = errorMessage;
             Log(ConsoleSeverity::Warning, errorMessage);
         }
+        if (!IsPrefabEditingPath(scenePath))
+            UpdateOutdatedPrefabInstances();
         return true;
     }
 
@@ -4688,6 +4757,11 @@ namespace PlutoGE::ui
                         ImGui::Separator();
                     }
                     ImGui::BeginDisabled(isBakeRunning);
+                    if (ImGui::MenuItem("Update Prefab Instances in All Scenes", nullptr, false, m_project && !m_engine.IsRuntimeRunning()))
+                        UpdatePrefabInstancesInAllScenes();
+                    ImGui::SetItemTooltip("Rebuilds instances whose prefab changed in every scene file, keeping their overrides.\n"
+                                          "Scenes update automatically when opened; use this before a build.");
+                    ImGui::Separator();
                     if (ImGui::BeginMenu("Lighting", m_scene != nullptr))
                     {
                         if (ImGui::MenuItem("Bake Lighting"))

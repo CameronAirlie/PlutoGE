@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/ui/meshedit/MeshEditorViews.h"
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <memory>
@@ -14,7 +15,7 @@ namespace PlutoGE::ui
     // Editor for .plutomesh assets: an overview, material slots, the humanoid rig map (with a diagram of the
     // mesh's joints to assign them from) and level-of-detail and import settings. Follows the mesh EditorShell
     // opens; unsaved changes are offered for saving first.
-    class MeshEditorPanel : public Panel
+    class MeshEditorPanel : public Panel, public IEditorDocument
     {
     public:
         explicit MeshEditorPanel(const PanelConfig &config);
@@ -25,7 +26,12 @@ namespace PlutoGE::ui
 
         // Shows an already-open session, e.g. one with custom storage. Replaces the current one without asking.
         void Open(std::unique_ptr<MeshAssetSession> session);
-        [[nodiscard]] bool HasUnsavedChanges() const;
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override { Revert(); }
+        void FocusDocument() override { Focus(); }
         [[nodiscard]] const MeshAssetSession *GetSession() const { return m_session.get(); }
         void SetPage(meshedit::MeshEditorPage page) { m_page = page; }
 

@@ -2096,61 +2096,80 @@ namespace PlutoGE::ui
 
     bool EditorShell::ConfirmContinueWithUnsavedChanges()
     {
-        if (!m_sceneDirty && !m_projectDirty && !(m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges()) &&
-            !(m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges()) &&
-            !(m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges()) &&
-            !(m_inputMappingEditor && m_inputMappingEditor->HasUnsavedChanges()) &&
-            !(m_postProcessEditor && m_postProcessEditor->HasUnsavedChanges()) &&
-            !(m_foliageEditor && m_foliageEditor->HasUnsavedChanges()))
+        const auto documents = CollectEditorDocuments();
+        std::string error;
+        const bool proceed = ResolveUnsavedDocuments(documents, [&](std::span<const std::string> names)
         {
+            std::string dialogError;
+            const auto choice = AskToSaveChanges(names, &dialogError);
+            if (!dialogError.empty())
+                error = dialogError;
+            return choice;
+        }, error);
+        if (!error.empty())
+        {
+            m_statusMessage = error;
+            Log(ConsoleSeverity::Warning, error);
+        }
+        return proceed;
+    }
+
+    std::vector<IEditorDocument *> EditorShell::CollectEditorDocuments()
+    {
+        std::vector<IEditorDocument *> documents{&m_sceneDocument};
+        for (auto *panel : m_panelManager.GetPanels())
+            if (auto *document = dynamic_cast<IEditorDocument *>(panel))
+                documents.push_back(document);
+        return documents;
+    }
+
+    bool EditorShell::SaveFocusedDocument()
+    {
+        for (auto *panel : m_panelManager.GetPanels())
+        {
+            auto *document = dynamic_cast<IEditorDocument *>(panel);
+            if (!document || !panel->HasKeyboardFocus() || !document->HasUnsavedChanges())
+                continue;
+            std::string error;
+            if (document->SaveDocument(error))
+                m_statusMessage = "Saved " + document->GetDocumentName() + ".";
+            else
+            {
+                m_statusMessage = "Could not save " + document->GetDocumentName() + (error.empty() ? "." : ": " + error);
+                Log(ConsoleSeverity::Error, m_statusMessage);
+            }
             return true;
         }
+        return false;
+    }
 
-#ifdef _WIN32
-        const int result = MessageBoxA(nullptr,
-                                       "There are unsaved editor changes. Continue and discard them?",
-                                       "Unsaved Changes",
-                                       MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2);
-        return result == IDYES;
-#else
-        if (m_rmlDocumentEditor && m_rmlDocumentEditor->HasUnsavedChanges())
-        {
-            m_rmlDocumentEditor->SetOpen(true);
-            Log(ConsoleSeverity::Warning, "Save or discard UI document edits before switching projects or exiting.");
-            return false;
-        }
-        if (m_animationGraphEditor && m_animationGraphEditor->HasUnsavedChanges())
-        {
-            m_animationGraphEditor->SetOpen(true);
-            Log(ConsoleSeverity::Warning, "Save or revert animation graph edits before switching projects or exiting.");
-            return false;
-        }
-        if (m_uiThemeEditor && m_uiThemeEditor->HasUnsavedChanges())
-        {
-            m_uiThemeEditor->SetOpen(true);
-            Log(ConsoleSeverity::Warning, "Save or revert UI theme edits before switching projects or exiting.");
-            return false;
-        }
-        if (m_inputMappingEditor && m_inputMappingEditor->HasUnsavedChanges())
-        {
-            m_inputMappingEditor->SetOpen(true);
-            Log(ConsoleSeverity::Warning, "Save or revert input mapping edits before switching projects or exiting.");
-            return false;
-        }
-        if (m_postProcessEditor && m_postProcessEditor->HasUnsavedChanges())
-        {
-            m_postProcessEditor->SetOpen(true);
-            Log(ConsoleSeverity::Warning, "Save or revert post process preset edits before switching projects or exiting.");
-            return false;
-        }
-        if (m_foliageEditor && m_foliageEditor->HasUnsavedChanges())
-        {
-            m_foliageEditor->SetOpen(true);
-            Log(ConsoleSeverity::Warning, "Save or revert foliage type edits before switching projects or exiting.");
-            return false;
-        }
-        return true;
-#endif
+    std::string EditorShell::SceneDocument::GetDocumentName() const
+    {
+        if (!m_shell.m_sceneDirty)
+            return "Project settings";
+        const auto *scene = m_shell.m_scene.get();
+        const auto path = scene ? std::filesystem::path(scene->GetFilePath()) : std::filesystem::path{};
+        return path.empty() ? std::string("Untitled scene") : "Scene " + path.filename().string();
+    }
+
+    bool EditorShell::SceneDocument::HasUnsavedChanges() const
+    {
+        return m_shell.m_project && (m_shell.m_sceneDirty || m_shell.m_projectDirty);
+    }
+
+    bool EditorShell::SceneDocument::SaveDocument(std::string &error)
+    {
+        if (m_shell.SaveProjectToDisk())
+            return true;
+        error = m_shell.m_statusMessage;
+        return false;
+    }
+
+    void EditorShell::SceneDocument::DiscardChanges()
+    {
+        // The caller is about to replace or close the scene; only the flags need clearing.
+        m_shell.MarkSceneClean();
+        m_shell.MarkProjectClean();
     }
 
     void EditorShell::UpdateWindowTitle()
@@ -4395,7 +4414,10 @@ namespace PlutoGE::ui
                     else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && ImGui::IsKeyPressed(ImGuiKey_O, false))
                         openProject();
                     else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_S, false))
-                        saveProject();
+                    {
+                        if (!SaveFocusedDocument())
+                            saveProject();
+                    }
                     else if (!fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_B, false))
                         buildProject();
                     else if (fileShortcutIO.KeyShift && !fileShortcutIO.KeyAlt && m_project && ImGui::IsKeyPressed(ImGuiKey_B, false))

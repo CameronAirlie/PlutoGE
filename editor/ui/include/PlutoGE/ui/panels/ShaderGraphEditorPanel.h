@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/ui/EditorDocument.h"
+#include "PlutoGE/ui/UnsavedSwitchGuard.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <GraphEditor.h>
@@ -11,7 +13,7 @@
 
 namespace PlutoGE::ui
 {
-    class ShaderGraphEditorPanel : public Panel
+    class ShaderGraphEditorPanel : public Panel, public IEditorDocument
     {
     public:
         ShaderGraphEditorPanel(const PanelConfig &config) : Panel(config) {}
@@ -19,8 +21,15 @@ namespace PlutoGE::ui
 
         void Render() override;
 
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
+
     private:
-        void LoadActiveGraph();
+        void LoadGraph(const std::string &reference);
 
         std::string m_loadedReference;
         render::ShaderGraph m_graph;
@@ -37,5 +46,6 @@ namespace PlutoGE::ui
         bool m_openAddNodePopup = false;
         bool m_showNodePreviews = true;
         bool m_dirty = false;
+        UnsavedSwitchGuard m_switchGuard;
     };
 }

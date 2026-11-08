@@ -402,6 +402,25 @@ namespace PlutoGE::ui
             Save();
     }
 
+    std::string FoliageEditorPanel::GetDocumentName() const
+    {
+        return m_session ? "Foliage type " + m_session->GetLabel() : std::string("Foliage type");
+    }
+
+    bool FoliageEditorPanel::SaveDocument(std::string &error)
+    {
+        if (!m_session || Save())
+            return true;
+        error = m_error;
+        return false;
+    }
+
+    void FoliageEditorPanel::DiscardChanges()
+    {
+        if (m_session)
+            m_session->Revert();
+    }
+
     bool FoliageEditorPanel::Save()
     {
         m_error.clear();

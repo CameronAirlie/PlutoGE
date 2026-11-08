@@ -15,6 +15,7 @@
 #include "PlutoGE/ui/animgraph/StateMachineView.h"
 
 #include <misc/cpp/imgui_stdlib.h>
+#include <filesystem>
 
 #include <imgui_internal.h>
 
@@ -92,6 +93,19 @@ namespace PlutoGE::ui
         m_document.Load(m_loadedReference, std::move(graph));
         m_canvas = {};
         m_canvasSearch.clear();
+    }
+
+    std::string AnimationGraphEditorPanel::GetDocumentName() const
+    {
+        return "Animation graph " + std::filesystem::path(m_loadedReference).filename().string();
+    }
+
+    bool AnimationGraphEditorPanel::SaveDocument(std::string &error)
+    {
+        if (Save())
+            return true;
+        error = "See the Console for details.";
+        return false;
     }
 
     bool AnimationGraphEditorPanel::Save()

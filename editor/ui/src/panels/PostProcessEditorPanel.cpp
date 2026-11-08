@@ -333,6 +333,22 @@ namespace PlutoGE::ui
             Save();
     }
 
+    std::string PostProcessEditorPanel::GetDocumentName() const
+    {
+        return m_session ? "Post-process preset " + m_session->GetLabel() : std::string("Post-process preset");
+    }
+
+    bool PostProcessEditorPanel::SaveDocument(std::string &error)
+    {
+        return !m_session || m_session->Save(error);
+    }
+
+    void PostProcessEditorPanel::DiscardChanges()
+    {
+        if (m_session)
+            m_session->Revert();
+    }
+
     void PostProcessEditorPanel::Save()
     {
         m_error.clear();

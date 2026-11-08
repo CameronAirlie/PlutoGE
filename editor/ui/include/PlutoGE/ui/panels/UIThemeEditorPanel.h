@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/theme/UIThemeDocument.h"
 #include "PlutoGE/ui/theme/UIThemeViews.h"
@@ -13,7 +14,7 @@ namespace PlutoGE::ui
     // Visual editor for UI themes: styles (with inheritance and per-state
     // values), shared variables, and the theme as text. Edits preview live in
     // the scene; asset themes save to their file, local styles with the scene.
-    class UIThemeEditorPanel : public Panel
+    class UIThemeEditorPanel : public Panel, public IEditorDocument
     {
     public:
         explicit UIThemeEditorPanel(const PanelConfig &config);
@@ -28,7 +29,12 @@ namespace PlutoGE::ui
         // Shows an already-open document, e.g. one with custom storage. Replaces
         // the current document without asking.
         void Open(std::unique_ptr<UIThemeDocument> document);
-        [[nodiscard]] bool HasUnsavedChanges() const;
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
         [[nodiscard]] const UIThemeDocument *GetDocument() const { return m_document.get(); }
 
     private:

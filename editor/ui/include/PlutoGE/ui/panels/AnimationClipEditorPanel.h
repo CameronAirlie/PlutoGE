@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/ui/EditorDocument.h"
+#include "PlutoGE/ui/UnsavedSwitchGuard.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <string>
@@ -9,15 +11,22 @@
 
 namespace PlutoGE::ui
 {
-    class AnimationClipEditorPanel final : public Panel
+    class AnimationClipEditorPanel final : public Panel, public IEditorDocument
     {
     public:
         explicit AnimationClipEditorPanel(const PanelConfig &config) : Panel(config) {}
         ~AnimationClipEditorPanel() override;
         void Render() override;
 
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
+
     private:
-        void LoadActiveClip();
+        void LoadClip(const std::string &reference);
         bool BeginPreview();
         void StopPreview();
         void UpdatePreview(bool advancePlayback);
@@ -41,5 +50,6 @@ namespace PlutoGE::ui
         std::size_t m_previewClipSignature = 0;
         bool m_expanded = true;
         bool m_dirty = false;
+        UnsavedSwitchGuard m_switchGuard;
     };
 }

@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include <ImSequencer.h>
+#include <filesystem>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
@@ -395,11 +396,10 @@ namespace PlutoGE::ui
         animation->SetTime(Time(m_currentFrame, m_clip.duration));
     }
 
-    void AnimationClipEditorPanel::LoadActiveClip()
+    void AnimationClipEditorPanel::LoadClip(const std::string &reference)
     {
         StopPreview();
-        auto &editor = EditorShell::GetInstance();
-        m_loadedReference = editor.GetActiveAnimationClipAssetReference();
+        m_loadedReference = reference;
         m_clip = {};
         if (!m_loadedReference.empty())
             core::Engine::GetInstance().GetAssetManager().LoadAnimationClipAsset(m_loadedReference, m_clip);
@@ -413,8 +413,14 @@ namespace PlutoGE::ui
     void AnimationClipEditorPanel::Render()
     {
         auto &editor = EditorShell::GetInstance();
-        const auto &reference = editor.GetActiveAnimationClipAssetReference();
-        if (reference != m_loadedReference) LoadActiveClip();
+        const std::string shellSelection = editor.GetActiveAnimationClipAssetReference();
+        if (auto next = m_switchGuard.Follow(shellSelection, m_loadedReference, HasUnsavedChanges()))
+            LoadClip(*next);
+        else if (!shellSelection.empty() && m_loadedReference.empty())
+            LoadClip(shellSelection);
+        if (auto next = m_switchGuard.DrawPrompt(*this, "Unsaved Animation Clip"))
+            LoadClip(*next);
+        const std::string reference = m_loadedReference;
         if (reference.empty())
         {
             ImGui::TextDisabled("Open an animation clip from the Content Browser.");
@@ -644,19 +650,39 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(!m_dirty);
         if (ImGui::Button("Save"))
         {
-            for (auto &channel : m_clip.channels.Mutable()) SortChannel(channel);
-            std::stable_sort(m_clip.events.begin(), m_clip.events.end(), [](const auto &a, const auto &b) { return a.time < b.time; });
             std::string error;
-            if (core::Engine::GetInstance().GetAssetManager().SaveAnimationClipAsset(reference, m_clip, &error))
-            {
-                m_dirty = false;
-                editor.MarkProjectDirty();
-                editor.Log(EditorShell::ConsoleSeverity::Info, "Saved animation clip: " + reference);
-            }
-            else editor.Log(EditorShell::ConsoleSeverity::Error, error);
+            if (!SaveDocument(error)) editor.Log(EditorShell::ConsoleSeverity::Error, error);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Revert")) LoadActiveClip();
+        if (ImGui::Button("Revert")) DiscardChanges();
         ImGui::EndDisabled();
+    }
+
+    std::string AnimationClipEditorPanel::GetDocumentName() const
+    {
+        return "Animation clip " + std::filesystem::path(m_loadedReference).filename().string();
+    }
+
+    bool AnimationClipEditorPanel::HasUnsavedChanges() const
+    {
+        return m_dirty && !m_loadedReference.empty();
+    }
+
+    void AnimationClipEditorPanel::DiscardChanges()
+    {
+        LoadClip(m_loadedReference);
+    }
+
+    bool AnimationClipEditorPanel::SaveDocument(std::string &error)
+    {
+        auto &editor = EditorShell::GetInstance();
+        for (auto &channel : m_clip.channels.Mutable()) SortChannel(channel);
+        std::stable_sort(m_clip.events.begin(), m_clip.events.end(), [](const auto &a, const auto &b) { return a.time < b.time; });
+        if (!core::Engine::GetInstance().GetAssetManager().SaveAnimationClipAsset(m_loadedReference, m_clip, &error))
+            return false;
+        m_dirty = false;
+        editor.MarkProjectDirty();
+        editor.Log(EditorShell::ConsoleSeverity::Info, "Saved animation clip: " + m_loadedReference);
+        return true;
     }
 }

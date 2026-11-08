@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/ui/FoliageTypeSession.h"
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <memory>
@@ -22,7 +23,7 @@ namespace PlutoGE::ui
     // Editor for .plutofoliage assets: what a plant draws, how it is placed, rendered, collided and moved by wind, with
     // the foliage types using it. Edits preview live on those types; saving keeps them. The settings themselves are the
     // sections the inspector shows for a type defined in the scene (FoliageTypeSections.h).
-    class FoliageEditorPanel final : public Panel
+    class FoliageEditorPanel final : public Panel, public IEditorDocument
     {
     public:
         explicit FoliageEditorPanel(const PanelConfig &config);
@@ -36,7 +37,12 @@ namespace PlutoGE::ui
         void OpenAsset(const std::string &reference);
         // Shows an already-open session, e.g. one with custom storage. Replaces the current one without asking.
         void Open(std::unique_ptr<FoliageTypeSession> session);
-        [[nodiscard]] bool HasUnsavedChanges() const;
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
 
     private:
         void OpenReference(const std::string &reference);

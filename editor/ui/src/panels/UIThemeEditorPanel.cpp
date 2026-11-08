@@ -34,6 +34,22 @@ namespace PlutoGE::ui
         return m_document && m_document->IsDirty();
     }
 
+    std::string UIThemeEditorPanel::GetDocumentName() const
+    {
+        return m_document ? "UI theme " + m_document->GetLabel() : std::string("UI theme");
+    }
+
+    bool UIThemeEditorPanel::SaveDocument(std::string &error)
+    {
+        return !m_document || m_document->Save(error);
+    }
+
+    void UIThemeEditorPanel::DiscardChanges()
+    {
+        if (m_document)
+            m_document->Revert();
+    }
+
     void UIThemeEditorPanel::Open(const UIThemeTarget &target, const std::string &style)
     {
         SetOpen(true);

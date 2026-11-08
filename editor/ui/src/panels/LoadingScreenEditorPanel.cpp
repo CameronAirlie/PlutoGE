@@ -50,7 +50,7 @@ namespace PlutoGE::ui
     }
     void LoadingScreenEditorPanel::Shutdown() { ClearPreview(); }
     void LoadingScreenEditorPanel::OnProjectChanged()
-    { ClearPreview(); m_reference.clear(); m_dirty = false; m_previewEnabled = false; m_sourcesValid = false; }
+    { ClearPreview(); m_reference.clear(); m_dirty = false; m_previewEnabled = false; m_sourcesValid = false; m_switchGuard.Reset(); }
 
     void LoadingScreenEditorPanel::LoadSources()
     {
@@ -72,10 +72,10 @@ namespace PlutoGE::ui
         }
         catch (const std::exception &e) { m_error = e.what(); }
     }
-    void LoadingScreenEditorPanel::Load()
+    void LoadingScreenEditorPanel::Load(const std::string &reference)
     {
         ClearPreview();
-        m_reference = EditorShell::GetInstance().GetActiveLoadingScreenAssetReference();
+        m_reference = reference;
         m_dirty = false;
         m_error.clear();
         m_sourcesValid = false;
@@ -151,7 +151,7 @@ h1 { font-size: 36px; margin: 18px 0; }
             project->RefreshAssetRegistry(); shell.MarkProjectDirty();
             shell.OpenLoadingScreenAsset(project->MakeAssetReference(assetPath));
             m_previewEnabled = true;
-            Load();
+            Load(shell.GetActiveLoadingScreenAssetReference());
         }
         catch (const std::exception &e) { m_error = e.what(); }
     }
@@ -187,12 +187,27 @@ h1 { font-size: 36px; margin: 18px 0; }
         catch (const std::exception &e) { m_error = e.what(); ClearPreview(); m_previewEnabled = false; }
     }
 
+    std::string LoadingScreenEditorPanel::GetDocumentName() const
+    {
+        return "Loading screen " + std::filesystem::path(m_reference).filename().string();
+    }
+
+    bool LoadingScreenEditorPanel::SaveDocument(std::string &error)
+    {
+        Save();
+        error = m_error;
+        return !m_dirty && m_error.empty();
+    }
+
     void LoadingScreenEditorPanel::Render()
     {
         auto &shell = EditorShell::GetInstance();
         auto *project = shell.GetProject();
         if (!project) { ImGui::TextDisabled("Open a project to author loading screens."); return; }
-        if (m_reference != shell.GetActiveLoadingScreenAssetReference()) Load();
+        const std::string selected = shell.GetActiveLoadingScreenAssetReference();
+        if (auto next = m_switchGuard.Follow(selected, m_reference, HasUnsavedChanges())) Load(*next);
+        else if (!selected.empty() && m_reference.empty()) Load(selected);
+        if (auto next = m_switchGuard.DrawPrompt(*this, "Unsaved Loading Screen")) Load(*next);
         ImGui::InputText("New asset name", m_name.data(), m_name.size());
         ImGui::SameLine(); if (ImGui::Button("Create screen")) Create();
         if (!m_reference.empty())
@@ -210,7 +225,7 @@ h1 { font-size: 36px; margin: 18px 0; }
                 ImGui::EndCombo();
             }
             if (ImGui::Button(m_dirty ? "Save and reload *" : "Save and reload")) Save();
-            ImGui::SameLine(); if (ImGui::Button("Reload from disk")) Load();
+            ImGui::SameLine(); if (ImGui::Button("Reload from disk")) DiscardChanges();
             ImGui::SameLine();
             if (ImGui::Button("Use as project loading screen"))
             { project->GetManifest().loadingScreen.assetReference = m_reference; shell.MarkProjectDirty(); }

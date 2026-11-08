@@ -30,6 +30,22 @@ belong to that panel.
 - Undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) and Play (F5) work everywhere except in text fields.
 - Backspace does not delete entities, so it is safe to press after leaving a text field. Use Delete.
 
+## Unsaved changes
+
+Closing the editor, opening another project or scene, or restoring a recovery backup first asks about every
+unsaved document in one dialog: the scene and project settings, and any asset editor with edits (material,
+particle system, shader graph, animation clip, animation graph, mesh, foliage type, input mapping, post-process
+preset, UI theme, UI document, loading screen). **Save** saves them all; if one fails, the editor stops, shows
+that editor and reports why. **Don't Save** discards them, and **Cancel** goes back.
+
+- **Switching assets.** Selecting another asset while its editor has unsaved edits keeps the editor on the
+  edited asset and asks Save / Don't Save / Cancel before switching. Select the other asset again to be asked
+  again after Cancel.
+- **Ctrl+S** saves the asset editor that has keyboard focus when it has unsaved edits, and otherwise saves the
+  project and scene.
+- On Linux the dialog uses zenity or kdialog. Without either, the editor refuses to continue and says so rather
+  than discarding anything.
+
 ## External script editor
 
 **Preferences > External Tools** chooses the program that opens C# files from the Console and the script

@@ -4,11 +4,16 @@
 #include "PlutoGE/scripting/ScriptErrors.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/ui/ConsoleLog.h"
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/ExternalScriptEditor.h"
 #include "PlutoGE/ui/ScriptDiagnostics.h"
+#include "PlutoGE/ui/UnsavedSwitchGuard.h"
 
+#include <array>
 #include <filesystem>
+#include <optional>
+#include <span>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -161,6 +166,88 @@ namespace
         Check(GetExternalScriptEditorCommand(settings).empty(), "Unknown preset falls back to system default");
     }
 
+    struct FakeDocument final : IEditorDocument
+    {
+        FakeDocument(std::string documentName, bool isDirty) : name(std::move(documentName)), dirty(isDirty) {}
+
+        std::string name;
+        bool dirty = false;
+        bool failSave = false;
+        int saves = 0, discards = 0, focuses = 0;
+
+        std::string GetDocumentName() const override { return name; }
+        bool HasUnsavedChanges() const override { return dirty; }
+        bool SaveDocument(std::string &error) override
+        {
+            ++saves;
+            if (failSave)
+            {
+                error = "disk full";
+                return false;
+            }
+            dirty = false;
+            return true;
+        }
+        void DiscardChanges() override { ++discards; dirty = false; }
+        void FocusDocument() override { ++focuses; }
+    };
+
+    void UnsavedDocumentsResolve()
+    {
+        FakeDocument scene("Scene Main", true);
+        FakeDocument clean("Material Clean", false);
+        FakeDocument material("Material Rock", true);
+        std::vector<IEditorDocument *> documents{&scene, &clean, &material};
+        std::string error;
+
+        std::vector<std::string> asked;
+        const auto answer = [&](UnsavedChangesChoice choice)
+        {
+            return [&asked, choice](std::span<const std::string> names)
+            {
+                asked.assign(names.begin(), names.end());
+                return choice;
+            };
+        };
+
+        Check(!ResolveUnsavedDocuments(documents, answer(UnsavedChangesChoice::Cancel), error), "Cancel stops");
+        Check((asked == std::vector<std::string>{"Scene Main", "Material Rock"}), "Only dirty documents are listed");
+        Check(scene.dirty && material.dirty && scene.saves == 0, "Cancel changes nothing");
+
+        material.failSave = true;
+        Check(!ResolveUnsavedDocuments(documents, answer(UnsavedChangesChoice::Save), error), "A failed save stops");
+        Check(!scene.dirty && material.dirty && material.focuses == 1, "Failed document keeps edits and is focused");
+        Check(error.find("Material Rock") != std::string::npos && error.find("disk full") != std::string::npos, "Save failure reason");
+
+        material.failSave = false;
+        Check(ResolveUnsavedDocuments(documents, answer(UnsavedChangesChoice::Save), error) && !material.dirty, "Save all");
+
+        material.dirty = true;
+        Check(ResolveUnsavedDocuments(documents, answer(UnsavedChangesChoice::Discard), error) && material.discards == 1 &&
+                  clean.discards == 0, "Discard only touches dirty documents");
+
+        bool askedAgain = false;
+        Check(ResolveUnsavedDocuments(documents, [&](std::span<const std::string>) { askedAgain = true; return UnsavedChangesChoice::Cancel; }, error) &&
+                  !askedAgain, "Nothing dirty: no question");
+
+        const std::array<std::string, 2> names{"Scene Main", "Material Rock"};
+        const auto message = FormatUnsavedChangesMessage(names);
+        Check(message.find("these") != std::string::npos && message.find("Material Rock") != std::string::npos, "Prompt lists documents");
+    }
+
+    void SwitchGuardFollowsSelection()
+    {
+        UnsavedSwitchGuard guard;
+        Check(guard.Follow("a", "", false) == std::optional<std::string>("a"), "First selection loads");
+        Check(!guard.Follow("a", "a", false), "Same selection does nothing");
+        Check(guard.Follow("b", "a", false) == std::optional<std::string>("b"), "Clean editor follows at once");
+        Check(!guard.Follow("c", "b", true) && guard.IsPromptPending(), "Dirty editor stays and asks");
+        Check(!guard.Follow("c", "b", true), "No repeated prompt for the same selection");
+        Check(!guard.Follow("", "b", false), "Clearing the selection keeps the shown asset");
+        guard.Reset();
+        Check(!guard.IsPromptPending() && guard.Follow("b", "", false) == std::optional<std::string>("b"), "Reset re-follows");
+    }
+
     void ScriptErrorThrottling()
     {
         scripting::ScriptErrorThrottle throttle;
@@ -204,6 +291,8 @@ int main()
         ExceptionLocations();
         ExternalEditorCommands();
         ScriptErrorThrottling();
+        UnsavedDocumentsResolve();
+        SwitchGuardFollowsSelection();
     }
     catch (const std::exception &error)
     {

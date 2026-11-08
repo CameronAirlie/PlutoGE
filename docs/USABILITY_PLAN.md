@@ -39,7 +39,7 @@ Status: `[ ]` not started, `[~]` in progress, `[x]` done, `[-]` deferred (with r
 - [x] **T1.4 Panel-scoped hotkeys.** Viewport W/E/R/F only when the viewport is hovered/focused; hierarchy Ctrl+G only
   when the hierarchy is focused; Backspace no longer deletes entities on Windows; Esc only clears selection from
   scene panels.
-- [ ] **T1.5 Asset editor documents.** An `IEditorDocument` interface (title, dirty, save, revert) implemented by the
+- [x] **T1.5 Asset editor documents.** An `IEditorDocument` interface (title, dirty, save, revert) implemented by the
   asset editors; the shell asks all dirty documents before closing / switching project; editors prompt before
   discarding edits when switching asset; Ctrl+S saves the focused document. Save / Don't Save / Cancel modal.
 - [ ] **T1.6 Small editor fixes.**
@@ -137,4 +137,22 @@ Record each completed item here with the date, what changed, and how it was veri
 - Viewport W/E/R/F need the viewport hovered or focused (keeps the hover-to-use behaviour from 434a4137) and no
   Ctrl. F frames from the hierarchy too.
 - Verified: `PlutoGEEditorUI` builds. Interactive check pending until the editor can be relinked.
+
+### 2026-11-08 — T1.5
+
+- `IEditorDocument` (`EditorDocument.h`): name, dirty, save, discard, focus. Implemented by the Material,
+  Particle System, Shader Graph, Animation Clip, Loading Screen, Animation Graph, Mesh, Foliage, Input Mapping,
+  Post-Process, UI Theme and RML document editors, plus `EditorShell::SceneDocument` for scene + project. The
+  shell discovers documents through `PanelManager::GetPanels()`, so the hand-maintained list in
+  `ConfirmContinueWithUnsavedChanges` is gone.
+- `ResolveUnsavedDocuments` asks once (Save / Don't Save / Cancel; MessageBox on Windows, zenity/kdialog on Linux)
+  and stops on the first failed save, focusing that editor.
+- `UnsavedSwitchGuard` generalises the Mesh editor's follow-the-selection prompt; the Material, Particle,
+  Shader Graph, Animation Clip and Loading Screen editors no longer drop edits when the selection changes. Their
+  save logic moved from button handlers into `SaveDocument`.
+- Ctrl+S saves the focused document first (`EditorShell::SaveFocusedDocument`).
+- Sequencer edits apply to the scene as undoable edits, so it is covered by the scene document.
+- Not done here: undo/redo for the Material, Particle and Loading Screen editors (still revert-only).
+- Verified: `PlutoGEEditorWorkflowTests` covers the resolver (cancel, save failure, save all, discard, nothing
+  dirty) and the guard's follow rules; `PlutoGEEditorUI` builds.
 

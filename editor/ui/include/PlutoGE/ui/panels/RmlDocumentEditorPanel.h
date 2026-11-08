@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/RmlDocumentEditSession.h"
@@ -9,7 +10,7 @@
 
 namespace PlutoGE::ui
 {
-    class RmlDocumentEditorPanel final : public Panel
+    class RmlDocumentEditorPanel final : public Panel, public IEditorDocument
     {
     public:
         explicit RmlDocumentEditorPanel(PanelConfig config) : Panel(std::move(config)) {}
@@ -18,7 +19,12 @@ namespace PlutoGE::ui
         void Render() override;
         void Shutdown() override;
         void OnProjectChanged() override;
-        bool HasUnsavedChanges() const { return m_session.IsDirty(); }
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_session.IsDirty(); }
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
         bool OwnsKeyboardFocus() const;
     private:
         void OpenPending();

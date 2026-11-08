@@ -15,6 +15,13 @@ namespace PlutoGE::ui
         return window && focused && ImGui::IsWindowChildOf(focused, window, true, false);
     }
 
+    void Panel::Focus()
+    {
+        SetOpen(true);
+        if (ImGui::GetCurrentContext())
+            ImGui::SetWindowFocus(GetName().c_str());
+    }
+
     namespace
     {
         bool IsHostedInMainViewport()

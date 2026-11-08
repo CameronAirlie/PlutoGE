@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/postprocess/PostProcessViews.h"
 
@@ -15,7 +16,7 @@ namespace PlutoGE::ui
     // Editor for .plutopostprocess presets: the effect stack grouped by pipeline stage, each effect's settings, and
     // the cameras using the preset. Edits preview live on those cameras; saving keeps them. Follows the preset
     // EditorShell opens; unsaved changes are offered for saving first.
-    class PostProcessEditorPanel : public Panel
+    class PostProcessEditorPanel : public Panel, public IEditorDocument
     {
     public:
         explicit PostProcessEditorPanel(const PanelConfig &config);
@@ -26,7 +27,12 @@ namespace PlutoGE::ui
 
         // Shows an already-open session, e.g. one with custom storage. Replaces the current one without asking.
         void Open(std::unique_ptr<PostProcessPresetSession> session);
-        [[nodiscard]] bool HasUnsavedChanges() const;
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
         [[nodiscard]] const PostProcessPresetSession *GetSession() const { return m_session.get(); }
 
     private:

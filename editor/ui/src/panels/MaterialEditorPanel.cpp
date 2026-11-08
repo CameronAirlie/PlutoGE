@@ -11,6 +11,7 @@
 #include "PlutoGE/ui/panels/ContentBrowserPanel.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -185,6 +186,7 @@ namespace PlutoGE::ui
     {
         m_loadedReference.clear();
         m_dirty = false;
+        m_switchGuard.Reset();
     }
 
     void MaterialEditorPanel::ApplyTextures(render::MaterialConfig &config)
@@ -233,12 +235,9 @@ namespace PlutoGE::ui
         return changed;
     }
 
-    void MaterialEditorPanel::LoadActiveMaterial()
+    void MaterialEditorPanel::LoadMaterial(const std::string &reference)
     {
         auto &editorShell = EditorShell::GetInstance();
-        // Keep a value copy while loading. Asset creation refreshes the project
-        // registry immediately before opening this panel.
-        const std::string reference = editorShell.GetActiveMaterialAssetReference();
         m_loadedReference = reference;
         m_dirty = false;
 
@@ -336,19 +335,104 @@ namespace PlutoGE::ui
         m_flipNormalY = config.flipNormalY;
     }
 
+    std::string MaterialEditorPanel::GetDocumentName() const
+    {
+        return "Material " + std::filesystem::path(m_loadedReference).filename().string();
+    }
+
+    bool MaterialEditorPanel::IsReadOnly() const
+    {
+        return assets::Project::IsEngineAssetReference(m_loadedReference) ||
+               core::Engine::GetInstance().GetAssetManager().IsImportedAsset(m_loadedReference);
+    }
+
+    bool MaterialEditorPanel::HasUnsavedChanges() const
+    {
+        return m_dirty && !m_loadedReference.empty() && !IsReadOnly();
+    }
+
+    void MaterialEditorPanel::DiscardChanges()
+    {
+        LoadMaterial(m_loadedReference);
+    }
+
+    bool MaterialEditorPanel::SaveDocument(std::string &errorMessage)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        const std::string reference = m_loadedReference;
+        if (IsReadOnly())
+        {
+            errorMessage = "Engine and imported materials are read-only; extract an authored copy to edit it.";
+            return false;
+        }
+        render::MaterialConfig config;
+        config.shaderGraphReference = m_shaderGraphReference.empty()
+                                          ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
+                                          : m_shaderGraphReference;
+        config.shaderGraphVariables = m_shaderGraphVariables;
+        config.shaderGraphTextures=m_shaderGraphTextures;
+        config.color = m_color;
+        config.surfaceType = m_surfaceType;
+        config.alphaMode = m_alphaMode;
+        config.alphaCutoff = (std::clamp)(m_alphaCutoff, 0.0f, 1.0f);
+        config.castsShadow = m_castsShadow;
+        config.twoSided = m_twoSided;
+        config.metallic = (std::clamp)(m_metallic, 0.0f, 1.0f);
+        config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
+        config.occlusionStrength = (std::clamp)(m_occlusionStrength, 0.0f, 1.0f);
+        config.clearCoat = (std::clamp)(m_clearCoat, 0.0f, 1.0f);
+        config.clearCoatRoughness = (std::clamp)(m_clearCoatRoughness, 0.0f, 1.0f);
+        config.sheenColor = glm::clamp(m_sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
+        config.sheenRoughness = (std::clamp)(m_sheenRoughness, 0.0f, 1.0f);
+        config.emission = glm::max(m_emission, glm::vec3(0.0f));
+        config.emissionTexCoord = m_emissionTexCoord;
+        config.emissionChannelMask = m_emissionChannelMask;
+        ApplyTextures(config);
+        config.emissionChannels = m_emissionChannels;
+        config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
+        config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
+        config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);
+        config.diffuseTransmission = std::clamp(m_diffuseTransmission, 0.0f, 1.0f);
+        config.diffuseTransmissionColor = m_diffuseTransmissionColor;
+        config.diffuseTransmissionAlbedoTint = std::clamp(m_diffuseTransmissionAlbedoTint, 0.0f, 1.0f);
+        config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);
+        config.ior = (std::clamp)(m_ior, 1.0f, 2.5f);
+        config.thickness = (std::max)(m_thickness, 0.0f);
+        config.attenuationColor = glm::clamp(m_attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f));
+        config.attenuationDistance = (std::max)(m_attenuationDistance, 0.0001f);
+        config.uvScale = glm::max(m_uvScale, glm::vec2(0.0001f));
+        config.flipNormalY = m_flipNormalY;
+
+        if (core::Engine::GetInstance().GetAssetManager().SaveMaterialAsset(reference, config, &errorMessage))
+        {
+            auto &engine = core::Engine::GetInstance();
+            if (auto *scene = engine.GetScene())
+            {
+                scene->RefreshMaterialAsset(reference, engine.GetAssetManager().LoadMaterialAsset(reference));
+            }
+            m_dirty = false;
+            editorShell.MarkSceneDirty();
+            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved material: " + reference);
+        }
+        return !m_dirty;
+    }
+
     void MaterialEditorPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();
-        const auto &reference = editorShell.GetActiveMaterialAssetReference();
+        // Copy: asset creation refreshes the project registry immediately before opening this panel.
+        const std::string selected = editorShell.GetActiveMaterialAssetReference();
+        if (auto next = m_switchGuard.Follow(selected, m_loadedReference, HasUnsavedChanges()))
+            LoadMaterial(*next);
+        else if (!selected.empty() && m_loadedReference.empty())
+            LoadMaterial(selected);
+        if (auto next = m_switchGuard.DrawPrompt(*this, "Unsaved Material"))
+            LoadMaterial(*next);
+        const std::string reference = m_loadedReference;
         if (reference.empty())
         {
             ImGui::TextDisabled("No material selected.");
             return;
-        }
-
-        if (reference != m_loadedReference)
-        {
-            LoadActiveMaterial();
         }
 
         const bool engineMaterial = assets::Project::IsEngineAssetReference(reference);
@@ -707,60 +791,9 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(engineMaterial || importedMaterial || !m_dirty);
         if (ImGui::Button("Save"))
         {
-            render::MaterialConfig config;
-            config.shaderGraphReference = m_shaderGraphReference.empty()
-                                              ? std::string(assets::Project::kBuiltinDefaultShaderGraphReference)
-                                              : m_shaderGraphReference;
-            config.shaderGraphVariables = m_shaderGraphVariables;
-            config.shaderGraphTextures=m_shaderGraphTextures;
-            config.color = m_color;
-            config.surfaceType = m_surfaceType;
-            config.alphaMode = m_alphaMode;
-            config.alphaCutoff = (std::clamp)(m_alphaCutoff, 0.0f, 1.0f);
-            config.castsShadow = m_castsShadow;
-            config.twoSided = m_twoSided;
-            config.metallic = (std::clamp)(m_metallic, 0.0f, 1.0f);
-            config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
-            config.occlusionStrength = (std::clamp)(m_occlusionStrength, 0.0f, 1.0f);
-            config.clearCoat = (std::clamp)(m_clearCoat, 0.0f, 1.0f);
-            config.clearCoatRoughness = (std::clamp)(m_clearCoatRoughness, 0.0f, 1.0f);
-            config.sheenColor = glm::clamp(m_sheenColor, glm::vec3(0.0f), glm::vec3(1.0f));
-            config.sheenRoughness = (std::clamp)(m_sheenRoughness, 0.0f, 1.0f);
-            config.emission = glm::max(m_emission, glm::vec3(0.0f));
-            config.emissionTexCoord = m_emissionTexCoord;
-            config.emissionChannelMask = m_emissionChannelMask;
-            ApplyTextures(config);
-            config.emissionChannels = m_emissionChannels;
-            config.subsurface = (std::clamp)(m_subsurface, 0.0f, 1.0f);
-            config.subsurfaceColor = glm::max(m_subsurfaceColor, glm::vec3(0.0f));
-            config.subsurfaceRadius = (std::max)(m_subsurfaceRadius, 0.001f);
-            config.diffuseTransmission = std::clamp(m_diffuseTransmission, 0.0f, 1.0f);
-            config.diffuseTransmissionColor = m_diffuseTransmissionColor;
-            config.diffuseTransmissionAlbedoTint = std::clamp(m_diffuseTransmissionAlbedoTint, 0.0f, 1.0f);
-            config.transmission = (std::clamp)(m_transmission, 0.0f, 1.0f);
-            config.ior = (std::clamp)(m_ior, 1.0f, 2.5f);
-            config.thickness = (std::max)(m_thickness, 0.0f);
-            config.attenuationColor = glm::clamp(m_attenuationColor, glm::vec3(0.0f), glm::vec3(1.0f));
-            config.attenuationDistance = (std::max)(m_attenuationDistance, 0.0001f);
-            config.uvScale = glm::max(m_uvScale, glm::vec2(0.0001f));
-            config.flipNormalY = m_flipNormalY;
-
             std::string errorMessage;
-            if (core::Engine::GetInstance().GetAssetManager().SaveMaterialAsset(reference, config, &errorMessage))
-            {
-                auto &engine = core::Engine::GetInstance();
-                if (auto *scene = engine.GetScene())
-                {
-                    scene->RefreshMaterialAsset(reference, engine.GetAssetManager().LoadMaterialAsset(reference));
-                }
-                m_dirty = false;
-                editorShell.MarkSceneDirty();
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved material: " + reference);
-            }
-            else
-            {
+            if (!SaveDocument(errorMessage))
                 editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to save material." : errorMessage);
-            }
         }
         ImGui::EndDisabled();
 
@@ -768,7 +801,7 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(!m_dirty);
         if (ImGui::Button("Revert"))
         {
-            LoadActiveMaterial();
+            DiscardChanges();
         }
         ImGui::EndDisabled();
     }

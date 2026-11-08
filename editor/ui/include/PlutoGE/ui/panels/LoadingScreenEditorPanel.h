@@ -1,4 +1,6 @@
 #pragma once
+#include "PlutoGE/ui/EditorDocument.h"
+#include "PlutoGE/ui/UnsavedSwitchGuard.h"
 #include "PlutoGE/ui/panels/Panel.h"
 #include "PlutoGE/ui/EditorCompositor.h"
 #include <array>
@@ -9,7 +11,7 @@
 namespace PlutoGE::core { class LoadingScreenSession; }
 namespace PlutoGE::ui
 {
-    class LoadingScreenEditorPanel : public Panel
+    class LoadingScreenEditorPanel : public Panel, public IEditorDocument
     {
     public:
         explicit LoadingScreenEditorPanel(const PanelConfig &config);
@@ -19,8 +21,15 @@ namespace PlutoGE::ui
         void PreparePreview();
         void Shutdown() override;
         void OnProjectChanged() override;
+
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_dirty && !m_reference.empty(); }
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override { Load(m_reference); }
+        void FocusDocument() override { Focus(); }
     private:
-        void Load();
+        void Load(const std::string &reference);
         void LoadSources();
         void Save();
         void Create();
@@ -35,5 +44,6 @@ namespace PlutoGE::ui
         bool m_dirty = false, m_previewEnabled = false, m_reloadPreview = false;
         bool m_sourcesValid = false;
         int m_stage = 1;
+        UnsavedSwitchGuard m_switchGuard;
     };
 }

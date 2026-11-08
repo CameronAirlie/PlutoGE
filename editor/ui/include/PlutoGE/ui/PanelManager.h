@@ -61,6 +61,7 @@ namespace PlutoGE::ui
         void ShutdownImGui();
 
         void AddPanel(Panel *panel);
+        [[nodiscard]] const std::vector<Panel *> &GetPanels() const { return m_panels; }
 
         void UpdatePanels();
 

@@ -2,6 +2,7 @@
 #pragma once
 
 #include "PlutoGE/ui/ConsoleLog.h"
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/EntityLocks.h"
 #include "PlutoGE/ui/EntitySelection.h"
 #include "PlutoGE/ui/FoliageEditTool.h"
@@ -468,6 +469,11 @@ namespace PlutoGE::ui
         void RenderGroundPlacement();
         void HandleRuntimeSceneLoadRequest(ViewportPanel &gameViewport);
         bool ConfirmContinueWithUnsavedChanges();
+        // The scene and project, then every editor panel that holds a document (see IEditorDocument).
+        [[nodiscard]] std::vector<IEditorDocument *> CollectEditorDocuments();
+        // Ctrl+S: saves the document whose editor has keyboard focus when it has unsaved changes. False when no
+        // such editor is focused, so the caller saves the project instead.
+        bool SaveFocusedDocument();
         void MarkSceneClean();
         void MarkProjectClean();
         void HandleEditorShortcuts(bool isRuntimeRunning, ProfilerPanel *profilerPanel);
@@ -529,6 +535,20 @@ namespace PlutoGE::ui
         std::string m_lastRecoveryState;
         std::chrono::steady_clock::time_point m_nextRecovery;
         bool m_projectDirty = false;
+        // The open scene and project settings, as one document for unsaved-change prompts.
+        class SceneDocument final : public IEditorDocument
+        {
+        public:
+            explicit SceneDocument(EditorShell &shell) : m_shell(shell) {}
+            [[nodiscard]] std::string GetDocumentName() const override;
+            [[nodiscard]] bool HasUnsavedChanges() const override;
+            bool SaveDocument(std::string &error) override;
+            void DiscardChanges() override;
+
+        private:
+            EditorShell &m_shell;
+        };
+        SceneDocument m_sceneDocument{*this};
         SceneEditHistory m_sceneHistory{*this};
         std::vector<std::filesystem::path> m_recentProjects;
         ConsoleLog m_consoleLog;

@@ -309,6 +309,22 @@ namespace PlutoGE::ui
             Save();
     }
 
+    std::string InputMappingEditorPanel::GetDocumentName() const
+    {
+        return m_session ? "Input mapping " + m_session->GetLabel() : std::string("Input mapping");
+    }
+
+    bool InputMappingEditorPanel::SaveDocument(std::string &error)
+    {
+        return !m_session || m_session->Save(error);
+    }
+
+    void InputMappingEditorPanel::DiscardChanges()
+    {
+        if (m_session)
+            m_session->Revert();
+    }
+
     void InputMappingEditorPanel::Save()
     {
         m_error.clear();

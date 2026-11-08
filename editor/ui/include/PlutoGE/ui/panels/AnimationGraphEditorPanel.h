@@ -3,6 +3,7 @@
 #include "PlutoGE/ui/animgraph/AnimationGraphDocument.h"
 #include "PlutoGE/ui/animgraph/AnimationGraphLiveSession.h"
 #include "PlutoGE/ui/animgraph/StateMachineCanvas.h"
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <string>
@@ -11,7 +12,7 @@ namespace PlutoGE::ui
 {
     // Hierarchical state machine editor: an outline/parameters/layers sidebar,
     // a canvas showing one group at a time, and a selection inspector.
-    class AnimationGraphEditorPanel : public Panel
+    class AnimationGraphEditorPanel : public Panel, public IEditorDocument
     {
     public:
         AnimationGraphEditorPanel(const PanelConfig &config) : Panel(config) {}
@@ -21,7 +22,12 @@ namespace PlutoGE::ui
 
         // While focused, the panel owns undo/redo/save shortcuts.
         bool OwnsKeyboardFocus() const;
-        bool HasUnsavedChanges() const { return m_document.IsDirty(); }
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override { return m_document.IsDirty(); }
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override { LoadActiveGraph(); }
+        void FocusDocument() override { Focus(); }
 
     private:
         void LoadActiveGraph();

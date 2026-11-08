@@ -3,6 +3,8 @@ add_library(PlutoGEEditorUI
     src/AuthoringUI.cpp
     src/ScriptSourceWatch.cpp
     src/ConsoleLog.cpp
+    src/EditorDocument.cpp
+    src/UnsavedSwitchGuard.cpp
     src/EditorConsole.cpp
     src/EditorSettings.cpp
     src/ExternalScriptEditor.cpp

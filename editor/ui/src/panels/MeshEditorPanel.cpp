@@ -302,6 +302,18 @@ namespace PlutoGE::ui
             Save();
     }
 
+    std::string MeshEditorPanel::GetDocumentName() const
+    {
+        return m_session ? "Mesh " + m_session->GetLabel() : std::string("Mesh");
+    }
+
+    bool MeshEditorPanel::SaveDocument(std::string &error)
+    {
+        Save();
+        error = m_error;
+        return !m_session || !m_session->IsDirty();
+    }
+
     void MeshEditorPanel::Save()
     {
         m_error.clear();

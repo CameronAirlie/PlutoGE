@@ -2,6 +2,8 @@
 
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/MaterialTextureSlots.h"
+#include "PlutoGE/ui/EditorDocument.h"
+#include "PlutoGE/ui/UnsavedSwitchGuard.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <glm/glm.hpp>
@@ -11,7 +13,7 @@
 
 namespace PlutoGE::ui
 {
-    class MaterialEditorPanel : public Panel
+    class MaterialEditorPanel : public Panel, public IEditorDocument
     {
     public:
         MaterialEditorPanel(const PanelConfig &config) : Panel(config) {}
@@ -20,8 +22,17 @@ namespace PlutoGE::ui
         void Render() override;
         void OnProjectChanged() override;
 
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
+
     private:
-        void LoadActiveMaterial();
+        void LoadMaterial(const std::string &reference);
+        // Engine materials and materials owned by a model import cannot be saved here.
+        [[nodiscard]] bool IsReadOnly() const;
         // The edited texture reference and sampled channel of each material texture slot.
         std::string &TexturePath(render::MaterialTextureSlot slot) { return m_texturePaths[static_cast<std::size_t>(slot)]; }
         render::TextureChannel &TextureChannel(render::MaterialTextureSlot slot)
@@ -72,5 +83,6 @@ namespace PlutoGE::ui
         bool m_flipNormalY = false;
         glm::vec2 m_uvScale{1.0f, 1.0f};
         bool m_dirty = false;
+        UnsavedSwitchGuard m_switchGuard;
     };
 }

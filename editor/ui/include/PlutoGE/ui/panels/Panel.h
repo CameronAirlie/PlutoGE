@@ -27,6 +27,8 @@ namespace PlutoGE::ui
         bool WasVisibleLastFrame() const { return m_wasVisibleLastFrame; }
         // True while keyboard focus is in this panel's window or its children.
         bool HasKeyboardFocus() const;
+        // Opens the panel and brings its window to the front with keyboard focus.
+        void Focus();
         void SetInteractionEnabled(bool enabled) { m_isInteractionEnabled = enabled; }
         void SetVisualAlpha(float alpha) { m_visualAlpha = alpha; }
 

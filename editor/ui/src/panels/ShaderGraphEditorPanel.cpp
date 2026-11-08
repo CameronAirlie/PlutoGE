@@ -10,6 +10,7 @@
 #include "PlutoGE/render/NoiseHash.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <array>
 #include <cstring>
 #include <cmath>
@@ -1385,10 +1386,9 @@ namespace PlutoGE::ui
         }
     }
 
-    void ShaderGraphEditorPanel::LoadActiveGraph()
+    void ShaderGraphEditorPanel::LoadGraph(const std::string &reference)
     {
-        auto &editorShell = EditorShell::GetInstance();
-        m_loadedReference = editorShell.GetActiveShaderGraphAssetReference();
+        m_loadedReference = reference;
         bool loaded = false;
         m_graph = core::Engine::GetInstance().GetAssetManager().LoadShaderGraphAsset(m_loadedReference, &loaded);
         if (!loaded)
@@ -1409,19 +1409,59 @@ namespace PlutoGE::ui
         m_undo.clear(); m_redo.clear(); m_editGesture=false;
     }
 
+    std::string ShaderGraphEditorPanel::GetDocumentName() const
+    {
+        return "Shader graph " + std::filesystem::path(m_loadedReference).filename().string();
+    }
+
+    bool ShaderGraphEditorPanel::HasUnsavedChanges() const
+    {
+        return m_dirty && !m_loadedReference.empty() && !assets::Project::IsEngineAssetReference(m_loadedReference);
+    }
+
+    void ShaderGraphEditorPanel::DiscardChanges()
+    {
+        LoadGraph(m_loadedReference);
+    }
+
+    bool ShaderGraphEditorPanel::SaveDocument(std::string &errorMessage)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        if (assets::Project::IsEngineAssetReference(m_loadedReference))
+        {
+            errorMessage = "Engine shader graphs are read-only.";
+            return false;
+        }
+        std::string validationError;
+        if (!render::ValidateShaderGraph(m_graph, &validationError))
+        {
+            errorMessage = "The graph is not valid: " + validationError;
+            return false;
+        }
+        if (!core::Engine::GetInstance().GetAssetManager().SaveShaderGraphAsset(m_loadedReference, m_graph, &errorMessage))
+            return false;
+        m_dirty = false;
+        editorShell.MarkProjectDirty();
+        editorShell.MarkSceneDirty();
+        editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved shader graph: " + m_loadedReference);
+        return true;
+    }
+
     void ShaderGraphEditorPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();
-        const auto &reference = editorShell.GetActiveShaderGraphAssetReference();
+        const std::string selected = editorShell.GetActiveShaderGraphAssetReference();
+        if (auto next = m_switchGuard.Follow(selected, m_loadedReference, HasUnsavedChanges()))
+            LoadGraph(*next);
+        else if (!selected.empty() && m_loadedReference.empty())
+            LoadGraph(selected);
+        if (auto next = m_switchGuard.DrawPrompt(*this, "Unsaved Shader Graph"))
+            LoadGraph(*next);
+        const std::string reference = m_loadedReference;
         if (reference.empty())
         {
             ImGui::TextDisabled("No shader graph selected.");
             return;
-        }
-
-        if (reference != m_loadedReference)
-        {
-            LoadActiveGraph();
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
@@ -1869,17 +1909,8 @@ namespace PlutoGE::ui
         if (ImGui::Button("Save"))
         {
             std::string errorMessage;
-            if (core::Engine::GetInstance().GetAssetManager().SaveShaderGraphAsset(reference, m_graph, &errorMessage))
-            {
-                m_dirty = false;
-                editorShell.MarkProjectDirty();
-                editorShell.MarkSceneDirty();
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved shader graph: " + reference);
-            }
-            else
-            {
+            if (!SaveDocument(errorMessage))
                 editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to save shader graph." : errorMessage);
-            }
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
@@ -1887,7 +1918,7 @@ namespace PlutoGE::ui
         if (ImGui::Button("Revert"))
         {
             historyAction=true;
-            LoadActiveGraph();
+            DiscardChanges();
         }
         ImGui::EndDisabled();
         if (!historyAction && EditorGraphHash(m_graph)!=beforeHash)

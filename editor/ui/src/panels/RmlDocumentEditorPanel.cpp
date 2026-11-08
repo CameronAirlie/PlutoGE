@@ -44,6 +44,32 @@ namespace PlutoGE::ui
         m_texture = {}; m_preview.Reset(); m_previewRevision = 0;
     }
 
+    std::string RmlDocumentEditorPanel::GetDocumentName() const
+    {
+        const auto &buffers = m_session.GetBuffers();
+        return buffers.empty() ? std::string("UI document") : "UI document " + buffers.front().path.filename().string();
+    }
+
+    bool RmlDocumentEditorPanel::SaveDocument(std::string &error)
+    {
+        Save();
+        error = m_error;
+        return m_error.empty() && !m_session.IsDirty();
+    }
+
+    void RmlDocumentEditorPanel::DiscardChanges()
+    {
+        try
+        {
+            m_session.Reload();
+            m_error.clear();
+        }
+        catch (const std::exception &reloadError)
+        {
+            m_error = reloadError.what();
+        }
+    }
+
     void RmlDocumentEditorPanel::Save()
     {
         try

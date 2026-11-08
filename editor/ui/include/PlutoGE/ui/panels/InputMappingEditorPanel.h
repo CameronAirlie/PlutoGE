@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/ui/input/InputMappingViews.h"
+#include "PlutoGE/ui/EditorDocument.h"
 #include "PlutoGE/ui/panels/Panel.h"
 
 #include <memory>
@@ -14,7 +15,7 @@ namespace PlutoGE::ui
     // Editor for .plutoinput mappings: actions and their bindings, a report of
     // shared and free inputs, and live device readings. Follows the mapping
     // EditorShell opens; unsaved changes are offered for saving first.
-    class InputMappingEditorPanel : public Panel
+    class InputMappingEditorPanel : public Panel, public IEditorDocument
     {
     public:
         explicit InputMappingEditorPanel(const PanelConfig &config);
@@ -26,7 +27,12 @@ namespace PlutoGE::ui
         // Shows an already-open session, e.g. one with custom storage.
         // Replaces the current one without asking.
         void Open(std::unique_ptr<InputMappingSession> session);
-        [[nodiscard]] bool HasUnsavedChanges() const;
+        // IEditorDocument
+        [[nodiscard]] std::string GetDocumentName() const override;
+        [[nodiscard]] bool HasUnsavedChanges() const override;
+        bool SaveDocument(std::string &error) override;
+        void DiscardChanges() override;
+        void FocusDocument() override { Focus(); }
         [[nodiscard]] const InputMappingSession *GetSession() const { return m_session.get(); }
 
     private:

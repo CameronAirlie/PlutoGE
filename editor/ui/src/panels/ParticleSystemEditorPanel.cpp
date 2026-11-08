@@ -9,6 +9,7 @@
 #include "PlutoGE/ui/EditorShell.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <imgui.h>
 
 namespace PlutoGE::ui
@@ -46,10 +47,9 @@ namespace PlutoGE::ui
         }
     }
 
-    void ParticleSystemEditorPanel::LoadActiveAsset()
+    void ParticleSystemEditorPanel::LoadAsset(const std::string &reference)
     {
-        auto &editorShell = EditorShell::GetInstance();
-        m_loadedReference = editorShell.GetActiveParticleSystemAssetReference();
+        m_loadedReference = reference;
         bool loaded = false;
         m_asset = core::Engine::GetInstance().GetAssetManager().LoadParticleSystemAsset(m_loadedReference, &loaded);
         if (!loaded)
@@ -59,19 +59,104 @@ namespace PlutoGE::ui
         m_dirty = false;
     }
 
+    std::string ParticleSystemEditorPanel::GetDocumentName() const
+    {
+        return "Particle system " + std::filesystem::path(m_loadedReference).filename().string();
+    }
+
+    bool ParticleSystemEditorPanel::HasUnsavedChanges() const
+    {
+        return m_dirty && !m_loadedReference.empty();
+    }
+
+    void ParticleSystemEditorPanel::DiscardChanges()
+    {
+        LoadAsset(m_loadedReference);
+    }
+
+    bool ParticleSystemEditorPanel::SaveDocument(std::string &errorMessage)
+    {
+        auto &editorShell = EditorShell::GetInstance();
+        const std::string reference = m_loadedReference;
+        m_asset.duration = std::max(m_asset.duration, 0.0001f);
+        m_asset.maxParticles = std::clamp(m_asset.maxParticles, 1, 200000);
+        m_asset.startLifetime = std::max(m_asset.startLifetime, 0.0001f);
+        m_asset.lifetimeVariation = std::clamp(m_asset.lifetimeVariation, 0.0f, 1.0f);
+        m_asset.startSpeed = std::max(m_asset.startSpeed, 0.0f);
+        m_asset.speedVariation = std::clamp(m_asset.speedVariation, 0.0f, 1.0f);
+        m_asset.startSize = std::max(m_asset.startSize, 0.0f);
+        m_asset.sizeVariation = std::clamp(m_asset.sizeVariation, 0.0f, 1.0f);
+        m_asset.startColor = glm::clamp(m_asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        m_asset.endColor = glm::clamp(m_asset.endColor, glm::vec4(0.0f), glm::vec4(1.0f));
+        m_asset.endSize = std::max(m_asset.endSize, 0.0f);
+        m_asset.drag = std::max(m_asset.drag, 0.0f);
+        m_asset.turbulenceStrength = std::max(m_asset.turbulenceStrength, 0.0f);
+        m_asset.turbulenceFrequency = std::max(m_asset.turbulenceFrequency, 0.0001f);
+        m_asset.rotationSpeedVariation = std::clamp(m_asset.rotationSpeedVariation, 0.0f, 1.0f);
+        m_asset.startRotationVariation = std::clamp(m_asset.startRotationVariation, 0.0f, 180.0f);
+        m_asset.fadeInFraction = std::clamp(m_asset.fadeInFraction, 0.0f, 1.0f);
+        m_asset.fadeOutFraction = std::clamp(m_asset.fadeOutFraction, 0.0f, 1.0f);
+        m_asset.flipbookColumns = std::clamp(m_asset.flipbookColumns, 1, 64);
+        m_asset.flipbookRows = std::clamp(m_asset.flipbookRows, 1, 64);
+        m_asset.flipbookFramesPerSecond = std::max(m_asset.flipbookFramesPerSecond, 0.0f);
+        m_asset.softParticleDistance = std::max(m_asset.softParticleDistance, 0.0001f);
+        m_asset.smokeLightingStrength = std::clamp(m_asset.smokeLightingStrength, 0.0f, 1.0f);
+        m_asset.smokeAmbient = std::clamp(m_asset.smokeAmbient, 0.0f, 1.0f);
+        m_asset.volumeDensity = std::max(m_asset.volumeDensity, 0.0f);
+        m_asset.volumeNoiseStrength = std::clamp(m_asset.volumeNoiseStrength, 0.0f, 1.0f);
+        m_asset.volumeNoiseFrequency = std::max(m_asset.volumeNoiseFrequency, 0.0001f);
+        m_asset.volumeEdgeSoftness = std::max(m_asset.volumeEdgeSoftness, 0.01f);
+        m_asset.volumeSelfShadow = std::clamp(m_asset.volumeSelfShadow, 0.0f, 4.0f);
+        m_asset.emissionRateOverTime = std::max(m_asset.emissionRateOverTime, 0.0f);
+        m_asset.burstTime = std::max(m_asset.burstTime, 0.0f);
+        m_asset.burstCount = std::max(m_asset.burstCount, 0);
+        m_asset.shapeSize = glm::max(m_asset.shapeSize, glm::vec3(0.0f));
+        m_asset.shapeRadius = std::max(m_asset.shapeRadius, 0.0f);
+        m_asset.coneAngle = std::clamp(m_asset.coneAngle, 0.0f, 89.0f);
+        m_asset.collisionDampening = std::clamp(m_asset.collisionDampening, 0.0f, 1.0f);
+        m_asset.collisionBounce = std::max(m_asset.collisionBounce, 0.0f);
+        m_asset.collisionLifetimeLoss = std::clamp(m_asset.collisionLifetimeLoss, 0.0f, 1.0f);
+        m_asset.collisionRadius = std::max(m_asset.collisionRadius, 0.0f);
+        m_asset.collisionMaxChecksPerFrame = std::clamp(m_asset.collisionMaxChecksPerFrame, 0, 200000);
+        m_asset.trailLifetime = std::max(m_asset.trailLifetime, 0.0f);
+        m_asset.trailWidth = std::max(m_asset.trailWidth, 0.0f);
+        m_asset.collisionSubEmitterCount = std::max(m_asset.collisionSubEmitterCount, 0);
+        m_asset.deathSubEmitterCount = std::max(m_asset.deathSubEmitterCount, 0);
+
+        if (core::Engine::GetInstance().GetAssetManager().SaveParticleSystemAsset(reference, m_asset, &errorMessage))
+        {
+            if (auto *scene = editorShell.GetScene())
+            {
+                for (auto *component : scene->GetParticleSystemComponents())
+                {
+                    if (component && component->GetParticleSystemAssetReference() == reference)
+                    {
+                        component->ApplyParticleSystemAsset(m_asset);
+                    }
+                }
+            }
+            m_dirty = false;
+            editorShell.MarkProjectDirty();
+            editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved particle system: " + reference);
+        }
+        return !m_dirty;
+    }
+
     void ParticleSystemEditorPanel::Render()
     {
         auto &editorShell = EditorShell::GetInstance();
-        const auto &reference = editorShell.GetActiveParticleSystemAssetReference();
+        const std::string selected = editorShell.GetActiveParticleSystemAssetReference();
+        if (auto next = m_switchGuard.Follow(selected, m_loadedReference, HasUnsavedChanges()))
+            LoadAsset(*next);
+        else if (!selected.empty() && m_loadedReference.empty())
+            LoadAsset(selected);
+        if (auto next = m_switchGuard.DrawPrompt(*this, "Unsaved Particle System"))
+            LoadAsset(*next);
+        const std::string reference = m_loadedReference;
         if (reference.empty())
         {
             ImGui::TextDisabled("No particle system selected.");
             return;
-        }
-
-        if (reference != m_loadedReference)
-        {
-            LoadActiveAsset();
         }
 
         ImGui::TextWrapped("Particle System: %s", reference.c_str());
@@ -264,72 +349,9 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(!m_dirty);
         if (ImGui::Button("Save"))
         {
-            m_asset.duration = std::max(m_asset.duration, 0.0001f);
-            m_asset.maxParticles = std::clamp(m_asset.maxParticles, 1, 200000);
-            m_asset.startLifetime = std::max(m_asset.startLifetime, 0.0001f);
-            m_asset.lifetimeVariation = std::clamp(m_asset.lifetimeVariation, 0.0f, 1.0f);
-            m_asset.startSpeed = std::max(m_asset.startSpeed, 0.0f);
-            m_asset.speedVariation = std::clamp(m_asset.speedVariation, 0.0f, 1.0f);
-            m_asset.startSize = std::max(m_asset.startSize, 0.0f);
-            m_asset.sizeVariation = std::clamp(m_asset.sizeVariation, 0.0f, 1.0f);
-            m_asset.startColor = glm::clamp(m_asset.startColor, glm::vec4(0.0f), glm::vec4(1.0f));
-            m_asset.endColor = glm::clamp(m_asset.endColor, glm::vec4(0.0f), glm::vec4(1.0f));
-            m_asset.endSize = std::max(m_asset.endSize, 0.0f);
-            m_asset.drag = std::max(m_asset.drag, 0.0f);
-            m_asset.turbulenceStrength = std::max(m_asset.turbulenceStrength, 0.0f);
-            m_asset.turbulenceFrequency = std::max(m_asset.turbulenceFrequency, 0.0001f);
-            m_asset.rotationSpeedVariation = std::clamp(m_asset.rotationSpeedVariation, 0.0f, 1.0f);
-            m_asset.startRotationVariation = std::clamp(m_asset.startRotationVariation, 0.0f, 180.0f);
-            m_asset.fadeInFraction = std::clamp(m_asset.fadeInFraction, 0.0f, 1.0f);
-            m_asset.fadeOutFraction = std::clamp(m_asset.fadeOutFraction, 0.0f, 1.0f);
-            m_asset.flipbookColumns = std::clamp(m_asset.flipbookColumns, 1, 64);
-            m_asset.flipbookRows = std::clamp(m_asset.flipbookRows, 1, 64);
-            m_asset.flipbookFramesPerSecond = std::max(m_asset.flipbookFramesPerSecond, 0.0f);
-            m_asset.softParticleDistance = std::max(m_asset.softParticleDistance, 0.0001f);
-            m_asset.smokeLightingStrength = std::clamp(m_asset.smokeLightingStrength, 0.0f, 1.0f);
-            m_asset.smokeAmbient = std::clamp(m_asset.smokeAmbient, 0.0f, 1.0f);
-            m_asset.volumeDensity = std::max(m_asset.volumeDensity, 0.0f);
-            m_asset.volumeNoiseStrength = std::clamp(m_asset.volumeNoiseStrength, 0.0f, 1.0f);
-            m_asset.volumeNoiseFrequency = std::max(m_asset.volumeNoiseFrequency, 0.0001f);
-            m_asset.volumeEdgeSoftness = std::max(m_asset.volumeEdgeSoftness, 0.01f);
-            m_asset.volumeSelfShadow = std::clamp(m_asset.volumeSelfShadow, 0.0f, 4.0f);
-            m_asset.emissionRateOverTime = std::max(m_asset.emissionRateOverTime, 0.0f);
-            m_asset.burstTime = std::max(m_asset.burstTime, 0.0f);
-            m_asset.burstCount = std::max(m_asset.burstCount, 0);
-            m_asset.shapeSize = glm::max(m_asset.shapeSize, glm::vec3(0.0f));
-            m_asset.shapeRadius = std::max(m_asset.shapeRadius, 0.0f);
-            m_asset.coneAngle = std::clamp(m_asset.coneAngle, 0.0f, 89.0f);
-            m_asset.collisionDampening = std::clamp(m_asset.collisionDampening, 0.0f, 1.0f);
-            m_asset.collisionBounce = std::max(m_asset.collisionBounce, 0.0f);
-            m_asset.collisionLifetimeLoss = std::clamp(m_asset.collisionLifetimeLoss, 0.0f, 1.0f);
-            m_asset.collisionRadius = std::max(m_asset.collisionRadius, 0.0f);
-            m_asset.collisionMaxChecksPerFrame = std::clamp(m_asset.collisionMaxChecksPerFrame, 0, 200000);
-            m_asset.trailLifetime = std::max(m_asset.trailLifetime, 0.0f);
-            m_asset.trailWidth = std::max(m_asset.trailWidth, 0.0f);
-            m_asset.collisionSubEmitterCount = std::max(m_asset.collisionSubEmitterCount, 0);
-            m_asset.deathSubEmitterCount = std::max(m_asset.deathSubEmitterCount, 0);
-
             std::string errorMessage;
-            if (core::Engine::GetInstance().GetAssetManager().SaveParticleSystemAsset(reference, m_asset, &errorMessage))
-            {
-                if (auto *scene = editorShell.GetScene())
-                {
-                    for (auto *component : scene->GetParticleSystemComponents())
-                    {
-                        if (component && component->GetParticleSystemAssetReference() == reference)
-                        {
-                            component->ApplyParticleSystemAsset(m_asset);
-                        }
-                    }
-                }
-                m_dirty = false;
-                editorShell.MarkProjectDirty();
-                editorShell.Log(EditorShell::ConsoleSeverity::Info, "Saved particle system: " + reference);
-            }
-            else
-            {
+            if (!SaveDocument(errorMessage))
                 editorShell.Log(EditorShell::ConsoleSeverity::Error, errorMessage.empty() ? "Failed to save particle system." : errorMessage);
-            }
         }
         ImGui::EndDisabled();
 
@@ -337,7 +359,7 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(!m_dirty);
         if (ImGui::Button("Revert"))
         {
-            LoadActiveAsset();
+            DiscardChanges();
         }
         ImGui::EndDisabled();
     }

@@ -136,6 +136,21 @@ namespace PlutoGE::render
             return (local + FoliageWindMaxDisplacement(command.foliageWind)) * scale;
         }
 
+        // The whole mesh's triangles at each of `lodCount` LODs (a submesh without one keeps its coarsest), so every
+        // submesh of a model changes detail at the same size.
+        std::vector<float> MeshTrianglesPerLod(const Mesh &mesh, std::size_t lodCount)
+        {
+            std::vector<float> triangles(lodCount, 0.0f);
+            for (std::size_t part = 0; part < mesh.GetSubmeshCount(); ++part)
+            {
+                const auto partLods = mesh.GetSubmeshLodCount(part);
+                if (partLods == 0) continue;
+                for (std::size_t lod = 0; lod < lodCount; ++lod)
+                    triangles[lod] += static_cast<float>(mesh.GetSubmeshLodRange(part, std::min(lod, partLods - 1)).indexCount / 3);
+            }
+            return triangles;
+        }
+
         // RenderCommand::maxShadowDistance: whether any of the command's casters lies within its producer's shadow
         // distance of the camera. Whole commands (foliage cells) are kept or dropped; the bound is conservative.
         bool WithinShadowDistance(const RenderCommand &command, const glm::vec3 &camera)
@@ -1248,6 +1263,34 @@ namespace PlutoGE::render
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
                 draw.maxInstanceRadius = deformed ? draw.shadowBoundsRadius : MaxInstanceRadius(command);
+                // A LOD range as the draws address it: identical ranges share one canonical copy.
+                const auto canonicalFirst = [&](const Submesh::LodRange &range)
+                {
+                    const auto canonical = rigidMesh->canonicalGeometry.find(GeometryRangeKey({range.indexOffset, range.indexCount}));
+                    return canonical != rigidMesh->canonicalGeometry.end() ? canonical->second : range.indexOffset;
+                };
+                // Instanced casters (foliage cells) take one LOD for a whole cell, and draw it into every clipmap level
+                // of virtual shadow maps, whose coarse levels cannot resolve it; their chain lets those levels draw
+                // coarser LODs. Shared packets move between the visible and shadow lists, so every list's draws carry
+                // it, and only virtual shadow maps read it.
+                if (rigidMesh && !emissiveGi && lodCount > 1 && command.instanceModels && command.instanceModels->size() > 1)
+                {
+                    auto &chain = rigidMesh->shadowCasterLods[command.submeshIndex];
+                    if (!chain)
+                    {
+                        auto built = std::make_shared<ShadowCasterLodChain>();
+                        built->boundsRadius = command.mesh->GetBounds().radius;
+                        const auto triangles = MeshTrianglesPerLod(*command.mesh, lodCount);
+                        for (std::size_t lod = 0; lod < lodCount; ++lod)
+                        {
+                            const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, lod);
+                            built->lods.push_back({canonicalFirst(range), range.indexCount, triangles[lod]});
+                        }
+                        chain = std::move(built);
+                    }
+                    draw.shadowCasterLods = chain;
+                    draw.shadowCasterLod = static_cast<std::uint32_t>(std::min<std::size_t>(drawLod, lodCount - 1));
+                }
                 // Camera passes pick each instance chunk's LOD (foliage clusters span many LODs' distances).
                 if (rigidMesh && !shadowOnly && !emissiveGi && lodCount > 1 && command.instanceModels &&
                     command.instanceModels->size() > 1)
@@ -1270,25 +1313,11 @@ namespace PlutoGE::render
                         for (std::size_t lod = 0; lod < lodCount; ++lod)
                         {
                             const auto range = command.mesh->GetSubmeshLodRange(command.submeshIndex, lod);
-                            std::uint32_t lodFirst = range.indexOffset;
-                            if (const auto canonical = rigidMesh->canonicalGeometry.find(GeometryRangeKey({range.indexOffset, range.indexCount}));
-                                canonical != rigidMesh->canonicalGeometry.end())
-                                lodFirst = canonical->second;
-                            built->lods.push_back({lodFirst, range.indexCount,
+                            built->lods.push_back({canonicalFirst(range), range.indexCount,
                                                    lod < submesh.lods.size() ? submesh.lods[lod].maxScreenRadiusPixels
                                                                              : std::numeric_limits<float>::max()});
                         }
-                        // The whole mesh's triangles per LOD (a submesh without one keeps its coarsest).
-                        std::vector<float> meshTriangles(lodCount, 0.0f);
-                        for (std::size_t part = 0; part < command.mesh->GetSubmeshCount(); ++part)
-                        {
-                            const auto partLods = command.mesh->GetSubmeshLodCount(part);
-                            if (partLods == 0) continue;
-                            for (std::size_t lod = 0; lod < lodCount; ++lod)
-                                meshTriangles[lod] += static_cast<float>(
-                                    command.mesh->GetSubmeshLodRange(part, std::min(lod, partLods - 1)).indexCount / 3);
-                        }
-                        built->ApplyTriangleDensity(meshTriangles);
+                        built->ApplyTriangleDensity(MeshTrianglesPerLod(*command.mesh, lodCount));
                         chain = std::move(built);
                     }
                     draw.instanceLods = chain;

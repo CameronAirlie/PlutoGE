@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <cstddef>
 #include "PlutoGE/render/VirtualShadowConfig.h"
 
 namespace PlutoGE::render
@@ -62,6 +63,44 @@ namespace PlutoGE::render
             finest *= 0.5f;
         }
         return levels;
+    }
+
+    // How caster draws split into page chunks, finest first. Finer chunking draws less geometry into each page, but
+    // needs more chunks, and all of a frame's chunks must fit in PLUTO_VSM_MAX_DRAW_CHUNKS.
+    enum class VirtualShadowChunking : std::uint8_t
+    {
+        // Mesh clusters of up to 16 models, per LOD variant: coarse levels draw coarser LODs (ShadowCasterLods.h).
+        ClusteredLodVariants,
+        // Mesh clusters of up to 16 models, at each draw's own LOD.
+        Clustered,
+        // Each draw's whole range, up to 16 models a chunk, each model planned separately.
+        MaskedModels,
+        // Each draw's whole range, up to 64 models a chunk, planned together; always fits (VirtualShadowMaps::CanPrepare).
+        WholeDraws,
+    };
+    // The chunks each finer chunking would need this frame.
+    struct VirtualShadowChunkCounts
+    {
+        std::size_t clusteredLodVariants = 0, clustered = 0, maskedModels = 0;
+    };
+    // The finest chunking whose chunks fit `capacity`, so a scene over the limit degrades one step at a time rather
+    // than straight to whole draws. Mesh clusters (both clustered chunkings) need cluster culling enabled.
+    constexpr VirtualShadowChunking SelectVirtualShadowChunking(const VirtualShadowChunkCounts &counts, bool clusterCulling,
+                                                                std::size_t capacity = PLUTO_VSM_MAX_DRAW_CHUNKS) noexcept
+    {
+        if (clusterCulling && counts.clusteredLodVariants <= capacity) return VirtualShadowChunking::ClusteredLodVariants;
+        if (clusterCulling && counts.clustered <= capacity) return VirtualShadowChunking::Clustered;
+        if (counts.maskedModels <= capacity) return VirtualShadowChunking::MaskedModels;
+        return VirtualShadowChunking::WholeDraws;
+    }
+
+    // Caster chunk slots to allocate for `chunks` caster chunks. GPU buffers scale with it (the page-major membership
+    // records most, one per slot and physical page), so it follows the scene's need rather than the next power of two,
+    // in steps of 512 with an eighth to spare, so a scene gaining a few chunks does not reallocate and clear them often.
+    constexpr std::size_t VirtualShadowCasterCapacity(std::size_t chunks) noexcept
+    {
+        const std::size_t wanted = std::max<std::size_t>(chunks + chunks / 8, 1);
+        return std::max(chunks, std::min<std::size_t>((wanted + 511) / 512 * 512, PLUTO_VSM_MAX_DRAW_CHUNKS));
     }
 
     // Consumes completed GPU observations, never waits for them. Independent

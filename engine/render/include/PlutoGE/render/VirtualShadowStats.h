@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <array>
 #include "PlutoGE/render/VirtualShadowConfig.h"
+#include "PlutoGE/render/VirtualShadowPolicy.h"
 
 namespace PlutoGE::render
 {
@@ -17,9 +18,12 @@ namespace PlutoGE::render
         std::uint32_t gpuFrame = 0, submittedIndirectCommands = 0, receiverDraws = 0;
         bool gpuCountersAvailable = false;
         bool reusedFrame = false, reusedPreparation = false;
-        // Whether caster chunks were built from mesh clusters this frame, or fell back to whole-draw chunks because
-        // clustering exceeded PLUTO_VSM_MAX_DRAW_CHUNKS.
+        // How caster draws split into chunks this frame: the finest chunking within PLUTO_VSM_MAX_DRAW_CHUNKS
+        // (SelectVirtualShadowChunking). clusteredChunks is whether that chunking uses mesh clusters.
+        VirtualShadowChunking chunking = VirtualShadowChunking::WholeDraws;
         bool clusteredChunks = false;
+        // Caster chunks this frame that serve only some levels: a caster's LOD variants (ShadowCasterLods.h).
+        std::uint32_t lodVariantChunks = 0;
         std::uint32_t clusterBoundsBuilds = 0, clusterBoundsCacheHits = 0;
         std::uint32_t reusedPackets = 0, rebuiltPackets = 0, pageDrawBatches = 0, effectiveTriangleBudget = 0;
         float resolutionScale = 1.0f;

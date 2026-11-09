@@ -12,7 +12,7 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
                [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
                [--quality=low|medium|high|ultra] [--camera-pan=<degrees>] [--camera-travel=<metres>]
-               [--disable-effects=<Type>[,<Type>...]|all]
+               [--disable-effects=<Type>[,<Type>...]|all] [--cpu-instance-binning]
 ```
 
 * Frames record on the render thread unless `--serial-render` is given (see [frame-pipeline.md](frame-pipeline.md));
@@ -44,6 +44,8 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
 * `--camera-travel` moves the base camera +/- that many metres along its horizontal forward axis over a
   600-frame cycle. Use it to measure costs that only appear as the camera travels, which panning alone does not
   exercise: LOD changes, producer shadow distances, VSM page churn and the ray-traced GI scene.
+* `--cpu-instance-binning` bins instanced draws on the CPU, without occlusion, instead of with GPU instance culling
+  (the default; `PLUTO_GPU_INSTANCE_CULLING=0` does the same outside benchmarks). Use it to A/B the culling.
 * `--disable-effects` turns off the named post-process effects (type names such as `SSAO`, `DDGI`; `all` for
   every one) on the rendering camera each frame, exactly as the editor's Enabled toggle does, so a run per effect
   shows what it costs. A disabled effect records no GPU work at all (`PlutoGE{Vulkan,OpenGL}DisabledEffectTests`).

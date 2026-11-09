@@ -193,14 +193,19 @@ struct InstanceIndex
 };
 [[vk::binding(2, 3)]] StructuredBuffer<InstanceIndex> instanceIndices : register(t2, space3);
 
+// The first record or bin entry of the draw: instanceRange.z is 0 for records from x, 1 for bins from entry x, 2 for
+// the GPU-written bin whose offset is header entry x (InstanceCulling.slang, where draws have no first instance).
+uint instanceFirstEntry()
+{
+    return instanceRange.z == 2 ? instanceIndices[instanceRange.x].record : instanceRange.x;
+}
+
 InstanceObjectParameters instanceObject(uint instanceId)
 {
     if (instanceRange.y == 0)
         return instances[instanceId];
-    // z: 0 records from x, 1 through bins from entry x, 2 through the GPU-written bin whose offset is header entry x
-    // (InstanceCulling.slang, where draws have no first instance).
-    const uint first = instanceRange.z == 2 ? instanceIndices[instanceRange.x].record : instanceRange.x;
-    // CPU bin entries carry a dither code above the record index (instanceLodFade); GPU-written entries have none.
+    const uint first = instanceFirstEntry();
+    // Bin entries (CPU and GPU written) carry a dither code above the record index (instanceLodFade).
     const uint index = instanceRange.z != 0 ? instanceIndices[first + instanceId].record & 0x00ffffffu : first + instanceId;
     const InstanceRecord record = instanceRecords[index];
     InstanceObjectParameters result;
@@ -217,14 +222,14 @@ float interleavedGradientNoise(float2 pixel, float frame)
     return frac(noise + frame * 0.61803398875);
 }
 
-// An instance's LOD crossfade, from its CPU bin entry (BasicInstanceLodChain::SelectBlend): instances near a LOD or
+// An instance's LOD crossfade, from its bin entry (BasicInstanceLodChain::SelectBlend, or InstanceCulling.slang): instances near a LOD or
 // impostor switch draw on both sides with complementary dithers. Positive f keeps the finer side where the dither
 // noise is at least f; negative keeps the coarser side where it is below -f.
 float instanceLodFade(uint instanceId)
 {
-    if (instanceRange.y == 0 || instanceRange.z != 1)
+    if (instanceRange.y == 0 || instanceRange.z == 0)
         return 0.0;
-    const uint code = instanceIndices[instanceRange.x + instanceId].record >> 24;
+    const uint code = instanceIndices[instanceFirstEntry() + instanceId].record >> 24;
     const float fade = float(code & 0x7fu) / 127.0;
     return (code & 0x80u) != 0u ? -fade : fade;
 }

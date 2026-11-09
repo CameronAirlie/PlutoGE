@@ -181,8 +181,6 @@ default preset to 20.1 ms.
 
 - **Normals do not bend.** Lighting uses the rest normal, which is invisible at grass and leaf scales but slightly flat
   on strongly bent trunks.
-- **GPU instance culling** (`GpuInstanceCulling`, off by default) does not pad instance bounds yet, so swaying
-  instances at the screen edge can cull a few pixels early.
 - **Impostors** do not sway. Frame-blended impostors could offset their cards by the root's lean.
 - **Other systems still have their own wind settings.** Clouds, particles, cloth, fog and the ocean do not read the
   scene wind yet. `SceneWindVelocity` and `BuildSceneWind` give them the same field, gusts included, when they adopt it.

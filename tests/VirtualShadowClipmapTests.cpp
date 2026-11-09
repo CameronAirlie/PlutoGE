@@ -1,5 +1,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -138,6 +140,55 @@ int main()
         Require(spotMoved.origins[spotLevel].z != spotRotated.origins[spotLevel].z, "Spot rotation retained stale projection epoch");
         lighting.spotLights[0].light.castsShadows = false;
         Require(VirtualShadowMaps::BuildClipmaps(lighting).origins[spotLevel].w == 0, "Disabled spotlight still requests pages");
+
+        // Chunking steps down one level at a time as the chunks a frame needs exceed the capacity.
+        Require(SelectVirtualShadowChunking({100, 50, 10}, true, 4096) == VirtualShadowChunking::ClusteredLodVariants,
+                "LOD variants were not used within capacity");
+        Require(SelectVirtualShadowChunking({5000, 4000, 2000}, true, 4096) == VirtualShadowChunking::Clustered,
+                "Clusters were dropped while they still fitted");
+        Require(SelectVirtualShadowChunking({5000, 5000, 4000}, true, 4096) == VirtualShadowChunking::MaskedModels,
+                "Over-capacity clusters fell back past masked models");
+        Require(SelectVirtualShadowChunking({5000, 5000, 5000}, true, 4096) == VirtualShadowChunking::WholeDraws,
+                "Masked models were used beyond capacity");
+        Require(SelectVirtualShadowChunking({10, 10, 10}, false, 4096) == VirtualShadowChunking::MaskedModels,
+                "Mesh clusters were used with cluster culling off");
+        // Caster slots follow the chunks needed, with headroom, never fewer than needed nor more than the limit.
+        Require(VirtualShadowCasterCapacity(0) == 512 && VirtualShadowCasterCapacity(5120) == 6144,
+                "Caster capacity does not follow the chunks needed");
+        Require(VirtualShadowCasterCapacity(8000) == PLUTO_VSM_MAX_DRAW_CHUNKS &&
+                VirtualShadowCasterCapacity(PLUTO_VSM_MAX_DRAW_CHUNKS) == PLUTO_VSM_MAX_DRAW_CHUNKS,
+                "Caster capacity exceeded the chunk limit");
+
+        // Caster LOD variants: a 10 m-wide caster drawn at LOD 2, under Verdant's five fine levels and the root.
+        ShadowCasterLodChain chain;
+        chain.boundsRadius = 1.0f;
+        for (const float triangles : {60000.0f, 15000.0f, 5000.0f, 1500.0f, 500.0f}) chain.lods.push_back({0, 0, triangles});
+        std::array<float, PLUTO_VSM_LEVELS> texels{};
+        const std::array<float, 6> verdantTexels{0.003f, 0.006f, 0.012f, 0.024f, 0.049f, 0.78f};
+        std::copy(verdantTexels.begin(), verdantTexels.end(), texels.begin());
+        const auto variants = SelectShadowCasterLodVariants(chain, 2, 5.0f, texels);
+        std::uint32_t covered = 0;
+        bool disjoint = true;
+        for (const auto &variant : variants)
+        {
+            disjoint &= (covered & variant.levels) == 0;
+            covered |= variant.levels;
+            Require(variant.lod >= 2, "A level drew a caster finer than its own LOD");
+        }
+        Require(disjoint && covered == PLUTO_VSM_ALL_LEVELS, "LOD variants do not partition the levels");
+        Require(variants.size() == 3 && variants[0].lod == 2 && variants[1].lod == 3 && variants[2].lod == 4 &&
+                variants[1].levels == (1u << 4) && variants[2].levels == (1u << 5),
+                "Coarse levels did not take the LODs their texels resolve");
+        Require((variants[0].levels & (1u << PLUTO_VSM_DIRECTIONAL_LEVELS)) != 0,
+                "A level without a texel size did not keep the caster's own LOD");
+        // A LOD saving too little over the next finer one kept is not worth its chunks: its levels draw the finer one.
+        chain.lods[3].meshTriangles = 4000.0f;
+        const auto merged = SelectShadowCasterLodVariants(chain, 2, 5.0f, texels);
+        Require(merged.size() == 2 && merged[0].lod == 2 && (merged[0].levels & (1u << 4)) != 0 && merged[1].lod == 4,
+                "A LOD saving little over the next finer one got its own variant");
+        Require(SelectShadowCasterLodVariants(chain, 2, -1.0f, texels).size() == 1 &&
+                SelectShadowCasterLodVariants(chain, 9, 5.0f, texels).size() == 1,
+                "A caster without a usable radius or LOD got variants");
         std::cout << "Virtual shadow clipmap policy passed\n";
         return 0;
     }

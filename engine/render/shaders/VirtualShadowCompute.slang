@@ -140,6 +140,23 @@ uint inclusivePlanScan(uint value, uint lane)
     }
     return planScan[lane];
 }
+// Whether a physical page still holds depth for its virtual page: drawn under the level's current projection epoch,
+// and inside the level's current clipmap.
+bool pageRetained(VirtualShadowPage p)
+{
+    int level = p.address.z;
+    int2 local = p.address.xy - vsm.origins[level].xy;
+    return p.state.y != 0 && p.address.w == vsm.origins[level].z && all(local >= 0) && all(local < int(virtualGrid(vsm, level)));
+}
+// Frames a page may go unrequested before it is preferred for reuse over recently requested pages.
+#define VSM_STALE_PAGE_FRAMES 32u
+// The order free slots are reused in (lowest first): those holding no usable depth, pages unrequested for at least
+// VSM_STALE_PAGE_FRAMES, then the rest, which the request set is most likely to want back.
+uint freeSlotPriority(VirtualShadowPage p)
+{
+    if (!pageRetained(p)) return 0u;
+    return vsm.limits.y - p.state.y >= VSM_STALE_PAGE_FRAMES ? 1u : 2u;
+}
 [shader("compute")][numthreads(VSM_PLANNING_LANES, 1, 1)]
 void allocateMain(uint lane : SV_GroupIndex)
 {
@@ -149,8 +166,7 @@ void allocateMain(uint lane : SV_GroupIndex)
         p.state.w = 0;
         int level = p.address.z;
         int2 local = p.address.xy - vsm.origins[level].xy;
-        bool retained = p.state.y != 0 && p.address.w == vsm.origins[level].z &&
-            all(local >= 0) && all(local < int(virtualGrid(vsm, level)));
+        bool retained = pageRetained(p);
         planRequested[slot] = 0;
         if (retained && requestMask[uint2(local.x, local.y + level * PLUTO_VSM_GRID)] != 0)
             planRequested[slot] = uint(level) + 1;
@@ -218,17 +234,20 @@ void allocateMain(uint lane : SV_GroupIndex)
     }
     AllMemoryBarrierWithGroupSync();
     // Reuse the request scratch as an ordered free-slot list after all readers
-    // of its old contents have completed.
+    // of its old contents have completed. Slots whose depth is no use go first, then pages unrequested for longest:
+    // a page leaves the request set for a frame whenever jitter moves receivers across a level boundary, and taking
+    // free slots in slot order overwrote such pages ahead of empty slots, to render them again when they returned.
     uint freeCount = 0;
-    for (uint first = 0; first < vsm.pool.x; first += VSM_PLANNING_LANES)
-    {
-        uint slot = first + lane;
-        uint freeSlot = slot < vsm.pool.x && planFree[slot] == 0 ? 1u : 0u;
-        uint rank = inclusivePlanScan(freeSlot, lane);
-        if (freeSlot != 0) planRequested[freeCount + rank - 1] = slot;
-        freeCount += planScan[VSM_PLANNING_LANES - 1];
-        GroupMemoryBarrierWithGroupSync();
-    }
+    for (uint priority = 0; priority < 3; ++priority)
+        for (uint first = 0; first < vsm.pool.x; first += VSM_PLANNING_LANES)
+        {
+            uint slot = first + lane;
+            uint freeSlot = slot < vsm.pool.x && planFree[slot] == 0 && freeSlotPriority(pages[slot]) == priority ? 1u : 0u;
+            uint rank = inclusivePlanScan(freeSlot, lane);
+            if (freeSlot != 0) planRequested[freeCount + rank - 1] = slot;
+            freeCount += planScan[VSM_PLANNING_LANES - 1];
+            GroupMemoryBarrierWithGroupSync();
+        }
     uint nextFree = 0;
     for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
     {
@@ -304,11 +323,21 @@ bool intersects(float4 sphere, float4 extents, VirtualShadowPage page)
     }
     return true;
 }
+// Whether a caster chunk can draw into the page at all: the page's level is one the chunk serves (a LOD variant serves
+// only the levels whose texels its detail suits), and the chunk's whole bounds reach it.
+bool casterReaches(VirtualShadowCaster caster, VirtualShadowPage page)
+{
+    return virtualCasterServesLevel(caster, page.address.z) && intersects(caster.bounds, caster.extents, page);
+}
+// A caster/page pair's membership record. Records are page-major, so the consecutive casters a wave evaluates for one
+// page (signatureMain), and for each updated page (binMain), read one contiguous block rather than a record per cache
+// line: planning reads a record for every pair of every requested page, which made it bandwidth-bound.
+uint membershipRecord(uint caster, uint slot) { return slot * virtualMembershipStride(vsm) + caster; }
 // Which of a caster's models reach the page: a bit per chunk-local model for masked chunks of several models, otherwise
 // 1 when the chunk does (its page entry then draws every model). Zero when none does.
 uint intersectionMask(uint index, VirtualShadowCaster caster, VirtualShadowPage page)
 {
-    if (!intersects(caster.bounds, caster.extents, page)) return 0;
+    if (!casterReaches(caster, page)) return 0;
     if (caster.draw.z <= 1 || !virtualMaskedCaster(caster)) return 1;
     uint mask = 0;
     for (uint model = 0; model < caster.draw.z; ++model)
@@ -332,6 +361,9 @@ uint swayingMask(VirtualShadowCaster caster, VirtualShadowPage page, uint mask)
 }
 uint mixHash(uint hash, uint value) { return (hash ^ value) * 16777619u; }
 groupshared uint4 signatureItems[64];
+// Whether any caster of the current block of 64 reaches the page. A page reaches few casters, so most blocks have
+// nothing to hash, and lane 0 skips them rather than stepping over 64 empty items.
+groupshared uint signatureBlockUsed;
 [shader("compute")][numthreads(64, 1, 1)]
 void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 {
@@ -339,14 +371,19 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
     if (p.state.y != vsm.limits.y) return;
     uint2 hash = uint2(2166136261u, 3339675911u), staticHash = hash;
     uint staticCost = 0, dynamicCost = 0;
+    if (lane == 0) signatureBlockUsed = 0;
+    GroupMemoryBarrierWithGroupSync();
     for (uint first = 0; first < vsm.limits.x; first += 64)
     {
         uint index = first + lane;
         uint4 item = 0;
-        if (index < vsm.limits.x)
+        VirtualShadowCaster caster;
+        if (index < vsm.limits.x) caster = casters[index];
+        // A chunk serving other levels (a LOD variant) never reaches the page, and its membership record for the page
+        // is neither read nor written: binMain applies the same test before reading one.
+        if (index < vsm.limits.x && virtualCasterServesLevel(caster, p.address.z))
         {
-            VirtualShadowCaster caster = casters[index];
-            uint at = index * vsm.pool.x + group.x;
+            uint at = membershipRecord(index, group.x);
             uint4 cached = membership[at];
             if (cached.x != caster.identity.z || cached.y != p.pending.w)
             {
@@ -365,10 +402,11 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             }
         }
         signatureItems[lane] = item;
+        if (item.w != 0) InterlockedOr(signatureBlockUsed, 1u);
         GroupMemoryBarrierWithGroupSync();
         // Retain the exact ordered hash and saturating cost; parallelising the
         // intersection/cache loads must not change cache identity or budgets.
-        if (lane == 0) for (uint itemIndex = 0; itemIndex < min(64u, vsm.limits.x - first); ++itemIndex)
+        if (lane == 0 && signatureBlockUsed != 0) for (uint itemIndex = 0; itemIndex < min(64u, vsm.limits.x - first); ++itemIndex)
         {
             uint4 next = signatureItems[itemIndex];
             if (next.w == 0) continue;
@@ -382,6 +420,8 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
             }
             else dynamicCost += min(next.z, 0xffffffffu - dynamicCost);
         }
+        // Only lane 0 reads the flag; it clears it before the barrier that precedes the next block's writes.
+        if (lane == 0) signatureBlockUsed = 0;
         GroupMemoryBarrierWithGroupSync();
     }
     if (lane == 0)
@@ -507,7 +547,9 @@ void binMain(uint3 id : SV_DispatchThreadID)
     {
         uint slot = requests[PLUTO_VSM_UPDATE_LIST_OFFSET + update];
         if (layered && pages[slot].freshness.w == 0) continue;
-        uint mask = membership[index * vsm.pool.x + slot].z;
+        // Planning skipped (and so never validated) the records of levels the chunk does not serve.
+        if (!virtualCasterServesLevel(caster, pages[slot].address.z)) continue;
+        uint mask = membership[membershipRecord(index, slot)].z;
         if (mask == 0) continue;
         const uint sways = swayingMask(caster, pages[slot], mask);
         if (!masked) pageLists[list + count++] = virtualPageEntry(slot, 0, sways != 0);

@@ -1,5 +1,6 @@
 #pragma once
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/ShaderGraph.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstdint>
 #include <iostream>
@@ -9,8 +10,10 @@
 #include <vector>
 
 // GPU instance culling (GpuInstanceCulling, InstanceCulling.slang) bins instances as the CPU does: the same frame
-// rendered with GPU and CPU binning is identical, for instances near (LOD0) and far (LOD1), outside the view, beyond
-// the draw distance and below the chain's covered size.
+// rendered with GPU and CPU binning is identical, for instances near (LOD0) and far (LOD1), crossfading between them
+// (BasicInstanceLodChain::SelectBlend), outside the view, beyond the draw distance and below the chain's covered size.
+// With occlusion, instances the previous frame's depth hid but this frame's does not are drawn in the same frame (the
+// second culling phase), so the frame still matches CPU binning.
 template <class ReadPixels>
 inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
 {
@@ -44,6 +47,8 @@ inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, Re
     for (int i = 0; i < 4; ++i) place({i * 2.0f - 3.0f, 0.0f, 6.0f});      // behind the camera
     for (int i = 0; i < 4; ++i) place({i * 6.0f - 9.0f, 0.0f, -90.0f});    // beyond the draw distance
     for (int i = 0; i < 4; ++i) place({i * 30.0f - 45.0f, -10.0f, -60.0f}); // below the covered size
+    // Across the LOD switch (about 8.2 pixels of radius at this view): these fade, binned into both LODs, dithered.
+    for (int i = 0; i < 5; ++i) place({i * 1.2f - 2.4f, 1.6f, -4.4f - i * 0.15f});
     auto chain = std::make_shared<BasicInstanceLodChain>();
     chain->boundsRadius = 0.71f;
     chain->lods = {{0, lod0Count, 1e30f}, {lod0Count, 6, 4.0f}};
@@ -102,4 +107,64 @@ inline void CheckGpuInstanceCulling(PlutoGE::render::BasicRenderer &renderer, Re
         else if (distanceScale != 1.0f && drawn >= litAtDefaultScale)
             throw std::runtime_error("A LOD distance scale must move instances out of the covered size");
     }
+    lighting.foliageDetail = 1.0f;
+    chain->distanceScale = 1.0f;
+
+    // Swaying: both culls widen visibility by the wind's reach (instances at the view's edges sway into it).
+    {
+        SetShaderGraphTimeSeconds(2.0f);
+        draw.foliageWind = {true, 0.0f, 0.3f, 0.5f, 0.0f};
+        lighting.wind.speed = 14.0f;
+        const auto [cpu, cpuBinned] = render(false);
+        const auto [gpu, gpuBinned] = render(true);
+        renderer.SetGpuInstanceCulling(false);
+        draw.foliageWind = {};
+        lighting.wind.speed = 0.0f;
+        SetShaderGraphTimeSeconds(0.0f);
+        std::size_t different = 0;
+        for (std::size_t texel = 0; texel + 3 < cpu.size(); texel += 4)
+            different += cpu[texel] != gpu[texel] || cpu[texel + 1] != gpu[texel + 1] || cpu[texel + 2] != gpu[texel + 2];
+        std::cout << "GPU instance culling (swaying): " << different << " of " << cpu.size() / 4
+                  << " pixels differ from CPU binning" << std::endl;
+        if (different != 0)
+            throw std::runtime_error("GPU instance culling must keep swaying instances CPU binning keeps");
+    }
+
+    // Disocclusion: a wall in front of every instance is drawn in one frame and gone in the next. The next frame's
+    // first culling phase still tests the wall's depth and hides the instances; its second phase, against the depth
+    // drawn so far, must draw them in that same frame.
+    BasicDraw wall;
+    wall.mesh = &mesh;
+    wall.castsShadow = false;
+    wall.firstIndex = 0;
+    wall.indexCount = lod0Count;
+    wall.model = glm::scale(glm::translate(glm::mat4(1), {0.0f, 0.0f, -2.0f}), glm::vec3(20.0f));
+    lighting.occlusionMode = OcclusionMode::Cull;
+    const std::vector<BasicDraw> walled{wall, draw};
+    const auto renderUncovered = [&](bool gpu)
+    {
+        renderer.SetGpuInstanceCulling(gpu);
+        renderer.Render(projection * lighting.view, lighting, std::span(walled));
+        renderer.Render(projection * lighting.view, lighting, std::span(walled));
+        renderer.Render(projection * lighting.view, lighting, std::span(&draw, 1));
+        return std::pair(readPixels(renderer.GetColorTexture()), renderer.GetFrameStats().gpuCullingSecondPhase);
+    };
+    const auto [cpu, cpuSecondPhase] = renderUncovered(false);
+    const auto [gpu, gpuSecondPhase] = renderUncovered(true);
+    renderer.SetGpuInstanceCulling(false);
+    lighting.occlusionMode = OcclusionMode::Off;
+    std::size_t different = 0, drawn = 0;
+    for (std::size_t texel = 0; texel + 3 < cpu.size(); texel += 4)
+    {
+        different += cpu[texel] != gpu[texel] || cpu[texel + 1] != gpu[texel + 1] || cpu[texel + 2] != gpu[texel + 2];
+        drawn += static_cast<unsigned>(cpu[texel]) > 128u;
+    }
+    std::cout << "GPU instance culling (uncovered by a wall, occlusion on): second phase " << (gpuSecondPhase ? "ran" : "did not run")
+              << ", " << different << " of " << cpu.size() / 4 << " pixels differ from CPU binning (" << drawn << " lit)\n";
+    if (!gpuSecondPhase)
+        throw std::runtime_error("GPU instance culling must cull occlusion in two phases with a depth prepass");
+    if (drawn == 0)
+        throw std::runtime_error("The uncovered instances drew nothing");
+    if (different != 0)
+        throw std::runtime_error("Instances the previous frame's depth hid must be drawn in the frame that shows them");
 }

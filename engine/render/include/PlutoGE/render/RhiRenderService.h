@@ -54,7 +54,8 @@ namespace PlutoGE::render
         // While a frame is in flight the caller must not use the device's command context or this service's renderers
         // directly; every call into this service other than the stats getters waits for that frame first.
         void SetRenderThreadEnabled(bool enabled);
-        // Bins instanced draws on the GPU (BasicRenderer::SetGpuInstanceCulling); off by default.
+        // Bins instanced draws on the GPU with two-phase occlusion (BasicRenderer::SetGpuInstanceCulling); on by default,
+        // where the device supports it. Off bins them on the CPU, without occlusion.
         void SetGpuInstanceCulling(bool enabled);
         [[nodiscard]] bool IsRenderThreadEnabled() const noexcept { return m_renderThread != nullptr; }
         // Blocks until the frame in flight, if any, has been presented. Returns false when recording or presenting it
@@ -126,7 +127,7 @@ namespace PlutoGE::render
         LoadingScreenRenderer m_loadingRenderer;
         // Render thread state: the worker, the frame's runtime UI captured for it, and stats published on completion.
         std::unique_ptr<core::FrameWorker> m_renderThread;
-        bool m_gpuInstanceCulling = false;
+        bool m_gpuInstanceCulling = true;
         rhi::DeferredCommandList m_runtimeUiCommands;
         NativeUIRenderer m_nativeUi;
         RhiSceneTimingStats m_completedTimingStats;

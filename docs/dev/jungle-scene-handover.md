@@ -182,7 +182,9 @@ need no manual registration.
      runtime, and the RHI renderer culls their instances (`RetainedRenderSceneTests`).
    - The exhaustion error now lists the arena's largest consumers by buffer debug name (`UniformArenaReport` in
      `VulkanDevice.cpp`), so a recurrence says what to fix.
-10. **GPU instance culling is off by default.** `GpuInstanceCulling` (count, scan and scatter compute passes, with
+10. **Resolved 2026-11-09: GPU instance culling is on by default**, with two-phase occlusion and crossfades (see
+    [FOLIAGE.md](../FOLIAGE.md#gpu-instance-culling)). The history below is kept for reference.
+    **It was off by default.** `GpuInstanceCulling` (count, scan and scatter compute passes, with
     occlusion against the previous frame's depth hierarchy) draws the same images as CPU binning on both backends
     (`--gpu-instance-culling` tests). Measured at the trailhead with cluster culling, though, it lost:
     - The passes take 0.7 ms.

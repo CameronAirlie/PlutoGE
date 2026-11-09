@@ -40,6 +40,7 @@ namespace PlutoGE::render
         struct alignas(16) Caster { glm::vec4 bounds; glm::uvec4 draw, identity; glm::vec4 extents; glm::uvec4 still; };
         static_assert(sizeof(Caster) == 80 && sizeof(DrawParameters) == 4128 + sizeof(FoliageWindParameters));
         using InstanceBoundsRecord = std::array<glm::vec4, PLUTO_VSM_MASKED_INSTANCES>;
+        static_assert(PLUTO_VSM_LEVELS <= 32, "caster level masks hold one bit per level");
         static_assert(PLUTO_VSM_MASKED_INSTANCES <= 32, "masks hold one bit per model");
 
         // How far `range` (mesh space) of a model sways from its rest pose under this frame's wind: the reach at the
@@ -434,9 +435,14 @@ namespace PlutoGE::render
             // key no revision uses.
             constexpr std::uint64_t TransientPacket = 1ull << 63;
             constexpr std::uint64_t PacketRetainFrames = 240, PacketSweepInterval = 64;
-            // Preserve the draw-capacity contract: exceptionally fragmented scenes
-            // retain whole-draw submission instead of disabling shadows.
-            std::size_t clusteredCount = 0;
+            // Each level's texel size, which LOD variants are chosen for. Spot levels are perspective (no one size) and
+            // keep their casters' own LODs, as do levels the directional clipmaps do not use.
+            std::array<float, PLUTO_VSM_LEVELS> levelTexels{};
+            if (parameters.camera.w > 0.0f)
+                for (std::uint32_t level = 0; level <= parameters.levels.x; ++level) levelTexels[level] = parameters.metrics[level].x;
+            // The chunks each chunking needs. The capacity contract is kept by stepping down to coarser chunking, and
+            // whole draws always fit (CanPrepare), so a fragmented scene keeps its shadows.
+            VirtualShadowChunkCounts chunkCounts;
             m_casterPacketSlots.assign(casters.size(), nullptr);
             for (std::size_t index = 0; index < casters.size(); ++index)
             {
@@ -466,9 +472,18 @@ namespace PlutoGE::render
                 }
                 packet.lastFrame = packetFrame;
                 m_casterPacketSlots[index] = &packet;
-                if (!lighting.virtualShadowClusterCulling) continue;
-                const auto ranges = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, count);
                 const auto models = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
+                const auto modelGroups = (models + PLUTO_VSM_MASKED_INSTANCES - 1) / PLUTO_VSM_MASKED_INSTANCES;
+                chunkCounts.maskedModels += modelGroups;
+                if (!lighting.virtualShadowClusterCulling) continue;
+                // Ranges not starting on a triangle cannot be split into clusters; they keep whole-draw chunks.
+                if (draw.firstIndex % 3 != 0)
+                {
+                    chunkCounts.clustered += (models + 63) / 64;
+                    chunkCounts.clusteredLodVariants += (models + 63) / 64;
+                    continue;
+                }
+                const auto ranges = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, count);
                 auto rangeCount = std::max<std::size_t>(1, ranges.size());
                 if (models == 1 && ranges.size() > 1)
                 {
@@ -491,10 +506,19 @@ namespace PlutoGE::render
                     if (packet.coalesce) rangeCount = 1;
                 }
                 else packet.coalesce = false;
-                clusteredCount += draw.firstIndex % 3 == 0 ? rangeCount * ((models + 15) / 16) : (models + 63) / 64;
+                chunkCounts.clustered += rangeCount * modelGroups;
+                SelectCasterVariants(packet, draw, levelTexels);
+                if (packet.variants.empty()) chunkCounts.clusteredLodVariants += rangeCount * modelGroups;
+                else
+                    // As BuildCasterChunks splits them: the draw's own LOD by clusters, coarser ones by models alone.
+                    for (const auto &variant : packet.variants)
+                        chunkCounts.clusteredLodVariants += variant.lod == draw.shadowCasterLod ? rangeCount * modelGroups : modelGroups;
             }
-            const bool useClusters = lighting.virtualShadowClusterCulling && clusteredCount <= PLUTO_VSM_MAX_DRAW_CHUNKS;
+            const auto chunking = SelectVirtualShadowChunking(chunkCounts, lighting.virtualShadowClusterCulling);
+            const bool useClusters = chunking == VirtualShadowChunking::ClusteredLodVariants || chunking == VirtualShadowChunking::Clustered;
+            m_stats->chunking = chunking;
             m_stats->clusteredChunks = useClusters;
+            m_stats->lodVariantChunks = 0;
             // Chunk bounds are padded for this wind only (WindPad); other settings may sway geometry further.
             if (!(wind.wind == m_chunkWind))
             {
@@ -607,21 +631,21 @@ namespace PlutoGE::render
             for (const bool dynamic : {false, true})
                 for (std::size_t index = 0; index < casters.size(); ++index)
                     if (m_casterPacketSlots[index] && IsDynamicCaster(casters[index]) == dynamic) m_casterOrder.push_back(index);
-            std::size_t casterCursor = 0, staticCasterCount = 0;
             bool hasDynamic = false;
             for (const auto index : m_casterOrder)
             {
                 auto *packet = m_casterPacketSlots[index];
                 const auto &draw = casters[index];
-                const bool dynamic = IsDynamicCaster(draw);
-                hasDynamic |= dynamic;
+                hasDynamic |= IsDynamicCaster(draw);
                 const bool coalesced = useClusters && packet->coalesce;
-                if (packet->chunksValid && packet->clustered == useClusters && packet->coalesced == coalesced)
+                const bool variants = chunking == VirtualShadowChunking::ClusteredLodVariants;
+                if (packet->chunksValid && packet->chunking == chunking && packet->coalesced == coalesced &&
+                    (variants ? packet->chunkVariants == packet->variants : packet->chunkVariants.empty()))
                     ++m_stats->reusedPackets;
                 else
                 {
                     ++m_stats->rebuiltPackets;
-                    BuildCasterChunks(*packet, draw, useClusters, coalesced, wind);
+                    BuildCasterChunks(*packet, draw, chunking, coalesced, wind);
                 }
                 if (m_batchPages && !packet->chunks.empty())
                 {
@@ -637,46 +661,63 @@ namespace PlutoGE::render
                     else if (!draw.preparationRevision)
                         m_batchedModels->Write(packet->models, std::as_bytes(models));
                 }
-                const auto baseIndex = draw.mesh->BaseIndex();
+            }
+            std::size_t casterCursor = 0, staticCasterCount = 0;
+            const auto emitChunk = [&](std::size_t index, const CasterPacket &packet, const CasterChunk &part)
+            {
+                const auto &draw = casters[index];
+                const bool dynamic = IsDynamicCaster(draw);
                 const auto texture = draw.baseColorTexture ? draw.baseColorTexture : m_white.Get();
                 const glm::vec4 alpha(draw.uvScale, draw.alphaCutoff, draw.baseColor.a);
-                for (const auto &part : packet->chunks)
+                // Pages beyond the shadow sway distance zero these per entry (VirtualShadowCompute's swayingMask).
+                const FoliageWindParameters chunkWind = wind.Parameters(draw.foliageWind);
+                if (casterCursor == m_casterChunks.size()) m_casterChunks.emplace_back();
+                auto &chunk = m_casterChunks[casterCursor];
+                const auto firstIndex = draw.mesh->BaseIndex() + part.indexOffset;
+                changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
+                    chunk.texture != texture || chunk.submission.indexCount != part.indexCount ||
+                    chunk.submission.firstIndex != firstIndex || chunk.submission.instances != part.instances;
+                chunk.preparationRevision = draw.preparationRevision;
+                chunk.firstInstance = part.firstInstance;
+                if (part.levels != PLUTO_VSM_ALL_LEVELS) ++m_stats->lodVariantChunks;
+                chunk.sourceIndex = index;
+                chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
+                chunk.geometry = draw.mesh->VertexBuffer();
+                chunk.texture = texture;
+                chunk.bounds = part.bounds; chunk.extents = part.extents;
+                chunk.submission = {&draw, part.indexCount, firstIndex, part.instances, {}, casterCursor * 20};
+                if (m_batchPages)
                 {
-                    // Pages beyond the shadow sway distance zero these per entry (VirtualShadowCompute's swayingMask).
-                    const FoliageWindParameters chunkWind = wind.Parameters(draw.foliageWind);
-                    if (casterCursor == m_casterChunks.size()) m_casterChunks.emplace_back();
-                    auto &chunk = m_casterChunks[casterCursor];
-                    const auto firstIndex = baseIndex + part.indexOffset;
-                    changed |= chunk.mesh != draw.mesh || chunk.meshRevision != draw.mesh->GetRevision() ||
-                        chunk.texture != texture || chunk.submission.indexCount != part.indexCount ||
-                        chunk.submission.firstIndex != firstIndex || chunk.submission.instances != part.instances;
-                    chunk.preparationRevision = draw.preparationRevision;
-                    chunk.clustered = packet->clustered;
-                    chunk.firstInstance = part.firstInstance;
-                    chunk.sourceIndex = index;
-                    chunk.mesh = draw.mesh; chunk.meshRevision = draw.mesh->GetRevision();
-                    chunk.geometry = draw.mesh->VertexBuffer();
-                    chunk.texture = texture;
-                    chunk.bounds = part.bounds; chunk.extents = part.extents;
-                    chunk.submission = {&draw, part.indexCount, firstIndex, part.instances, {}, casterCursor * 20};
-                    if (m_batchPages)
-                    {
-                        // Batched draws read the shared tables; drop parameters left from unbatched recording.
-                        if (chunk.uniform) { chunk.uniform.Reset(); chunk.uploaded = {}; }
-                        batched.push_back({glm::uvec4(casterCursor, part.instances, draw.alphaMode, packet->models + part.firstInstance), alpha,
-                                           chunkWind});
-                    }
-                    else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances, chunkWind);
-                    // One identity per chunk geometry, whether its packet was rebuilt or reused this frame. Pages choose
-                    // the swaying or the rest-pose one by their distance from the camera (VirtualShadowCompute's swayingMask).
-                    const auto geometry = std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull;
-                    const auto signature = signatures[index] ^ geometry, still = stillSignatures[index] ^ geometry;
-                    inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
-                        {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, 0}, part.extents,
-                        {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, chunkWind.Active() ? 1u : 0u, dynamic ? 1u : 0u}});
-                    instanceBounds.push_back(part.instanceBounds);
-                    ++casterCursor;
+                    // Batched draws read the shared tables; drop parameters left from unbatched recording.
+                    if (chunk.uniform) { chunk.uniform.Reset(); chunk.uploaded = {}; }
+                    batched.push_back({glm::uvec4(casterCursor, part.instances, draw.alphaMode, packet.models + part.firstInstance), alpha,
+                                       chunkWind});
                 }
+                else uploadChunk(chunk, casterCursor, draw, part.firstInstance, part.instances, chunkWind);
+                // One identity per chunk geometry, whether its packet was rebuilt or reused this frame. Pages choose
+                // the swaying or the rest-pose one by their distance from the camera (VirtualShadowCompute's swayingMask).
+                const auto geometry = std::uint64_t(part.indexOffset) * 0x9e3779b97f4a7c15ull;
+                const auto signature = signatures[index] ^ geometry, still = stillSignatures[index] ^ geometry;
+                inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
+                    {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, part.levels}, part.extents,
+                    {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, chunkWind.Active() ? 1u : 0u, dynamic ? 1u : 0u}});
+                instanceBounds.push_back(part.instanceBounds);
+                ++casterCursor;
+            };
+            // Within each of those ranges, chunks drawing into any fine level precede those drawing only into coarse
+            // ones (LOD variants for the root), so the waves that plan a page mostly skip whole blocks of chunks
+            // that do not serve its level instead of diverging over interleaved ones.
+            const std::uint32_t fineLevels = (1u << parameters.levels.x) - 1u;
+            for (const bool dynamic : {false, true})
+            {
+                for (const bool coarseOnly : {false, true})
+                    for (const auto index : m_casterOrder)
+                    {
+                        if (IsDynamicCaster(casters[index]) != dynamic) continue;
+                        const auto &packet = *m_casterPacketSlots[index];
+                        for (const auto &part : packet.chunks)
+                            if (((part.levels & fineLevels) == 0) == coarseOnly) emitChunk(index, packet, part);
+                    }
                 if (!dynamic) staticCasterCount = casterCursor;
             }
             if (packetFrame % PacketSweepInterval == 0)
@@ -698,8 +739,7 @@ namespace PlutoGE::render
             const bool grow = m_capacity < std::max(m_casterCount, std::size_t{1});
             if (grow)
             {
-                m_capacity = 1;
-                while (m_capacity < m_casterCount) m_capacity *= 2;
+                m_capacity = VirtualShadowCasterCapacity(m_casterCount);
                 m_casters = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(Caster), rhi::BufferUsage::Storage, "VSM caster bounds/signatures"}));
                 m_uploadedCasters.clear();
                 m_instanceBounds = rhi::Buffer(device, device.CreateBuffer({m_capacity * sizeof(InstanceBoundsRecord),
@@ -714,8 +754,8 @@ namespace PlutoGE::render
             if (grow)
             {
                 m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
-                // Zero epochs make every pair invalid until evaluated. Each record
-                // stores exact caster/page generations and conservative membership.
+                // Page-major records (VirtualShadowCompute membershipRecord); zero epochs make every pair invalid until
+                // evaluated. Each record stores exact caster/page generations and conservative membership.
                 const std::vector<glm::uvec4> empty(m_capacity * poolCapacity, glm::uvec4(0));
                 m_membership = rhi::Buffer(device, device.CreateBuffer({empty.size() * sizeof(glm::uvec4),
                     rhi::BufferUsage::Storage, "VSM persistent caster/page membership"}, std::as_bytes(std::span(empty))));
@@ -734,7 +774,8 @@ namespace PlutoGE::render
                         ((index + 1) * sizeof(InstanceBoundsRecord) <= m_uploadedInstanceBounds.size()) &&
                         std::memcmp(m_uploadedInstanceBounds.data() + index * sizeof(InstanceBoundsRecord),
                                     instanceBounds[index].data(), sizeof(InstanceBoundsRecord)) == 0;
-                    if (m_cacheMembership && input.bounds == previous.bounds && input.extents == previous.extents && sameModels)
+                    if (m_cacheMembership && input.bounds == previous.bounds && input.extents == previous.extents && sameModels &&
+                        input.identity.w == previous.identity.w)
                         input.identity.z = previous.identity.z;
                 }
             }
@@ -789,6 +830,7 @@ namespace PlutoGE::render
         m_stats->effectiveTriangleBudget = m_budgetPolicy.Budget(std::clamp(lighting.virtualShadowTriangleBudget, 1u, 16000000u));
         parameters.limits = {m_casterCount, m_frame, PageUpdateBudget(lighting, poolCapacity), m_stats->effectiveTriangleBudget};
         parameters.levels.y = m_staticDepth ? m_staticGeneration : 0u;
+        parameters.levels.z = static_cast<std::uint32_t>(m_capacity);
         parameters.settings = {lighting.shadowSoftness, 1, m_frame == 1 ? 1 : 0, m_resolutionPolicy.Scale()};
         auto inputKey = parameters;
         inputKey.limits.y = 0; inputKey.settings.z = 0;
@@ -810,57 +852,100 @@ namespace PlutoGE::render
         packet.models = GpuRecordHeap::Invalid;
         packet.modelCount = 0;
     }
-    void VirtualShadowMaps::BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced,
-                                              const FoliageWindFrame &wind) const
+    void VirtualShadowMaps::SelectCasterVariants(CasterPacket &packet, const BasicDraw &draw,
+                                                 std::span<const float> levelTexels) const
+    {
+        packet.variants.clear();
+        const auto &chain = draw.shadowCasterLods;
+        if (!chain || draw.shadowCasterLod >= chain->lods.size() || !draw.instanceModels || draw.instanceModels->empty()) return;
+        // Variants replace the draw's range with its chain's ranges, so the draw must draw its chain's own LOD.
+        const auto &own = chain->lods[draw.shadowCasterLod];
+        if (own.firstIndex != draw.firstIndex || own.indexCount != packet.indexCount) return;
+        if (packet.modelScale < 0.0f)
+        {
+            packet.modelScale = 0.0f;
+            for (const auto &model : *draw.instanceModels)
+                packet.modelScale = std::max({packet.modelScale, glm::length(glm::vec3(model[0])),
+                                              glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2]))});
+        }
+        auto variants = SelectShadowCasterLodVariants(*chain, draw.shadowCasterLod, chain->boundsRadius * packet.modelScale,
+                                                      levelTexels);
+        if (variants.size() > 1) packet.variants = std::move(variants);
+    }
+    void VirtualShadowMaps::BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, VirtualShadowChunking chunking,
+                                              bool coalesced, const FoliageWindFrame &wind) const
     {
         packet.chunks.clear();
         packet.chunksValid = true;
-        packet.clustered = clustered;
+        packet.chunking = chunking;
         packet.coalesced = coalesced;
-        const auto drawCount = packet.indexCount;
-        if (drawCount == 0) return;
+        packet.chunkVariants.clear();
+        if (packet.indexCount == 0) return;
+        const bool clustered = chunking == VirtualShadowChunking::ClusteredLodVariants || chunking == VirtualShadowChunking::Clustered;
         const std::size_t modelCount = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
-        auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), draw.firstIndex, drawCount);
-        const bool subdivide = clustered && draw.firstIndex % 3 == 0 && !clusters.empty();
-        if (subdivide && coalesced)
-            clusters = std::span<const ShadowGeometryCluster>(&packet.merged, 1);
-        const auto rangeCount = subdivide ? clusters.size() : 1;
-        // Without subdivision a chunk covers the draw's whole range; its bound is that range's under the chunk's models.
-        const auto whole = subdivide ? ShadowGeometryCluster{} : MergeShadowGeometryClusters(clusters);
-        const std::size_t instanceLimit = subdivide ? 16 : 64;
         const float radius = std::isfinite(draw.shadowBoundsRadius) ? draw.shadowBoundsRadius : -1.0f;
-        for (std::size_t range = 0; range < rangeCount; ++range)
+        // Appends the chunks of the draw's index range [rangeFirst, rangeFirst + rangeCount), drawn into `levels`: split
+        // into mesh clusters of up to 16 models when `split` allows, otherwise whole, of up to 16 models planned
+        // separately with `maskModels` or 64 planned together without.
+        const auto appendRange = [&](std::uint32_t rangeFirst, std::uint32_t rangeCount, std::uint32_t levels, bool split,
+                                     bool merge, bool maskModels)
         {
-            const auto firstIndex = subdivide ? std::max(draw.firstIndex, clusters[range].firstIndex) : draw.firstIndex;
-            const auto endIndex = subdivide ? std::min(draw.firstIndex + drawCount, clusters[range].firstIndex + clusters[range].indexCount)
-                                            : draw.firstIndex + drawCount;
-            if (endIndex <= firstIndex) continue;
-            for (std::size_t first = 0; first < modelCount; first += instanceLimit)
+            auto clusters = SelectShadowGeometryClusters(draw.mesh->GetShadowClusters(), rangeFirst, rangeCount);
+            const bool subdivide = split && rangeFirst % 3 == 0 && !clusters.empty();
+            if (subdivide && merge)
+                clusters = std::span<const ShadowGeometryCluster>(&packet.merged, 1);
+            const auto parts = subdivide ? clusters.size() : 1;
+            // Without subdivision a chunk covers the whole range; its bound is that range's under the chunk's models.
+            const auto whole = subdivide ? ShadowGeometryCluster{} : MergeShadowGeometryClusters(clusters);
+            // Whole draws plan up to 64 models together; every finer chunking plans each of up to 16 separately.
+            const std::size_t instanceLimit = subdivide || maskModels ? PLUTO_VSM_MASKED_INSTANCES : 64;
+            for (std::size_t part = 0; part < parts; ++part)
             {
-                const auto models = static_cast<std::uint32_t>(std::min(instanceLimit, modelCount - first));
-                CasterChunk chunk{endIndex - firstIndex, firstIndex, models, static_cast<std::uint32_t>(first)};
-                if (subdivide)
+                const auto firstIndex = subdivide ? std::max(rangeFirst, clusters[part].firstIndex) : rangeFirst;
+                const auto endIndex = subdivide ? std::min(rangeFirst + rangeCount, clusters[part].firstIndex + clusters[part].indexCount)
+                                                : rangeFirst + rangeCount;
+                if (endIndex <= firstIndex) continue;
+                for (std::size_t first = 0; first < modelCount; first += instanceLimit)
                 {
-                    const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
-                        ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
-                    auto bounds = ShadowClusterWorldBounds(clusters[range], transforms);
-                    PadForWind(bounds, wind, draw, clusters[range], transforms);
-                    chunk.bounds = bounds.sphere;
-                    chunk.extents = bounds.extents;
+                    const auto models = static_cast<std::uint32_t>(std::min(instanceLimit, modelCount - first));
+                    CasterChunk chunk{endIndex - firstIndex, firstIndex, models, static_cast<std::uint32_t>(first), levels};
+                    if (subdivide)
+                    {
+                        const auto transforms = draw.instanceModels && !draw.instanceModels->empty()
+                            ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
+                        auto bounds = ShadowClusterWorldBounds(clusters[part], transforms);
+                        PadForWind(bounds, wind, draw, clusters[part], transforms);
+                        chunk.bounds = bounds.sphere;
+                        chunk.extents = bounds.extents;
+                    }
+                    else if (const auto bounds = InstanceChunkBounds(wind, draw, whole, first, models); bounds.sphere.w >= 0.0f)
+                    {
+                        chunk.bounds = bounds.sphere;
+                        chunk.extents = bounds.extents;
+                    }
+                    else
+                        chunk.bounds = glm::vec4(draw.shadowBoundsCenter, radius);
+                    if (MaskedModels(models))
+                        chunk.instanceBounds = ModelBounds(wind, draw, subdivide ? clusters[part] : whole,
+                                                           std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models));
+                    packet.chunks.push_back(chunk);
                 }
-                else if (const auto bounds = InstanceChunkBounds(wind, draw, whole, first, models); bounds.sphere.w >= 0.0f)
-                {
-                    chunk.bounds = bounds.sphere;
-                    chunk.extents = bounds.extents;
-                }
-                else
-                    chunk.bounds = glm::vec4(draw.shadowBoundsCenter, radius);
-                if (MaskedModels(models))
-                    chunk.instanceBounds = ModelBounds(wind, draw, subdivide ? clusters[range] : whole,
-                                                       std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models));
-                packet.chunks.push_back(chunk);
+            }
+        };
+        if (chunking == VirtualShadowChunking::ClusteredLodVariants && !packet.variants.empty())
+        {
+            packet.chunkVariants = packet.variants;
+            // Only the draw's own LOD splits into clusters. Coarser variants serve coarser levels, whose pages are wide
+            // beside a model, so a cluster would seldom miss a page its model reaches; planning each model separately
+            // is enough, and costs a chunk per 16 models rather than one per cluster as well.
+            for (const auto &variant : packet.chunkVariants)
+            {
+                const auto &lod = draw.shadowCasterLods->lods[variant.lod];
+                appendRange(lod.firstIndex, lod.indexCount, variant.levels, variant.lod == draw.shadowCasterLod, false, true);
             }
         }
+        else appendRange(draw.firstIndex, packet.indexCount, PLUTO_VSM_ALL_LEVELS, clustered, coalesced,
+                         chunking == VirtualShadowChunking::MaskedModels);
     }
     void VirtualShadowMaps::BindCompute(rhi::ICommandContext &commands, std::size_t pipeline)
     {

@@ -307,8 +307,8 @@ of a cluster with a LOD chain is:
    (`BasicInstanceLodChain::SelectBlend`). Its bin entries carry complementary dither codes in their top byte, and
    the shaded and depth passes discard by screen-space interleaved gradient noise (`BasicLit.slang`
    `lodDitherDiscards`), which a temporal resolve turns into a blend. The hand-over to an impostor fades the same way:
-   the mesh's chain and the impostor's derive the same fade from the same radius. GPU instance culling selects the
-   same LODs without the crossfade.
+   the mesh's chain and the impostor's derive the same fade from the same radius. GPU instance culling fades the same
+   way, from the switches `BasicInstanceLodChain::BlendSwitches` computes for both.
 
 Before any per-instance work, a cluster whose bounds lie wholly outside the view or beyond its draw distance is
 culled whole (`InstanceView::ClusterVisible`). It is neither binned nor recorded: the camera passes make the same test
@@ -432,15 +432,29 @@ those keep the mesh at the cluster's shadow LOD.
 
 ### GPU instance culling
 
-When enabled (`BasicRenderer::SetGpuInstanceCulling`, off by default; the benchmark's `--gpu-instance-culling`) and
-the device has compute and the `InstanceCulling` shaders load, `GpuInstanceCulling` (`engine/render/src`) bins
-instanced draws on the GPU instead of the CPU loop above. It applies the same culling and LOD rules, and adds
-occlusion against the previous frame's depth hierarchy (`OcclusionCulling::Hierarchy`, used only when it was built
-last frame at the same size and the camera moved under 4 m). Three compute passes run per frame:
+On by default where the device has compute and the `InstanceCulling` shaders load (`RhiRenderService` and
+`RhiSceneRenderer` enable it; `BasicRenderer::SetGpuInstanceCulling` defaults off for direct users such as tests).
+`PLUTO_GPU_INSTANCE_CULLING=0`, or the benchmark's `--cpu-instance-binning`, bins on the CPU instead.
+`GpuInstanceCulling` (`engine/render/src`) bins instanced draws on the GPU instead of the CPU loop above. It applies the
+same culling, wind padding, LOD selection and crossfades (`BasicInstanceLodChain::BlendSwitches`, so an instance near a
+switch bins into both LODs with complementary dither codes), and adds occlusion in two phases, as GPU-driven
+renderers do:
 
-1. **Count:** each instance's slot (draw and LOD) is counted.
+- **Phase 0**, before the depth prepass, tests the previous frame's depth hierarchy (`OcclusionCulling::Hierarchy`, used
+  only when it was built last frame at the same size and the camera moved under 4 m) and marks the instances it hid.
+- The coverage depth draws phase 0's bins, then `OcclusionCulling::RecordIntermediateHierarchy` reduces that depth.
+- **Phase 1** re-tests only the marked instances against it, into slots and bins of its own, and the coverage depth
+  draws those too.
+
+The shaded pass draws both phases. Together they are exactly the instances this frame's depth does not hide, so
+something the previous frame hid but this one shows (a camera move, an occluder gone) is drawn in the same frame, not
+one frame late; the shaded pass, which tests depth for equality with the coverage depth, draws the same instances at
+the same LODs. Without a depth prepass, or with occlusion off, there is one phase and no occlusion at all.
+Three compute passes run per phase:
+
+1. **Count:** each instance's slots (draw and LOD; two while it crossfades) are counted.
 2. **Scan:** prefix sums give each bin's offset and fill the indirect draw arguments.
-3. **Scatter:** record indices are written into the bins.
+3. **Scatter:** record indices, with their dither codes, are written into the bins.
 
 Draws read the bins through the same index buffer binding as CPU bins:
 
@@ -452,11 +466,17 @@ Draws read the bins through the same index buffer binding as CPU bins:
 Limits and fallbacks:
 
 - Chains of more than 8 LODs keep the CPU path.
-- It is off by default because every LOD of every binned draw is an indirect draw, empty or not: the RHI has no
-  indirect draw count (`vkCmdDrawIndexedIndirectCount`, `GL_ARB_indirect_parameters`) to drop empty bins. In Verdant
-  on a Vega 8 (2026-11-03, trailhead, 720p Low) the culling passes take 0.7 ms, but about 21,000 indirect draws per
-  pass instead of CPU binning's 2,200 non-empty ones raise scene GPU time from 42 to 94 ms. Adding an indirect count
-  path, and slots only for the LODs a cluster's distance range can reach, are the next steps.
+- Every LOD of every binned draw is an indirect draw per phase, empty or not: the RHI has no indirect draw count
+  (`vkCmdDrawIndexedIndirectCount`, `GL_ARB_indirect_parameters`) to drop empty bins. On 2026-11-03 that cost more than
+  occlusion saved (42 to 94 ms). Since whole clusters outside the view are skipped before binning, it no longer does:
+  in Verdant on the Vega 8 (2026-11-09, 1280x720, the scene's quality), scene GPU time fell from 76.5 to 59.9 ms at the
+  trailhead and from 79.7 to 65.0 ms with the camera travelling, for about 0.55 ms of culling and hierarchy passes.
+  Coverage depth went from 24.4 to 16.9 ms and the shaded pass from 38.2 to 29.0 ms. Review captures match CPU binning
+  within capture noise, still and moving. An indirect count path would trim the empty draws further.
+- Swaying instances' bounds are padded by this frame's wind's reach at the mesh's top (`FoliageWindFrame::MaxDisplacement`,
+  as virtual shadow maps pad casters), not the any-wind bound CPU binning uses: that one roughly doubles a tree's
+  sphere, and with it the occlusion test hid little (75 ms against 60 ms on Verdant). Without the padding occlusion would
+  hide more (51 ms), but crowns swaying out from behind an occluder would be cut off.
 - Triangles and instances of GPU-binned draws are not counted in the frame statistics, because the bins are never
   read back. `gpuBinnedDraws` reports how many draws were binned on the GPU.
 

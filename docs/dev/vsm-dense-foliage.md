@@ -1,12 +1,14 @@
 # VSM in dense foliage
 
-Status: November 2026. Four changes to [virtual shadow maps](../virtual-shadow-maps.md), found on Verdant Gorge
+Status: November 2026. Changes to [virtual shadow maps](../virtual-shadow-maps.md), found on Verdant Gorge
 (`ThirdPersonProject`, `Scenes/Verdant.plutoscene`):
 
 1. per-instance page planning;
 2. per-page sway;
 3. clipmap levels that follow the shadow distance;
-4. a static layer for dynamic casters.
+4. a static layer for dynamic casters;
+5. page reuse order, planning cost, coarser LODs for coarse levels and chunking under the capacity (9 November,
+   measured on the Vega 8; see [the second pass](#second-pass-page-reuse-planning-cost-and-caster-lods)).
 
 ## What went wrong in Verdant
 
@@ -142,6 +144,91 @@ Scenes without dynamic casters do not allocate it.
 - moving a dynamic quad over static grids redraws no static caster and submits fewer triangles than one of them;
 - the result is byte-identical to the frame after the quad becomes static.
 
+## Second pass: page reuse, planning cost and caster LODs
+
+Measured on the user's Vega 8 (Ryzen 7 5700G), `PlutoGERuntime --benchmark-project` at 1280x720 with
+`--frozen-render`, the scene's own quality, Verdant's startup camera (the trailhead), nothing else using the GPU. Builds
+were compared against a frozen copy of the previous runtime, alternating runs. Images were compared with deterministic
+`--capture`s of the review shots with the adaptive triangle budget off (it reads GPU timings, so captures would not
+repeat); two captures of one build differ by about 56 dB PSNR.
+
+### Page reuse order
+
+A new page took the free physical slots in slot order, and a slot was free whenever its page was not requested this
+frame. Jitter moves receivers across level boundaries, so pages leave the request set for a frame and come back. Those
+pages sat at low slot numbers, ahead of the pool's empty slots, so they were overwritten and redrawn when they came back.
+With 541 of 1024 pages requested, the static trailhead view evicted 22 pages and redrew 28 new ones every frame, up to
+the triangle budget, and never converged. Pages still waiting showed as rectangular unshadowed holes (the gorge pool
+review shot had several over the water).
+
+`allocateMain` now orders the free list by `freeSlotPriority`: slots holding no usable depth (`pageRetained` false),
+then pages unrequested for at least `VSM_STALE_PAGE_FRAMES` (32), then the rest. The allocator is otherwise unchanged
+and still deterministic.
+
+| Static trailhead | Before | After |
+| --- | --- | --- |
+| Evicted / new dirty / updated pages per frame | 22 / 28 / 14 | 0 / 0 / 0 |
+| VSM planning + pages (GPU ms) | 8.9 + 6.5 | 0 (the reused frame records neither) |
+| Scene GPU (ms) | 123.2 | 104.2 |
+
+Three review shots match the old build within capture noise (50-57 dB); the gorge pool lost its holes.
+
+### Planning cost
+
+`signatureMain` evaluates every caster chunk for every requested page. Three changes, all with identical results:
+
+- **Page-major membership.** A record's address is `slot * stride + caster` (`membershipRecord`, stride in
+  `VirtualShadowParameters::levels.z`). Lanes are consecutive casters, so a wave reads one contiguous block instead of
+  a record 16 KB apart per lane. Signatures went from 7.0-7.5 to 4.8-4.9 ms on the static trailhead.
+- **Level test first.** A chunk not serving the page's level (a LOD variant) skips its membership record in both
+  passes; `binMain` repeats the test before reading one, since planning never validated it.
+- **Empty blocks skipped.** Lane 0 hashes a block of 64 chunks only when one of them reaches the page
+  (`signatureBlockUsed`). A page reaches few chunks, so most blocks were 64 serial steps over empty items.
+
+Testing whole-chunk bounds before the cache instead, to avoid reading it, was slower (8.6 ms): the cache saves the
+intersection arithmetic, and the cost was the scattered reads.
+
+### Coarser LODs for coarse levels
+
+Foliage draws (cells) pick one LOD for the whole cell and drew it into every level. `RhiSceneRenderer` now gives
+instanced shadow draws with LODs their mesh's `ShadowCasterLodChain` (`BasicDraw::shadowCasterLods`), and
+`SelectShadowCasterLodVariants` (`ShadowCasterLods.h`) splits the levels between LODs: each level takes the finest LOD
+from the draw's own whose whole-mesh triangles fit 0.15 per texel of the caster's disc (the camera passes' density), a
+variant is kept only if it costs at most half the next finer one, and no level is finer than the draw's own LOD. Each
+chunk carries the levels it serves (`VirtualShadowCaster::identity.w`); only the draw's own LOD splits into mesh
+clusters, coarser variants plan each model whole.
+
+On Verdant, fine-level texels are 3-49 mm, which every caster's own LOD (its shadow floor) already suits, so in practice
+only the root (0.78 m texels) takes a coarser LOD: canopy trees drop from 5,102 to 485 triangles there. While the camera
+moves, the root held about a third of the dirty triangles. Chunks are ordered fine-serving before root-only within the
+static and dynamic ranges, so planning waves skip root-only chunks together.
+
+### Chunking under the capacity
+
+Variants need about 5,240 chunks on Verdant, against 3,852 without; the limit was 4,096 and Verdant used 94% of it. Above
+the limit every caster fell back to whole-draw chunks of 64 unmasked models, so one page drew 64 trees: this is the
+2.4 M-triangle page in the editor capture that started this pass. Now:
+
+- `PLUTO_VSM_MAX_DRAW_CHUNKS` is 8,192, and buffers grow with the chunks needed (`VirtualShadowCasterCapacity`, steps of
+  512 plus an eighth), not to the next power of two: membership records for Verdant's 5,240 chunks take 96 MB
+  (6,144 slots x 1024 pages x 16 bytes), against 64 MB at 4,096.
+- `SelectVirtualShadowChunking` steps down one level at a time: clusters with LOD variants, clusters, whole draws with
+  16 masked models per chunk, whole draws of 64.
+
+### Measured while the camera travels
+
+`--camera-travel=30` (300 frames), so pages keep entering and leaving:
+
+| | Before | Page reuse and membership | All |
+| --- | --- | --- | --- |
+| Dirty / deferred pages | 178 / 171 | 172 / 164 | 119 / 108 |
+| Pages updated per frame | 7.5 | 7.2 | 11.4 |
+| Largest dirty page (triangles) | 1.58 M | 1.52 M | 0.34 M |
+| New dirty pages per frame | 104 | 84 | 53 |
+| Caster signatures (GPU ms) | 9.1 | 5.8 | 5.6 |
+| VSM planning + pages (GPU ms) | 9.9 + 5.2 | 6.5 + 5.1 | 6.3 + 4.3 |
+| Scene GPU (ms) | 115.7 | 112.8 | 109.5 |
+
 ## Verdant settings
 
 These are recommended scene changes; this work does not apply them.
@@ -168,6 +255,7 @@ These are recommended scene changes; this work does not apply them.
 | `vsm_new_dirty_pages`, `vsm_changed_dirty_pages`, `vsm_static_dirty_pages` | Dirty pages that are new coverage, that changed content, and that need a static redraw |
 | `vsm_evicted_pages`, `vsm_cache_hits` | Evictions and cache hits |
 | `vsm_dynamic_chunks`, `vsm_static_layer` | Dynamic caster chunks, and whether the static layer exists |
+| `vsm_chunking`, `vsm_lod_variant_chunks` | The chunking used (`VirtualShadowChunking`: 0 clusters with LOD variants, 1 clusters, 2 masked models, 3 whole draws), and chunks serving only some levels |
 
 ## Remaining work
 
@@ -176,6 +264,9 @@ These are recommended scene changes; this work does not apply them.
   depend on the camera (or that have hysteresis) would keep pages cached.
 - **Resolution policy recovery.** Recovery needs nothing deferred. In a scene that always has deferred updates, the
   scale never returns to 1, even when the pool would fit.
-- **Signature planning cost.** The pass went from about 0.08 to 0.3 ms. Every page still loops over every caster
-  chunk, and the records are now 80 bytes.
+- **Signature planning cost.** Every requested page still loops over every caster chunk (about 5 ms on the Vega 8
+  while the camera moves). Binning casters to pages from each caster's footprint would make it proportional to the
+  pairs that meet.
+- **Fine-level caster cost.** Fine levels draw each caster's own (floored) LOD; L4 holds the most dirty triangles
+  while the camera moves. Per-instance LODs, as cascades have, would help there.
 - **Culling bounds.** `InstanceBinning` and `RhiSceneRenderer` still pad culling bounds with the any-wind bound.

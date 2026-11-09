@@ -2470,6 +2470,13 @@ namespace PlutoGE::render
             temporalClipOffset.x = sharedClipJitter->x;
             temporalClipOffset.y = sharedClipJitter->y;
         }
+        // The jittered projection the coverage depth is drawn with: depth hierarchies built from it test with it.
+        glm::mat4 occlusionProjection = viewProjection;
+        for (int column = 0; column < 4; ++column)
+        {
+            occlusionProjection[column][0] += temporalClipOffset.x * viewProjection[column][3];
+            occlusionProjection[column][1] += temporalClipOffset.y * viewProjection[column][3];
+        }
         // A temporal resolve accumulates jittered frames, so shading may replace
         // per-pixel blends (VSM level transitions) with a per-frame dither.
         if (upscalerFrame || taaEffect != postProcessEffects.end() || sharedClipJitter)
@@ -2784,7 +2791,7 @@ namespace PlutoGE::render
             // Per-instance LOD: bin every instance of a draw with a LOD chain by the LOD it needs alone, leaving out
             // instances outside the view or beyond the draw's distance (a visible foliage cell is often mostly off
             // screen or out of range). The bins feed only the camera passes. GpuInstanceCulling bins the draws it
-            // supports on the GPU, also culling against the previous frame's depth; InstanceBinning bins the rest.
+            // supports on the GPU, also culling occluded instances in two phases; InstanceBinning bins the rest.
             const auto recordsOf = [&](const BasicDraw &draw)
             {
                 const bool hasPrevious = m_hasPreviousFrame && draw.previousInstanceModels &&
@@ -2813,16 +2820,26 @@ namespace PlutoGE::render
             m_instanceStorage->UploadBins();
             if (gpuBinning)
             {
-                // The previous render's occlusion hierarchy, while it still describes the view: same size, and the
-                // camera moved little (a cut would otherwise hide what the old view did not see for a frame).
+                // Two-phase occlusion (GpuInstanceCulling): phase 0 tests the previous render's hierarchy while it
+                // still describes the view (same size, and the camera moved little, or phase 0 would hide much that
+                // phase 1 must then recover); phase 1 tests a hierarchy of phase 0's coverage depth, which the
+                // coverage job builds. Without a depth prepass there is no such depth, and no occlusion at all: a
+                // single phase must not hide anything it cannot draw later.
                 constexpr float MaxOcclusionCameraTravel = 4.0f;
-                const OcclusionDepthHierarchy *hierarchy = m_occlusion ? &m_occlusion->Hierarchy() : nullptr;
-                if (!hierarchy || !m_hasPreviousFrame || m_occlusionHierarchyRender + 1 != m_renderCount ||
-                    hierarchy->width != m_width || hierarchy->height != m_height ||
+                const OcclusionDepthHierarchy *previous = m_occlusion ? &m_occlusion->Hierarchy() : nullptr;
+                if (!previous || !m_hasPreviousFrame || m_occlusionHierarchyRender + 1 != m_renderCount ||
+                    previous->width != m_width || previous->height != m_height ||
                     glm::distance(m_occlusionHierarchyCamera, lighting.cameraPosition) >= MaxOcclusionCameraTravel)
-                    hierarchy = nullptr;
-                m_gpuInstanceCulling->Record(commands, gpuSources, {viewProjection, lighting.cameraPosition, instanceView.lodProjection, hierarchy});
+                    previous = nullptr;
+                const OcclusionDepthHierarchy *current = nullptr;
+                if (previous && depthPrepassActive && lighting.occlusionMode == OcclusionMode::Cull &&
+                    m_occlusion->PrepareIntermediateHierarchy(*m_device, occlusionProjection, m_width, m_height))
+                    current = &m_occlusion->IntermediateHierarchy();
+                m_gpuInstanceCulling->Prepare(gpuSources, {viewProjection, lighting.cameraPosition, instanceView.lodProjection,
+                                                           previous, current, &m_foliageWind});
+                m_gpuInstanceCulling->RecordPhase(commands, 0);
                 m_frameStats.gpuBinnedDraws = gpuSources.size();
+                m_frameStats.gpuCullingSecondPhase = m_gpuInstanceCulling->TwoPhase();
             }
             m_frameStats.instanceRecordUploads = m_instanceStorage->UploadedRecords();
             m_frameStats.residentInstanceRecords = m_instanceStorage->ResidentRecords();
@@ -3583,19 +3600,15 @@ namespace PlutoGE::render
             std::fill(std::begin(renderingInfo.clearColorValue), std::end(renderingInfo.clearColorValue), 0.0f);
             renderingInfo.clearColorValues[0] = {0, 0, 0, 0};
         }
-        // Current-frame coverage must include exactly the same temporal jitter.
-        glm::mat4 occlusionProjection = viewProjection;
-        for (int column = 0; column < 4; ++column)
-        {
-            occlusionProjection[column][0] += temporalClipOffset.x * viewProjection[column][3];
-            occlusionProjection[column][1] += temporalClipOffset.y * viewProjection[column][3];
-        }
         // VSM depth has simplified material coverage and is unjittered. Reuse
         // only when every receiver is a compatible opaque, single draw.
         const bool reuseReceiverDepth = virtualShadowsActive && temporalClipOffset == glm::vec4(0) &&
             std::ranges::all_of(draws, OcclusionCulling::SafeOccluder);
         bool occlusionActive = false;
         bool recordingDepth = false;
+        // The GPU culling phases recordDraw draws GPU-binned instances of (bit p for phase p): the coverage depth draws
+        // phase 0, then phase 1 once its culling has run; every other pass draws both.
+        std::uint32_t gpuBinPhases = 3u;
         core::CpuScope geometryScope("Geometry", core::CpuCategory::Rendering);
         if (!geometryDebug) renderingInfo.clearColorValues.resize(geometryLayout == GeometryOutputLayout::SurfaceReflections ? 7u : 6u);
         if (geometryLayout == GeometryOutputLayout::SurfaceIndirect)
@@ -3942,18 +3955,22 @@ namespace PlutoGE::render
                         boundObjectBlock = {};
                         const auto arguments = m_gpuInstanceCulling->Arguments();
                         constexpr auto stride = GpuInstanceCulling::ArgumentStride;
-                        if (m_gpuInstanceCulling->UsesFirstInstance())
+                        const auto phases = m_gpuInstanceCulling->TwoPhase() ? GpuInstanceCulling::PhaseCount : 1u;
+                        if (m_gpuInstanceCulling->UsesFirstInstance()) bind({0u, 1u, 1u, instanceLayout});
+                        for (std::uint32_t phase = 0; phase < phases; ++phase)
                         {
-                            bind({0u, 1u, 1u, instanceLayout});
-                            commands.DrawIndexedIndirectBatch(arguments, std::size_t(gpuBins->firstSlot) * stride, gpuBins->lodCount);
+                            if ((gpuBinPhases & (1u << phase)) == 0) continue;
+                            const auto firstSlot = gpuBins->firstSlot + phase * m_gpuInstanceCulling->PhaseSlots();
+                            if (m_gpuInstanceCulling->UsesFirstInstance())
+                                commands.DrawIndexedIndirectBatch(arguments, std::size_t(firstSlot) * stride, gpuBins->lodCount);
+                            else
+                                for (std::uint32_t lod = 0; lod < gpuBins->lodCount; ++lod)
+                                {
+                                    bind({firstSlot + lod, 1u, 2u, instanceLayout});
+                                    commands.DrawIndexedIndirect(arguments, std::size_t(firstSlot + lod) * stride);
+                                }
+                            m_frameStats.geometryDraws += gpuBins->lodCount;
                         }
-                        else
-                            for (std::uint32_t lod = 0; lod < gpuBins->lodCount; ++lod)
-                            {
-                                bind({gpuBins->firstSlot + lod, 1u, 2u, instanceLayout});
-                                commands.DrawIndexedIndirect(arguments, std::size_t(gpuBins->firstSlot + lod) * stride);
-                            }
-                        m_frameStats.geometryDraws += gpuBins->lodCount;
                     }
                     else if (binned)
                     {
@@ -4110,8 +4127,33 @@ namespace PlutoGE::render
                 depth.clearColor = false;
                 commands.BeginRendering(depth);
                 recordingDepth = true;
+                const bool secondPhase = m_gpuInstanceCulling && m_gpuInstanceCullingEnabled && m_gpuInstanceCulling->TwoPhase();
+                gpuBinPhases = secondPhase ? 1u : 3u;
                 for (std::size_t index = 0; index < draws.size(); ++index)
                     if (prepassEligible(draws[index])) recordDraw(commands, draws[index], false, index);
+                if (secondPhase)
+                {
+                    // Two-phase occlusion: a hierarchy of the depth so far, then the instances the previous frame's
+                    // hierarchy hid and this one does not, drawn into the same depth before anything reads it.
+                    commands.EndRendering();
+                    m_occlusion->RecordIntermediateHierarchy(commands, m_depthTarget.Get());
+                    m_gpuInstanceCulling->RecordPhase(commands, 1);
+                    // The compute passes invalidate cached graphics bindings.
+                    boundDrawPipeline = {};
+                    boundDrawMesh = nullptr;
+                    frameResourcesBound = false;
+                    geometryResourcesBound = false;
+                    skyTextureBound = false;
+                    boundMaterial = {};
+                    boundObjectBlock = {};
+                    depth.clearDepth = false;
+                    commands.BeginRendering(depth);
+                    gpuBinPhases = 2u;
+                    for (std::size_t index = 0; index < draws.size(); ++index)
+                        if (prepassEligible(draws[index]) && draws[index].instanceLods && m_gpuInstanceCulling->Find(draws[index]))
+                            recordDraw(commands, draws[index], false, index);
+                }
+                gpuBinPhases = 3u;
                 recordingDepth = false;
                 commands.EndRendering();
                 commands.EndGpuScope();

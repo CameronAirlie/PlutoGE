@@ -584,7 +584,11 @@ int RunRuntime(int argc, char **argv)
     const bool renderThreadDisabled = renderThreadSetting && std::string_view(renderThreadSetting) == "0";
     engine.GetRhiRenderService().SetRenderThreadEnabled(
         !runtimeProfiler && !renderThreadDisabled && !(projectBenchmark && projectBenchmark->serialRender));
-    engine.GetRhiRenderService().SetGpuInstanceCulling(projectBenchmark && projectBenchmark->gpuInstanceCulling);
+    // GPU instance culling (two-phase occlusion) by default; PLUTO_GPU_INSTANCE_CULLING=0 or --cpu-instance-binning bins
+    // instanced draws on the CPU instead, for comparisons.
+    const char *gpuCullingSetting = std::getenv("PLUTO_GPU_INSTANCE_CULLING");
+    engine.GetRhiRenderService().SetGpuInstanceCulling(
+        !(gpuCullingSetting && std::string_view(gpuCullingSetting) == "0") && !(projectBenchmark && projectBenchmark->cpuInstanceBinning));
 
     while (!window.ShouldClose())
     {
@@ -820,6 +824,8 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.virtualShadows.staticDirty),
                         static_cast<double>(render.virtualShadows.dynamicCasterChunks),
                         render.virtualShadows.staticLayer ? 1.0 : 0.0,
+                        static_cast<double>(render.virtualShadows.chunking),
+                        static_cast<double>(render.virtualShadows.lodVariantChunks),
                         render.rayTracedSceneRebuilt ? 1.0 : 0.0, static_cast<double>(render.rebuiltOpaqueBatchGroups),
                         static_cast<double>(render.rebuiltOpaqueBatchDraws), static_cast<double>(render.visibleDrawCount), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)

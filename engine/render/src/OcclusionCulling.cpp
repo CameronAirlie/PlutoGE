@@ -20,6 +20,24 @@ namespace PlutoGE::render
         struct alignas(16) Candidate { glm::vec4 bounds, extents; glm::uvec4 draw; };
         static_assert(sizeof(Parameters) == 624 && sizeof(Candidate) == 48);
         bool Single(const BasicDraw &draw) { return !draw.instanceModels || draw.instanceModels->size() == 1; }
+        // Fills `parameters.levels` (and config.w, the level count) with the reduction chain of a width x height depth
+        // target: each level halves the last, down to one texel, packed one after another. Returns the texels.
+        std::uint32_t HierarchyLevels(Parameters &parameters, std::uint32_t width, std::uint32_t height)
+        {
+            std::uint32_t count = 0, w = width, h = height;
+            parameters.config.w = 0;
+            do
+            {
+                w = (w + 1) / 2; h = (h + 1) / 2;
+                parameters.levels[parameters.config.w++] = {w, h, count, 0};
+                count += w * h;
+            } while (w > 1 || h > 1);
+            return count;
+        }
+        std::uint32_t ClipFlags(const rhi::IRenderDevice &device)
+        {
+            return (device.UsesZeroToOneClipDepth() ? 1u : 0u) | (device.GetApi() == rhi::GraphicsApi::Vulkan ? 2u : 0u);
+        }
     }
 
     void OcclusionCulling::SetRigidBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum)
@@ -83,14 +101,8 @@ namespace PlutoGE::render
         if (mode == OcclusionMode::Off || !m_testPipeline || draws.empty() || width == 0 || height == 0) return false;
         Parameters parameters;
         parameters.viewProjection = viewProjection;
-        parameters.config = {draws.size(), (device.UsesZeroToOneClipDepth() ? 1u : 0u) | (device.GetApi() == GraphicsApi::Vulkan ? 2u : 0u), mode == OcclusionMode::Cull ? 1u : 0u, 0};
-        std::uint32_t count = 0, w = width, h = height;
-        do
-        {
-            w = (w + 1) / 2; h = (h + 1) / 2;
-            parameters.levels[parameters.config.w++] = {w, h, count, 0};
-            count += w * h;
-        } while (w > 1 || h > 1);
+        parameters.config = {draws.size(), ClipFlags(device), mode == OcclusionMode::Cull ? 1u : 0u, 0};
+        const auto count = HierarchyLevels(parameters, width, height);
         if (width != m_width || height != m_height)
         {
             m_depth = Texture(device, device.CreateTexture({width, height, Format::D32Float, TextureUsage::DepthStencilAttachment, "Occlusion depth", true}));
@@ -196,5 +208,58 @@ namespace PlutoGE::render
             }
         });
         return true;
+    }
+    bool OcclusionCulling::PrepareIntermediateHierarchy(rhi::IRenderDevice &device, const glm::mat4 &viewProjection,
+                                                        std::uint32_t width, std::uint32_t height)
+    {
+        using namespace rhi;
+        m_intermediate = {};
+        if (!m_reducePipeline || width == 0 || height == 0) return false;
+        Parameters parameters;
+        parameters.viewProjection = viewProjection;
+        parameters.config.y = ClipFlags(device);
+        const auto count = HierarchyLevels(parameters, width, height);
+        if (width != m_intermediateWidth || height != m_intermediateHeight || !m_intermediateBuffer)
+        {
+            m_intermediateBuffer = Buffer(device, device.CreateBuffer({count * sizeof(float), BufferUsage::Storage,
+                                                                       "Occlusion intermediate hierarchy"}));
+            m_intermediateWidth = width; m_intermediateHeight = height;
+            while (m_intermediateUniforms.size() < parameters.config.w)
+                m_intermediateUniforms.emplace_back(device, device.CreateBuffer({sizeof(Parameters), BufferUsage::Uniform,
+                                                                                 "Occlusion intermediate parameters"}));
+        }
+        // One parameter block per reduction step, as Record binds them.
+        parameters.source = {width, height, 0, 1};
+        for (std::uint32_t level = 0; level < parameters.config.w; ++level)
+        {
+            parameters.destination = parameters.levels[level];
+            device.UpdateBuffer(m_intermediateUniforms[level].Get(), 0, Bytes(parameters));
+            parameters.source = parameters.destination;
+        }
+        m_intermediate = {m_intermediateBuffer.Get(), viewProjection, width, height, parameters.config.w, parameters.config.y,
+                          parameters.levels, 0};
+        return true;
+    }
+
+    void OcclusionCulling::RecordIntermediateHierarchy(rhi::ICommandContext &commands, rhi::TextureHandle depth)
+    {
+        using rhi::BarrierAccess;
+        if (!m_intermediate.buffer) return;
+        commands.BeginGpuScope("RHI Occlusion Intermediate Hierarchy");
+        // Rewrites the hierarchy the previous frame's second culling phase read.
+        commands.PipelineBarrier(BarrierAccess::ComputeShaderRead, BarrierAccess::ComputeShaderWrite);
+        commands.BindPipeline(m_reducePipeline.Get());
+        commands.BindTexture(1, depth, m_sampler.Get());
+        commands.BindStorageBuffer(2, m_intermediate.buffer);
+        // The reduction reads only the depth and writes only the hierarchy; the other slots need valid storage.
+        for (std::uint32_t slot = 3; slot <= 5; ++slot) commands.BindStorageBuffer(slot, m_counters.Get());
+        for (std::uint32_t level = 0; level < m_intermediate.levelCount; ++level)
+        {
+            commands.BindUniformBuffer(0, m_intermediateUniforms[level].Get());
+            const auto &destination = m_intermediate.levels[level];
+            commands.Dispatch((destination.x + 7) / 8, (destination.y + 7) / 8, 1);
+            commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite, BarrierAccess::Compute);
+        }
+        commands.EndGpuScope();
     }
 }

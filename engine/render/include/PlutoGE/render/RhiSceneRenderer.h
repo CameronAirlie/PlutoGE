@@ -313,7 +313,7 @@ namespace PlutoGE::render
       BasicSelectionOutline m_selectionOutline;
       std::vector<const RenderCommand *> m_selectionCommands;
       std::string m_submissionLabel = "Scene";
-      bool m_gpuInstanceCulling = false;
+      bool m_gpuInstanceCulling = true;
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
       std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;
@@ -336,6 +336,8 @@ namespace PlutoGE::render
               auto operator<=>(const InstanceLodKey &) const = default;
           };
           std::map<InstanceLodKey, std::shared_ptr<const BasicInstanceLodChain>> instanceLods;
+          // Each submesh's shadow caster LOD chain (BasicDraw::shadowCasterLods), by submesh.
+          std::unordered_map<std::size_t, std::shared_ptr<const ShadowCasterLodChain>> shadowCasterLods;
       };
       std::unordered_map<const Mesh *, CachedMesh> m_meshes;
       struct SkinnedMesh

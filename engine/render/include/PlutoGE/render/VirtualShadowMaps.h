@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/FoliageWind.h"
+#include "PlutoGE/render/ShadowCasterLods.h"
 #include "PlutoGE/render/VirtualShadowConfig.h"
 #include "PlutoGE/render/VirtualShadowStats.h"
 #include "PlutoGE/render/VirtualShadowPolicy.h"
@@ -8,6 +9,7 @@
 #include "PlutoGE/render/rhi/Resource.h"
 #include <glm/glm.hpp>
 #include <array>
+#include <span>
 #include <memory>
 #include <string_view>
 #include <unordered_map>
@@ -38,6 +40,7 @@ namespace PlutoGE::render
         glm::uvec4 pool{}, scheduling{};
         glm::vec4 culling{};
         // x: the directional root level, which is the number of active fine levels (VirtualShadowFineLevels).
+        // y: the static layer's generation (0 without one). z: casters per page in the page-major membership records.
         glm::uvec4 levels{};
         std::array<glm::uvec4, (PLUTO_VSM_LEVELS + 3) / 4> membershipEpochs{};
     };
@@ -136,7 +139,6 @@ namespace PlutoGE::render
           std::size_t firstInstance = 0, sourceIndex = 0;
           glm::vec4 bounds{0, 0, 0, -1};
           glm::vec4 extents{-1, -1, -1, 0};
-          bool clustered = false;
       };
         void ResizePool(rhi::IRenderDevice &device, std::uint32_t tiles);
         // Allocates the static layer (m_staticDepth) and starts a new generation, so every page redraws into it once.
@@ -183,6 +185,9 @@ namespace PlutoGE::render
         {
             // indexOffset is relative to the mesh's base index (BasicMesh::BaseIndex).
             std::uint32_t indexCount = 0, indexOffset = 0, instances = 0, firstInstance = 0;
+            // The clipmap levels this chunk draws into (one bit per level): a LOD variant serves only the levels whose
+            // texels its detail suits.
+            std::uint32_t levels = PLUTO_VSM_ALL_LEVELS;
             glm::vec4 bounds{0, 0, 0, -1};
             glm::vec4 extents{-1, -1, -1, 0};
             // World sphere of each model of a masked chunk (several models, at most PLUTO_VSM_MASKED_INSTANCES), padded
@@ -204,15 +209,28 @@ namespace PlutoGE::render
             glm::vec4 worldBounds{0, 0, 0, -1};
             bool planned = false, coalesce = false;
             std::uint64_t coalesceProjection = 0;
-            bool chunksValid = false, clustered = false, coalesced = false;
+            // The LOD variants of this frame (ShadowCasterLods.h): one at the draw's own LOD for every level unless
+            // its chain lets coarse levels draw coarser LODs.
+            std::vector<ShadowCasterLodVariant> variants;
+            // The largest axis scale of the draw's models, for its variants' world radius (negative until measured).
+            float modelScale = -1.0f;
+            // What the chunks were built for.
+            bool chunksValid = false, coalesced = false;
+            VirtualShadowChunking chunking = VirtualShadowChunking::WholeDraws;
+            std::vector<ShadowCasterLodVariant> chunkVariants;
             std::vector<CasterChunk> chunks;
             // First of this packet's records in m_batchedModels, or ~0u.
             std::uint32_t models = ~0u, modelCount = 0;
             std::uint64_t lastFrame = 0;
         };
-        // `wind` pads swaying chunks' bounds; chunks are rebuilt when its settings change (m_chunkWind).
-        void BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, bool clustered, bool coalesced,
+        // Splits the packet's draw into page chunks as `chunking` does, one set per LOD variant (packet.variants) with
+        // ClusteredLodVariants. `wind` pads swaying chunks' bounds; chunks are rebuilt when its settings change
+        // (m_chunkWind).
+        void BuildCasterChunks(CasterPacket &packet, const BasicDraw &draw, VirtualShadowChunking chunking, bool coalesced,
                                const FoliageWindFrame &wind) const;
+        // The packet's LOD variants for this frame's clipmap texels: a single variant at the draw's own LOD unless
+        // the draw carries a shadow caster LOD chain (BasicDraw::shadowCasterLods) that draws its range.
+        void SelectCasterVariants(CasterPacket &packet, const BasicDraw &draw, std::span<const float> levelTexels) const;
         void ReleaseCasterModels(CasterPacket &packet);
         std::unordered_map<std::uint64_t, CasterPacket> m_casterPackets;
         std::vector<CasterPacket *> m_casterPacketSlots;

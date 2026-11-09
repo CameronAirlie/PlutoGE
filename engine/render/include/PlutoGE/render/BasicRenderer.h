@@ -3,6 +3,7 @@
 #include "PlutoGE/render/AmbientProbeConfig.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/GeometryDiagnostics.h"
+#include "PlutoGE/render/ShadowCasterLods.h"
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
@@ -561,6 +562,49 @@ namespace PlutoGE::render
             std::array<std::uint8_t, 2> codes{};
             std::uint32_t count = 0;
         };
+        // Where this draw's LODs switch, as SelectBlend fades between them: switch k sits between levels k - 1 and k
+        // (levels run from -1, above the draw's range, through the LODs to lods.size(), below it) at the projected
+        // radius below which level k is taken (Select's rules, MaxTrianglesPerPixel included), clamped into the draw's
+        // range and non-increasing; equal switches enclose empty levels and act as one, so `coarser[k]` is the
+        // coarsest level switch k leads to. GPU instance culling uploads these to fade exactly as the CPU does.
+        static constexpr std::uint32_t MaxSwitches = 16;
+        struct Switches
+        {
+            std::array<float, MaxSwitches> radius{};
+            std::array<std::uint32_t, MaxSwitches> coarser{};
+            // lods.size() + 1, or 0 when the chain has too many LODs to fade (SelectBlend then uses Select).
+            std::uint32_t count = 0;
+            // The finest LOD drawn (minimumLod, within the chain).
+            std::uint32_t first = 0;
+        };
+        [[nodiscard]] Switches BlendSwitches() const
+        {
+            Switches result;
+            const auto count = static_cast<std::uint32_t>(lods.size());
+            if (count == 0 || count + 1 > MaxSwitches) return result;
+            result.count = count + 1;
+            result.first = std::min(minimumLod, count - 1);
+            float bound = maxScreenRadiusPixels;
+            for (std::uint32_t k = 0; k <= count; ++k)
+            {
+                float radius = maxScreenRadiusPixels;
+                if (k == count) radius = minScreenRadiusPixels;
+                else if (k > result.first)
+                    // The finer level also needs enough pixels for its triangles (MaxTrianglesPerPixel).
+                    radius = std::max(lods[k].maxScreenRadiusPixels,
+                                      std::sqrt(static_cast<float>(lods[k - 1].indexCount / 3) /
+                                                (MaxTrianglesPerPixel * std::numbers::pi_v<float>)));
+                bound = std::min(bound, std::max(radius, minScreenRadiusPixels));
+                result.radius[k] = bound;
+            }
+            for (std::uint32_t k = 0; k <= count; ++k)
+            {
+                auto level = k;
+                while (level < count && result.radius[level + 1] == result.radius[level]) ++level;
+                result.coarser[k] = level;
+            }
+            return result;
+        }
         // The LODs (at most two) this draw bins an instance of radius `pixels` into, with their dither codes; 0 is
         // drawn whole. Sides another draw covers (a mesh's impostor-sized instances) are left out: both draws derive
         // the same fade from the same switch radius, so their dithers complement each other.
@@ -568,53 +612,30 @@ namespace PlutoGE::render
         {
             Blend result;
             if (lods.empty() || !(pixels > 0.0f)) return result;
-            pixels *= distanceScale;
-            // Levels run from -1 (above this draw's range) through the LODs to lods.size() (below it). Switch k sits
-            // between levels k - 1 and k, at the radius below which level k is taken (Select's rules), clamped into
-            // the draw's range and non-increasing. Equal switches enclose empty levels and act as one.
-            const auto count = static_cast<std::uint32_t>(lods.size());
-            constexpr std::uint32_t MaxSwitches = 16;
-            if (count + 1 > MaxSwitches)
+            const auto switches = BlendSwitches();
+            if (switches.count == 0)
             {
                 if (const auto lod = Select(pixels); lod != NotDrawn()) result = {{lod, 0}, {0, 0}, 1};
                 return result;
             }
-            const auto first = std::min(minimumLod, count - 1);
-            std::array<float, MaxSwitches> switches{};
-            float bound = maxScreenRadiusPixels;
-            for (std::uint32_t k = 0; k <= count; ++k)
-            {
-                float radius = maxScreenRadiusPixels;
-                if (k == count) radius = minScreenRadiusPixels;
-                else if (k > first)
-                    // The finer level also needs enough pixels for its triangles (MaxTrianglesPerPixel).
-                    radius = std::max(lods[k].maxScreenRadiusPixels,
-                                      std::sqrt(static_cast<float>(lods[k - 1].indexCount / 3) /
-                                                (MaxTrianglesPerPixel * std::numbers::pi_v<float>)));
-                bound = std::min(bound, std::max(radius, minScreenRadiusPixels));
-                switches[k] = bound;
-            }
+            pixels *= distanceScale;
+            const auto count = static_cast<std::uint32_t>(lods.size());
             const auto add = [&](std::int64_t level, std::uint8_t code)
             {
                 if (level < 0 || level >= count) return;
-                result.lods[result.count] = static_cast<std::uint32_t>(std::max<std::int64_t>(level, first));
+                result.lods[result.count] = static_cast<std::uint32_t>(std::max<std::int64_t>(level, switches.first));
                 result.codes[result.count++] = code;
             };
-            // The coarsest level a switch leads to: past every switch equal to it.
-            const auto coarserLevel = [&](std::uint32_t k)
+            for (std::uint32_t k = 0; k < switches.count; ++k)
             {
-                while (k < count && switches[k + 1] == switches[k]) ++k;
-                return static_cast<std::int64_t>(k);
-            };
-            for (std::uint32_t k = 0; k <= count; ++k)
-            {
-                const float radius = switches[k];
+                const float radius = switches.radius[k];
                 if (!std::isfinite(radius) || !(radius > 0.0f)) continue;
                 const float upper = radius * (1.0f + TransitionWidth);
                 if (pixels > upper || pixels < radius * (1.0f - TransitionWidth)) continue;
                 const float fade = std::clamp((upper - pixels) / (2.0f * TransitionWidth * radius), 0.0f, 1.0f);
                 const auto steps = static_cast<std::uint32_t>(std::lround(fade * DitherSteps));
-                const auto finer = static_cast<std::int64_t>(k) - 1, coarser = coarserLevel(k);
+                const auto finer = static_cast<std::int64_t>(k) - 1;
+                const auto coarser = static_cast<std::int64_t>(switches.coarser[k]);
                 if (steps == 0) add(finer, 0);
                 else if (steps >= DitherSteps) add(coarser, 0);
                 else
@@ -626,8 +647,8 @@ namespace PlutoGE::render
             }
             // Outside every band: the last level whose switch the radius is below.
             std::int64_t level = -1;
-            for (std::uint32_t k = 0; k <= count; ++k)
-                if (pixels < switches[k]) level = k;
+            for (std::uint32_t k = 0; k < switches.count; ++k)
+                if (pixels < switches.radius[k]) level = k;
             add(level, 0);
             return result;
         }
@@ -720,6 +741,11 @@ namespace PlutoGE::render
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
         // With instanceModels: per-chunk LOD selection in the camera passes (shadows keep firstIndex/indexCount).
         std::shared_ptr<const BasicInstanceLodChain> instanceLods;
+        // On an instanced shadow caster with LODs: the mesh's LOD chain, and the LOD of it that firstIndex/indexCount
+        // draw. Virtual shadow maps draw coarser LODs into the clipmap levels too coarse for this one's detail
+        // (SelectShadowCasterLodVariants); no other pass reads them.
+        std::shared_ptr<const ShadowCasterLodChain> shadowCasterLods;
+        std::uint32_t shadowCasterLod = 0;
         // With instanceLods: the camera passes skip instances whose bounds lie wholly beyond this distance (the
         // producer's draw distance, RenderCommand::maxDrawDistance, which otherwise only culls whole clusters).
         float instanceDrawDistance = std::numeric_limits<float>::max();
@@ -1036,6 +1062,8 @@ namespace PlutoGE::render
         std::size_t gpuDrivenDraws = 0, gpuDrivenBatches = 0, gpuDrivenMaterials = 0;
         // Instanced draws binned by GpuInstanceCulling (their triangles and instances are not counted).
         std::size_t gpuBinnedDraws = 0;
+        // Whether GPU instance culling ran its second occlusion phase (GpuInstanceCulling::TwoPhase).
+        bool gpuCullingSecondPhase = false;
         // Frame-graph sections run on the async compute queue (zero when its work ran inline or none was needed).
         std::uint32_t asyncComputeSections = 0;
         // The lighting paths this frame's geometry pipelines kept (SurfaceFeature bits, src/SurfaceFeatures.h).

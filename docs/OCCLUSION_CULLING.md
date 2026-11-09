@@ -26,6 +26,11 @@ An inconclusive coarse depth test retries progressively finer levels, including 
 
 Each single-instance draw has a stable indirect slot for the current input span. GPU-driven opaque draws ([renderer modernisation](dev/renderer-modernisation.md)) copy their visibility from these slots on the GPU. Instanced, transparent, and outline rendering keeps its existing submission path. No readback controls drawing, and no prior-frame visibility is trusted. Resource lifetime and upload versioning are provided by the RHI.
 
+Instanced draws with LOD chains (foliage) are culled per instance by GPU instance culling, in two phases: against
+the previous frame's hierarchy before the depth prepass, then, for what that hid, against a hierarchy of the depth
+drawn so far (`OcclusionCulling::PrepareIntermediateHierarchy` and `RecordIntermediateHierarchy`). Nothing the
+previous frame hid is missing from the frame that shows it. See [foliage](FOLIAGE.md#gpu-instance-culling).
+
 ## Limits and follow-up work
 
 This saves main-pass vertex/raster/shading work for fully hidden eligible draws. It does not skip CPU animation/skinning, depth-pass geometry, shadow casters, GI contributors, or the CPU's material binding work. The fallback depth pass can outweigh savings in open scenes or scenes with few hidden objects. Per-instance compaction and partial-mesh/meshlet culling are outside this implementation.

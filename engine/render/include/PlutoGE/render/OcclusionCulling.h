@@ -52,6 +52,15 @@ namespace PlutoGE::render
         // The hierarchy the last Record built (frame counts Records). Valid until the next Record at another size.
         [[nodiscard]] const OcclusionDepthHierarchy &Hierarchy() const { return m_lastHierarchy; }
         [[nodiscard]] std::uint64_t Frame() const { return m_frame; }
+        // A hierarchy of a depth target partway through a frame, beside the one Record builds: two-phase instance
+        // culling re-tests what the previous frame's hierarchy rejected against the depth drawn so far. Prepare
+        // allocates and uploads on the calling thread; RecordIntermediateHierarchy only records commands, so it may run
+        // in a parallel recording job. `viewProjection` is the one the depth was drawn with.
+        bool PrepareIntermediateHierarchy(rhi::IRenderDevice &device, const glm::mat4 &viewProjection,
+                                          std::uint32_t width, std::uint32_t height);
+        void RecordIntermediateHierarchy(rhi::ICommandContext &commands, rhi::TextureHandle depth);
+        // Valid once recorded, for this frame only.
+        [[nodiscard]] const OcclusionDepthHierarchy &IntermediateHierarchy() const { return m_intermediate; }
         [[nodiscard]] OcclusionStats Stats() const { return *m_stats; }
         [[nodiscard]] static bool SafeOccluder(const BasicDraw &draw);
         static void SetRigidBounds(BasicDraw &draw, glm::vec3 minimum, glm::vec3 maximum);
@@ -62,6 +71,10 @@ namespace PlutoGE::render
         rhi::Texture m_depth, m_color;
         rhi::Sampler m_sampler;
         rhi::Buffer m_hierarchy, m_candidates, m_indirect, m_counters;
+        rhi::Buffer m_intermediateBuffer;
+        std::vector<rhi::Buffer> m_intermediateUniforms;
+        OcclusionDepthHierarchy m_intermediate;
+        std::uint32_t m_intermediateWidth = 0, m_intermediateHeight = 0;
         std::vector<rhi::Buffer> m_uniforms, m_models;
         std::uint32_t m_width = 0, m_height = 0;
         std::size_t m_capacity = 0;

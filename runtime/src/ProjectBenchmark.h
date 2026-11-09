@@ -52,7 +52,9 @@ namespace PlutoGE
         bool frozenRender = false;
         // Records, submits and presents on the calling thread instead of the render thread (for comparisons).
         bool serialRender = false;
-        bool gpuInstanceCulling = false; // --gpu-instance-culling: bin instanced draws on the GPU
+        // --cpu-instance-binning: bin instanced draws on the CPU, without occlusion, rather than with GPU instance
+        // culling (the default). --gpu-instance-culling, the default, is still accepted.
+        bool cpuInstanceBinning = false;
         // Geometry shading diagnostic applied to every measured frame.
         render::GeometryDiagnosticMode geometryDiagnostic = render::GeometryDiagnosticMode::None;
         // Project graphics tier applied before the scene loads. Frozen captures run
@@ -98,7 +100,7 @@ namespace PlutoGE
         {
             if (args.size() < 2 || args.size() > 14) // project, output, two counts and ten switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
-                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--gpu-instance-culling] "
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--cpu-instance-binning] "
                                             "[--quality=low|medium|high|ultra] [--foliage-detail=<0.25..2>] [--camera-pan=<degrees>] [--camera-travel=<metres>] "
                                             "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
@@ -125,7 +127,8 @@ namespace PlutoGE
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
-                else if (value == "--gpu-instance-culling" && !result.gpuInstanceCulling) result.gpuInstanceCulling = true;
+                else if (value == "--cpu-instance-binning" && !result.cpuInstanceBinning) result.cpuInstanceBinning = true;
+                else if (value == "--gpu-instance-culling") {}
                 else if (value.starts_with(capturePrefix) && result.capture.empty())
                 {
                     result.capture = std::filesystem::path(value.substr(capturePrefix.size()));
@@ -227,7 +230,7 @@ namespace PlutoGE
             "vsm_updated_pages", "vsm_caster_chunks", "vsm_clustered_chunks", "vsm_max_dirty_page_triangles", "vsm_requested_pages",
             "vsm_dirty_fine_triangles", "vsm_dirty_root_triangles", "vsm_fine_levels", "vsm_resolution_scale",
             "vsm_new_dirty_pages", "vsm_changed_dirty_pages", "vsm_evicted_pages", "vsm_cache_hits",
-            "vsm_static_dirty_pages", "vsm_dynamic_chunks", "vsm_static_layer",
+            "vsm_static_dirty_pages", "vsm_dynamic_chunks", "vsm_static_layer", "vsm_chunking", "vsm_lod_variant_chunks",
             "ray_traced_rebuilt", "opaque_batch_groups_rebuilt", "opaque_batch_draws_rebuilt", "visible_packets", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;

@@ -76,6 +76,9 @@ void CheckEditorFoliage(Device &device, const PlutoGE::render::BasicRendererShad
 
     // Clusters of one mesh that differ only in their LOD distance scale need their own chains. The row is about 6.5 px
     // in radius, below LOD0's density limit of about 8 px; at 3 it is about 19 px and keeps LOD0.
+    // The statistics count CPU-binned instances: GPU instance culling (the scene renderer's default) never reads its
+    // bins back.
+    renderer.SetGpuInstanceCulling(false);
     const auto triangles = [&](std::vector<RenderCommand> scene)
     {
         render(scene, scene);

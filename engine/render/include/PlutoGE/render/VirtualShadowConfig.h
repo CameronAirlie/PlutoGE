@@ -12,6 +12,8 @@
 #define PLUTO_VSM_SPOT_ROOT_GRID 2
 #define PLUTO_VSM_SPOT_ROOT_BASE (PLUTO_VSM_DIRECTIONAL_LEVELS + PLUTO_VSM_SPOT_COUNT)
 #define PLUTO_VSM_LEVELS (PLUTO_VSM_DIRECTIONAL_LEVELS + 2 * PLUTO_VSM_SPOT_COUNT)
+// Caster level masks (VirtualShadowCaster::identity.w) hold one bit per level, so there are at most 32 levels.
+#define PLUTO_VSM_ALL_LEVELS ((1u << PLUTO_VSM_LEVELS) - 1u)
 #define PLUTO_VSM_ROOT_GRID 8
 #define PLUTO_VSM_ROOT_PAGES (PLUTO_VSM_ROOT_GRID * PLUTO_VSM_ROOT_GRID)
 // Virtual pages per axis of `level` when the directional root is level `root` (spot fine levels scale by resolution).
@@ -38,7 +40,7 @@
 #define PLUTO_VSM_ATLAS_SIZE (PLUTO_VSM_ATLAS_TILES * PLUTO_VSM_PAGE_SIZE)
 #define PLUTO_VSM_LEVEL_PAGES (PLUTO_VSM_GRID * PLUTO_VSM_GRID)
 #define PLUTO_VSM_UPDATE_LIST_OFFSET (PLUTO_VSM_LEVELS + PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES)
-#define PLUTO_VSM_MAX_DRAW_CHUNKS 4096
+#define PLUTO_VSM_MAX_DRAW_CHUNKS 8192
 // Caster chunks of at most this many models are planned per instance: each caster/page membership holds a mask of the
 // instances whose bounds reach the page, and the page draws only those. Larger (whole-draw fallback) chunks draw every
 // model into every page their bounds reach.

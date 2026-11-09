@@ -30,15 +30,20 @@ struct VirtualShadowPage
 // With a static layer (levels.y, its generation, nonzero) each page keeps the static casters' depth apart: an update
 // whose static casters are unchanged restores it and draws the dynamic casters only.
 bool virtualStaticLayer(VirtualShadowParameters p) { return p.levels.y != 0; }
+// Casters per physical page in the page-major caster/page membership records (levels.z, the caster capacity).
+uint virtualMembershipStride(VirtualShadowParameters p) { return p.levels.z; }
 bool virtualRedrawsStatic(VirtualShadowParameters p, VirtualShadowPage page) { return !virtualStaticLayer(p) || page.freshness.w != 0; }
 struct VirtualShadowCaster
 {
     float4 bounds;
     uint4 draw; // index count, first index, model count, original draw index
-    uint4 identity; // swaying signature low/high, membership generation, unused
+    uint4 identity; // swaying signature low/high, membership generation, levels served (one bit per level)
     float4 extents; // conservative world AABB around bounds.xyz; negative = unknown
     uint4 still; // rest-pose signature low/high, 1 if its wind animates it, 1 if dynamic
 };
+// A caster chunk draws only into pages of the levels it serves: LOD variants of one chunk split the levels between
+// them by texel size (VirtualShadowCasterLods.h). Other chunks serve PLUTO_VSM_ALL_LEVELS.
+bool virtualCasterServesLevel(VirtualShadowCaster caster, uint level) { return ((caster.identity.w >> level) & 1u) != 0; }
 // Masked chunks list one entry per (page, instance); others one entry per page, drawn for every model.
 bool virtualMaskedCaster(VirtualShadowCaster caster) { return caster.draw.z <= PLUTO_VSM_MASKED_INSTANCES; }
 bool virtualMaskedModelCount(uint models) { return models <= PLUTO_VSM_MASKED_INSTANCES; }

@@ -2840,6 +2840,7 @@ namespace PlutoGE::render
                 m_gpuInstanceCulling->RecordPhase(commands, 0);
                 m_frameStats.gpuBinnedDraws = gpuSources.size();
                 m_frameStats.gpuCullingSecondPhase = m_gpuInstanceCulling->TwoPhase();
+                m_frameStats.instanceCulling = m_gpuInstanceCulling->Stats();
             }
             m_frameStats.instanceRecordUploads = m_instanceStorage->UploadedRecords();
             m_frameStats.residentInstanceRecords = m_instanceStorage->ResidentRecords();
@@ -3955,21 +3956,32 @@ namespace PlutoGE::render
                         boundObjectBlock = {};
                         const auto arguments = m_gpuInstanceCulling->Arguments();
                         constexpr auto stride = GpuInstanceCulling::ArgumentStride;
+                        // The phases this pass draws are adjacent in the draw's slots (phase 0's LODs, then phase 1's),
+                        // so they go as one range: one batch with first instances, else one draw per slot.
                         const auto phases = m_gpuInstanceCulling->TwoPhase() ? GpuInstanceCulling::PhaseCount : 1u;
-                        if (m_gpuInstanceCulling->UsesFirstInstance()) bind({0u, 1u, 1u, instanceLayout});
+                        std::uint32_t firstPhase = phases, endPhase = 0;
                         for (std::uint32_t phase = 0; phase < phases; ++phase)
+                            if ((gpuBinPhases & (1u << phase)) != 0)
+                            {
+                                firstPhase = std::min(firstPhase, phase);
+                                endPhase = phase + 1;
+                            }
+                        if (firstPhase < endPhase)
                         {
-                            if ((gpuBinPhases & (1u << phase)) == 0) continue;
-                            const auto firstSlot = gpuBins->firstSlot + phase * m_gpuInstanceCulling->PhaseSlots();
+                            const auto firstSlot = gpuBins->PhaseSlot(firstPhase);
+                            const auto slotCount = (endPhase - firstPhase) * gpuBins->lodCount;
                             if (m_gpuInstanceCulling->UsesFirstInstance())
-                                commands.DrawIndexedIndirectBatch(arguments, std::size_t(firstSlot) * stride, gpuBins->lodCount);
+                            {
+                                bind({0u, 1u, 1u, instanceLayout});
+                                commands.DrawIndexedIndirectBatch(arguments, std::size_t(firstSlot) * stride, slotCount);
+                            }
                             else
-                                for (std::uint32_t lod = 0; lod < gpuBins->lodCount; ++lod)
+                                for (std::uint32_t slot = firstSlot; slot < firstSlot + slotCount; ++slot)
                                 {
-                                    bind({firstSlot + lod, 1u, 2u, instanceLayout});
-                                    commands.DrawIndexedIndirect(arguments, std::size_t(firstSlot + lod) * stride);
+                                    bind({slot, 1u, 2u, instanceLayout});
+                                    commands.DrawIndexedIndirect(arguments, std::size_t(slot) * stride);
                                 }
-                            m_frameStats.geometryDraws += gpuBins->lodCount;
+                            m_frameStats.geometryDraws += slotCount;
                         }
                     }
                     else if (binned)

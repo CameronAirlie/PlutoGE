@@ -460,6 +460,12 @@ namespace PlutoGE::ui
             report << "RHI occlusion delayed frame " << rhiScene.occlusion.frame << ": "
                    << rhiScene.occlusion.tested << " tested, " << rhiScene.occlusion.rejected
                    << " hidden draws, " << rhiScene.occlusion.rejectedTriangles << " hidden triangles\n";
+        if (const auto &culling = rhiScene.instanceCulling; culling.available)
+            report << "RHI GPU instance culling delayed frame " << culling.frame << ": " << culling.instances
+                   << " instances, " << culling.outside << " outside the view or range, " << culling.occluded
+                   << " hidden by the previous frame's depth, " << culling.recovered << " of them drawn by the second phase, "
+                   << culling.drawn << " drawn (" << culling.crossfading << " crossfading); second phase "
+                   << (culling.secondPhase ? "ran" : "off") << "\n";
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)
             report << "RHI occlusion diagnostics: " << rhiScene.occlusion.unsupported << " unsupported, "
                    << rhiScene.occlusion.invalidBounds << " invalid bounds, " << rhiScene.occlusion.clipped

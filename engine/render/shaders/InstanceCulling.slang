@@ -27,8 +27,8 @@ static const uint DitherShift = 24u;         // BasicInstanceLodChain::DitherShi
     column_major float4x4 hierarchyViewProjection; // the view the hierarchy's depth was drawn from
     uint4 hierarchySource;                      // depth width, height, level count, flags
     uint4 cullDispatch;                         // first draw, draw count, first item, item end
-    uint4 cullTotals;                           // slots per phase, first instance in arguments (1) or bin header (0),
-                                                // phase, first bin entry of this phase
+    uint4 cullTotals;                           // slots (every phase's), first instance in arguments (1) or bin header
+                                                // (0), phase, first bin entry of this phase
     uint4 hierarchyLevels[16];                  // width, height, offset in `hierarchy`
 };
 
@@ -40,7 +40,7 @@ struct CullRecord
 };
 struct CullDraw
 {
-    uint4 items;            // first item, item count, first record, first slot (in phase 0)
+    uint4 items;            // first item, item count, first record, first slot (phase 0's; phase p's follow LOD count * p later)
     uint4 lodInfo;          // LOD count, finest LOD drawn, switch count
     float4 bounds;          // model-space sphere: centre, radius
     float4 screenRange;     // wind reach (a share of the rest radius), unused, draw distance, LOD distance scale
@@ -54,7 +54,8 @@ struct CullIndex
 
 [[vk::binding(1, 0)]] StructuredBuffer<CullRecord> records : register(t1);
 [[vk::binding(2, 0)]] StructuredBuffer<CullDraw> cullDraws : register(t2);
-// Every slot's count (both phases), then every slot's scatter cursor.
+// Every slot's count, then every slot's scatter cursor. A draw's slots are its LODs in phase 0, then in phase 1, so one
+// indirect batch draws both phases.
 [[vk::binding(3, 0)]] RWStructuredBuffer<uint> slotCounters : register(u3);
 // The bins: one header entry per slot (its bin's offset), then the bins' entries: a record index with its dither code
 // in the top byte (BasicLit.slang reads both).
@@ -65,6 +66,13 @@ struct CullIndex
 [[vk::binding(6, 0)]] StructuredBuffer<float> hierarchy : register(t6);
 // Per item: 1 when phase 0 rejected it only for occlusion, so phase 1 tests it again.
 [[vk::binding(7, 0)]] RWStructuredBuffer<uint> occludedItems : register(u7);
+// Per slot: the phase it bins, so each phase's scan picks its own slots out of the interleaved layout.
+[[vk::binding(8, 0)]] StructuredBuffer<uint> slotPhases : register(t8);
+// Diagnostics read back after the frame (GpuInstanceCulling::Stats, InstanceCullingStats): instances tested, outside the
+// view or range, hidden by phase 0's hierarchy, drawn after phase 1's test, drawn, and drawn crossfading.
+static const uint StatInstances = 0, StatOutside = 1, StatOccluded = 2, StatRecovered = 3, StatDrawn = 4,
+                  StatCrossfading = 5, StatCount = 6;
+[[vk::binding(9, 0)]] RWStructuredBuffer<uint> cullStats : register(u9);
 
 float switchRadius(CullDraw draw, uint k) { return draw.switches[k / 4][k % 4]; }
 uint switchCoarser(CullDraw draw, uint k) { return draw.coarser[k / 4][k % 4]; }
@@ -135,7 +143,7 @@ void addLevel(inout ItemBins bins, CullDraw draw, uint record, int level, uint c
 {
     if (level < 0 || level >= int(min(draw.lodInfo.x, MaxLods))) return;
     const uint lod = max(uint(level), draw.lodInfo.y);
-    bins.slots[bins.count] = cullTotals.z * cullTotals.x + draw.items.w + lod;
+    bins.slots[bins.count] = draw.items.w + cullTotals.z * min(draw.lodInfo.x, MaxLods) + lod;
     bins.entries[bins.count] = record | (code << DitherShift);
     ++bins.count;
 }
@@ -209,32 +217,52 @@ ItemBins itemBins(uint item, out bool rejectedForOcclusion)
     return bins;
 }
 
+// Each group sums its statistics here and adds them to cullStats once, rather than every instance contending for them.
+groupshared uint groupStats[StatCount];
+
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void countMain(uint3 id : SV_DispatchThreadID)
+void countMain(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex)
 {
+    if (lane < StatCount) groupStats[lane] = 0u;
+    GroupMemoryBarrierWithGroupSync();
     const uint item = cullDispatch.z + id.x;
-    if (item >= cullDispatch.w) return;
-    bool rejectedForOcclusion;
-    const ItemBins bins = itemBins(item, rejectedForOcclusion);
-    // Phase 0 decides which items phase 1 tests again.
-    if (cullTotals.z == 0u) occludedItems[item] = rejectedForOcclusion ? 1u : 0u;
-    for (uint entry = 0; entry < bins.count; ++entry) InterlockedAdd(slotCounters[bins.slots[entry]], 1u);
+    if (item < cullDispatch.w)
+    {
+        bool rejectedForOcclusion;
+        const ItemBins bins = itemBins(item, rejectedForOcclusion);
+        const uint phase = cullTotals.z;
+        // Phase 0 decides which items phase 1 tests again.
+        if (phase == 0u) occludedItems[item] = rejectedForOcclusion ? 1u : 0u;
+        for (uint entry = 0; entry < bins.count; ++entry) InterlockedAdd(slotCounters[bins.slots[entry]], 1u);
+        if (phase == 0u)
+        {
+            InterlockedAdd(groupStats[StatInstances], 1u);
+            if (rejectedForOcclusion) InterlockedAdd(groupStats[StatOccluded], 1u);
+            else if (bins.count == 0u) InterlockedAdd(groupStats[StatOutside], 1u);
+        }
+        else if (bins.count != 0u) InterlockedAdd(groupStats[StatRecovered], 1u);
+        if (bins.count != 0u) InterlockedAdd(groupStats[StatDrawn], 1u);
+        if (bins.count > 1u) InterlockedAdd(groupStats[StatCrossfading], 1u);
+    }
+    GroupMemoryBarrierWithGroupSync();
+    if (lane < StatCount && groupStats[lane] != 0u) InterlockedAdd(cullStats[lane], groupStats[lane]);
 }
 
 static const uint ScanThreads = 256;
 groupshared uint scanTotals[ScanThreads];
 
-// Prefix sums of this phase's slots, into bins starting at cullTotals.w.
+// Prefix sums of this phase's slots, into bins starting at cullTotals.w. Other phases' slots are left alone.
 [shader("compute")]
 [numthreads(256, 1, 1)]
 void scanMain(uint3 id : SV_GroupThreadID)
 {
-    const uint slots = cullTotals.x, firstSlot = cullTotals.z * slots, cursors = 2u * slots;
+    const uint slots = cullTotals.x, phase = cullTotals.z;
     const uint perThread = (slots + ScanThreads - 1u) / ScanThreads;
-    const uint begin = firstSlot + min(id.x * perThread, slots), end = min(begin + perThread, firstSlot + slots);
+    const uint begin = min(id.x * perThread, slots), end = min(begin + perThread, slots);
     uint total = 0;
-    for (uint slot = begin; slot < end; ++slot) total += slotCounters[slot];
+    for (uint slot = begin; slot < end; ++slot)
+        if (slotPhases[slot] == phase) total += slotCounters[slot];
     scanTotals[id.x] = total;
     GroupMemoryBarrierWithGroupSync();
     // Each thread's exclusive prefix over the threads before it (256 adds at most).
@@ -242,11 +270,12 @@ void scanMain(uint3 id : SV_GroupThreadID)
     for (uint other = 0; other < id.x; ++other) offset += scanTotals[other];
     for (uint slot = begin; slot < end; ++slot)
     {
+        if (slotPhases[slot] != phase) continue;
         const uint count = slotCounters[slot];
         binIndices[slot].record = offset;
         slotArguments[slot * 5u + 1u] = count;
         slotArguments[slot * 5u + 4u] = cullTotals.y != 0u ? offset : 0u;
-        slotCounters[cursors + slot] = 0u;
+        slotCounters[slots + slot] = 0u;
         offset += count;
     }
 }
@@ -263,7 +292,7 @@ void scatterMain(uint3 id : SV_DispatchThreadID)
     {
         const uint slot = bins.slots[entry];
         uint rank;
-        InterlockedAdd(slotCounters[2u * cullTotals.x + slot], 1u, rank);
+        InterlockedAdd(slotCounters[cullTotals.x + slot], 1u, rank);
         binIndices[binIndices[slot].record + rank].record = bins.entries[entry];
     }
 }

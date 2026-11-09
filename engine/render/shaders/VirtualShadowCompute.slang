@@ -9,7 +9,10 @@
 [[vk::binding(7, 0)]] RWStructuredBuffer<uint> stats : register(u7, space0);
 [[vk::binding(8, 0)]] RWTexture2D<uint> requestMask : register(u8, space0);
 [[vk::binding(9, 0)]] RWTexture2D<float> pageTable : register(u9, space0);
-[[vk::binding(10, 0)]] RWStructuredBuffer<uint4> membership : register(u10, space0);
+// Caster/page membership records (membershipRecord): the frame the record was evaluated, and the mask of the caster's
+// models reaching the page. A record stays valid until its caster's generation (VirtualShadowCaster::identity.z) or its
+// page's membership epoch (VirtualShadowPage::pending.w) moves past that frame; both are frames, set when they change.
+[[vk::binding(10, 0)]] RWStructuredBuffer<uint2> membership : register(u10, space0);
 // Masked chunks' per-model world spheres, PLUTO_VSM_MASKED_INSTANCES per caster; negative radius = unknown.
 [[vk::binding(11, 0)]] StructuredBuffer<float4> instanceBounds : register(t11, space0);
 
@@ -384,20 +387,21 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
         if (index < vsm.limits.x && virtualCasterServesLevel(caster, p.address.z))
         {
             uint at = membershipRecord(index, group.x);
-            uint4 cached = membership[at];
-            if (cached.x != caster.identity.z || cached.y != p.pending.w)
+            uint2 cached = membership[at];
+            if (cached.x == 0 || cached.x < caster.identity.z || cached.x < p.pending.w)
             {
-                cached = uint4(caster.identity.z, p.pending.w, intersectionMask(index, caster, p), 0);
+                cached = uint2(vsm.limits.y, intersectionMask(index, caster, p));
                 membership[at] = cached;
             }
-            if (cached.z != 0)
+            const uint mask = cached.y;
+            if (mask != 0)
             {
                 // The page's content is the rest pose unless it sways; the masks distinguish which models it holds.
-                const uint sways = swayingMask(caster, p, cached.z);
+                const uint sways = swayingMask(caster, p, mask);
                 const uint2 identity = sways != 0 ? caster.identity.xy : caster.still.xy;
-                const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(cached.z) : caster.draw.z;
+                const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(mask) : caster.draw.z;
                 // w: 1 for a static caster, 2 for a dynamic one.
-                item = uint4(mixHash(identity.x, cached.z), mixHash(identity.y, sways), (caster.draw.x / 3) * models,
+                item = uint4(mixHash(identity.x, mask), mixHash(identity.y, sways), (caster.draw.x / 3) * models,
                              caster.still.w != 0 ? 2u : 1u);
             }
         }
@@ -549,7 +553,7 @@ void binMain(uint3 id : SV_DispatchThreadID)
         if (layered && pages[slot].freshness.w == 0) continue;
         // Planning skipped (and so never validated) the records of levels the chunk does not serve.
         if (!virtualCasterServesLevel(caster, pages[slot].address.z)) continue;
-        uint mask = membership[membershipRecord(index, slot)].z;
+        uint mask = membership[membershipRecord(index, slot)].y;
         if (mask == 0) continue;
         const uint sways = swayingMask(caster, pages[slot], mask);
         if (!masked) pageLists[list + count++] = virtualPageEntry(slot, 0, sways != 0);

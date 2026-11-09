@@ -240,6 +240,10 @@ namespace PlutoGE::ui
                     static_cast<unsigned long long>(rhiScene.viewCulledInstanceCount));
         ImGui::Text("  Internal: %u x %u; output: %u x %u", rhiScene.renderSize.width, rhiScene.renderSize.height,
                     rhiScene.outputSize.width, rhiScene.outputSize.height);
+        if (const auto &culling = rhiScene.instanceCulling; culling.available)
+            ImGui::Text("GPU instance culling (delayed): %u instances, %u outside view, %u occluded (%u recovered), %u drawn%s",
+                        culling.instances, culling.outside, culling.occluded, culling.recovered, culling.drawn,
+                        culling.secondPhase ? "" : "; second phase off");
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)
             ImGui::Text("Occlusion (delayed): %u tested, %u hidden draws, %u hidden triangles",
                         rhiScene.occlusion.tested, rhiScene.occlusion.rejected, rhiScene.occlusion.rejectedTriangles);

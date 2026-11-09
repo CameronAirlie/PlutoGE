@@ -456,10 +456,11 @@ Three compute passes run per phase:
 2. **Scan:** prefix sums give each bin's offset and fill the indirect draw arguments.
 3. **Scatter:** record indices, with their dither codes, are written into the bins.
 
-Draws read the bins through the same index buffer binding as CPU bins:
+A draw's slots are its LODs in phase 0, then its LODs in phase 1 (`GpuInstanceCulling::Bins::PhaseSlot`), so the
+phases a pass draws are one contiguous range. Draws read the bins through the same index buffer binding as CPU bins:
 
-- **Vulkan with indirect first instances:** a draw's LODs go as one indirect batch whose first instances are the bin
-  offsets.
+- **Vulkan with indirect first instances:** that range goes as one indirect batch whose first instances are the bin
+  offsets: the coverage depth draws phase 0's LODs and later phase 1's, the shaded pass both at once.
 - **Otherwise (OpenGL):** each LOD is an indirect draw whose vertex shader reads its bin's offset from a header
   (`instanceRange.z == 2`).
 
@@ -472,13 +473,22 @@ Limits and fallbacks:
   in Verdant on the Vega 8 (2026-11-09, 1280x720, the scene's quality), scene GPU time fell from 76.5 to 59.9 ms at the
   trailhead and from 79.7 to 65.0 ms with the camera travelling, for about 0.55 ms of culling and hierarchy passes.
   Coverage depth went from 24.4 to 16.9 ms and the shaded pass from 38.2 to 29.0 ms. Review captures match CPU binning
-  within capture noise, still and moving. An indirect count path would trim the empty draws further.
+  within capture noise, still and moving.
+- An indirect draw count would let the GPU skip the empty slots, but it was measured and is not worth an RHI
+  capability: leaving out about 9,200 mostly empty phase-1 draws saved about 0.5 ms of GPU time on Verdant (five
+  alternating pairs), within noise. Merging each draw's phases into one batch halves the shaded pass's indirect calls,
+  with no measurable change to recording time either way.
 - Swaying instances' bounds are padded by this frame's wind's reach at the mesh's top (`FoliageWindFrame::MaxDisplacement`,
   as virtual shadow maps pad casters), not the any-wind bound CPU binning uses: that one roughly doubles a tree's
   sphere, and with it the occlusion test hid little (75 ms against 60 ms on Verdant). Without the padding occlusion would
   hide more (51 ms), but crowns swaying out from behind an occluder would be cut off.
 - Triangles and instances of GPU-binned draws are not counted in the frame statistics, because the bins are never
-  read back. `gpuBinnedDraws` reports how many draws were binned on the GPU.
+  read back. `gpuBinnedDraws` reports how many draws were binned on the GPU, and `InstanceCullingStats` (read back
+  without waiting, so it describes an earlier frame) how many instances were tested, outside the view or range,
+  hidden by the previous frame's depth, drawn after all by the second phase, drawn, and crossfading. The editor
+  profiler shows them ("RHI GPU instance culling"), and the benchmark CSV has `gpu_cull_*` columns. On Verdant's
+  trailhead (still camera): 50,064 instances, 35,792 outside, 5,687 hidden by the previous depth, 422 of them drawn by
+  the second phase (dithered crossfades change the depth's holes every frame), 9,007 drawn.
 
 ## Physics representation
 

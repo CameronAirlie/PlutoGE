@@ -1062,8 +1062,10 @@ namespace PlutoGE::render
         std::size_t gpuDrivenDraws = 0, gpuDrivenBatches = 0, gpuDrivenMaterials = 0;
         // Instanced draws binned by GpuInstanceCulling (their triangles and instances are not counted).
         std::size_t gpuBinnedDraws = 0;
-        // Whether GPU instance culling ran its second occlusion phase (GpuInstanceCulling::TwoPhase).
+        // Whether GPU instance culling ran its second occlusion phase (GpuInstanceCulling::TwoPhase), and its latest
+        // diagnostics (an earlier frame's).
         bool gpuCullingSecondPhase = false;
+        InstanceCullingStats instanceCulling;
         // Frame-graph sections run on the async compute queue (zero when its work ran inline or none was needed).
         std::uint32_t asyncComputeSections = 0;
         // The lighting paths this frame's geometry pipelines kept (SurfaceFeature bits, src/SurfaceFeatures.h).

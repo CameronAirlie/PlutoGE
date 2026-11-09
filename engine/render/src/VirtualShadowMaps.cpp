@@ -754,10 +754,10 @@ namespace PlutoGE::render
             if (grow)
             {
                 m_indirect = rhi::Buffer(device, device.CreateBuffer({m_capacity * 20, rhi::BufferUsage::Storage, "VSM indexed indirect commands"}));
-                // Page-major records (VirtualShadowCompute membershipRecord); zero epochs make every pair invalid until
-                // evaluated. Each record stores exact caster/page generations and conservative membership.
-                const std::vector<glm::uvec4> empty(m_capacity * poolCapacity, glm::uvec4(0));
-                m_membership = rhi::Buffer(device, device.CreateBuffer({empty.size() * sizeof(glm::uvec4),
+                // Page-major records (VirtualShadowCompute membershipRecord): the frame each was evaluated, and its
+                // conservative membership mask. Frame zero makes every pair invalid until evaluated.
+                const std::vector<glm::uvec2> empty(m_capacity * poolCapacity, glm::uvec2(0));
+                m_membership = rhi::Buffer(device, device.CreateBuffer({empty.size() * sizeof(glm::uvec2),
                     rhi::BufferUsage::Storage, "VSM persistent caster/page membership"}, std::as_bytes(std::span(empty))));
             }
             for (std::size_t index = 0; index < inputs.size(); ++index)
@@ -1138,7 +1138,7 @@ namespace PlutoGE::render
         stats.receiverDraws = m_reuseFrame || m_sceneDepth ? 0 : static_cast<std::uint32_t>(m_receiverCount);
         stats.memoryBytes = std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 8 +
             PLUTO_VSM_LEVELS * PLUTO_VSM_LEVEL_PAGES * 12 + poolCapacity * PLUTO_VSM_PAGE_METADATA_BYTES + sizeof(VirtualShadowParameters) + PLUTO_VSM_COUNTER_COUNT * 4 + 16 +
-            m_capacity * (sizeof(Caster) + sizeof(InstanceBoundsRecord) + m_listEntries * 4 + poolCapacity * sizeof(glm::uvec4) + 20) +
+            m_capacity * (sizeof(Caster) + sizeof(InstanceBoundsRecord) + m_listEntries * 4 + poolCapacity * sizeof(glm::uvec2) + 20) +
             PLUTO_VSM_CAPACITY * 4 +
             std::uint64_t(m_width) * m_height * 8 + m_batchedDraws->MemoryBytes() + m_batchedModels->MemoryBytes() +
             (m_staticDepth ? std::uint64_t(poolCapacity) * PLUTO_VSM_PAGE_SIZE * PLUTO_VSM_PAGE_SIZE * 4 : 0);

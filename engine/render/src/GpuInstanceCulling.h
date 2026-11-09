@@ -56,14 +56,16 @@ namespace PlutoGE::render
             const FoliageWindFrame *wind = nullptr;
         };
 
-        // A binned draw: its phase-0 slots (one per LOD), whose arguments are in Arguments() at
-        // firstSlot * ArgumentStride; phase p's start PhaseSlots() * p later.
+        static constexpr std::uint32_t PhaseCount = 2;
+        // A binned draw's slots: one per LOD and phase, its LODs in phase 0 then in phase 1, so one indirect batch of
+        // SlotCount() draws both phases. A slot's arguments are in Arguments() at its index * ArgumentStride.
         struct Bins
         {
             std::uint32_t firstSlot = 0;
             std::uint32_t lodCount = 0;
+            [[nodiscard]] std::uint32_t PhaseSlot(std::uint32_t phase) const noexcept { return firstSlot + phase * lodCount; }
+            [[nodiscard]] std::uint32_t SlotCount() const noexcept { return lodCount * PhaseCount; }
         };
-        static constexpr std::uint32_t PhaseCount = 2;
         static constexpr std::size_t ArgumentStride = 20;
 
         bool Initialize(rhi::IRenderDevice &device, const Shaders &shaders);
@@ -79,10 +81,10 @@ namespace PlutoGE::render
         // phase 1 (only when TwoPhase()) after phase 0's depth and View::current's hierarchy are recorded. Records
         // nothing else, so it may run in a parallel recording job.
         void RecordPhase(rhi::ICommandContext &commands, std::uint32_t phase);
-        // Whether this frame has a phase 1 to record and draw.
+        // Whether this frame has a phase 1 to record and draw. Without one, phase 1's slots draw nothing.
         [[nodiscard]] bool TwoPhase() const noexcept { return m_twoPhase; }
-        // Slots per phase: phase p's slots of a draw start at Bins::firstSlot + p * PhaseSlots().
-        [[nodiscard]] std::uint32_t PhaseSlots() const noexcept { return m_slots; }
+        // The latest diagnostics read back (an earlier frame's; see InstanceCullingStats).
+        [[nodiscard]] InstanceCullingStats Stats() const { return *m_stats; }
         // The bins Record made for a draw this frame, or null.
         [[nodiscard]] const Bins *Find(const BasicDraw &draw) const;
         [[nodiscard]] rhi::BufferHandle IndexBuffer() const noexcept { return m_indices.Get(); }
@@ -109,16 +111,21 @@ namespace PlutoGE::render
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_count, m_scan, m_scatter; // compute pipelines
-        rhi::Buffer m_draws, m_counters, m_indices, m_arguments, m_occludedItems, m_placeholder;
+        rhi::Buffer m_draws, m_counters, m_indices, m_arguments, m_occludedItems, m_slotPhases, m_placeholder;
         std::size_t m_drawCapacity = 0, m_counterCapacity = 0, m_indexCapacity = 0, m_argumentCapacity = 0;
-        std::size_t m_occludedCapacity = 0;
+        std::size_t m_occludedCapacity = 0, m_slotPhaseCapacity = 0;
         // Per phase: one parameter block per records page, then one for the scan.
         std::array<std::vector<rhi::Buffer>, PhaseCount> m_dispatchParameters;
         // This frame's records pages, and each phase's hierarchy buffer (the placeholder without one).
         struct Page { rhi::BufferHandle records; glm::uvec4 dispatch; };
         std::vector<Page> m_pages;
         std::array<rhi::BufferHandle, PhaseCount> m_hierarchies{};
-        std::uint32_t m_slots = 0;
+        std::uint32_t m_slots = 0; // every phase's
+        // InstanceCulling.slang's StatCount counters, cleared by Prepare and read back after the last phase.
+        static constexpr std::uint32_t StatCount = 6;
+        rhi::Buffer m_statCounters;
+        std::uint64_t m_frame = 0;
+        std::shared_ptr<InstanceCullingStats> m_stats = std::make_shared<InstanceCullingStats>();
         bool m_twoPhase = false;
         std::unordered_map<Key, Bins, KeyHash> m_bins;
         bool m_firstInstance = false;

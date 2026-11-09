@@ -210,8 +210,11 @@ the limit every caster fell back to whole-draw chunks of 64 unmasked models, so 
 2.4 M-triangle page in the editor capture that started this pass. Now:
 
 - `PLUTO_VSM_MAX_DRAW_CHUNKS` is 8,192, and buffers grow with the chunks needed (`VirtualShadowCasterCapacity`, steps of
-  512 plus an eighth), not to the next power of two: membership records for Verdant's 5,240 chunks take 96 MB
-  (6,144 slots x 1024 pages x 16 bytes), against 64 MB at 4,096.
+  512 plus an eighth), not to the next power of two.
+- A membership record is 8 bytes: the frame it was evaluated and its model mask. It is valid while neither its caster's
+  generation nor its page's epoch has moved past that frame (both are frames, set when they change), which is exactly
+  the old record's test of both against stored copies, in half the memory. Verdant's 5,240 chunks take 48 MB of records
+  (6,144 slots x 1024 pages x 8 bytes); the editor's 6,942 take 64 MB, where 16-byte records took 128 MB.
 - `SelectVirtualShadowChunking` steps down one level at a time: clusters with LOD variants, clusters, whole draws with
   16 masked models per chunk, whole draws of 64.
 

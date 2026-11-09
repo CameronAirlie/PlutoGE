@@ -112,6 +112,8 @@ namespace PlutoGE::render
         OcclusionMode occlusionMode = OcclusionMode::Off;
         OcclusionStats occlusion;
         bool occlusionActive = false;
+        // GPU instance culling's latest diagnostics, when it binned anything (BasicRenderer::FrameStats::instanceCulling).
+        InstanceCullingStats instanceCulling;
         float directionalShadowSoftness = 0.0f;
         unsigned skinningParticipants = 1;
         float skinningDispatchMs = 0, skinningCallerMs = 0, skinningWaitMs = 0, skinningMergeMs = 0;

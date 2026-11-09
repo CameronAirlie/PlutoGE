@@ -231,6 +231,7 @@ namespace PlutoGE
             "vsm_dirty_fine_triangles", "vsm_dirty_root_triangles", "vsm_fine_levels", "vsm_resolution_scale",
             "vsm_new_dirty_pages", "vsm_changed_dirty_pages", "vsm_evicted_pages", "vsm_cache_hits",
             "vsm_static_dirty_pages", "vsm_dynamic_chunks", "vsm_static_layer", "vsm_chunking", "vsm_lod_variant_chunks",
+            "gpu_cull_instances", "gpu_cull_outside", "gpu_cull_occluded", "gpu_cull_recovered", "gpu_cull_drawn",
             "ray_traced_rebuilt", "opaque_batch_groups_rebuilt", "opaque_batch_draws_rebuilt", "visible_packets", "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;

@@ -20,6 +20,18 @@ namespace PlutoGE::render
         std::uint32_t refined = 0, refinementRejected = 0, budgetExceeded = 0;
         std::uint32_t tightBounds = 0;
     };
+    // GPU instance culling's diagnostics (GpuInstanceCulling, InstanceCulling.slang), read back without waiting, so
+    // they describe `frame`, an earlier render. Instances are counted once each, whatever their LOD crossfade.
+    struct InstanceCullingStats
+    {
+        std::uint64_t frame = 0;
+        bool available = false;
+        // Instances tested; outside the view, beyond the draw distance or the covered size; hidden by the previous
+        // frame's depth (phase 0); of those, drawn after all by the second phase; drawn; and drawn on both sides of a
+        // LOD crossfade.
+        std::uint32_t instances = 0, outside = 0, occluded = 0, recovered = 0, drawn = 0, crossfading = 0;
+        bool secondPhase = false;
+    };
     struct OcclusionShaders
     {
         rhi::GraphicsPipelineDescriptor::ShaderCode vertex, fragment, reduce, test;

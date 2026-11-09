@@ -7,6 +7,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <memory>
 
 namespace PlutoGE::render
 {
@@ -20,13 +21,13 @@ namespace PlutoGE::render
             glm::mat4 hierarchyViewProjection{1.0f};
             glm::uvec4 hierarchySource{0u};
             glm::uvec4 dispatch{0u};
-            glm::uvec4 totals{0u}; // slots per phase, first instance in arguments, phase, first bin entry of the phase
+            glm::uvec4 totals{0u}; // slots (every phase's), first instance in arguments, phase, first bin entry of the phase
             std::array<glm::uvec4, 16> hierarchyLevels{};
         };
         static_assert(sizeof(CullParameters) == 448);
         struct CullDraw
         {
-            glm::uvec4 items{0u};   // first item, item count, first record, first phase-0 slot
+            glm::uvec4 items{0u};   // first item, item count, first record, first slot (Bins::firstSlot)
             glm::uvec4 lodInfo{0u}; // LOD count, finest LOD drawn, switch count
             glm::vec4 bounds{0.0f};
             glm::vec4 screenRange{0.0f};
@@ -88,16 +89,18 @@ namespace PlutoGE::render
         if (!shaders.Available()) return false;
         using rhi::ResourceBindingType;
         std::vector<rhi::GraphicsPipelineDescriptor::ResourceBinding> bindings{{0, 0, 0, ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Compute}};
-        for (std::uint32_t binding = 1; binding <= 7; ++binding)
+        for (std::uint32_t binding = 1; binding <= 9; ++binding)
             bindings.push_back({binding, 0, binding, ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Compute});
         m_count = rhi::GraphicsPipeline(device, device.CreateComputePipeline({shaders.count, bindings, "Instance culling count"}));
         m_scan = rhi::GraphicsPipeline(device, device.CreateComputePipeline({shaders.scan, bindings, "Instance culling scan"}));
         m_scatter = rhi::GraphicsPipeline(device, device.CreateComputePipeline({shaders.scatter, bindings, "Instance culling scatter"}));
         m_placeholder = rhi::Buffer(device, device.CreateBuffer({16, rhi::BufferUsage::Storage, "Instance culling placeholder"}));
+        m_statCounters = rhi::Buffer(device, device.CreateBuffer({StatCount * sizeof(std::uint32_t), rhi::BufferUsage::Storage,
+                                                                  "Instance culling statistics"}));
         // Batching a draw's LODs needs multi-draw with first instances the shader sees (MaxIndexedIndirectBatchSize).
         auto &context = device.GetImmediateContext();
         m_firstInstance = context.SupportsFirstInstance() && context.MaxIndexedIndirectBatchSize() > 0;
-        if (!m_count || !m_scan || !m_scatter || !m_placeholder)
+        if (!m_count || !m_scan || !m_scatter || !m_placeholder || !m_statCounters)
         {
             m_count = {}; m_scan = {}; m_scatter = {};
             return false;
@@ -135,7 +138,7 @@ namespace PlutoGE::render
             if (source.draw && source.records && Supports(*source.draw))
                 byPage[{source.records.buffer.index, source.records.buffer.generation}].push_back(&source);
         std::vector<CullDraw> draws;
-        std::vector<std::uint32_t> arguments;
+        std::vector<std::uint32_t> arguments, slotPhases;
         std::uint32_t items = 0;
         for (const auto &[pageKey, pageSources] : byPage)
         {
@@ -165,15 +168,18 @@ namespace PlutoGE::render
                     entry.coarser[k / 4][k % 4] = switches.coarser[k];
                 }
                 // Cards index their own buffer; meshes theirs, bound at zero, so their ranges start at the base index.
+                // Each phase repeats the LODs' index ranges; the scans fill in their instance counts.
                 const std::uint32_t base = draw.impostor ? 0u : draw.mesh->BaseIndex();
-                for (std::uint32_t lod = 0; lod < lods; ++lod)
-                {
-                    const auto &range = chain.lods[lod];
-                    const std::uint32_t indexCount = draw.impostor ? range.indexCount
-                        : range.firstIndex < draw.mesh->GetIndexCount()
-                            ? std::min(range.indexCount, draw.mesh->GetIndexCount() - range.firstIndex) : 0u;
-                    arguments.insert(arguments.end(), {indexCount, 0u, base + range.firstIndex, 0u, 0u});
-                }
+                for (std::uint32_t phase = 0; phase < PhaseCount; ++phase)
+                    for (std::uint32_t lod = 0; lod < lods; ++lod)
+                    {
+                        const auto &range = chain.lods[lod];
+                        const std::uint32_t indexCount = draw.impostor ? range.indexCount
+                            : range.firstIndex < draw.mesh->GetIndexCount()
+                                ? std::min(range.indexCount, draw.mesh->GetIndexCount() - range.firstIndex) : 0u;
+                        arguments.insert(arguments.end(), {indexCount, 0u, base + range.firstIndex, 0u, 0u});
+                        slotPhases.push_back(phase);
+                    }
                 m_bins[{draw.instanceModels.get(), draw.instanceLods.get()}] = {firstSlot, lods};
                 draws.push_back(entry);
                 items += count;
@@ -186,27 +192,27 @@ namespace PlutoGE::render
         // Phase 1 needs both hierarchies; phase 0 occludes only when phase 1 can draw what it hid.
         m_twoPhase = Usable(view.previous) && Usable(view.current);
         const auto phases = m_twoPhase ? PhaseCount : 1u;
-        // Phase 1's slots repeat phase 0's index ranges; the scans fill in their instance counts.
-        const auto phaseArguments = arguments.size();
-        for (std::uint32_t phase = 1; phase < PhaseCount; ++phase)
-            arguments.insert(arguments.end(), arguments.begin(), arguments.begin() + phaseArguments);
 
         // Each instance bins into at most two LODs (a crossfade) and one phase. The bin buffer holds every slot's
         // header, then each phase's region of entries.
-        const std::size_t slotsAllPhases = std::size_t(m_slots) * PhaseCount;
+        const std::size_t slotCount = m_slots;
         const std::size_t phaseEntries = std::size_t(items) * 2;
         Grow(device, m_draws, m_drawCapacity, draws.size() * sizeof(CullDraw), rhi::BufferUsage::Storage, "Instance culling draws");
-        Grow(device, m_counters, m_counterCapacity, slotsAllPhases * 2 * sizeof(std::uint32_t), rhi::BufferUsage::Storage,
+        Grow(device, m_counters, m_counterCapacity, slotCount * 2 * sizeof(std::uint32_t), rhi::BufferUsage::Storage,
              "Instance culling counters");
-        Grow(device, m_indices, m_indexCapacity, (slotsAllPhases + phaseEntries * PhaseCount) * sizeof(std::uint32_t),
+        Grow(device, m_indices, m_indexCapacity, (slotCount + phaseEntries * PhaseCount) * sizeof(std::uint32_t),
              rhi::BufferUsage::Storage, "Instance culling bins");
+        Grow(device, m_slotPhases, m_slotPhaseCapacity, slotCount * sizeof(std::uint32_t), rhi::BufferUsage::Storage,
+             "Instance culling slot phases");
         Grow(device, m_arguments, m_argumentCapacity, arguments.size() * sizeof(std::uint32_t), rhi::BufferUsage::Storage,
              "Instance culling indirect draws");
         Grow(device, m_occludedItems, m_occludedCapacity, std::size_t(items) * sizeof(std::uint32_t), rhi::BufferUsage::Storage,
              "Instance culling occluded items");
         device.UpdateBuffer(m_draws.Get(), 0, Bytes(draws));
         device.UpdateBuffer(m_arguments.Get(), 0, Bytes(arguments));
-        device.UpdateBuffer(m_counters.Get(), 0, Bytes(std::vector<std::uint32_t>(slotsAllPhases, 0u)));
+        device.UpdateBuffer(m_slotPhases.Get(), 0, Bytes(slotPhases));
+        device.UpdateBuffer(m_counters.Get(), 0, Bytes(std::vector<std::uint32_t>(slotCount, 0u)));
+        device.UpdateBuffer(m_statCounters.Get(), 0, Bytes(std::array<std::uint32_t, StatCount>{}));
 
         CullParameters parameters;
         parameters.planes = SidePlanes(view.viewProjection);
@@ -217,7 +223,7 @@ namespace PlutoGE::render
             SetHierarchy(parameters, hierarchy);
             m_hierarchies[phase] = hierarchy ? hierarchy->buffer : m_placeholder.Get();
             parameters.totals = {m_slots, m_firstInstance ? 1u : 0u, phase,
-                                 static_cast<std::uint32_t>(slotsAllPhases + phaseEntries * phase)};
+                                 static_cast<std::uint32_t>(slotCount + phaseEntries * phase)};
             auto &blocks = m_dispatchParameters[phase];
             while (blocks.size() < m_pages.size() + 1)
                 blocks.emplace_back(device, device.CreateBuffer({sizeof(CullParameters), rhi::BufferUsage::Uniform,
@@ -242,6 +248,8 @@ namespace PlutoGE::render
             commands.BindStorageBuffer(5, m_arguments.Get());
             commands.BindStorageBuffer(6, m_hierarchies[phase]);
             commands.BindStorageBuffer(7, m_occludedItems.Get());
+            commands.BindStorageBuffer(8, m_slotPhases.Get());
+            commands.BindStorageBuffer(9, m_statCounters.Get());
         };
         const auto perPage = [&](rhi::PipelineHandle pipeline)
         {
@@ -270,7 +278,24 @@ namespace PlutoGE::render
         commands.Dispatch(1, 1, 1);
         commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite, BarrierAccess::Compute);
         perPage(m_scatter.Get());
-        commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite, BarrierAccess::IndirectCommandRead | BarrierAccess::VertexShaderRead);
+        commands.PipelineBarrier(BarrierAccess::ComputeShaderWrite,
+                                 BarrierAccess::IndirectCommandRead | BarrierAccess::VertexShaderRead | BarrierAccess::TransferRead);
         commands.EndGpuScope();
+        // After the frame's last phase, its statistics come back when the GPU has finished; nothing waits for them.
+        if (phase + 1 == (m_twoPhase ? PhaseCount : 1u))
+        {
+            const auto frame = ++m_frame;
+            const bool secondPhase = m_twoPhase;
+            const std::weak_ptr<InstanceCullingStats> weakStats = m_stats;
+            commands.QueueBufferReadback(m_statCounters.Get(), StatCount * sizeof(std::uint32_t),
+                [weakStats, frame, secondPhase](std::span<const std::byte> bytes)
+                {
+                    const auto stats = weakStats.lock();
+                    if (!stats || bytes.size() != StatCount * sizeof(std::uint32_t) || frame <= stats->frame) return;
+                    std::array<std::uint32_t, StatCount> values{};
+                    std::memcpy(values.data(), bytes.data(), bytes.size());
+                    *stats = {frame, true, values[0], values[1], values[2], values[3], values[4], values[5], secondPhase};
+                });
+        }
     }
 }

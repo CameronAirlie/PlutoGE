@@ -2257,6 +2257,7 @@ namespace PlutoGE::render
         m_timingStats.rayTracedSceneRebuilt = frameStats.rayTracedSceneRebuilt;
         m_timingStats.occlusion = frameStats.occlusion;
         m_timingStats.occlusionActive = frameStats.occlusionActive;
+        m_timingStats.instanceCulling = frameStats.gpuBinnedDraws != 0 ? frameStats.instanceCulling : InstanceCullingStats{};
         m_timingStats.occlusionMode = frame.lighting.occlusionMode;
         m_timingStats.virtualShadows = frameStats.virtualShadows;
         m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;

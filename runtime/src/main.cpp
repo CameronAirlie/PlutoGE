@@ -826,6 +826,9 @@ int RunRuntime(int argc, char **argv)
                         render.virtualShadows.staticLayer ? 1.0 : 0.0,
                         static_cast<double>(render.virtualShadows.chunking),
                         static_cast<double>(render.virtualShadows.lodVariantChunks),
+                        static_cast<double>(render.instanceCulling.instances), static_cast<double>(render.instanceCulling.outside),
+                        static_cast<double>(render.instanceCulling.occluded), static_cast<double>(render.instanceCulling.recovered),
+                        static_cast<double>(render.instanceCulling.drawn),
                         render.rayTracedSceneRebuilt ? 1.0 : 0.0, static_cast<double>(render.rebuiltOpaqueBatchGroups),
                         static_cast<double>(render.rebuiltOpaqueBatchDraws), static_cast<double>(render.visibleDrawCount), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)

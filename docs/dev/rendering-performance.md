@@ -45,7 +45,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
   600-frame cycle. Use it to measure costs that only appear as the camera travels, which panning alone does not
   exercise: LOD changes, producer shadow distances, VSM page churn and the ray-traced GI scene.
 * `--cpu-instance-binning` bins instanced draws on the CPU, without occlusion, instead of with GPU instance culling
-  (the default; `PLUTO_GPU_INSTANCE_CULLING=0` does the same outside benchmarks). Use it to A/B the culling.
+  (the default; `PLUTO_GPU_INSTANCE_CULLING=0` does the same outside benchmarks). Use it to A/B the culling. The
+  `gpu_cull_instances`, `gpu_cull_outside`, `gpu_cull_occluded`, `gpu_cull_recovered` and `gpu_cull_drawn` columns are
+  its delayed statistics (`InstanceCullingStats`).
 * `--disable-effects` turns off the named post-process effects (type names such as `SSAO`, `DDGI`; `all` for
   every one) on the rendering camera each frame, exactly as the editor's Enabled toggle does, so a run per effect
   shows what it costs. A disabled effect records no GPU work at all (`PlutoGE{Vulkan,OpenGL}DisabledEffectTests`).

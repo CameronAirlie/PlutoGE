@@ -46,7 +46,21 @@ namespace PlutoGE::ui
         }
         if (m_scriptWatchFuture.valid() && m_scriptWatchFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
         {
-            try { m_scriptWatch.Observe(m_scriptWatchFuture.get(), now); }
+            try
+            {
+                auto snapshot = m_scriptWatchFuture.get();
+                // On the first scan of a project, rebuild an assembly left behind by an engine update, another
+                // machine or edits made while the editor was closed: its calls into ScriptCore may no longer exist.
+                const bool stale = !m_scriptWatch.IsPrimed() &&
+                                   ScriptSourceWatch::IsAssemblyStale(ResolveProjectScriptAssemblyPath(),
+                                                                      GetEditorScriptCoreAssemblyPath(), snapshot);
+                m_scriptWatch.Observe(std::move(snapshot), now);
+                if (stale)
+                {
+                    m_scriptWatch.Request(now);
+                    Log(ConsoleSeverity::Info, "Project scripts are older than the engine or their sources; rebuilding.");
+                }
+            }
             catch (const std::exception &error) { Log(ConsoleSeverity::Warning, "Script source scan: " + std::string(error.what())); }
             m_nextScriptScan = now + std::chrono::seconds(1);
         }

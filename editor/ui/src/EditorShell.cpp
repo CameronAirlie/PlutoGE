@@ -1153,6 +1153,11 @@ namespace PlutoGE::ui
         return (m_project->GetRootDirectory() / (baseName + ".Scripts.csproj")).lexically_normal();
     }
 
+    std::filesystem::path EditorShell::GetEditorScriptCoreAssemblyPath() const
+    {
+        return FindScriptCoreAssemblyPath(GetProcessDirectory());
+    }
+
     std::filesystem::path EditorShell::GetProjectScriptAssemblyOutputPath() const
     {
         if (!m_project)

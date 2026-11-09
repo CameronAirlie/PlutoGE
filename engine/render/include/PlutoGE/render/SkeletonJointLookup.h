@@ -1,12 +1,14 @@
 #pragma once
 #include "PlutoGE/render/Mesh.h"
+#include <array>
 
 namespace PlutoGE::render
 {
-    // Canonical key for conventional finger joints (Blender, Unreal and Mixamo).
+    // Canonical key for conventional finger joints (Blender, Rigify, Unreal and Mixamo).
     // Core humanoid joints use saved mappings instead. Unknown names stay exact-only.
     inline std::string HumanoidFingerKey(std::string_view name)
     {
+        constexpr std::array<std::string_view, 6> fingers = {"thumb", "index", "middle", "ring", "pinky", "little"};
         std::string n = NormalizeHumanoidBoneName(name), side;
         if (n.starts_with("left")) { side = "left"; n.erase(0, 4); }
         else if (n.starts_with("right")) { side = "right"; n.erase(0, 5); }
@@ -14,7 +16,11 @@ namespace PlutoGE::render
         { side = n.back() == 'l' ? "left" : "right"; n.pop_back(); }
         else return {};
         if (n.starts_with("hand")) n.erase(0, 4);
-        for (const std::string_view finger : {"thumb", "index", "middle", "ring", "pinky", "little"})
+        // Rigify (and rigs generated from it, such as CharMorph and MB-Lab) prefix fingers with "f_": f_index.01.L.
+        if (n.size() > 1 && n.front() == 'f')
+            for (const auto finger : fingers)
+                if (std::string_view(n).substr(1).starts_with(finger)) { n.erase(0, 1); break; }
+        for (const auto finger : fingers)
         {
             if (!n.starts_with(finger)) continue;
             auto segment = std::string_view(n).substr(finger.size());

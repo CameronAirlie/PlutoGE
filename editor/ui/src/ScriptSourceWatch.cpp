@@ -25,6 +25,23 @@ namespace PlutoGE::ui
         }
         return result;
     }
+    bool ScriptSourceWatch::IsAssemblyStale(const std::filesystem::path &assembly, const std::filesystem::path &scriptCore,
+                                            const Snapshot &sources)
+    {
+        const bool hasScripts = std::any_of(sources.begin(), sources.end(), [](const auto &source)
+                                            { return source.first.ends_with(".cs"); });
+        if (!hasScripts) return false;
+        std::error_code error;
+        const auto built = std::filesystem::last_write_time(assembly, error);
+        if (error) return true;
+        if (!scriptCore.empty())
+        {
+            const auto core = std::filesystem::last_write_time(scriptCore, error);
+            if (!error && core > built) return true;
+        }
+        return std::any_of(sources.begin(), sources.end(), [&](const auto &source) { return source.second.first > built; });
+    }
+
     bool ScriptSourceWatch::Observe(Snapshot snapshot, Clock::time_point now)
     {
         const bool changed = m_primed && snapshot != m_snapshot;

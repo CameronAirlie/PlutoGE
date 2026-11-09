@@ -40,6 +40,31 @@ int main()
     Check(watch.Ready(now + std::chrono::seconds(1)), "Watch never became ready");
     watch.Acknowledge();
     Check(!watch.Ready(now + std::chrono::seconds(2)), "Failed build would repeat");
+    {
+        // A project opened after an engine update must rebuild scripts compiled against the old ScriptCore.
+        const auto dir = std::filesystem::temp_directory_path() / "PlutoGEAuthoringStaleAssembly";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        const auto assembly = dir / "Game.dll", core = dir / "PlutoGE.ScriptCore.dll";
+        std::ofstream(assembly) << "dll";
+        std::ofstream(core) << "core";
+        const auto built = std::filesystem::last_write_time(assembly);
+        std::filesystem::last_write_time(core, built - std::chrono::hours(1));
+        ScriptSourceWatch::Snapshot sources{{"Game.cs", {built - std::chrono::hours(2), 1}}};
+        Check(!ScriptSourceWatch::IsAssemblyStale(assembly, core, sources), "Fresh assembly reported stale");
+        Check(!ScriptSourceWatch::IsAssemblyStale(dir / "Missing.dll", core, {}), "Project without scripts reported stale");
+        Check(ScriptSourceWatch::IsAssemblyStale(dir / "Missing.dll", core, sources), "Missing assembly not stale");
+        std::filesystem::last_write_time(core, built + std::chrono::hours(1));
+        Check(ScriptSourceWatch::IsAssemblyStale(assembly, core, sources), "Assembly older than ScriptCore not stale");
+        std::filesystem::last_write_time(core, built - std::chrono::hours(1));
+        sources["Game.cs"].first = built + std::chrono::hours(1);
+        Check(ScriptSourceWatch::IsAssemblyStale(assembly, core, sources), "Assembly older than sources not stale");
+        std::filesystem::remove_all(dir);
+        ScriptSourceWatch fresh;
+        Check(!fresh.IsPrimed(), "New watch primed");
+        fresh.Request(now);
+        Check(fresh.Ready(now + std::chrono::seconds(1)), "Requested build never became ready");
+    }
     AuthoringRegistry registry;
     registry.Register({"test", "Test", "", AuthoringRegistry::Kind::Command, [](EditorShell &) {}});
     Reject([&] { registry.Register({"test", "Test", "", AuthoringRegistry::Kind::Command, [](EditorShell &) {}}); });

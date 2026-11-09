@@ -410,6 +410,8 @@ namespace PlutoGE::ui
         std::filesystem::path GetProjectScriptSourceDirectory() const;
         std::filesystem::path GetProjectScriptProjectPath() const;
         std::filesystem::path GetProjectScriptAssemblyOutputPath() const;
+        // The PlutoGE.ScriptCore.dll the editor loads project scripts against.
+        std::filesystem::path GetEditorScriptCoreAssemblyPath() const;
         bool EnsureProjectScriptBuildScaffold(std::string *errorMessage = nullptr);
         bool SaveProjectManifest(std::string *errorMessage = nullptr);
         void UpdateWindowTitle();

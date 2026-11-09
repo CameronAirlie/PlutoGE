@@ -37,6 +37,19 @@ int main()
             Require(render::FindSkeletonJoint(imported,"Middle1.L")==-1,"Ambiguous finger alias accepted");
             Require(render::FindSkeletonJoint(imported,"mixamorig:LeftHandMiddle1")==3,"Exact finger name lost priority");
         }
+        {
+            // Rigify-style rigs (CharMorph, MB-Lab) name fingers f_index.01.R; thumbs have no prefix.
+            render::Skeleton rigify;
+            for (const char *name : {"hand.R", "f_index.01.R", "f_middle.01.R", "thumb.01.R", "f_middle.01.L", "DEF-f_ring.01.R"})
+                rigify.joints.push_back({.name=name});
+            Require(render::FindSkeletonJoint(rigify,"Middle1.R")==2,"Rigify middle finger alias failed");
+            Require(render::FindSkeletonJoint(rigify,"Index1.R")==1,"Rigify index finger alias failed");
+            Require(render::FindSkeletonJoint(rigify,"Thumb1.R")==3,"Rigify thumb alias failed");
+            Require(render::FindSkeletonJoint(rigify,"Middle1.L")==4,"Rigify finger alias crossed sides");
+            Require(render::FindSkeletonJoint(rigify,"Ring1.R")==5,"Prefixed Rigify finger alias failed");
+            Require(render::FindSkeletonJoint(rigify,"Middle2.R")==-1,"Rigify finger segment confused");
+            Require(render::HumanoidFingerKey("foot.R").empty(),"Non-finger joint read as a finger");
+        }
         render::MeshConfig config;
         config.skeleton.joints.resize(3); config.animationNodes.resize(3);
         for (int i=0; i<3; ++i)

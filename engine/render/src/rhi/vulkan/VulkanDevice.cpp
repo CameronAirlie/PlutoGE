@@ -896,11 +896,19 @@ namespace PlutoGE::render::rhi::vulkan
                 m_scratch.clear();
             }
 
+            // FSR2 supports any render size up to the one its context was created for, so a context made for the
+            // frame's maximum survives dynamic resolution changes below it.
+            [[nodiscard]] static Extent2D MaximumRenderSize(const TemporalUpscalerFrame &frame)
+            {
+                return {(std::max)(frame.maxRenderSize.width, frame.renderSize.width),
+                        (std::max)(frame.maxRenderSize.height, frame.renderSize.height)};
+            }
+
             [[nodiscard]] bool RequiresRecreation(const TemporalUpscalerOptions &options,
                                                   const TemporalUpscalerFrame &frame) const
             {
                 return m_contextCreated &&
-                       (frame.renderSize != m_renderSize || frame.outputSize != m_outputSize ||
+                       (MaximumRenderSize(frame) != m_renderSize || frame.outputSize != m_outputSize ||
                         ContextFlags(options, frame) != m_flags);
             }
 
@@ -1003,20 +1011,21 @@ namespace PlutoGE::render::rhi::vulkan
                                const TemporalUpscalerFrame &frame)
             {
                 const std::uint32_t flags = ContextFlags(options, frame);
-                if (m_contextCreated && frame.renderSize == m_renderSize &&
+                const auto maximumRenderSize = MaximumRenderSize(frame);
+                if (m_contextCreated && maximumRenderSize == m_renderSize &&
                     frame.outputSize == m_outputSize && flags == m_flags)
                     return true;
 
                 Shutdown();
                 m_failed = false;
                 m_reason.clear();
-                m_renderSize = frame.renderSize;
+                m_renderSize = maximumRenderSize;
                 m_outputSize = frame.outputSize;
                 m_flags = flags;
 
                 FfxFsr2ContextDescription description{};
                 description.flags = flags;
-                description.maxRenderSize = {frame.renderSize.width, frame.renderSize.height};
+                description.maxRenderSize = {maximumRenderSize.width, maximumRenderSize.height};
                 description.displaySize = {frame.outputSize.width, frame.outputSize.height};
                 description.device = ffxGetDeviceVK(m_device);
                 const std::size_t scratchSize = ffxFsr2GetScratchMemorySizeVK(m_physicalDevice);

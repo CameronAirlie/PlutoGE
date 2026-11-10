@@ -435,6 +435,12 @@ int RunRuntime(int argc, char **argv)
     config.enableProfiling = profilerEnabled;
     config.graphicsApi = project->GetManifest().graphicsApi;
     config.temporalUpscaler = project->GetManifest().GetTemporalUpscalerOptions();
+    config.dynamicResolution = project->GetManifest().GetDynamicResolutionSettings();
+    if (projectBenchmark && projectBenchmark->dynamicResolutionFps)
+    {
+        config.dynamicResolution.enabled = true;
+        config.dynamicResolution.targetGpuMs = 1000.0f / *projectBenchmark->dynamicResolutionFps;
+    }
 
     if (!engine.Initialize(config))
     {

@@ -23,6 +23,15 @@
 
 namespace PlutoGE::assets
 {
+    render::DynamicResolutionSettings ProjectManifest::GetDynamicResolutionSettings() const noexcept
+    {
+        render::DynamicResolutionSettings settings;
+        settings.enabled = runtimeDynamicResolution;
+        settings.targetGpuMs = 1000.0f / std::clamp(runtimeDynamicResolutionTargetFps, 10.0f, 500.0f);
+        settings.minimumScale = std::clamp(runtimeDynamicResolutionMinimumScale, 0.25f, 1.0f);
+        return settings;
+    }
+
     render::rhi::TemporalUpscalerOptions ProjectManifest::GetTemporalUpscalerOptions() const noexcept
     {
         render::rhi::TemporalUpscalerOptions options;
@@ -881,6 +890,16 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "RUNTIME_DYNAMIC_RESOLUTION" && tokens.size() >= 4)
+            {
+                manifest.runtimeDynamicResolution = tokens[1] == "1";
+                ParseFloat(tokens[2], manifest.runtimeDynamicResolutionTargetFps);
+                ParseFloat(tokens[3], manifest.runtimeDynamicResolutionMinimumScale);
+                manifest.runtimeDynamicResolutionTargetFps = std::clamp(manifest.runtimeDynamicResolutionTargetFps, 10.0f, 500.0f);
+                manifest.runtimeDynamicResolutionMinimumScale = std::clamp(manifest.runtimeDynamicResolutionMinimumScale, 0.25f, 1.0f);
+                continue;
+            }
+
             if (tokens[0] == "RUNTIME_UPSCALE_SHARPNESS" && tokens.size() >= 2)
             {
                 ParseFloat(tokens[1], manifest.runtimeUpscaleSharpness);
@@ -1200,6 +1219,9 @@ namespace PlutoGE::assets
         output << "RAY_TRACED_MIN_INSTANCE_RADIUS\t" << m_manifest.rendering.rayTracedMinimumInstanceRadius << '\n';
         output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';
         output << "RUNTIME_UPSCALE_SHARPNESS\t" << std::clamp(m_manifest.runtimeUpscaleSharpness, 0.0f, 1.0f) << '\n';
+        if (m_manifest.runtimeDynamicResolution)
+            output << "RUNTIME_DYNAMIC_RESOLUTION\t1\t" << m_manifest.runtimeDynamicResolutionTargetFps << '\t'
+                   << m_manifest.runtimeDynamicResolutionMinimumScale << '\n';
         // Personal editor state goes to its own file so camera moves do not change the shared project file.
         std::ostringstream editorState;
         {

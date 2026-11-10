@@ -8,9 +8,11 @@
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/TextureCompression.h"
+#include "PlutoGE/render/DynamicResolution.h"
 
 #include <algorithm>
 #include <compare>
+#include <deque>
 #include <functional>
 #include <future>
 #include <map>
@@ -59,6 +61,9 @@ namespace PlutoGE::render
         // Material textures replaced by block-compressed uploads this frame, and encodes still running.
         std::size_t compressedTextureUploads = 0;
         std::size_t pendingTextureCompressions = 0;
+        // The dynamic resolution scale this frame rendered at (1 when disabled), and its render size.
+        float dynamicResolutionScale = 1.0f;
+        std::uint32_t renderWidth = 0, renderHeight = 0;
         float sceneSetupMs = 0.0f;
         float renderRecordingMs = 0.0f;
         float beginFrameMs = 0.0f;
@@ -188,6 +193,17 @@ namespace PlutoGE::render
         [[nodiscard]] const TextureCompressionSettings &GetTextureCompression() const noexcept
         {
             return m_textureCompressionSettings;
+        }
+        // Automatic render resolution (DynamicResolution.h): the render size the view would otherwise use (native,
+        // or the temporal upscaler's quality mode) is scaled each frame from completed GPU timings of this
+        // renderer's submissions. Render targets are rebuilt when the scale changes level; a temporal upscaler
+        // keeps its history across levels. Needs device GPU timing (Vulkan); without it the scale stays at its
+        // maximum. Replace the decision with SetDynamicResolutionPolicy.
+        void SetDynamicResolution(const DynamicResolutionSettings &settings);
+        void SetDynamicResolutionPolicy(std::unique_ptr<IDynamicResolutionPolicy> policy);
+        [[nodiscard]] const DynamicResolutionSettings &GetDynamicResolution() const noexcept
+        {
+            return m_dynamicResolutionSettings;
         }
         void InvalidateAssetCache();
         void SetSubmissionLabel(std::string label);
@@ -474,6 +490,15 @@ namespace PlutoGE::render
       glm::mat4 m_previousUpscalerViewProjection{1.0f};
       rhi::Extent2D m_previousRenderSize;
       rhi::Extent2D m_previousOutputSize;
+      // The render size before dynamic resolution scaling, whose change resets every temporal history.
+      rhi::Extent2D m_previousMaximumRenderSize;
+      // The scale for the next frame, from GPU timings; null when disabled.
+      [[nodiscard]] float UpdateDynamicResolution();
+      DynamicResolutionSettings m_dynamicResolutionSettings;
+      std::unique_ptr<IDynamicResolutionPolicy> m_dynamicResolution;
+      // (pending submission when prepared, scale) of recent frames, to match GPU results with their scale.
+      std::deque<std::pair<std::uint64_t, float>> m_dynamicResolutionFrames;
+      std::uint64_t m_dynamicResolutionObservation = 0;
       bool m_upscalerHistoryValid = false;
       TemporalUpscalerStatus m_upscalerStatus;
       std::uint64_t m_upscalerContextId = 0;

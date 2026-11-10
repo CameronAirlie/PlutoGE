@@ -207,6 +207,9 @@ namespace PlutoGE::render::rhi
         TextureHandle reactiveMask;
         Extent2D renderSize;
         Extent2D outputSize;
+        // The largest renderSize frames of this history may use (dynamic resolution). Zero means renderSize.
+        // Upscalers that support it keep one context and history while renderSize varies below this.
+        Extent2D maxRenderSize;
         std::array<float, 2> jitterPixels{};
         std::array<float, 2> motionVectorScale{1.0f, 1.0f};
         std::array<float, 16> cameraViewToClip{};

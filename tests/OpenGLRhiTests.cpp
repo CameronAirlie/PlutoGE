@@ -49,6 +49,7 @@
 #include "SsrRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "CompressedTextureRenderingChecks.h"
+#include "RenderScaleChecks.h"
 #include "VsmOnlyRenderingChecks.h"
 #include "DisabledEffectRenderingChecks.h"
 #include "VsmMembershipChecks.h"
@@ -887,6 +888,16 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             return pixels;
         });
         if (argc > 1 && std::string_view(argv[1]) == "--compressed-textures") return 0;
+        CheckRenderScaleOutput(basicRenderer, device, [&](render::rhi::TextureHandle texture) {
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            GLint width = 0, height = 0;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+            std::vector<std::byte> pixels(width * height * 4);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--render-scale") return 0;
         CheckShadowFiltering(basicRenderer, [&](render::rhi::TextureHandle texture)
         {
             std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);

@@ -1644,8 +1644,6 @@ namespace PlutoGE::render
         m_temporalUpscalerOutput.Reset();
         m_upscalerReactiveMask.Reset();
         m_displayTarget.Reset();
-        for (auto &target : m_postProcessTargets)
-            target.Reset();
         m_postProcessPassTargets.clear();
         m_postProcessPassTargetDescriptions.clear();
         for (auto &target : m_taaHistoryTargets)
@@ -2016,12 +2014,6 @@ namespace PlutoGE::render
                                              {width, height, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "BasicRenderer HDR color", true}));
         rhi::Texture newDisplay(*m_device, m_device->CreateTexture(
                                                {outputWidth, outputHeight, rhi::Format::R8G8B8A8Unorm, rhi::TextureUsage::ColorAttachment, "BasicRenderer display output", true}));
-        std::array<rhi::Texture, 2> newPostTargets{
-            rhi::Texture(*m_device, m_device->CreateTexture(
-                                        {outputWidth, outputHeight, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "HDR post process ping", true})),
-            rhi::Texture(*m_device, m_device->CreateTexture(
-                                        {outputWidth, outputHeight, rhi::Format::R16G16B16A16Float, rhi::TextureUsage::ColorAttachment, "HDR post process pong", true})),
-        };
         rhi::Texture newDepth(*m_device, m_device->CreateTexture(
                                              {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
                                               "BasicRenderer depth", true}));
@@ -2037,7 +2029,6 @@ namespace PlutoGE::render
         m_indirectTarget.Reset();
         m_environmentSpecularTarget.Reset();
         m_debugTarget.Reset();
-        m_postProcessTargets = std::move(newPostTargets);
         m_postProcessPassTargets.clear();
         m_postProcessPassTargetDescriptions.clear();
         for (std::size_t index = 0; index < m_taaHistoryTargets.size(); ++index)
@@ -4998,7 +4989,7 @@ namespace PlutoGE::render
             }
             if (effect.type == BasicPostProcessEffectType::AutoExposure)
             {
-                m_outputColor = RenderAutoExposure(m_outputColor, effect, commands);
+                m_outputColor = RenderAutoExposure(m_outputColor, effect, commands, targetIndex);
                 continue;
             }
             if (effect.type == BasicPostProcessEffectType::SSAO)
@@ -5401,7 +5392,7 @@ namespace PlutoGE::render
 
     rhi::TextureHandle BasicRenderer::RenderAutoExposure(rhi::TextureHandle source,
                                                          const BasicPostProcessEffect &effect,
-                                                         rhi::ICommandContext &commands)
+                                                         rhi::ICommandContext &commands, std::size_t &targetIndex)
     {
         if (!source || !m_autoExposurePipelines[0] || !m_autoExposurePipelines[1] ||
             !m_exposureHistoryTargets[0] || !m_exposureHistoryTargets[1])
@@ -5436,9 +5427,8 @@ namespace PlutoGE::render
         commands.Draw(3);
         commands.EndRendering();
 
-        rhi::Texture *destination = &m_postProcessTargets[0];
-        if (destination->Get() == source)
-            destination = &m_postProcessTargets[1];
+        // Sized like every other pass output: the post-process extent, which is the render size before an upscale.
+        rhi::Texture *destination = &AcquirePostProcessTarget(targetIndex++, m_postProcessWidth, m_postProcessHeight);
         auto &applyBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
         m_device->UpdateBuffer(applyBuffer.Get(), 0, Bytes(block));
         rhi::RenderingInfo applyInfo;

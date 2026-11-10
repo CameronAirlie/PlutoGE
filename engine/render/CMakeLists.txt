@@ -64,6 +64,7 @@ add_library(PlutoGERender
     src/CompressedTextureStore.cpp
     src/TextureCompressionQueue.cpp
     src/RhiTextureCompression.cpp
+    src/DynamicResolution.cpp
     src/ShaderArtifacts.cpp
     src/Texture.cpp
     src/TerrainLayers.cpp

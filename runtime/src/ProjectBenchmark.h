@@ -55,6 +55,8 @@ namespace PlutoGE
         // --cpu-instance-binning: bin instanced draws on the CPU, without occlusion, rather than with GPU instance
         // culling (the default). --gpu-instance-culling, the default, is still accepted.
         bool cpuInstanceBinning = false;
+        // --dynamic-resolution=<target FPS>: enables automatic render resolution for the run.
+        std::optional<float> dynamicResolutionFps;
         // Geometry shading diagnostic applied to every measured frame.
         render::GeometryDiagnosticMode geometryDiagnostic = render::GeometryDiagnosticMode::None;
         // Project graphics tier applied before the scene loads. Frozen captures run
@@ -124,6 +126,7 @@ namespace PlutoGE
                 constexpr std::string_view travelPrefix = "--camera-travel=";
                 constexpr std::string_view foliagePrefix = "--foliage-detail=";
                 constexpr std::string_view disablePrefix = "--disable-effects=";
+                constexpr std::string_view dynamicResolutionPrefix = "--dynamic-resolution=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
@@ -144,6 +147,15 @@ namespace PlutoGE
                     if (tier == tiers.end())
                         throw std::invalid_argument("Unknown benchmark quality: " + std::string(value));
                     result.quality = tier->second;
+                }
+                else if (value.starts_with(dynamicResolutionPrefix) && !result.dynamicResolutionFps)
+                {
+                    const auto text = value.substr(dynamicResolutionPrefix.size());
+                    float fps = 0.0f;
+                    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), fps);
+                    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || !(fps >= 10.0f && fps <= 500.0f))
+                        throw std::invalid_argument("Dynamic resolution target must be a frame rate in [10, 500]");
+                    result.dynamicResolutionFps = fps;
                 }
                 else if (value.starts_with(foliagePrefix) && !result.foliageDetail)
                 {

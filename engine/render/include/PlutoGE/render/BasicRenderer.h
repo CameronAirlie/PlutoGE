@@ -1363,7 +1363,7 @@ namespace PlutoGE::render
                                                      const BasicPostProcessEffect &effect);
         [[nodiscard]] rhi::TextureHandle RenderAutoExposure(rhi::TextureHandle source,
                                                             const BasicPostProcessEffect &effect,
-                                                            rhi::ICommandContext &commands);
+                                                            rhi::ICommandContext &commands, std::size_t &targetIndex);
         // Screen-space state for this frame's camera and G-buffer (see ScreenSpacePass.h).
         [[nodiscard]] ScreenSpaceView MakeScreenSpaceView(std::uint32_t width, std::uint32_t height) const;
         [[nodiscard]] rhi::TextureHandle RenderSsao(rhi::TextureHandle source,
@@ -1564,7 +1564,6 @@ namespace PlutoGE::render
         rhi::Texture m_indirectTarget;
         rhi::Texture m_environmentSpecularTarget;
         rhi::Texture m_debugTarget;
-        std::array<rhi::Texture, 2> m_postProcessTargets;
         // Reusing ping-pong attachments within a recorded Vulkan chain produced
         // screen-tile corruption. Keep one stable output per ordinary pass.
         std::vector<rhi::Texture> m_postProcessPassTargets;

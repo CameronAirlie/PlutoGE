@@ -5,6 +5,7 @@
 #include "PlutoGE/platform/Window.h"
 #include "PlutoGE/render/LoadingScreenStyle.h"
 #include "PlutoGE/render/rhi/Types.h"
+#include "PlutoGE/render/DynamicResolution.h"
 
 #include <cstdint>
 #include <memory>
@@ -75,6 +76,7 @@ namespace PlutoGE::core
         bool vSync = true;
         bool isEditorHost = false;
         render::rhi::TemporalUpscalerOptions temporalUpscaler;
+        render::DynamicResolutionSettings dynamicResolution;
         bool enableProfiling = false;
         // Headless hosts retain CPU scene/physics/navigation/script services only.
         bool headless = false;

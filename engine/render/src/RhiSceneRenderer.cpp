@@ -216,6 +216,48 @@ namespace PlutoGE::render
         m_textureCache->compression = std::make_shared<RhiTextureCompression>(*m_device, m_textureCompressionSettings);
     }
 
+    void RhiSceneRenderer::SetDynamicResolution(const DynamicResolutionSettings &settings)
+    {
+        if (settings == m_dynamicResolutionSettings && (m_dynamicResolution || !settings.enabled))
+            return;
+        m_dynamicResolutionSettings = settings;
+        SetDynamicResolutionPolicy(settings.enabled ? std::make_unique<DynamicResolutionController>(settings) : nullptr);
+    }
+
+    void RhiSceneRenderer::SetDynamicResolutionPolicy(std::unique_ptr<IDynamicResolutionPolicy> policy)
+    {
+        m_dynamicResolution = std::move(policy);
+        m_dynamicResolutionFrames.clear();
+        m_dynamicResolutionObservation = 0;
+    }
+
+    float RhiSceneRenderer::UpdateDynamicResolution()
+    {
+        if (!m_dynamicResolution || !m_device)
+            return 1.0f;
+        // Each completed submission is observed once, at the scale it was prepared with: the latest frame recorded
+        // as pending at or before that submission.
+        const auto timing = m_device->GetTimingStats(m_submissionLabel);
+        if (timing.hasGpuResult && timing.gpuObservationId > m_dynamicResolutionObservation)
+        {
+            m_dynamicResolutionObservation = timing.gpuObservationId;
+            float renderedScale = 0.0f;
+            while (!m_dynamicResolutionFrames.empty() && m_dynamicResolutionFrames.front().first <= timing.gpuObservationId)
+            {
+                renderedScale = m_dynamicResolutionFrames.front().second;
+                m_dynamicResolutionFrames.pop_front();
+            }
+            if (renderedScale > 0.0f)
+                (void)m_dynamicResolution->Observe(timing.frameGpuMs, renderedScale);
+        }
+        const float scale = std::clamp(m_dynamicResolution->Scale(), 0.1f, 1.0f);
+        constexpr std::size_t kTrackedFrames = 16;
+        if (m_dynamicResolutionFrames.size() == kTrackedFrames)
+            m_dynamicResolutionFrames.pop_front();
+        m_dynamicResolutionFrames.emplace_back(m_device->PendingSubmission(), scale);
+        return scale;
+    }
+
     void RhiSceneRenderer::SetGpuInstanceCulling(bool enabled)
     {
         m_gpuInstanceCulling = enabled;
@@ -321,6 +363,9 @@ namespace PlutoGE::render
         m_previousUpscalerViewProjection = glm::mat4(1.0f);
         m_previousRenderSize = {};
         m_previousOutputSize = {};
+        m_previousMaximumRenderSize = {};
+        m_dynamicResolutionFrames.clear();
+        m_dynamicResolutionObservation = 0;
         m_upscalerHistoryValid = false;
         m_upscalerStatus = {};
         m_upscalerContextId = 0;
@@ -372,11 +417,18 @@ namespace PlutoGE::render
                                          : rhi::TemporalUpscalerSupport{};
         const bool orthographic = std::abs(cameraData.projection[3][3]) > 0.5f;
         const bool useTemporalUpscaler = temporalUpscalerRequested && upscalerSupport.supported;
-        const rhi::Extent2D renderSize = useTemporalUpscaler
+        // The size before dynamic resolution; the scale only ever lowers it.
+        const rhi::Extent2D maximumRenderSize = useTemporalUpscaler
             ? m_device->GetOptimalRenderSize(m_upscalerOptions, outputSize)
             : outputSize;
-        if (renderSize.width == 0 || renderSize.height == 0)
+        if (maximumRenderSize.width == 0 || maximumRenderSize.height == 0)
             return std::nullopt;
+        const float dynamicScale = UpdateDynamicResolution();
+        const rhi::Extent2D renderSize{ScaledRenderExtent(maximumRenderSize.width, dynamicScale, 2),
+                                       ScaledRenderExtent(maximumRenderSize.height, dynamicScale, 2)};
+        m_timingStats.dynamicResolutionScale = dynamicScale;
+        m_timingStats.renderWidth = renderSize.width;
+        m_timingStats.renderHeight = renderSize.height;
         m_upscalerStatus = {
             .options = m_upscalerOptions,
             .renderSize = renderSize,
@@ -387,9 +439,17 @@ namespace PlutoGE::render
         };
         const bool projectionChanged = orthographic != m_previousUpscalerOrthographic;
         m_previousUpscalerOrthographic = orthographic;
-        const bool resolutionChanged = renderSize != m_previousRenderSize || outputSize != m_previousOutputSize || projectionChanged;
+        // A temporal upscaler keeps its output-resolution history while dynamic resolution moves the render size
+        // below the same maximum; everything else at render resolution restarts. Without an upscaler any render
+        // size change restarts every history, as a resize always has.
+        const bool renderSizeChanged = renderSize != m_previousRenderSize;
+        const bool resolutionChanged = maximumRenderSize != m_previousMaximumRenderSize ||
+            outputSize != m_previousOutputSize || projectionChanged || (renderSizeChanged && !useTemporalUpscaler);
+        m_previousMaximumRenderSize = maximumRenderSize;
         if (resolutionChanged)
             ResetTemporalHistory();
+        else if (renderSizeChanged)
+            m_renderer->ResetTemporalHistory();
         auto effectiveUpscaler = m_upscalerOptions;
         if (!useTemporalUpscaler)
             effectiveUpscaler.technology = rhi::TemporalUpscaler::None;
@@ -2058,6 +2118,7 @@ namespace PlutoGE::render
             upscalerFrame.contextId = m_upscalerContextId;
             upscalerFrame.frameIndex = m_temporalFrameIndex;
             upscalerFrame.resetHistory = !m_upscalerHistoryValid || resolutionChanged;
+            upscalerFrame.maxRenderSize = maximumRenderSize;
             // BasicRenderer generates velocity from unjittered current and
             // previous transforms, so SDK-side jitter cancellation must stay
             // disabled.

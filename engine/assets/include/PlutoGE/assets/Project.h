@@ -5,6 +5,7 @@
 #include "PlutoGE/render/LoadingScreenStyle.h"
 #include "PlutoGE/render/GraphicsQualityPresets.h"
 #include "PlutoGE/render/RenderingSettings.h"
+#include "PlutoGE/render/DynamicResolution.h"
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -105,6 +106,10 @@ namespace PlutoGE::assets
         render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
         RuntimeUpscalerMode runtimeUpscaler = RuntimeUpscalerMode::None;
         float runtimeRenderScale = 1.0f;
+        // RUNTIME_DYNAMIC_RESOLUTION <0|1> <target FPS> <minimum scale>: automatic render resolution.
+        bool runtimeDynamicResolution = false;
+        float runtimeDynamicResolutionTargetFps = 60.0f;
+        float runtimeDynamicResolutionMinimumScale = 0.5f;
         float runtimeUpscaleSharpness = 0.25f;
         render::rhi::UpscalerQuality runtimeUpscalerQuality = render::rhi::UpscalerQuality::Quality;
         float editorFontSize = 15.0f;
@@ -115,6 +120,7 @@ namespace PlutoGE::assets
         std::vector<ProjectAssetEntry> assetEntries;
 
         [[nodiscard]] render::rhi::TemporalUpscalerOptions GetTemporalUpscalerOptions() const noexcept;
+        [[nodiscard]] render::DynamicResolutionSettings GetDynamicResolutionSettings() const noexcept;
     };
 
     class Project

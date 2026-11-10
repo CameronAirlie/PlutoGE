@@ -59,6 +59,7 @@
 #include "TemporalMotionRenderingChecks.h"
 #include "TextureMipRenderingChecks.h"
 #include "CompressedTextureRenderingChecks.h"
+#include "RenderScaleChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "GlobalIlluminationRenderingChecks.h"
 #include "VctPublicationChecks.h"
@@ -695,6 +696,10 @@ int main(int argc, char **argv)
             return device.ReadTextureRgba8(texture);
         });
         if (argc > 1 && std::string_view(argv[1]) == "--compressed-textures") return 0;
+        CheckRenderScaleOutput(renderer, device, [&](rhi::TextureHandle texture) {
+            return device.ReadTextureRgba8(texture);
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--render-scale") return 0;
         CheckShadowFiltering(renderer, [&](rhi::TextureHandle texture)
         {
             return device.ReadTextureRgba8(texture);

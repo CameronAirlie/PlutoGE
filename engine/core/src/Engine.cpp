@@ -292,6 +292,7 @@ namespace PlutoGE::core
                 return false;
             }
             m_rhiRenderService->SetTemporalUpscalerOptions(m_config.temporalUpscaler);
+            m_rhiRenderService->SetDynamicResolution(m_config.dynamicResolution);
         }
         catch (const std::exception &error)
         {

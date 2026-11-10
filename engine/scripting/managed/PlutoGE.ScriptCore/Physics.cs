@@ -5,18 +5,32 @@ namespace PlutoGE.ScriptCore;
 
 public readonly struct RaycastHit
 {
-    internal RaycastHit(uint entityId, Vector3 point, Vector3 normal, float distance)
+    internal RaycastHit(uint entityId, Vector3 point, Vector3 normal, float distance, ulong foliageInstanceId = 0)
     {
         Entity = new GameObject(entityId);
         Point = point;
         Normal = normal;
         Distance = distance;
+        FoliageInstance = new FoliageInstance(entityId, foliageInstanceId);
     }
 
+    internal RaycastHit(in ScriptBridge.NativeRaycastHit native)
+        : this(native.EntityId, native.Point.ToManaged(), native.Normal.ToManaged(), native.Distance, native.FoliageInstanceId)
+    {
+    }
+
+    /// <summary>The entity whose collider was hit. For painted foliage, the entity with the FoliageComponent.</summary>
     public GameObject Entity { get; }
     public Vector3 Point { get; }
     public Vector3 Normal { get; }
     public float Distance { get; }
+
+    /// <summary>
+    /// The foliage instance that was hit, when the collider belongs to painted foliage (a tree trunk's capsule);
+    /// otherwise <see cref="FoliageInstance.IsValid"/> is false. Promote it to interact with that one plant:
+    /// <code>var target = hit.FoliageInstance.TryPromote(out var proxy) ? proxy : hit.Entity;</code>
+    /// </summary>
+    public FoliageInstance FoliageInstance { get; }
 }
 
 public static class Physics
@@ -54,7 +68,7 @@ public static class Physics
         hit = default;
         if (!ScriptBridge.PhysicsQueryCapsule(center, displacement, radius, height, ignoredEntity?.EntityId ?? 0, out var native))
             return false;
-        hit = new RaycastHit(native.EntityId, native.Point.ToManaged(), native.Normal.ToManaged(), native.Distance);
+        hit = new RaycastHit(native);
         return true;
     }
 
@@ -79,7 +93,7 @@ public static class Physics
         return ToGameObjects(ScriptBridge.PhysicsOverlapBox(center, halfExtents, rotation, ignoredEntity?.EntityId ?? 0, tag));
     }
 
-    /// <summary>Every solid collider along the ray, nearest first, one hit per collider.</summary>
+    /// <summary>Every solid collider along the ray, nearest first, one hit per collider (per instance for foliage).</summary>
     public static RaycastHit[] RaycastAll(Vector3 origin, Vector3 direction, float maxDistance, GameObject? ignoredEntity = null,
                                           string? tag = null)
     {
@@ -88,7 +102,7 @@ public static class Physics
         var hits = ScriptBridge.PhysicsRaycastAll(origin, Vector3.Normalize(direction), maxDistance, ignoredEntity?.EntityId ?? 0, tag);
         var result = new RaycastHit[hits.Length];
         for (var index = 0; index < hits.Length; index++)
-            result[index] = new RaycastHit(hits[index].EntityId, hits[index].Point.ToManaged(), hits[index].Normal.ToManaged(), hits[index].Distance);
+            result[index] = new RaycastHit(hits[index]);
         return result;
     }
 
@@ -104,7 +118,7 @@ public static class Physics
             return false;
         if (!ScriptBridge.PhysicsSphereCast(origin, direction, radius, maxDistance, ignoredEntity?.EntityId ?? 0, out var native))
             return false;
-        hit = new RaycastHit(native.EntityId, native.Point.ToManaged(), native.Normal.ToManaged(), native.Distance);
+        hit = new RaycastHit(native);
         return true;
     }
 
@@ -145,11 +159,7 @@ public static class Physics
             return false;
         }
 
-        hit = new RaycastHit(
-            nativeHit.EntityId,
-            nativeHit.Point.ToManaged(),
-            nativeHit.Normal.ToManaged(),
-            nativeHit.Distance);
+        hit = new RaycastHit(nativeHit);
         return true;
     }
 
@@ -166,11 +176,7 @@ public static class Physics
             return false;
         }
 
-        hit = new RaycastHit(
-            nativeHit.EntityId,
-            nativeHit.Point.ToManaged(),
-            nativeHit.Normal.ToManaged(),
-            nativeHit.Distance);
+        hit = new RaycastHit(nativeHit);
         return true;
     }
 }

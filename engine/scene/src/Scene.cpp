@@ -726,13 +726,247 @@ namespace PlutoGE::scene
             return CreateBulletShape(collider, worldScale);
         }
 
+        BulletShapeData CreateFoliageCellBulletShape(const FoliageCollisionCell &cell)
+        {
+            BulletShapeData data;
+            auto compound = std::make_unique<btCompoundShape>(true, static_cast<int>(cell.instances.size()));
+            data.ownedChildShapes.reserve(cell.instances.size());
+            for (const auto &instance : cell.instances)
+            {
+                const float scaleX = glm::length(glm::vec3(instance.worldTransform[0]));
+                const float scaleY = glm::length(glm::vec3(instance.worldTransform[1]));
+                const float scaleZ = glm::length(glm::vec3(instance.worldTransform[2]));
+                const float radius = (std::max)(instance.radius * (std::max)(scaleX, scaleZ), 0.01f);
+                const float height = (std::max)(instance.height * scaleY, radius * 2.0f);
+                auto capsule = std::make_unique<btCapsuleShape>(radius, height - radius * 2.0f);
+                btTransform childTransform;
+                childTransform.setIdentity();
+                childTransform.setOrigin(ToBullet(glm::vec3(instance.worldTransform * glm::vec4(instance.center, 1.0f))));
+                childTransform.setRotation(ToBulletRotation(instance.worldTransform));
+                compound->addChildShape(childTransform, capsule.get());
+                data.ownedChildShapes.push_back(std::move(capsule));
+            }
+            data.shape = std::move(compound);
+            return data;
+        }
+
+        // One foliage collision cell in a Bullet world: a compound of capsules whose child i stands for instanceIds[i].
+        struct BulletFoliageCellBody
+        {
+            FoliageComponent *foliage = nullptr;
+            Entity *owner = nullptr;
+            FoliageCellCoordinate coordinate;
+            std::uint64_t signature = 0;
+            std::vector<std::uint64_t> instanceIds;
+            std::unique_ptr<btCollisionShape> shape;
+            std::vector<std::unique_ptr<btCollisionShape>> childShapes;
+            std::unique_ptr<btDefaultMotionState> motionState; // Rigid bodies only.
+            // A static btRigidBody in the dynamics world, a plain collision object in the query world.
+            std::unique_ptr<btCollisionObject> object;
+        };
+
+        enum class FoliageBodyKind
+        {
+            CollisionObject,
+            StaticRigidBody,
+        };
+
+        // A world's foliage collision. It is kept apart from entity bodies, so that adding or removing an entity never
+        // rebuilds foliage, and a foliage edit (felling one tree) rebuilds only the cells it touched.
+        struct BulletFoliageBodies
+        {
+            struct ComponentState
+            {
+                std::uint64_t revision = 0;
+                glm::mat4 ownerTransform{1.0f};
+            };
+
+            FoliageBodyKind kind = FoliageBodyKind::CollisionObject;
+            std::vector<BulletFoliageCellBody> cells;
+            // What each component looked like when its cells were last synchronized.
+            std::unordered_map<const FoliageComponent *, ComponentState> synchronized;
+            // Set when components came or went, or something outside them changed: compare every cell next time.
+            bool dirty = true;
+            std::unordered_map<const btCollisionObject *, std::size_t> cellByObject;
+
+            // The foliage instance behind a hit on `object`'s compound child `childIndex`; 0 for anything else.
+            [[nodiscard]] std::uint64_t FindInstance(const btCollisionObject *object, int childIndex) const
+            {
+                if (!object || childIndex < 0) return 0;
+                const auto found = cellByObject.find(object);
+                if (found == cellByObject.end()) return 0;
+                const auto &ids = cells[found->second].instanceIds;
+                return static_cast<std::size_t>(childIndex) < ids.size() ? ids[static_cast<std::size_t>(childIndex)] : 0;
+            }
+
+            void RemoveAll(btCollisionWorld &world)
+            {
+                for (auto &cell : cells)
+                    if (cell.object) world.removeCollisionObject(cell.object.get());
+                cells.clear();
+                synchronized.clear();
+                cellByObject.clear();
+            }
+
+            // Drops the cells of foliage owned by entities that are about to be freed, before anything can query them.
+            void RemoveOwnedBy(btCollisionWorld &world, const std::unordered_set<Entity *> &owners)
+            {
+                const auto before = cells.size();
+                std::erase_if(cells, [&](BulletFoliageCellBody &cell)
+                {
+                    if (!owners.contains(cell.owner)) return false;
+                    if (cell.object) world.removeCollisionObject(cell.object.get());
+                    synchronized.erase(cell.foliage);
+                    return true;
+                });
+                if (cells.size() != before) ReindexObjects();
+            }
+
+            // Moves every cell, shapes and all, into another world of the same kind; nothing is rebuilt.
+            void TransferTo(btCollisionWorld &from, BulletFoliageBodies &target, btCollisionWorld &to)
+            {
+                for (auto &cell : cells)
+                {
+                    if (cell.object) from.removeCollisionObject(cell.object.get());
+                    target.Add(to, std::move(cell));
+                }
+                target.synchronized = std::move(synchronized);
+                target.dirty = dirty;
+                target.ReindexObjects();
+                cells.clear();
+                synchronized.clear();
+                cellByObject.clear();
+            }
+
+            void Add(btCollisionWorld &world, BulletFoliageCellBody cell)
+            {
+                if (cell.object)
+                {
+                    if (kind == FoliageBodyKind::StaticRigidBody)
+                        static_cast<btDiscreteDynamicsWorld &>(world).addRigidBody(static_cast<btRigidBody *>(cell.object.get()));
+                    else
+                        world.addCollisionObject(cell.object.get());
+                }
+                cells.push_back(std::move(cell));
+            }
+
+            void ReindexObjects()
+            {
+                cellByObject.clear();
+                cellByObject.reserve(cells.size());
+                for (std::size_t index = 0; index < cells.size(); ++index)
+                    if (cells[index].object) cellByObject.emplace(cells[index].object.get(), index);
+            }
+        };
+
+        BulletFoliageCellBody CreateFoliageCellBody(FoliageComponent &foliage, Entity &owner, const FoliageCollisionCell &cell,
+                                                    FoliageBodyKind kind)
+        {
+            BulletFoliageCellBody body{
+                .foliage = &foliage,
+                .owner = &owner,
+                .coordinate = cell.coordinate,
+                .signature = cell.signature,
+            };
+            body.instanceIds.reserve(cell.instances.size());
+            for (const auto &instance : cell.instances)
+                body.instanceIds.push_back(instance.instanceId);
+            auto shapeData = CreateFoliageCellBulletShape(cell);
+            if (!shapeData.shape || cell.instances.empty())
+                return body;
+            if (kind == FoliageBodyKind::StaticRigidBody)
+            {
+                btTransform identity;
+                identity.setIdentity();
+                body.motionState = std::make_unique<btDefaultMotionState>(identity);
+                btRigidBody::btRigidBodyConstructionInfo info(0.0f, body.motionState.get(), shapeData.shape.get());
+                body.object = std::make_unique<btRigidBody>(info);
+            }
+            else
+            {
+                body.object = std::make_unique<btCollisionObject>();
+                body.object->setCollisionShape(shapeData.shape.get());
+                body.object->setWorldTransform(btTransform::getIdentity());
+            }
+            body.object->setUserPointer(&owner);
+            body.shape = std::move(shapeData.shape);
+            body.childShapes = std::move(shapeData.ownedChildShapes);
+            return body;
+        }
+
+        struct FoliageCellKeyHash
+        {
+            std::size_t operator()(const std::pair<const FoliageComponent *, FoliageCellCoordinate> &key) const noexcept
+            {
+                return std::hash<const void *>{}(key.first) ^ (FoliageCellCoordinateHash{}(key.second) * 1099511628211ull);
+            }
+        };
+
+        // Brings `bodies` in step with the scene's foliage. A component whose instances and transform have not changed
+        // costs one comparison. For the rest, only cells whose contents changed are replaced: felling one tree rebuilds
+        // one cell, and the world's other bodies keep their contacts and simulation state.
+        void SynchronizeFoliageBodies(BulletFoliageBodies &bodies, btCollisionWorld &world,
+                                      const std::vector<FoliageComponent *> &components)
+        {
+            std::unordered_map<const FoliageComponent *, BulletFoliageBodies::ComponentState> current;
+            bool changed = false;
+            for (auto *foliage : components)
+            {
+                auto *owner = foliage ? foliage->GetOwner() : nullptr;
+                if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive())
+                    continue;
+                const BulletFoliageBodies::ComponentState state{foliage->GetRevision(), owner->GetWorldTransform()};
+                const auto previous = bodies.synchronized.find(foliage);
+                changed |= previous == bodies.synchronized.end() || previous->second.revision != state.revision ||
+                           previous->second.ownerTransform != state.ownerTransform;
+                current.emplace(foliage, state);
+            }
+            if (!bodies.dirty && !changed && current.size() == bodies.synchronized.size())
+                return;
+
+            core::CpuScope scope("Physics foliage cell synchronization", core::CpuCategory::Physics);
+            std::unordered_map<std::pair<const FoliageComponent *, FoliageCellCoordinate>, std::size_t, FoliageCellKeyHash> existing;
+            existing.reserve(bodies.cells.size());
+            for (std::size_t index = 0; index < bodies.cells.size(); ++index)
+                existing.emplace(std::pair{static_cast<const FoliageComponent *>(bodies.cells[index].foliage),
+                                           bodies.cells[index].coordinate},
+                                 index);
+
+            BulletFoliageBodies next;
+            next.kind = bodies.kind;
+            next.cells.reserve(bodies.cells.size());
+            for (auto *foliage : components)
+            {
+                if (!current.contains(foliage))
+                    continue;
+                for (const auto &cell : foliage->BuildCollisionCells())
+                {
+                    if (cell.instances.empty())
+                        continue;
+                    const auto found = existing.find(std::pair{static_cast<const FoliageComponent *>(foliage), cell.coordinate});
+                    if (found != existing.end() && bodies.cells[found->second].object &&
+                        bodies.cells[found->second].signature == cell.signature)
+                    {
+                        // Unchanged: the body stays in the world. Moving the record leaves no object behind to retire.
+                        next.cells.push_back(std::move(bodies.cells[found->second]));
+                        continue;
+                    }
+                    next.Add(world, CreateFoliageCellBody(*foliage, *foliage->GetOwner(), cell, bodies.kind));
+                }
+            }
+            for (auto &cell : bodies.cells)
+                if (cell.object)
+                    world.removeCollisionObject(cell.object.get());
+            bodies.cells = std::move(next.cells);
+            bodies.synchronized = std::move(current);
+            bodies.dirty = false;
+            bodies.ReindexObjects();
+        }
+
         struct BulletStepBody
         {
             Entity *entity = nullptr;
             EntityID entityId = 0;
-            FoliageComponent *foliage = nullptr;
-            uint64_t foliageRevision = 0;
-            glm::mat4 foliageOwnerTransform{1.0f};
             ColliderComponent *collider = nullptr;
             RigidbodyComponent *rigidbody = nullptr;
             std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
@@ -800,6 +1034,7 @@ namespace PlutoGE::scene
             btDiscreteDynamicsWorld dynamicsWorld{&dispatcher, &broadphase, &solver, &collisionConfiguration};
             std::vector<BulletStepBody> bodies;
             std::vector<BulletRagdoll> ragdolls;
+            BulletFoliageBodies foliage{.kind = FoliageBodyKind::StaticRigidBody};
 
             BulletRuntimeWorld()
             {
@@ -826,6 +1061,7 @@ namespace PlutoGE::scene
                         dynamicsWorld.removeRigidBody(body.body.get());
                     }
                 }
+                foliage.RemoveAll(dynamicsWorld);
             }
         };
 
@@ -961,10 +1197,6 @@ namespace PlutoGE::scene
         {
             Entity *entity = nullptr;
             glm::mat4 synchronizedWorldTransform{1.0f};
-            FoliageComponent *foliage = nullptr;
-            uint64_t foliageRevision = 0;
-            glm::mat4 foliageOwnerTransform{1.0f};
-            std::vector<std::uint64_t> foliageInstanceIds;
             std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
             std::unique_ptr<btCollisionShape> shape;
             std::vector<std::unique_ptr<btCollisionShape>> childShapes;
@@ -980,6 +1212,7 @@ namespace PlutoGE::scene
             btDbvtBroadphase broadphase;
             btCollisionWorld collisionWorld{&dispatcher, &broadphase, &collisionConfiguration};
             std::vector<BulletQueryBody> bodies;
+            BulletFoliageBodies foliage{.kind = FoliageBodyKind::CollisionObject};
 
             ~BulletQueryWorld()
             {
@@ -990,36 +1223,13 @@ namespace PlutoGE::scene
                         collisionWorld.removeCollisionObject(body.object.get());
                     }
                 }
+                foliage.RemoveAll(collisionWorld);
             }
         };
 
         uint64_t ComputeRuntimePhysicsBodySignature(const Entity &entity,
                                                     const ColliderComponent &collider,
                                                     const RigidbodyComponent *rigidbody);
-
-        BulletShapeData CreateFoliageCellBulletShape(const FoliageCollisionCell &cell)
-        {
-            BulletShapeData data;
-            auto compound = std::make_unique<btCompoundShape>(true, static_cast<int>(cell.instances.size()));
-            data.ownedChildShapes.reserve(cell.instances.size());
-            for (const auto &instance : cell.instances)
-            {
-                const float scaleX = glm::length(glm::vec3(instance.worldTransform[0]));
-                const float scaleY = glm::length(glm::vec3(instance.worldTransform[1]));
-                const float scaleZ = glm::length(glm::vec3(instance.worldTransform[2]));
-                const float radius = (std::max)(instance.radius * (std::max)(scaleX, scaleZ), 0.01f);
-                const float height = (std::max)(instance.height * scaleY, radius * 2.0f);
-                auto capsule = std::make_unique<btCapsuleShape>(radius, height - radius * 2.0f);
-                btTransform childTransform;
-                childTransform.setIdentity();
-                childTransform.setOrigin(ToBullet(glm::vec3(instance.worldTransform * glm::vec4(instance.center, 1.0f))));
-                childTransform.setRotation(ToBulletRotation(instance.worldTransform));
-                compound->addChildShape(childTransform, capsule.get());
-                data.ownedChildShapes.push_back(std::move(capsule));
-            }
-            data.shape = std::move(compound);
-            return data;
-        }
 
         // Empty shapes retain a membership record so unsupported/temporarily
         // unavailable geometry cannot trigger endless query-world rebuilds.
@@ -1090,55 +1300,6 @@ namespace PlutoGE::scene
                 if (body.object)
                     world.collisionWorld.removeCollisionObject(body.object.get());
             world.bodies = std::move(next);
-        }
-
-        std::unique_ptr<BulletQueryWorld> BuildBulletQueryWorld(const std::vector<Entity *> &entities,
-                                                                const std::vector<FoliageComponent *> &foliageComponents)
-        {
-            auto queryWorld = std::make_unique<BulletQueryWorld>();
-            queryWorld->bodies.reserve(entities.size());
-
-            for (auto *entity : entities)
-            {
-                auto body = CreateBulletQueryBody(entity);
-                if (body.object)
-                    queryWorld->collisionWorld.addCollisionObject(body.object.get());
-                queryWorld->bodies.push_back(std::move(body));
-            }
-
-            for (auto *foliage : foliageComponents)
-            {
-                auto *owner = foliage ? foliage->GetOwner() : nullptr;
-                if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive())
-                    continue;
-                for (const auto &cell : foliage->BuildCollisionCells())
-                {
-                    auto shapeData = CreateFoliageCellBulletShape(cell);
-                    if (!shapeData.shape || cell.instances.empty())
-                        continue;
-                    auto object = std::make_unique<btCollisionObject>();
-                    object->setCollisionShape(shapeData.shape.get());
-                    object->setWorldTransform(btTransform::getIdentity());
-                    object->setUserPointer(owner);
-                    queryWorld->collisionWorld.addCollisionObject(object.get());
-                    std::vector<std::uint64_t> instanceIds;
-                    instanceIds.reserve(cell.instances.size());
-                    for (const auto &instance : cell.instances)
-                        instanceIds.push_back(instance.instanceId);
-                    queryWorld->bodies.push_back(BulletQueryBody{
-                        .entity = owner,
-                        .foliage = foliage,
-                        .foliageRevision = foliage->GetRevision(),
-                        .foliageOwnerTransform = owner->GetWorldTransform(),
-                        .foliageInstanceIds = std::move(instanceIds),
-                        .shape = std::move(shapeData.shape),
-                        .childShapes = std::move(shapeData.ownedChildShapes),
-                        .object = std::move(object),
-                    });
-                }
-            }
-
-            return queryWorld;
         }
 
         class IgnoringRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
@@ -1447,8 +1608,14 @@ namespace PlutoGE::scene
 
     struct Scene::PhysicsQueryCache
     {
-        std::unique_ptr<BulletQueryWorld> world;
-        uint64_t refreshSequence = 0;
+        // Never matches an update sequence, so the next query refreshes first.
+        static constexpr uint64_t kStaleSequence = (std::numeric_limits<uint64_t>::max)();
+
+        std::unique_ptr<BulletQueryWorld> world = std::make_unique<BulletQueryWorld>();
+        uint64_t refreshSequence = kStaleSequence;
+        // Entity bodies may point at freed entities or carry outdated geometry: recreate them all on the next refresh.
+        // Foliage cells are unaffected; they synchronize on their own.
+        bool entityBodiesStale = false;
     };
 
     struct Scene::RuntimePhysicsState
@@ -1643,52 +1810,34 @@ namespace PlutoGE::scene
                 queryEntities.push_back(collider->GetOwner());
             }
 
-        bool rebuild = !m_physicsQueryCache || !m_physicsQueryCache->world;
-        if (!rebuild)
+        if (!m_physicsQueryCache)
+            m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
+        auto &world = *m_physicsQueryCache->world;
+        if (m_physicsQueryCache->entityBodiesStale)
         {
-            const auto &bodies = m_physicsQueryCache->world->bodies;
-            size_t entityBodyCount = 0;
-            for (const auto &body : bodies)
-                entityBodyCount += body.foliage == nullptr ? 1u : 0u;
-            rebuild = entityBodyCount != queryEntities.size();
-            for (size_t index = 0; !rebuild && index < queryEntities.size(); ++index)
-            {
-                auto *entity = queryEntities[index];
-                auto *collider = queryColliders[index];
-                auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
-                if (bodies[index].entity != entity ||
-                    bodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbody))
-                    rebuild = true;
-            }
-            for (const auto &body : bodies)
-                if (!rebuild && body.foliage &&
-                    (body.foliageRevision != body.foliage->GetRevision() ||
-                     body.foliageOwnerTransform != body.entity->GetWorldTransform()))
-                    rebuild = true;
-            for (auto *foliage : m_foliageComponents)
-                if (!rebuild && foliage && foliage->IsEnabled())
-                {
-                    const bool represented = std::any_of(bodies.begin(), bodies.end(),
-                                                         [foliage](const BulletQueryBody &body)
-                                                         { return body.foliage == foliage; });
-                    if (!represented && !foliage->BuildCollisionCells().empty())
-                        rebuild = true;
-                }
+            core::CpuScope rebuildScope("Physics query entity rebuild", core::CpuCategory::Physics);
+            for (auto &body : world.bodies)
+                if (body.object)
+                    world.collisionWorld.removeCollisionObject(body.object.get());
+            world.bodies.clear();
+            m_physicsQueryCache->entityBodiesStale = false;
         }
 
-        if (rebuild)
+        bool changed = world.bodies.size() != queryEntities.size();
+        for (size_t index = 0; !changed && index < queryEntities.size(); ++index)
+        {
+            auto *entity = queryEntities[index];
+            changed = world.bodies[index].entity != entity ||
+                      world.bodies[index].configurationSignature !=
+                          ComputeRuntimePhysicsBodySignature(*entity, *queryColliders[index],
+                                                             entity->GetComponent<RigidbodyComponent>());
+        }
+        if (changed)
         {
             core::CpuScope membershipScope("Physics query membership update", core::CpuCategory::Physics);
-            if (m_physicsQueryCache && m_physicsQueryCache->world && m_foliageComponents.empty())
-                SynchronizeBulletQueryBodies(*m_physicsQueryCache->world, queryEntities);
-            else
-            {
-                // Foliage cells have a separate spatial membership contract.
-                core::CpuScope rebuildScope("Physics query world rebuild", core::CpuCategory::Physics);
-                m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
-                m_physicsQueryCache->world = BuildBulletQueryWorld(queryEntities, m_foliageComponents);
-            }
+            SynchronizeBulletQueryBodies(world, queryEntities);
         }
+        SynchronizeFoliageBodies(world.foliage, world.collisionWorld, m_foliageComponents);
     }
 
     void Scene::SynchronizePhysicsQueryBodyTransforms() const
@@ -1698,8 +1847,6 @@ namespace PlutoGE::scene
             for (auto &body : m_physicsQueryCache->world->bodies)
             {
                 if (!body.entity || !body.object)
-                    continue;
-                if (body.foliage)
                     continue;
                 const glm::mat4 worldTransform = body.entity->GetWorldTransform();
                 if (body.synchronizedWorldTransform == worldTransform)
@@ -1717,7 +1864,10 @@ namespace PlutoGE::scene
 
     void Scene::InvalidatePhysicsQueryCache() const
     {
-        m_physicsQueryCache.reset();
+        if (!m_physicsQueryCache)
+            return;
+        m_physicsQueryCache->entityBodiesStale = true;
+        m_physicsQueryCache->refreshSequence = PhysicsQueryCache::kStaleSequence;
     }
 
     void Scene::ResetRuntimePhysicsState()
@@ -1951,36 +2101,13 @@ namespace PlutoGE::scene
             });
         }
 
-        for (auto *foliage : m_foliageComponents)
+        // Foliage cells carry over from the world being replaced, so an entity change never rebuilds them.
+        if (m_runtimePhysicsState->world)
         {
-            auto *owner = foliage ? foliage->GetOwner() : nullptr;
-            if (!foliage || !foliage->IsEnabled() || !owner || !owner->IsActive())
-                continue;
-            for (const auto &cell : foliage->BuildCollisionCells())
-            {
-                auto shapeData = CreateFoliageCellBulletShape(cell);
-                if (!shapeData.shape || cell.instances.empty())
-                    continue;
-                btTransform identity;
-                identity.setIdentity();
-                auto motionState = std::make_unique<btDefaultMotionState>(identity);
-                btRigidBody::btRigidBodyConstructionInfo info(0.0f, motionState.get(), shapeData.shape.get());
-                auto body = std::make_unique<btRigidBody>(info);
-                body->setUserPointer(owner);
-                runtimeWorld->dynamicsWorld.addRigidBody(body.get());
-                runtimeWorld->bodies.push_back(BulletStepBody{
-                    .entity = owner,
-                    .entityId = owner->GetID(),
-                    .foliage = foliage,
-                    .foliageRevision = foliage->GetRevision(),
-                    .foliageOwnerTransform = owner->GetWorldTransform(),
-                    .shape = std::move(shapeData.shape),
-                    .childShapes = std::move(shapeData.ownedChildShapes),
-                    .motionState = std::move(motionState),
-                    .body = std::move(body),
-                });
-            }
+            auto &previous = *m_runtimePhysicsState->world;
+            previous.foliage.TransferTo(previous.dynamicsWorld, runtimeWorld->foliage, runtimeWorld->dynamicsWorld);
         }
+        SynchronizeFoliageBodies(runtimeWorld->foliage, runtimeWorld->dynamicsWorld, m_foliageComponents);
 
         // Ragdolls share this dynamics world with ordinary scene bodies. Each
         // skeleton joint gets a rigid collision shape and parent/child bodies
@@ -2896,7 +3023,10 @@ namespace PlutoGE::scene
                     world.dynamicsWorld.removeRigidBody(body.body.get());
                 return true;
             });
+            world.foliage.RemoveOwnedBy(world.dynamicsWorld, entitySet);
         }
+        if (m_physicsQueryCache)
+            m_physicsQueryCache->world->foliage.RemoveOwnedBy(m_physicsQueryCache->world->collisionWorld, entitySet);
         std::vector<EntityID> removedInstanceRoots;
         for (const auto *removed : subtree)
             if (m_staticModelInstances.contains(removed->GetID()))
@@ -3828,8 +3958,16 @@ namespace PlutoGE::scene
 
     void Scene::InvalidateFoliagePhysics()
     {
-        InvalidatePhysicsQueryCache();
-        ResetRuntimePhysicsState();
+        // Both worlds compare cell signatures at their next synchronization and replace only the cells that changed.
+        // The query world does so before the next query, so a ray never reaches a tree that was just removed; the
+        // simulation does so before its next step.
+        if (m_physicsQueryCache)
+        {
+            m_physicsQueryCache->world->foliage.dirty = true;
+            m_physicsQueryCache->refreshSequence = PhysicsQueryCache::kStaleSequence;
+        }
+        if (m_runtimePhysicsState && m_runtimePhysicsState->world)
+            m_runtimePhysicsState->world->foliage.dirty = true;
     }
 
     void Scene::RegisterRmlWidgetComponent(RmlWidgetComponent *widgetComponent)
@@ -3996,20 +4134,7 @@ namespace PlutoGE::scene
         hit.point = FromBullet(resolvedPoint);
         hit.normal = NormalizeRaycastNormal(resolvedNormal);
         hit.distance = glm::length(hit.point - origin);
-        // The cached query world retains foliage child-to-instance metadata. The
-        // runtime dynamics world deliberately does not duplicate that editor/query
-        // bookkeeping, so runtime fixed-step rays report the owning entity only.
-        if (!useRuntimeWorld && callback.m_hitChildIndex >= 0)
-        {
-            const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
-            for (const auto &body : GetPhysicsQueryCache().world->bodies)
-                if (body.object.get() == callback.m_collisionObject)
-                {
-                    if (childIndex < body.foliageInstanceIds.size())
-                        hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
-                    break;
-                }
-        }
+        hit.foliageInstanceId = FindFoliageInstance(callback.m_collisionObject, callback.m_hitChildIndex, useRuntimeWorld);
         return true;
     }
 
@@ -4034,7 +4159,14 @@ namespace PlutoGE::scene
                 auto *entity = object ? static_cast<const Entity *>(object->getUserPointer()) : nullptr;
                 return object && object->hasContactResponse() && !IsEntityOrDescendantOf(entity, first) && !IsEntityOrDescendantOf(entity, second);
             }
+            btScalar addSingleResult(btCollisionWorld::LocalConvexResult &result, bool normalInWorldSpace) override
+            {
+                if (result.m_hitFraction <= m_closestHitFraction)
+                    hitChildIndex = result.m_localShapeInfo ? result.m_localShapeInfo->m_triangleIndex : -1;
+                return ClosestConvexResultCallback::addSingleResult(result, normalInWorldSpace);
+            }
             EntityID first, second;
+            int hitChildIndex = -1;
         } callback(start, end, ignoredEntityId, secondIgnoredEntityId);
         btSphereShape shape(radius);
         btTransform a, b;
@@ -4054,7 +4186,18 @@ namespace PlutoGE::scene
         hit.point = FromBullet(callback.m_hitPointWorld);
         hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
         hit.distance = distance * callback.m_closestHitFraction;
+        hit.foliageInstanceId = FindFoliageInstance(callback.m_hitCollisionObject, callback.hitChildIndex, runtimeWorld);
         return true;
+    }
+
+    std::uint64_t Scene::FindFoliageInstance(const void *collisionObject, int childIndex, bool runtimeWorld) const
+    {
+        const auto *object = static_cast<const btCollisionObject *>(collisionObject);
+        if (runtimeWorld)
+            return m_runtimePhysicsState && m_runtimePhysicsState->world
+                       ? m_runtimePhysicsState->world->foliage.FindInstance(object, childIndex)
+                       : 0;
+        return m_physicsQueryCache ? m_physicsQueryCache->world->foliage.FindInstance(object, childIndex) : 0;
     }
 
     bool Scene::QueryCapsule(const glm::vec3 &center, const glm::vec3 &displacement, float radius, float height,
@@ -4177,15 +4320,7 @@ namespace PlutoGE::scene
             hit.point = FromBullet(callback.m_hitPointWorld);
             hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld);
             hit.distance = glm::length(hit.point - request.origin);
-            if (callback.m_hitChildIndex >= 0)
-                for (const auto &body : queryCache.world->bodies)
-                    if (body.object.get() == callback.m_collisionObject)
-                    {
-                        const auto childIndex = static_cast<std::size_t>(callback.m_hitChildIndex);
-                        if (childIndex < body.foliageInstanceIds.size())
-                            hit.foliageInstanceId = body.foliageInstanceIds[childIndex];
-                        break;
-                    }
+            hit.foliageInstanceId = queryCache.world->foliage.FindInstance(callback.m_collisionObject, callback.m_hitChildIndex);
             hitResults[index] = 1;
         }
     }
@@ -4262,6 +4397,7 @@ namespace PlutoGE::scene
         hit.point = FromBullet(resolvedPoint);
         hit.normal = NormalizeRaycastNormal(resolvedNormal);
         hit.distance = glm::length(hit.point - origin);
+        hit.foliageInstanceId = FindFoliageInstance(callback.m_collisionObject, callback.m_hitChildIndex, useRuntimeWorld);
         return true;
     }
 
@@ -4585,21 +4721,16 @@ namespace PlutoGE::scene
             // Death/deactivation usually only removes a collider. Preserve all
             // surviving Bullet bodies (and their mesh shapes and simulation
             // state) instead of rebuilding the entire world for that removal.
-            size_t previousEntityCount = 0;
-            for (const auto &body : existingBodies)
-                previousEntityCount += body.foliage == nullptr ? 1u : 0u;
-            if (previousEntityCount > physicsEntities.size())
+            if (existingBodies.size() > physicsEntities.size())
             {
                 const std::unordered_set<Entity *> active(physicsEntities.begin(), physicsEntities.end());
                 std::erase_if(existingBodies, [&](BulletStepBody &body)
                               {
-                    if (body.foliage || active.contains(body.entity)) return false;
+                    if (active.contains(body.entity)) return false;
                     if (body.body) world.dynamicsWorld.removeRigidBody(body.body.get());
                     return true; });
             }
-            size_t entityBodyCount = 0;
-            for (const auto &body : existingBodies)
-                entityBodyCount += body.foliage == nullptr ? 1u : 0u;
+            const size_t entityBodyCount = existingBodies.size();
             if (entityBodyCount != physicsEntities.size())
             {
                 std::ostringstream message;
@@ -4631,20 +4762,6 @@ namespace PlutoGE::scene
                         break;
                     }
                 }
-                for (const auto &body : existingBodies)
-                    if (!rebuildRuntimePhysics && body.foliage &&
-                        (body.foliageRevision != body.foliage->GetRevision() ||
-                         body.foliageOwnerTransform != body.entity->GetWorldTransform()))
-                        rebuildRuntimePhysics = true;
-                for (auto *foliage : m_foliageComponents)
-                    if (!rebuildRuntimePhysics && foliage && foliage->IsEnabled())
-                    {
-                        const bool represented = std::any_of(existingBodies.begin(), existingBodies.end(),
-                                                             [foliage](const BulletStepBody &body)
-                                                             { return body.foliage == foliage; });
-                        if (!represented && !foliage->BuildCollisionCells().empty())
-                            rebuildRuntimePhysics = true;
-                    }
             }
             if (!rebuildRuntimePhysics)
             {
@@ -4696,13 +4813,10 @@ namespace PlutoGE::scene
         }
 
         auto &runtimeWorld = *m_runtimePhysicsState->world;
+        SynchronizeFoliageBodies(runtimeWorld.foliage, runtimeWorld.dynamicsWorld, m_foliageComponents);
         for (auto &stepBody : runtimeWorld.bodies)
         {
             if (!stepBody.body || !stepBody.entity)
-            {
-                continue;
-            }
-            if (stepBody.foliage)
             {
                 continue;
             }
@@ -5317,7 +5431,13 @@ namespace PlutoGE::scene
                 return AllHitsRayResultCallback::needsCollision(proxy) &&
                        PassesQueryOptions(static_cast<const btCollisionObject *>(proxy->m_clientObject), options);
             }
+            btScalar addSingleResult(btCollisionWorld::LocalRayResult &result, bool normalInWorldSpace) override
+            {
+                childIndices.push_back(result.m_localShapeInfo ? result.m_localShapeInfo->m_triangleIndex : -1);
+                return AllHitsRayResultCallback::addSingleResult(result, normalInWorldSpace);
+            }
             const PhysicsQueryOptions &options;
+            std::vector<int> childIndices; // Parallel to m_collisionObjects.
         } callback(from, to, options);
         const bool useRuntimeWorld = m_inFixedScriptUpdate && m_runtimePhysicsState && m_runtimePhysicsState->world;
         if (useRuntimeWorld)
@@ -5325,19 +5445,24 @@ namespace PlutoGE::scene
         else
             GetPhysicsQueryCache().world->collisionWorld.rayTest(from, to, callback);
 
-        // A collider with several triangles or children reports one hit: its nearest.
+        // A collider with several triangles or children reports one hit: its nearest. Foliage reports one per instance.
         std::vector<std::pair<btScalar, int>> order;
         for (int index = 0; index < callback.m_collisionObjects.size(); ++index)
             order.emplace_back(callback.m_hitFractions[index], index);
         std::sort(order.begin(), order.end());
         std::vector<PhysicsRaycastHit> hits;
-        std::vector<const btCollisionObject *> seen;
+        std::vector<std::pair<const btCollisionObject *, std::uint64_t>> seen;
         for (const auto &[fraction, index] : order)
         {
             const auto *object = callback.m_collisionObjects[index];
-            if (std::find(seen.begin(), seen.end(), object) != seen.end())
+            const int childIndex = static_cast<std::size_t>(index) < callback.childIndices.size()
+                                       ? callback.childIndices[static_cast<std::size_t>(index)]
+                                       : -1;
+            const std::uint64_t foliageInstanceId = FindFoliageInstance(object, childIndex, useRuntimeWorld);
+            const std::pair key{object, foliageInstanceId};
+            if (std::find(seen.begin(), seen.end(), key) != seen.end())
                 continue;
-            seen.push_back(object);
+            seen.push_back(key);
             const auto *entity = static_cast<const Entity *>(object->getUserPointer());
             if (!entity)
                 continue;
@@ -5346,6 +5471,7 @@ namespace PlutoGE::scene
             hit.point = FromBullet(callback.m_hitPointWorld[index]);
             hit.normal = NormalizeRaycastNormal(callback.m_hitNormalWorld[index]);
             hit.distance = glm::length(hit.point - origin);
+            hit.foliageInstanceId = foliageInstanceId;
             hits.push_back(hit);
         }
         return hits;

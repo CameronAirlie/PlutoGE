@@ -52,6 +52,10 @@ namespace PlutoGE::scene
         // How the type bends in the scene's wind (WindComponent); off by default, so existing types stay still.
         render::FoliageWindResponse wind{};
 
+        // Interaction: the prefab an instance is swapped for when gameplay needs a full entity there (felling a tree,
+        // opening a bush). Empty leaves the type as scenery. See FoliageProxies.h.
+        std::string proxyPrefabReference;
+
         bool operator==(const FoliageTypeAsset &) const = default;
     };
 

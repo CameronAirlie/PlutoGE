@@ -269,6 +269,22 @@ namespace PlutoGE::ui
         });
     }
 
+    bool DrawFoliageInteractionSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context)
+    {
+        const ImGuiTreeNodeFlags flags = asset.proxyPrefabReference.empty() ? ImGuiTreeNodeFlags_None : ImGuiTreeNodeFlags_DefaultOpen;
+        return Section("Interaction", flags, context, [&]
+        {
+            const bool changed = RenderProjectAssetPicker("Proxy Prefab", context.project, assets::ProjectAssetType::Prefab,
+                                                          asset.proxyPrefabReference, {.noneLabel = "None (Scenery)"});
+            ImGui::SetItemTooltip("The entity an instance becomes when gameplay promotes it (an axe strikes a tree).\n"
+                                  "It spawns at the instance's position, rotation and scale with its scripts running,\n"
+                                  "and releasing it puts the instance back. Other instances stay cheap foliage.");
+            if (!asset.proxyPrefabReference.empty())
+                ImGui::TextDisabled("Scripts promote instances with RaycastHit.FoliageInstance.TryPromote.");
+            return changed;
+        });
+    }
+
     bool DrawFoliageTypeSections(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context)
     {
         bool changed = DrawFoliageSourceSection(asset, context);
@@ -276,6 +292,7 @@ namespace PlutoGE::ui
         changed |= DrawFoliageRenderingSection(asset, context);
         changed |= DrawFoliageCollisionSection(asset, context);
         changed |= DrawFoliageWindSection(asset, context);
+        changed |= DrawFoliageInteractionSection(asset, context);
         return changed;
     }
 }

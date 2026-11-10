@@ -52,7 +52,8 @@ namespace
                  "AmbientLightVolumeComponent", "IblCaptureComponent", "ScriptComponent", "SoundEmitterComponent",
                  "SoundListenerComponent", "AudioEnvironmentVolumeComponent", "CanvasComponent", "RmlWidgetComponent",
                  "RectTransformComponent", "UIImageComponent", "UITextComponent", "UIButtonComponent",
-                 "VolumetricCloudComponent", "PhysicalSkyComponent", "WindComponent", "OutlineComponent"})
+                 "VolumetricCloudComponent", "PhysicalSkyComponent", "WindComponent", "OutlineComponent",
+                 "FoliageProxyComponent"})
             Require(registry.Find(std::string_view(name)) != nullptr, std::string("Missing built-in type ") + name);
         for (const auto &item : registry.GetMenuItems())
             Require(registry.Find(item.typeID) != nullptr, "Menu item without a type: " + item.path);

@@ -9,6 +9,7 @@ add_library(PlutoGEScene
     src/ComponentRegistry.cpp
     src/BuiltinComponentTypes.cpp
     src/Entity.cpp
+    src/FoliageProxies.cpp
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp
     src/PrefabMeshExporter.cpp
@@ -46,6 +47,7 @@ add_library(PlutoGEScene
     src/components/ColliderComponent.cpp
     src/components/DecalComponent.cpp
     src/components/FoliageComponent.cpp
+    src/components/FoliageProxyComponent.cpp
     src/components/IblCaptureComponent.cpp
     src/components/AmbientLightVolumeComponent.cpp
     src/components/LightComponent.cpp

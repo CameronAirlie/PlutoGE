@@ -687,6 +687,35 @@ var surface = terrain.GetLayerName(terrain.GetDominantLayer(transform.Position))
 terrain.PaintLayer(wheelPosition, terrain.FindLayer("Road"), radius: 0.4f, opacity: 0.3f);
 ```
 
+### FoliageComponent
+
+Painted foliage: many copies of a few plants, drawn and collided with as instances rather than entities. A
+`FoliageInstance` names one of them by its stable ID. Types with a proxy prefab can be **promoted**: the instance
+leaves the foliage and an entity spawned from the prefab takes its place, scripts and all, until the proxy is
+released. See [Interactive foliage](FOLIAGE.md#interactive-foliage-proxies).
+
+```csharp
+// FoliageComponent
+FoliageInstance GetInstance(ulong instanceId)
+FoliageInstance[] FindInstances(Vector3 center, float radius)   // pivots within radius, nearest first
+
+// FoliageInstance (a value type; RaycastHit.FoliageInstance on any query hit)
+ulong Id; uint FoliageEntityId; GameObject Foliage
+bool IsValid                                   // refers to an instance at all
+bool Exists                                    // still placed (false once promoted)
+bool TryGetInfo(out FoliageInstanceInfo info)  // TypeIndex, TypeName, Position, Rotation, Scale, HasProxyPrefab
+bool TryPromote(out GameObject proxy)
+bool TryPromote(out GameObject proxy, out string error)
+
+// FoliageProxyComponent, on a promoted instance's proxy
+FoliageInstance Instance
+bool Release()                                 // puts the instance back and destroys the proxy
+```
+
+```csharp
+var target = hit.FoliageInstance.TryPromote(out var tree) ? tree : hit.Entity;
+```
+
 ### Runtime UI
 
 - `CanvasComponent`: `ScaleFactor`, `SortingOrder`
@@ -766,7 +795,7 @@ Vector3 Physics.MoveKinematic(
     GameObject gameObject, Vector3 displacement, float skinWidth = 0.02f)
 ```
 
-`RaycastHit` has read-only `Entity`, `Point`, `Normal`, and `Distance`. Directions are normalized by the wrapper. Zero-length directions and non-positive distances return `false`.
+`RaycastHit` has read-only `Entity`, `Point`, `Normal`, `Distance` and `FoliageInstance`. For a hit on painted foliage, `Entity` is the entity with the `FoliageComponent` and `FoliageInstance` names the plant that was hit (see [FoliageComponent](#foliagecomponent)); otherwise `FoliageInstance.IsValid` is false. Directions are normalized by the wrapper. Zero-length directions and non-positive distances return `false`.
 
 `MoveKinematic` performs collision-aware movement and returns the displacement actually applied. There is also a `uint entityId` overload.
 
@@ -779,7 +808,7 @@ RaycastHit[] Physics.RaycastAll(Vector3 origin, Vector3 direction, float maxDist
 bool Physics.SphereCast(Vector3 origin, Vector3 direction, float radius, float maxDistance, out RaycastHit hit, GameObject? ignoredEntity = null)
 ```
 
-- Overlaps report each entity once. `RaycastAll` is ordered nearest first, with one hit per collider.
+- Overlaps report each entity once. `RaycastAll` is ordered nearest first, with one hit per collider (per instance for foliage).
 - `tag` keeps only colliders whose entity has that tag, so it can act as a layer: tag enemies `"Damageable"` and
   pass that tag to an explosion's `OverlapSphere`.
 - `ignoredEntity` skips that entity and its children, usually the caller's own character.

@@ -286,6 +286,7 @@ public sealed class GameObject : IEquatable<GameObject>
             _ when type == typeof(SoundEmitterComponent) => ScriptBridge.NativeComponentType.SoundEmitter,
             _ when type == typeof(RmlWidgetComponent) => ScriptBridge.NativeComponentType.RmlWidget,
             _ when type == typeof(TerrainComponent) => ScriptBridge.NativeComponentType.Terrain,
+            _ when type == typeof(FoliageComponent) => ScriptBridge.NativeComponentType.Foliage,
             _ => null,
         };
         nativeType = match ?? default;
@@ -314,6 +315,7 @@ public sealed class GameObject : IEquatable<GameObject>
             var type when type == typeof(SoundEmitterComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.SoundEmitter),
             var type when type == typeof(RmlWidgetComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget),
             var type when type == typeof(TerrainComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Terrain),
+            var type when type == typeof(FoliageComponent) => ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Foliage),
             _ => ScriptBridge.GetScript<T>(EntityId) is not null,
         };
     }
@@ -380,6 +382,10 @@ public sealed class GameObject : IEquatable<GameObject>
         if (typeof(T) == typeof(TerrainComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Terrain))
         {
             return new TerrainComponent(EntityId) as T;
+        }
+        if (typeof(T) == typeof(FoliageComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.Foliage))
+        {
+            return new FoliageComponent(EntityId) as T;
         }
         if (typeof(T) == typeof(RmlWidgetComponent) && ScriptBridge.HasComponent(EntityId, ScriptBridge.NativeComponentType.RmlWidget))
         {

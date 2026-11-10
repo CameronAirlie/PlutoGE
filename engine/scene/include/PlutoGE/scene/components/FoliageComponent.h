@@ -61,6 +61,9 @@ namespace PlutoGE::scene
     {
         FoliageCellCoordinate coordinate;
         std::vector<FoliageCollisionInstance> instances;
+        // Changes whenever any of the cell's capsules does (added, removed, moved or resized), so physics can rebuild
+        // only the cells an edit touched.
+        std::uint64_t signature = 0;
     };
 
     struct FoliageType
@@ -262,6 +265,11 @@ namespace PlutoGE::scene
         [[nodiscard]] std::optional<FoliageInstanceBounds> GetInstanceBounds(const FoliageInstanceLocation &location) const;
         // The instance's pivot and rotation in the world, without its scale: what a transform gizmo manipulates.
         [[nodiscard]] std::optional<glm::mat4> GetInstancePivotTransform(const FoliageInstanceLocation &location) const;
+        // The instance's pivot, rotation and scale in the world: where an entity standing in for it goes so that the
+        // same mesh draws exactly where the instance did.
+        [[nodiscard]] std::optional<glm::mat4> GetInstanceWorldTransform(const FoliageInstanceLocation &location) const;
+        // Instances of every type whose pivot is within `radius` of `worldCenter`, nearest first.
+        [[nodiscard]] std::vector<FoliageInstanceLocation> FindInstancesInRadius(const glm::vec3 &worldCenter, float radius) const;
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;
         FoliageInstanceSnapshot CaptureInstanceSnapshot() const;

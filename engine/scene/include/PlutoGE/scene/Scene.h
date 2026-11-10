@@ -490,6 +490,8 @@ namespace PlutoGE::scene
         void RebuildRuntimePhysicsState(const std::vector<Entity *> &physicsEntities,
                                         const std::vector<Entity *> &activeEntities);
         void SyncPhysicsQueryTransform(const Entity &entity) const;
+        // The foliage instance behind a hit on a Bullet collision object's compound child; 0 for anything else.
+        [[nodiscard]] std::uint64_t FindFoliageInstance(const void *collisionObject, int childIndex, bool runtimeWorld) const;
         void StepPhysics(float deltaTime);
         // Keys are MakeCollisionPairKey pairs; contacts are seen from the pair's lower entity ID.
         void DispatchCollisionEvents(std::unordered_map<uint64_t, CollisionContact> currentCollisionPairs);

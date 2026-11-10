@@ -144,6 +144,7 @@ internal static unsafe partial class ScriptBridge
         public NativeVector3 Point;
         public NativeVector3 Normal;
         public float Distance;
+        public ulong FoliageInstanceId;
     }
 
     internal enum NativeComponentType
@@ -165,6 +166,7 @@ internal static unsafe partial class ScriptBridge
         RmlWidget = 14,
         ActiveRagdoll = 15,
         Terrain = 16,
+        Foliage = 17,
         // Components reached through the generic property bridge (RegisteredComponent).
         Registered = 1000,
     }

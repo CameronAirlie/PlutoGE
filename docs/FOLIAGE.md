@@ -234,6 +234,7 @@ COLLISION_CENTER	0	1.5	0
 COLLISION_CAPSULE	0.4	3
 WIND_ENABLED	0
 WIND_RESPONSE	0.5	0.5	1	0
+PROXY_PREFAB	project://Nodes/Oak.plutoprefab
 ```
 
 In version 2, an omitted record takes its default. Version 1 files hold only the rendering,
@@ -254,6 +255,58 @@ bool LoadFoliageTypeAsset(const std::string& path,
 foliage->SetTypeAssetReference(typeIndex, "project://Trees/Oak.plutofoliage");
 scene->RefreshFoliageTypeAsset("project://Trees/Oak.plutofoliage");
 ```
+
+## Interactive foliage (proxies)
+
+Games usually want every tree to be choppable and every bush harvestable, without
+paying for thousands of entities. A foliage type can name a **proxy prefab**: the
+entity one of its instances becomes when gameplay needs it to behave like an object.
+
+1. Make the prefab: the gameplay object for one plant, with its pivot at the base,
+   the plant's mesh at scale 1, a collider and the scripts that handle it (for a
+   tree, say, a script that takes axe hits and falls). It spawns with the
+   instance's position, rotation **and scale**, so build it the size of an unscaled
+   instance.
+2. Open the type's **Interaction** section, in the inspector or the Foliage Editor,
+   and choose the prefab under **Proxy Prefab**.
+3. Leave **Capsule Collision** on, so rays and weapons can find the instance. The
+   setup checks warn when a type has a proxy but no collision.
+
+At run time:
+
+- **Promoting** an instance removes it from the foliage and spawns the proxy where
+  it stood. The proxy's scripts have run `OnCreate` by the time the call returns,
+  and its `FoliageProxyComponent` records which instance it replaced. Rendering and
+  collision drop the instance at once.
+- **Releasing** the proxy puts the instance back exactly as it was and destroys the
+  proxy. Destroying a proxy without releasing it removes the plant for the rest of
+  the session.
+- Only the plants being interacted with are entities. The rest stay instanced, with
+  cell collision and cheap rendering.
+
+From C#, the hit of any physics query carries the foliage instance it reached:
+
+```csharp
+if (Physics.Raycast(origin, forward, reach, Character, out var hit))
+{
+    // A painted tree becomes its proxy; anything else is hit as it is.
+    var target = hit.FoliageInstance.TryPromote(out var proxy) ? proxy : hit.Entity;
+    Damage.Apply(target, damage);
+}
+
+// Later, on the proxy (for example once the tree has regrown):
+GameObject.GetComponent<FoliageProxyComponent>()?.Release();
+```
+
+`FoliageComponent.FindInstances(center, radius)` lists the instances near a point,
+for interaction prompts or area effects. `FoliageInstance.TryGetInfo` gives an
+instance's type and world transform. From C++, use `PromoteFoliageInstance` and
+`ReleaseFoliageProxy` (`scene/FoliageProxies.h`).
+
+Instance IDs are stable, so a game can save what happened to its plants (felled
+trees, picked bushes) as a list of IDs and replay it after loading: promote or
+remove those instances again. The engine does not save play-session changes to
+foliage itself.
 
 ## Spatial cells and rendering
 
@@ -501,9 +554,14 @@ The same representation is added to:
 - The runtime Bullet dynamics world, for character and rigidbody collision
 - The physics query world, for raycasts and other scene queries
 
-Painting or editing foliage invalidates the affected component revision and
-causes the physics representation to be refreshed. Static foliage bodies are
-not transformed or updated every physics step.
+Foliage collision is kept apart from entity bodies in both worlds. When a
+component's instances change, only the cells whose capsules changed are rebuilt:
+each cell carries a signature of its contents (`FoliageCollisionCell::signature`),
+and unchanged cells keep their Bullet bodies. Felling one tree replaces one cell.
+It does not reset the simulation, so other bodies keep their velocities, contacts
+and sleep state. Adding or removing entities, such as a spawned proxy, never
+rebuilds foliage cells. Queries made after an edit in the same frame already see
+it. Static foliage bodies are not transformed or updated every physics step.
 
 Capsules are scaled from the complete owner and instance transform. Radius uses
 the larger horizontal scale, while height uses vertical scale. Non-uniformly
@@ -526,8 +584,11 @@ if (scene.Raycast(origin, direction, distance, hit))
 ```
 
 Ordinary entity collisions return `foliageInstanceId == 0`. Foliage instance
-IDs are component-local handles and are intended for future selection,
-promotion, damage, and persistence APIs.
+IDs are component-local handles. `Raycast`, `RaycastByTag`, `RaycastBatch`,
+`RaycastAll` (one hit per instance) and `SweepSphere` report them, in both the
+query world and the fixed-step simulation world. Overlap and capsule queries
+report only the owner. [Interactive foliage](#interactive-foliage-proxies)
+promotes the instance a hit reports.
 
 ## Choosing cell and collider settings
 
@@ -568,9 +629,12 @@ Type.N.WindStiffness
 Type.N.WindFlutter
 Type.N.WindBendHeight
 Type.N.WindPivotHeight
+Type.N.ProxyPrefab
 ```
 
 The wind fields ([Foliage wind](FOLIAGE_WIND.md)) default to disabled, so older scenes keep still foliage.
+`ProxyPrefab` defaults to empty, so older scenes and `.plutofoliage` files keep their types as scenery; the
+`PROXY_PREFAB` record is written only when set, and older readers skip it.
 `LodDistanceScale` defaults to 1, so older scenes keep their LOD distances. Types without a
 scale range start with the component's old `MinScale` and `MaxScale`.
 
@@ -599,7 +663,6 @@ This milestone provides static capsule collision. It does not yet provide:
 - Boxes, spheres, or multi-shape collider authoring
 - Navigation obstacle generation
 - Collision-layer settings per foliage type
-- Destructible-tree promotion into entities
 - Painting on anything but a terrain on the same entity
 - Per-field overrides of a linked type's settings
 - Marquee selection of instances
@@ -616,7 +679,10 @@ command cache. Physics collision cells themselves are cached and revisioned.
 - `engine/scene/src/FoliageTypeAsset.cpp`
 - `engine/scene/include/PlutoGE/scene/components/FoliageComponent.h`
 - `engine/scene/src/components/FoliageComponent.cpp`
-- `engine/scene/src/Scene.cpp`
+- `engine/scene/src/Scene.cpp` (foliage collision cells in both physics worlds: `SynchronizeFoliageBodies`)
+- `engine/scene/include/PlutoGE/scene/FoliageProxies.h`, `engine/scene/src/FoliageProxies.cpp` (promotion and release)
+- `engine/scene/include/PlutoGE/scene/components/FoliageProxyComponent.h`
+- `engine/scripting/src/FoliageScriptApi.cpp`, `engine/scripting/managed/PlutoGE.ScriptCore/FoliageComponent.cs` (C#)
 - `editor/ui/src/inspectors/FoliageInspector.cpp` (the inspector, top to bottom)
 - `editor/ui/src/foliage/FoliageTypeSections.cpp` (settings UI shared with the asset editor; add new settings here)
 - `editor/ui/src/panels/FoliageEditorPanel.cpp` (the Foliage Editor)
@@ -628,5 +694,6 @@ command cache. Physics collision cells themselves are cached and revisioned.
 - `editor/ui/src/foliage/FoliageDiagnostics.cpp` (setup checks; add new checks here)
 - `engine/render/src/InstanceBinning.h`, `engine/render/src/InstanceBinning.cpp`
 - `engine/render/include/PlutoGE/render/GraphicsQuality.h` (foliage detail per tier)
-- `tests/FoliageCollisionTests.cpp`, `tests/FoliageEditingTests.cpp`
+- `tests/FoliageCollisionTests.cpp`, `tests/FoliageEditingTests.cpp`, `tests/FoliageProxyTests.cpp`,
+  `tests/managed/PlutoGE.FoliageSmokeTests`
 - `tests/InstanceLodChecks.h`, `tests/GpuInstanceCullingChecks.h`

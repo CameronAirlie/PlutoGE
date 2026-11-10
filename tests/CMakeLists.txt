@@ -391,6 +391,14 @@ pluto_link_engine(PlutoGEFoliageCollisionTests)
 
 add_test(NAME PlutoGEFoliageCollisionTests COMMAND PlutoGEFoliageCollisionTests)
 
+add_executable(PlutoGEFoliageProxyTests
+    FoliageProxyTests.cpp
+)
+
+pluto_link_engine(PlutoGEFoliageProxyTests)
+
+add_test(NAME PlutoGEFoliageProxyTests COMMAND PlutoGEFoliageProxyTests)
+
 add_executable(PlutoGEFoliageEditingTests
     FoliageEditingTests.cpp
     ../editor/ui/src/foliage/FoliageDiagnostics.cpp
@@ -580,6 +588,8 @@ endif()
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGETerrainManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.TerrainSmokeTests/PlutoGE.TerrainSmokeTests.csproj --configuration Release)
+    add_test(NAME PlutoGEFoliageManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.FoliageSmokeTests/PlutoGE.FoliageSmokeTests.csproj --configuration Release)
 endif()
 
 add_executable(PlutoGEPrefabVariantTests

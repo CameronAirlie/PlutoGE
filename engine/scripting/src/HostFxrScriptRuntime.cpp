@@ -34,10 +34,12 @@
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SoundEmitterComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 
 #include "TerrainScriptApi.h"
+#include "FoliageScriptApi.h"
 #include "ComponentScriptApi.h"
 
 #include <algorithm>
@@ -156,6 +158,7 @@ namespace PlutoGE::scripting
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_terrain_api_fn = int(PLUTO_HOST_CALL *)(void *);
+        using register_foliage_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_component_property_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_camera_rig_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_skeletal_api_fn = int(PLUTO_HOST_CALL *)(void *);
@@ -182,13 +185,28 @@ namespace PlutoGE::scripting
             float w = 1.0f;
         };
 
+        // Mirrors ScriptBridge.NativeRaycastHit.
         struct NativeRaycastHit
         {
             uint32_t entityId = 0;
             NativeVector3 point{};
             NativeVector3 normal{};
             float distance = 0.0f;
+            // The foliage instance hit on `entityId`'s FoliageComponent; 0 when the hit was not foliage.
+            uint64_t foliageInstanceId = 0;
         };
+        static_assert(sizeof(NativeRaycastHit) == 40, "Keep in step with ScriptBridge.NativeRaycastHit");
+
+        NativeRaycastHit ToNativeRaycastHit(const scene::PhysicsRaycastHit &hit)
+        {
+            return NativeRaycastHit{
+                .entityId = hit.entityId,
+                .point = NativeVector3{hit.point.x, hit.point.y, hit.point.z},
+                .normal = NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z},
+                .distance = hit.distance,
+                .foliageInstanceId = hit.foliageInstanceId,
+            };
+        }
 
         using get_entity_vector3_fn = NativeVector3(PLUTO_HOST_CALL *)(uint32_t);
         using set_entity_vector3_fn = void(PLUTO_HOST_CALL *)(uint32_t, NativeVector3);
@@ -293,6 +311,7 @@ namespace PlutoGE::scripting
             RmlWidget = 14,
             ActiveRagdoll = 15,
             Terrain = 16,
+            Foliage = 17,
         };
 
         std::string HostStringToUtf8(std::basic_string_view<char_t> text)
@@ -995,6 +1014,8 @@ namespace PlutoGE::scripting
                 return entity->GetComponent<scene::ActiveRagdollComponent>();
             case ManagedComponentKind::Terrain:
                 return entity->GetComponent<scene::TerrainComponent>();
+            case ManagedComponentKind::Foliage:
+                return entity->GetComponent<scene::FoliageComponent>();
             default:
                 return nullptr;
             }
@@ -3335,9 +3356,7 @@ namespace PlutoGE::scripting
                                                 maxDistance, MakeQueryOptions(ignoredEntityId, tag));
             for (int32_t index = 0; results && index < capacity && index < static_cast<int32_t>(hits.size()); ++index)
             {
-                const auto &hit = hits[static_cast<std::size_t>(index)];
-                results[index] = NativeRaycastHit{hit.entityId, NativeVector3{hit.point.x, hit.point.y, hit.point.z},
-                                                  NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z}, hit.distance};
+                results[index] = ToNativeRaycastHit(hits[static_cast<std::size_t>(index)]);
             }
             return static_cast<int32_t>(hits.size());
         }
@@ -3356,8 +3375,7 @@ namespace PlutoGE::scripting
             scene::PhysicsRaycastHit hit;
             if (!scene->SweepSphere(from, from + heading * maxDistance, radius, hit, ignoredEntityId))
                 return 0;
-            *nativeHit = NativeRaycastHit{hit.entityId, NativeVector3{hit.point.x, hit.point.y, hit.point.z},
-                                          NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z}, hit.distance};
+            *nativeHit = ToNativeRaycastHit(hit);
             return 1;
         }
 
@@ -3391,10 +3409,7 @@ namespace PlutoGE::scripting
                 return 0;
             }
 
-            nativeHit->entityId = hit.entityId;
-            nativeHit->point = NativeVector3{hit.point.x, hit.point.y, hit.point.z};
-            nativeHit->normal = NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z};
-            nativeHit->distance = hit.distance;
+            *nativeHit = ToNativeRaycastHit(hit);
             return 1;
         }
 
@@ -3476,10 +3491,7 @@ namespace PlutoGE::scripting
                 return 0;
             }
 
-            nativeHit->entityId = hit.entityId;
-            nativeHit->point = NativeVector3{hit.point.x, hit.point.y, hit.point.z};
-            nativeHit->normal = NativeVector3{hit.normal.x, hit.normal.y, hit.normal.z};
-            nativeHit->distance = hit.distance;
+            *nativeHit = ToNativeRaycastHit(hit);
             return 1;
         }
 
@@ -3491,10 +3503,7 @@ namespace PlutoGE::scripting
             scene::PhysicsRaycastHit hit;
             if (!scene->QueryCapsule({center.x, center.y, center.z}, {displacement.x, displacement.y, displacement.z},
                                      radius, height, hit, ignoredEntityId)) return 0;
-            nativeHit->entityId = hit.entityId;
-            nativeHit->point = {hit.point.x, hit.point.y, hit.point.z};
-            nativeHit->normal = {hit.normal.x, hit.normal.y, hit.normal.z};
-            nativeHit->distance = hit.distance;
+            *nativeHit = ToNativeRaycastHit(hit);
             return 1;
         }
 
@@ -3962,6 +3971,7 @@ namespace PlutoGE::scripting
         register_debug_api_fn registerDebugApi = nullptr;
         register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
         register_terrain_api_fn registerTerrainApi = nullptr;
+        register_foliage_api_fn registerFoliageApi = nullptr;
         register_component_property_api_fn registerComponentPropertyApi = nullptr;
         register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
@@ -4099,6 +4109,7 @@ namespace PlutoGE::scripting
             impl.registerDebugApi = nullptr;
             impl.registerSurfaceResponseApi = nullptr;
             impl.registerTerrainApi = nullptr;
+            impl.registerFoliageApi = nullptr;
             impl.registerComponentPropertyApi = nullptr;
             impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
@@ -4468,6 +4479,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterDebugApi"), impl.registerDebugApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterTerrainApi"), impl.registerTerrainApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterFoliageApi"), impl.registerFoliageApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentPropertyApi"), impl.registerComponentPropertyApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneStreamingApi"), impl.registerSceneStreamingApi) &&
@@ -5489,6 +5501,11 @@ namespace PlutoGE::scripting
         if (!m_impl->registerTerrainApi || m_impl->registerTerrainApi(reinterpret_cast<void *>(&ControlTerrain)) == 0)
         {
             setManagedBridgeFailure("RegisterTerrainApi");
+            return false;
+        }
+        if (!m_impl->registerFoliageApi || m_impl->registerFoliageApi(reinterpret_cast<void *>(&ControlFoliage)) == 0)
+        {
+            setManagedBridgeFailure("RegisterFoliageApi");
             return false;
         }
         if (!m_impl->registerComponentPropertyApi ||

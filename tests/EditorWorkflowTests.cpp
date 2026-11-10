@@ -24,6 +24,7 @@
 #include <optional>
 #include <span>
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -164,6 +165,15 @@ namespace
         Check(arguments.size() == 4 && arguments[2] == "1", "Missing line becomes 1; repeated spaces ignored");
         Check(ExpandExternalEditorCommand("", location).empty(), "Empty command means system default");
         Check(ExpandExternalEditorCommand("tool \"\"", location).size() == 2, "Explicit empty argument kept");
+
+        const ExternalEditorProjectContext project{.projectRoot = "C:/Game", .solution = "C:/Game/Game.sln"};
+        arguments = ExpandExternalEditorCommand("code \"{projectRoot}\" --goto \"{file}:{line}\"", location, project);
+        Check(arguments.size() == 4 && std::filesystem::path(arguments[1]) == std::filesystem::path("C:/Game").make_preferred(),
+              "Project root substituted");
+        arguments = ExpandExternalEditorCommand("rider \"{solution}\" \"{file}\"", location, project);
+        Check(arguments.size() == 3 && arguments[1].ends_with("Game.sln"), "Solution substituted");
+        arguments = ExpandExternalEditorCommand("code \"{projectRoot}\" --goto \"{file}:{line}\"", location);
+        Check(arguments.size() == 3 && arguments[1] == "--goto", "Placeholder-only argument dropped without a project");
 
         EditorSettings settings(std::filesystem::temp_directory_path() / "PlutoGEEditorWorkflowTests-editor.ini");
         settings.SetString(kExternalEditorPresetKey, "vscode");
@@ -314,6 +324,56 @@ namespace
               "Version control and debugger files written");
         Check(BuildGitAttributesText().find("*.plutometa text -filter") != std::string::npos, "plutometa kept out of LFS");
         Check(BuildGitIgnoreText().find("*.engine.props") != std::string::npos, "engine props ignored");
+        Check(BuildGitIgnoreText().find("/*.sln") != std::string::npos, "per-machine solution ignored");
+        std::filesystem::remove_all(root.parent_path());
+    }
+
+    void ScriptSolutionGeneration()
+    {
+        Check(GetScriptSolutionPath("C:/Game/Demo.Scripts.csproj") == std::filesystem::path("C:/Game/Demo.sln"), "Solution path");
+
+        const std::vector<SolutionProject> scriptsOnly{{"Demo.Scripts", "Demo.Scripts.csproj"}};
+        const std::vector<SolutionProject> withEngine{{"Demo.Scripts", "Demo.Scripts.csproj"},
+                                                      {"PlutoGE.ScriptCore", "../Engine/ScriptCore/PlutoGE.ScriptCore.csproj"}};
+        const auto text = BuildScriptSolutionText(withEngine);
+        Check(text == BuildScriptSolutionText(withEngine), "Solution text is deterministic");
+        Check(text.find("Microsoft Visual Studio Solution File, Format Version 12.00") != std::string::npos, "Solution header");
+        Check(text.find("..\\Engine\\ScriptCore\\PlutoGE.ScriptCore.csproj") != std::string::npos, "Solution uses Windows separators");
+        Check(text.find(".Debug|Any CPU.Build.0 = Debug|Any CPU") != std::string::npos, "Projects build in Debug");
+        Check(ReadSolutionProjects(text) == withEngine, "Solution projects round-trip");
+        Check(ReadSolutionProjects(BuildScriptSolutionText(scriptsOnly)) == scriptsOnly, "Single-project solution");
+
+        const auto root = std::filesystem::temp_directory_path() / "PlutoGEEditorWorkflowTests" / "solution";
+        std::filesystem::remove_all(root);
+        std::filesystem::create_directories(root);
+        const auto solution = root / "Demo.sln";
+        const std::array<std::string, 2> managed{"Demo.Scripts.csproj", "PlutoGE.ScriptCore.csproj"};
+        const auto readSolution = [&]
+        {
+            std::ifstream input(solution, std::ios::binary);
+            return std::string((std::istreambuf_iterator<char>(input)), {});
+        };
+        std::string error;
+
+        Check(UpdateScriptSolution(solution, withEngine, managed, &error) && readSolution() == text, "Missing solution written");
+
+        // An IDE may rewrite the file (e.g. add a SolutionGuid section); the same projects mean nothing to do.
+        { std::ofstream(solution, std::ios::app | std::ios::binary) << "# formatting an IDE added\r\n"; }
+        const auto touched = readSolution();
+        Check(UpdateScriptSolution(solution, withEngine, managed, &error) && readSolution() == touched,
+              "Up-to-date solution left untouched");
+
+        Check(UpdateScriptSolution(solution, scriptsOnly, managed, &error) &&
+                  ReadSolutionProjects(readSolution()) == scriptsOnly,
+              "Editor-owned solution refreshed when the engine reference changes");
+
+        std::vector<SolutionProject> userProjects = scriptsOnly;
+        userProjects.push_back({"Demo.Tests", "Tests/Demo.Tests.csproj"});
+        { std::ofstream(solution, std::ios::trunc | std::ios::binary) << BuildScriptSolutionText(userProjects); }
+        Check(UpdateScriptSolution(solution, withEngine, managed, &error) &&
+                  ReadSolutionProjects(readSolution()) == userProjects,
+              "Solution with user projects is left alone");
+
         std::filesystem::remove_all(root.parent_path());
     }
 
@@ -502,6 +562,7 @@ int main()
         DuplicateNames();
         RecoverySessionMarker();
         ProjectScaffolding();
+        ScriptSolutionGeneration();
         AssetHotReloadWatch();
         EditorCommandsRebindAndRun();
         ViewportNavigation();

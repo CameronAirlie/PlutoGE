@@ -123,7 +123,7 @@ namespace PlutoGE::ui
         if (entry.location.IsSet())
         {
             std::string error;
-            if (!OpenInExternalScriptEditor(entry.location, &error))
+            if (!OpenInExternalScriptEditor(entry.location, GetExternalEditorProjectContext(), &error))
                 m_statusMessage = error;
             return;
         }

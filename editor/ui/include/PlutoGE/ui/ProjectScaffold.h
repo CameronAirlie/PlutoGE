@@ -1,7 +1,10 @@
 #pragma once
 
 #include <filesystem>
+#include <span>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace PlutoGE::ui
 {
@@ -24,6 +27,33 @@ namespace PlutoGE::ui
     [[nodiscard]] std::string BuildScriptEnginePropsText(const ScriptProjectLayout &layout);
     // "<project>.engine.props" beside "<project>.csproj".
     [[nodiscard]] std::filesystem::path GetScriptEnginePropsPath(const std::filesystem::path &scriptProjectPath);
+
+    // A C# project listed in a solution. `path` is relative to the solution, '/' or '\' separated.
+    struct SolutionProject
+    {
+        std::string name;
+        std::string path;
+        bool operator==(const SolutionProject &) const = default;
+    };
+
+    // "<Name>.sln" beside "<Name>.Scripts.csproj", so IDEs opening the project folder find a solution.
+    [[nodiscard]] std::filesystem::path GetScriptSolutionPath(const std::filesystem::path &scriptProjectPath);
+    // A Visual Studio solution (format 12.00) listing `projects` with Debug and Release configurations.
+    // Project GUIDs derive from project names, so regenerating the same projects gives identical text.
+    [[nodiscard]] std::string BuildScriptSolutionText(std::span<const SolutionProject> projects);
+    // The projects listed in solution text, in order; separators normalised to '/'.
+    [[nodiscard]] std::vector<SolutionProject> ReadSolutionProjects(std::string_view solutionText);
+
+    // Keeps the editor's solution for the script project current. The solution is per machine (it can list
+    // this machine's engine ScriptCore project), so Git ignores it. It is written when missing, rewritten when
+    // it lists only editor-managed projects that differ from `projects`, and otherwise left alone: an
+    // up-to-date file keeps its timestamp so an open IDE does not prompt to reload, and a solution the user
+    // has added their own projects to is theirs. `editorManagedFileNames` names the project files the editor
+    // owns (e.g. "Demo.Scripts.csproj", "PlutoGE.ScriptCore.csproj").
+    bool UpdateScriptSolution(const std::filesystem::path &solutionPath,
+                              std::span<const SolutionProject> projects,
+                              std::span<const std::string> editorManagedFileNames,
+                              std::string *errorMessage = nullptr);
 
     // Version control defaults for a new project: generated and per-user files ignored, binary sources routed
     // to Git LFS when it is installed, small metadata kept in Git. Existing files are never overwritten.

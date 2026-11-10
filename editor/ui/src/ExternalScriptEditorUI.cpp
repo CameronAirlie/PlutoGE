@@ -40,7 +40,8 @@ namespace PlutoGE::ui
                 ImGui::EndCombo();
             }
 
-            widgets::SettingsRow("Command", "{file}, {line} and {column} are replaced. The program must be on PATH or a full path.");
+            widgets::SettingsRow("Command", "{file}, {line}, {column}, {projectRoot} and {solution} are replaced. The program "
+                                            "must be on PATH or a full path.");
             const bool custom = current.command == nullptr;
             std::array<char, 512> buffer{};
             const auto command = GetExternalScriptEditorCommand(settings);

@@ -168,7 +168,7 @@ namespace PlutoGE::ui
                     if (ImGui::Selectable(line.c_str()))
                     {
                         std::string error;
-                        if (!OpenInExternalScriptEditor(diagnostics.front().location, &error)) Log(ConsoleSeverity::Error, error);
+                        if (!OpenInExternalScriptEditor(diagnostics.front().location, GetExternalEditorProjectContext(), &error)) Log(ConsoleSeverity::Error, error);
                     }
                 }
                 else ImGui::TextUnformatted(line.c_str());

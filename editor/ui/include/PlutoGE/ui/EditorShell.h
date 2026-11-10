@@ -84,6 +84,7 @@ namespace PlutoGE::ui
     class ProfilerPanel;
     class ViewportPanel;
     class EditorSceneRenderService;
+    struct ExternalEditorProjectContext;
 
     class EditorShell : private ISceneHistoryHost
     {
@@ -409,6 +410,8 @@ namespace PlutoGE::ui
         bool ReloadProjectScriptAssembly(std::string *errorMessage = nullptr);
         std::filesystem::path GetProjectScriptSourceDirectory() const;
         std::filesystem::path GetProjectScriptProjectPath() const;
+        // The open source project's root and script solution for the external script editor; empty otherwise.
+        ExternalEditorProjectContext GetExternalEditorProjectContext() const;
         std::filesystem::path GetProjectScriptAssemblyOutputPath() const;
         // The PlutoGE.ScriptCore.dll the editor loads project scripts against.
         std::filesystem::path GetEditorScriptCoreAssemblyPath() const;

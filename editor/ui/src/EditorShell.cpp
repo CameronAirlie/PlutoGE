@@ -22,6 +22,7 @@
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/ProjectScaffold.h"
+#include "PlutoGE/ui/ExternalScriptEditor.h"
 #include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorPreferences.h"
 #include "PlutoGE/ui/EditorTheme.h"
@@ -1153,6 +1154,22 @@ namespace PlutoGE::ui
         return (m_project->GetRootDirectory() / (baseName + ".Scripts.csproj")).lexically_normal();
     }
 
+    ExternalEditorProjectContext EditorShell::GetExternalEditorProjectContext() const
+    {
+        if (!m_project || IsRuntimeExportProject())
+        {
+            return {};
+        }
+
+        ExternalEditorProjectContext context{.projectRoot = m_project->GetRootDirectory()};
+        std::error_code errorCode;
+        if (auto solution = GetScriptSolutionPath(GetProjectScriptProjectPath()); std::filesystem::exists(solution, errorCode))
+        {
+            context.solution = std::move(solution);
+        }
+        return context;
+    }
+
     std::filesystem::path EditorShell::GetEditorScriptCoreAssemblyPath() const
     {
         return FindScriptCoreAssemblyPath(GetProcessDirectory());
@@ -1335,6 +1352,25 @@ namespace PlutoGE::ui
         if (existingScriptProjectContent != scriptProjectContent && !WriteTextFile(scriptProjectPath, scriptProjectContent, errorMessage))
         {
             return false;
+        }
+
+        // A solution lets IDEs opening the project folder load the script project (and, in a source checkout,
+        // the engine's ScriptCore sources). It is a convenience, so a failure is reported but does not stop the build.
+        std::vector<SolutionProject> solutionProjects{
+            {scriptProjectPath.stem().string(), scriptProjectPath.filename().generic_string()},
+        };
+        if (layout.scriptCoreIsProject)
+        {
+            solutionProjects.push_back({scriptCoreProjectPath.stem().string(), scriptCoreReference});
+        }
+        const std::array<std::string, 2> editorManagedProjects{
+            scriptProjectPath.filename().string(),
+            scriptCoreProjectPath.filename().string(),
+        };
+        if (std::string solutionError;
+            !UpdateScriptSolution(GetScriptSolutionPath(scriptProjectPath), solutionProjects, editorManagedProjects, &solutionError))
+        {
+            Log(ConsoleSeverity::Warning, "Could not update the script solution: " + solutionError);
         }
 
         auto &manifest = m_project->GetManifest();

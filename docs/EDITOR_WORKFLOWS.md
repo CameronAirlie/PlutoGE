@@ -135,7 +135,7 @@ The build location is remembered for the next build. Any failure is reported in 
 New projects come ready for Git:
 
 - `.gitignore` excludes regenerated and per-user files: `Library/`, `Build/`, `Assets/Managed/`, `.plutoge-editor/`,
-  IDE folders and `*.engine.props`.
+  IDE folders, `*.engine.props` and the editor-generated solution (`/*.sln`).
 - `.gitattributes` sends large binary sources (FBX, glTF binaries, images, audio) to Git LFS when LFS is installed,
   and keeps `.plutometa` identity files as plain text in Git.
 - `.vscode/launch.json` attaches the debugger to the editor.
@@ -147,6 +147,14 @@ engine location goes into `<Project>.Scripts.engine.props`, which the editor rew
 NuGet packages, analyzers or other MSBuild settings, create `<Project>.Scripts.custom.props` (or
 `.custom.targets`) next to it. The editor imports these files and never changes them.
 
+The editor also keeps `<Project>.sln` beside the script project, so Visual Studio, Rider and VS Code (C# Dev
+Kit) load the scripts with IntelliSense when you open the project folder. In an engine source checkout, the
+solution also lists the engine's `PlutoGE.ScriptCore` project, so go-to-definition reaches engine source. That
+path is specific to this machine, so the solution is regenerated when you open or save the project, and Git
+ignores it. The editor rewrites the solution only when it lists nothing but the script and ScriptCore
+projects. Add your own projects (tests, tools) and it leaves the file alone from then on. Projects created
+before this change get the solution on their next open; add `/*.sln` to their `.gitignore` by hand.
+
 Personal editor state, such as the editor camera, font and viewport effects, is saved in
 `.plutoge-editor/<Project>.editor-state` rather than in the shared `.plutoproject`.
 
@@ -154,8 +162,10 @@ Personal editor state, such as the editor camera, font and viewport effects, is 
 
 **Preferences > External Tools** chooses the program that opens C# files from the Console and the script
 build diagnostics: the system default application, Visual Studio Code, Visual Studio, JetBrains Rider, or a
-custom command. The command's `{file}`, `{line}` and `{column}` placeholders are replaced, and it runs
-without a shell, so paths with spaces need no extra quoting. The program must be on `PATH` or given as a full
+custom command. The command's `{file}`, `{line}`, `{column}`, `{projectRoot}` and `{solution}` placeholders
+are replaced, and it runs without a shell, so paths with spaces need no extra quoting. An argument made only of
+placeholders that expand to nothing (for example `{solution}` before a solution exists) is left out. The VS
+Code preset opens the project folder along with the file, so C# Dev Kit loads the solution. The program must be on `PATH` or given as a full
 path. The setting is saved per user in `editor-settings.ini` in the PlutoGE settings folder
 (`%APPDATA%\PlutoGE` on Windows, `~/.config/PlutoGE` on Linux).
 

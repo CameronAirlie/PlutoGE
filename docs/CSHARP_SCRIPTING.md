@@ -8,7 +8,7 @@ summary; the public managed source defines the exact API for your checkout.
 
 ## Quick start
 
-Project scripts use .NET 8 and normally live in the project's `Assets/Scripts` directory. The editor creates and maintains the project `.csproj`, builds the assembly into `Assets/Managed`, and reloads it after a successful build.
+Project scripts use .NET 8 and normally live in the project's `Assets/Scripts` directory. The editor creates and maintains the project `.csproj` and a per-machine `<Project>.sln` (open the project folder in Visual Studio, Rider or VS Code for IntelliSense; see [Editor workflows](EDITOR_WORKFLOWS.md#projects-in-version-control)), builds the assembly into `Assets/Managed`, and reloads it after a successful build.
 
 ```csharp
 using System.Numerics;

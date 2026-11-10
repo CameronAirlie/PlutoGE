@@ -16,7 +16,8 @@ namespace PlutoGE::ui
     {
         constexpr std::array<ExternalScriptEditorPreset, 5> kPresets{{
             {"system", "System default", ""},
-            {"vscode", "Visual Studio Code", "code --goto \"{file}:{line}:{column}\""},
+            // Opening the project folder lets C# Dev Kit find the solution; a lone file gets no IntelliSense.
+            {"vscode", "Visual Studio Code", "code \"{projectRoot}\" --goto \"{file}:{line}:{column}\""},
             {"visualstudio", "Visual Studio", "devenv /edit \"{file}\" /command \"Edit.GoTo {line}\""},
             {"rider", "JetBrains Rider", "rider --line {line} \"{file}\""},
             {"custom", "Custom", nullptr},
@@ -32,6 +33,12 @@ namespace PlutoGE::ui
         {
             const auto text = path.u8string();
             return {reinterpret_cast<const char *>(text.data()), text.size()};
+        }
+
+        // Normalised, with the platform's separators; empty for an empty path.
+        std::string PreferredUtf8(const std::filesystem::path &path)
+        {
+            return Utf8(path.lexically_normal().make_preferred());
         }
     }
 
@@ -54,7 +61,9 @@ namespace PlutoGE::ui
         return preset.command;
     }
 
-    std::vector<std::string> ExpandExternalEditorCommand(std::string_view commandTemplate, const ConsoleFileLocation &location)
+    std::vector<std::string> ExpandExternalEditorCommand(std::string_view commandTemplate,
+                                                         const ConsoleFileLocation &location,
+                                                         const ExternalEditorProjectContext &project)
     {
         std::vector<std::string> arguments;
         std::string current;
@@ -81,19 +90,30 @@ namespace PlutoGE::ui
         if (hasArgument)
             arguments.push_back(std::move(current));
 
-        const auto file = Utf8(location.file.lexically_normal().make_preferred());
+        const auto file = PreferredUtf8(location.file);
         const auto line = std::to_string(std::max(location.line, 1));
         const auto column = std::to_string(std::max(location.column, 1));
+        const auto projectRoot = PreferredUtf8(project.projectRoot);
+        const auto solution = PreferredUtf8(project.solution);
+        std::vector<std::string> expanded;
+        expanded.reserve(arguments.size());
         for (auto &argument : arguments)
         {
+            const bool explicitlyEmpty = argument.empty(); // A literal "" is kept; see the header.
             ReplaceAll(argument, "{file}", file);
             ReplaceAll(argument, "{line}", line);
             ReplaceAll(argument, "{column}", column);
+            ReplaceAll(argument, "{projectRoot}", projectRoot);
+            ReplaceAll(argument, "{solution}", solution);
+            if (explicitlyEmpty || !argument.empty())
+                expanded.push_back(std::move(argument));
         }
-        return arguments;
+        return expanded;
     }
 
-    bool OpenInExternalScriptEditor(const ConsoleFileLocation &location, std::string *errorMessage)
+    bool OpenInExternalScriptEditor(const ConsoleFileLocation &location,
+                                    const ExternalEditorProjectContext &project,
+                                    std::string *errorMessage)
     {
         if (!location.IsSet())
         {
@@ -102,7 +122,7 @@ namespace PlutoGE::ui
             return false;
         }
         const auto command = GetExternalScriptEditorCommand(EditorSettings::Get());
-        const auto arguments = ExpandExternalEditorCommand(command, location);
+        const auto arguments = ExpandExternalEditorCommand(command, location, project);
         if (arguments.empty())
             return OpenWithSystem(location.file, errorMessage);
         if (LaunchDetached(arguments, errorMessage))

@@ -15,6 +15,7 @@
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/TerrainLayerLimits.h"
 #include "PlutoGE/render/TextureCompression.h"
+#include "PlutoGE/render/DeferredLocalLightPolicy.h"
 #include "PlutoGE/render/OceanParameters.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
 #include "PlutoGE/render/SkyIrradiance.h"
@@ -60,6 +61,7 @@ namespace PlutoGE::render
     class ScreenSpaceGlobalIllumination;
     class ScreenSpaceContactShadows;
     class DirectionalShadowMask;
+    class DeferredLocalLights;
     class OutlinePass;
     class DdgiVolume;
     class VoxelDdgiRaySource;
@@ -387,6 +389,8 @@ namespace PlutoGE::render
         BasicPostProcessShaderPackage contactShadows;
         // The directional shadow mask (DirectionalShadowMask.slang, Vulkan); without it surfaces filter in place.
         BasicPostProcessShaderPackage directionalShadowMask;
+        // Deferred local lights (DeferredLocalLights.slang, Vulkan); without it surfaces light local lights in place.
+        BasicPostProcessShaderPackage deferredLocalLights;
         // Reduced-resolution trace and full-resolution composite of deferred probe irradiance.
         BasicPostProcessShaderPackage diffuseProbeTrace, diffuseProbeComposite;
         // Optional: the resolve that also applies baked reflection terms (DiffuseProbeResolve.slang).
@@ -1077,6 +1081,8 @@ namespace PlutoGE::render
         bool virtualShadowsActive = false;
         // Prepassed surfaces read the directional shadow from the per-pixel mask (DirectionalShadowMask.h).
         bool directionalShadowMask = false;
+        // Eligible opaque surfaces took their local lights from the deferred pass (DeferredLocalLights.h).
+        bool deferredLocalLights = false;
         std::string directionalShadowStatus = "Disabled";
         std::size_t shadowObjectUploads = 0;
         // Distinct cascade caster materials this frame (each shared by every draw using it).
@@ -1208,6 +1214,11 @@ namespace PlutoGE::render
         // Filters the directional shadow once per pixel into a mask that prepassed surfaces read (src/
         // DirectionalShadowMask.h, Vulkan). On by default; off filters in each surface shader, for comparisons.
         void SetDirectionalShadowMask(bool enabled) noexcept { m_shadowMaskEnabled = enabled; }
+        // Lights point, spot and rectangle lights once per pixel from the G-buffer for eligible opaque surfaces
+        // (src/DeferredLocalLights.h, Vulkan). The policy decides per frame; enabled = false lights them in each
+        // surface shader, for comparisons.
+        void SetDeferredLocalLights(const DeferredLocalLightPolicy &policy) noexcept { m_deferredLocalLightPolicy = policy; }
+        [[nodiscard]] const DeferredLocalLightPolicy &GetDeferredLocalLights() const noexcept { return m_deferredLocalLightPolicy; }
         // Records shadows and geometry on worker threads when the device supports it. The output is identical;
         // switching it off is for comparisons and debugging.
         void SetParallelRecordingEnabled(bool enabled) noexcept { m_parallelRecording = enabled; }
@@ -1436,6 +1447,9 @@ namespace PlutoGE::render
         std::unique_ptr<ScreenSpaceGlobalIllumination> m_globalIllumination;
         std::unique_ptr<ScreenSpaceContactShadows> m_contactShadows;
         std::unique_ptr<DirectionalShadowMask> m_shadowMask;
+        std::unique_ptr<DeferredLocalLights> m_deferredLocalLights;
+        DeferredLocalLightPolicy m_deferredLocalLightPolicy;
+        bool m_deferredLocalLightsActive = false;
         // Whether this frame's prepassed shading pipelines read m_shadowMask (BasicRenderer::Render).
         bool m_shadowMaskActive = false;
         std::unique_ptr<DdgiVolume> m_ddgi;

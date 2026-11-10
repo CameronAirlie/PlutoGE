@@ -11,7 +11,7 @@ Each step lands as its own commit, keeps the previous path behind a switch, and 
 | --- | --- | --- | --- |
 | 1 | Block-compressed material textures (BC1/BC3/BC5), encoded in the background and cached by content | Done | [TEXTURE_COMPRESSION.md](../TEXTURE_COMPRESSION.md) |
 | 2 | Automatic resolution scaling from GPU time | Done | [DYNAMIC_RESOLUTION.md](../DYNAMIC_RESOLUTION.md) |
-| 3 | Deferred lighting for standard opaque surfaces | Planned | |
+| 3 | Deferred local lights for standard opaque surfaces | Done (neutral on Settlement; see doc) | [deferred-local-lights.md](deferred-local-lights.md) |
 | 4 | Sparse VSM planning: casters binned to pages by footprint | Planned | |
 | 5 | Wider GPU-driven coverage: prepass and masked draws, occlusion for every mesh | Planned | |
 | 6 | Bandwidth: smaller target formats, discard load/store ops, fewer full-screen passes | Planned | |

@@ -58,4 +58,13 @@ namespace PlutoGE::render
     {
         if (shadowMask) descriptor.specializationConstants.push_back({SurfaceShadowMaskConstant, 1u});
     }
+
+    // kSurfaceDeferredLocalLights' id: the pipeline leaves local lights to the deferred pass (DeferredLocalLights.h)
+    // and marks its pixels. Off in the general shader.
+    inline constexpr std::uint32_t SurfaceDeferredLocalLightsConstant = 7;
+
+    inline void ApplySurfaceDeferredLocalLights(rhi::GraphicsPipelineDescriptor &descriptor, bool deferred)
+    {
+        if (deferred) descriptor.specializationConstants.push_back({SurfaceDeferredLocalLightsConstant, 1u});
+    }
 }

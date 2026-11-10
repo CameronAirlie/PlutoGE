@@ -179,6 +179,10 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
         materialLighting.shadowsEnabled = false;
         materialLighting.cameraPosition = {0, 0, 3};
         materialLighting.pointLights = {{{.5f, .5f, 2}, 5, {1, .5f, .25f}, 2}};
+        // Graph draws keep forward local lights; compare the standard variant with forward lighting too, and keep the
+        // geometry layouts below to the consumers they test (CheckDeferredLocalLights covers the deferred pass).
+        reference.SetDeferredLocalLights({.enabled = false});
+        renderer.SetDeferredLocalLights({.enabled = false});
         reference.Render(glm::mat4(1), materialLighting, {&materialDraw, 1});
         const auto original = readPixels(reference.GetColorTexture());
         renderer.Render(glm::mat4(1), materialLighting, {&materialDraw, 1});
@@ -435,5 +439,6 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
             compare(original, readPixels(renderer.GetColorTexture()), 0.1, 1, "Full-resolution volumetric fallback differs");
         }
     }
+    renderer.SetDeferredLocalLights({});
     renderer.Resize(oldWidth, oldHeight);
 }

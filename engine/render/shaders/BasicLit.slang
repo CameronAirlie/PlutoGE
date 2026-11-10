@@ -1335,6 +1335,110 @@ DirectionalShadowSample evaluateDirectionalShadow(float3 worldPosition, float3 s
     return result;
 }
 
+// The receiver of local lights: everything the point, spot and rectangle loop reads of a shaded surface. The geometry
+// pass fills it from the fragment; the deferred local-light pass (DeferredLocalLights.slang) from the G-buffer and depth.
+struct LocalLightReceiver
+{
+    float3 position;             // world position
+    float3 normal;               // shading normal
+    float3 planeNormal;          // receiver plane (shadow lookups' bias): normalised cross of the screen derivatives
+    float3 worldDx, worldDy;     // world-position steps to the next pixel
+    float4 screenPosition;       // SV_Position (contact shadows)
+    float occlusion;             // material occlusion (micro-shadowing)
+    float3 diffuseTransmittance; // light leaving the far side (zero for ordinary surfaces)
+};
+
+// Adds every local light reaching `receiver` to `lighting` (and its specular share to `specularLighting`). Inlined so
+// a constant `customLighting` (false in standard materials) removes graph lighting and the graph textures it samples:
+// OpenGL counts every referenced sampler against its limit.
+[ForceInline]
+void accumulateLocalLights(LocalLightReceiver receiver, BrdfSurface brdf, SurfaceLayers layers, bool transparentPass,
+                           bool customLighting, inout ShaderGraphState graphState, inout float3 lighting,
+                           inout float3 specularLighting)
+{
+    const bool transmits = any(receiver.diffuseTransmittance > 0.0);
+    LocalLightIterator localLightIterator = localLights(receiver.position);
+    uint light;
+    while (kSurfaceLocalLights && (transparentPass || pointParameters.w != 6.0) && localLightIterator.next(light))
+    {
+        const float3 offset = pointPositionRange[light].xyz - receiver.position;
+        const float distance = length(offset);
+        const float range = pointPositionRange[light].w;
+        if (range <= 0.0 || distance >= range) continue;
+        if (localLightType(light) == LocalLightRect)
+        {
+            // A one-sided rectangle facing pointDirectionSpot.xyz (LtcAreaLights.slang). Its intensity is along the
+            // normal, so its radiance is intensity over area; corners are relative to the surface.
+            const float3 forward = pointDirectionSpot[light].xyz;
+            const float3 rightHalf = pointShape[light].yzw;
+            const float3 upHalf = normalize(cross(rightHalf, forward)) * pointShape[light].x;
+            const float3 corners[4] = {offset - rightHalf - upHalf, offset + rightHalf - upHalf,
+                                       offset + rightHalf + upHalf, offset - rightHalf + upHalf};
+            float3 diffuseRect, specularRect;
+            ltcRectLight(brdf, layers, corners, diffuseRect, specularRect);
+            const float area = max(4.0 * length(rightHalf) * pointShape[light].x, 1e-6);
+            const float window = 1.0 - smoothstep(range * 0.9, range, distance);
+            const float3 toCentre = offset / max(distance, 0.0001);
+            const float rectVisibility = microShadowing(receiver.occlusion, dot(receiver.normal, toCentre)) *
+                                         contactShadowVisibility(receiver.screenPosition, transparentPass, float(light));
+            const float3 intensity = pointColorIntensity[light].rgb * pointColorIntensity[light].w;
+            const float3 rectRadiance = intensity / area * window * rectVisibility;
+            if (customLighting)
+                // Graph lighting takes one direction: the rectangle as a cosine emitter at its centre.
+                lighting += evaluateShaderGraphLighting(shaderGraph, graphState, toCentre, intensity,
+                    window * saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001), rectVisibility);
+            else lighting += (diffuseRect + specularRect) * rectRadiance;
+            specularLighting += specularRect * rectRadiance;
+            // Through a thin surface: a cosine emitter at its centre, unshadowed as rectangles are.
+            if (transmits)
+                lighting += receiver.diffuseTransmittance / PI * saturate(-dot(receiver.normal, toCentre)) * intensity * window *
+                                 saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001);
+            continue;
+        }
+        // Source shape (SceneLightingParameters.slang): sphere radius, tube axis times length.
+        const float tubeLength = length(pointShape[light].yzw);
+        float3 l;
+        const BrdfLight shape = brdfAreaLight(brdf, offset, pointShape[light].x,
+            tubeLength > 0.0 ? pointShape[light].yzw / tubeLength : float3(0.0), tubeLength, l);
+        const float nl = saturate(dot(receiver.normal, l));
+        float3 diffusePoint, specularPoint;
+        brdfEvaluate(brdf, shape, nl, diffusePoint, specularPoint);
+        layersEvaluate(brdf, layers, shape, nl, diffusePoint, specularPoint);
+        float visibility = 1.0;
+        // Through a thin surface: its near side faces away from the light, so the lookup moves to the side the light
+        // reaches, past the surface's own entry in the shadow map. Either nl or this is zero, so one lookup serves both.
+        const float farNdotL = transmits ? saturate(-dot(receiver.normal, l)) : 0.0;
+        const float3 shadowPosition = farNdotL > 0.0 ? receiver.position + l * foliageShadowOffset(receiver.position) : receiver.position;
+        const float3 shadowReceiver = farNdotL > 0.0 && dot(receiver.planeNormal, l) < 0.0 ? -receiver.planeNormal : receiver.planeNormal;
+        // Standard lighting scales by nl, so surfaces facing away from the
+        // light need no shadow lookup. Custom graph lighting receives visibility.
+        if (pointSettings[light].x >= 0.0 && (customLighting || nl > 0.0 || farNdotL > 0.0))
+        {
+            const uint row = uint(pointSettings[light].x);
+            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, shadowPosition, shadowReceiver, pointSettings[light].yz);
+        }
+        float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
+        if (localLightType(light) == LocalLightSpot)
+        {
+            attenuation *= smoothstep(pointSettings[light].z, max(pointSettings[light].w, pointSettings[light].z + 0.000001), dot(-l, pointDirectionSpot[light].xyz));
+            if (attenuation > 0 && pointSettings[light].y >= 0)
+                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), shadowPosition,
+                    shadowReceiver, l, receiver.worldDx, receiver.worldDy);
+        }
+        if (farNdotL > 0.0)
+            lighting += receiver.diffuseTransmittance / PI * farNdotL * pointColorIntensity[light].rgb *
+                             pointColorIntensity[light].w * attenuation * visibility;
+        visibility *= microShadowing(receiver.occlusion, nl) *
+                      contactShadowVisibility(receiver.screenPosition, transparentPass, float(light));
+        const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * attenuation * visibility;
+        if(customLighting)
+            lighting += evaluateShaderGraphLighting(shaderGraph,graphState,l,
+                pointColorIntensity[light].rgb*pointColorIntensity[light].w,attenuation,visibility);
+        else lighting += (diffusePoint + specularPoint) * pointRadiance;
+        specularLighting += specularPoint * pointRadiance;
+    }
+}
+
 FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDerivatives derivatives)
 {
     const float4 sampledBaseColor = baseColorTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy);
@@ -1509,86 +1613,19 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     float3 pointReceiverNormal = cross(pointWorldDx, pointWorldDy);
     float pointNormalLength = dot(pointReceiverNormal, pointReceiverNormal);
     pointReceiverNormal = pointNormalLength > 1.e-12 ? pointReceiverNormal * rsqrt(pointNormalLength) : normalize(input.worldNormal);
-    LocalLightIterator localLightIterator = localLights(input.worldPosition);
-    uint light;
-    while (kSurfaceLocalLights && (transparentPass || pointParameters.w != 6.0) && localLightIterator.next(light))
-    {
-        const float3 offset = pointPositionRange[light].xyz - input.worldPosition;
-        const float distance = length(offset);
-        const float range = pointPositionRange[light].w;
-        if (range <= 0.0 || distance >= range) continue;
-        if (localLightType(light) == LocalLightRect)
-        {
-            // A one-sided rectangle facing pointDirectionSpot.xyz (LtcAreaLights.slang). Its intensity is along the
-            // normal, so its radiance is intensity over area; corners are relative to the surface.
-            const float3 forward = pointDirectionSpot[light].xyz;
-            const float3 rightHalf = pointShape[light].yzw;
-            const float3 upHalf = normalize(cross(rightHalf, forward)) * pointShape[light].x;
-            const float3 corners[4] = {offset - rightHalf - upHalf, offset + rightHalf - upHalf,
-                                       offset + rightHalf + upHalf, offset - rightHalf + upHalf};
-            float3 diffuseRect, specularRect;
-            ltcRectLight(brdf, layers, corners, diffuseRect, specularRect);
-            const float area = max(4.0 * length(rightHalf) * pointShape[light].x, 1e-6);
-            const float window = 1.0 - smoothstep(range * 0.9, range, distance);
-            const float3 toCentre = offset / max(distance, 0.0001);
-            const float rectVisibility = microShadowing(materialOcclusion, dot(normal, toCentre)) *
-                                         contactShadowVisibility(input.position, transparentPass, float(light));
-            const float3 intensity = pointColorIntensity[light].rgb * pointColorIntensity[light].w;
-            const float3 rectRadiance = intensity / area * window * rectVisibility;
-            if (customLighting)
-                // Graph lighting takes one direction: the rectangle as a cosine emitter at its centre.
-                pointLighting += evaluateShaderGraphLighting(shaderGraph, graphState, toCentre, intensity,
-                    window * saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001), rectVisibility);
-            else pointLighting += (diffuseRect + specularRect) * rectRadiance;
-            pointSpecularLighting += specularRect * rectRadiance;
-            // Through a thin surface: a cosine emitter at its centre, unshadowed as rectangles are.
-            if (transmits)
-                pointLighting += diffuseTransmittance / PI * saturate(-dot(normal, toCentre)) * intensity * window *
-                                 saturate(dot(-toCentre, forward)) / max(distance * distance, 0.0001);
-            continue;
-        }
-        // Source shape (SceneLightingParameters.slang): sphere radius, tube axis times length.
-        const float tubeLength = length(pointShape[light].yzw);
-        float3 l;
-        const BrdfLight shape = brdfAreaLight(brdf, offset, pointShape[light].x,
-            tubeLength > 0.0 ? pointShape[light].yzw / tubeLength : float3(0.0), tubeLength, l);
-        const float nl = saturate(dot(normal, l));
-        float3 diffusePoint, specularPoint;
-        brdfEvaluate(brdf, shape, nl, diffusePoint, specularPoint);
-        layersEvaluate(brdf, layers, shape, nl, diffusePoint, specularPoint);
-        float visibility = 1.0;
-        // Through a thin surface: its near side faces away from the light, so the lookup moves to the side the light
-        // reaches, past the surface's own entry in the shadow map. Either nl or this is zero, so one lookup serves both.
-        const float farNdotL = transmits ? saturate(-dot(normal, l)) : 0.0;
-        const float3 shadowPosition = farNdotL > 0.0 ? input.worldPosition + l * foliageShadowOffset(input.worldPosition) : input.worldPosition;
-        const float3 shadowReceiver = farNdotL > 0.0 && dot(pointReceiverNormal, l) < 0.0 ? -pointReceiverNormal : pointReceiverNormal;
-        // Standard lighting scales by nl, so surfaces facing away from the
-        // light need no shadow lookup. Custom graph lighting receives visibility.
-        if (pointSettings[light].x >= 0.0 && (customLighting || nl > 0.0 || farNdotL > 0.0))
-        {
-            const uint row = uint(pointSettings[light].x);
-            visibility = evaluatePointShadow(row, pointPositionRange[light].xyz, shadowPosition, shadowReceiver, pointSettings[light].yz);
-        }
-        float attenuation = (1.0 - smoothstep(range * 0.9, range, distance)) / max(distance * distance, 0.0001);
-        if (localLightType(light) == LocalLightSpot)
-        {
-            attenuation *= smoothstep(pointSettings[light].z, max(pointSettings[light].w, pointSettings[light].z + 0.000001), dot(-l, pointDirectionSpot[light].xyz));
-            if (attenuation > 0 && pointSettings[light].y >= 0)
-                visibility = evaluateSpotVirtualShadow(uint(pointSettings[light].y), shadowPosition,
-                    shadowReceiver, l, pointWorldDx, pointWorldDy);
-        }
-        if (farNdotL > 0.0)
-            pointLighting += diffuseTransmittance / PI * farNdotL * pointColorIntensity[light].rgb *
-                             pointColorIntensity[light].w * attenuation * visibility;
-        visibility *= microShadowing(materialOcclusion, nl) *
-                      contactShadowVisibility(input.position, transparentPass, float(light));
-        const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * attenuation * visibility;
-        if(customLighting)
-            pointLighting += evaluateShaderGraphLighting(shaderGraph,graphState,l,
-                pointColorIntensity[light].rgb*pointColorIntensity[light].w,attenuation,visibility);
-        else pointLighting += (diffusePoint + specularPoint) * pointRadiance;
-        pointSpecularLighting += specularPoint * pointRadiance;
-    }
+    LocalLightReceiver localReceiver;
+    localReceiver.position = input.worldPosition;
+    localReceiver.normal = normal;
+    localReceiver.planeNormal = pointReceiverNormal;
+    localReceiver.worldDx = pointWorldDx;
+    localReceiver.worldDy = pointWorldDy;
+    localReceiver.screenPosition = input.position;
+    localReceiver.occlusion = materialOcclusion;
+    localReceiver.diffuseTransmittance = diffuseTransmittance;
+    // A pipeline whose local lights the deferred pass adds (kSurfaceDeferredLocalLights) leaves them out here.
+    if (!kSurfaceDeferredLocalLights || transparentPass)
+        accumulateLocalLights(localReceiver, brdf, layers, transparentPass, customLighting, graphState, pointLighting,
+                              pointSpecularLighting);
     const float subsurfaceStrength = saturate(subsurfaceColorStrength.w) * (1.0 - materialMetallic);
     const float subsurfaceRadius = max(subsurfaceRadiusPadding.x, 0.001);
     const float wrappedNdotL = saturate((dot(normal, lightDirection) + subsurfaceRadius * 0.25) /
@@ -1860,7 +1897,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0)
         : float4(max(ambient - environmentSpecular, 0.0), transmits ? FoliageIndirectAlpha : 1.0);
     // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
-    output.normal = float4(normal * 0.5 + 0.5, gridDeferred && shaderGraph.header.y == 0 && !glass ? 0.0 : 1.0);
+    // Alpha below one half marks deferred probe irradiance; 0.25 and 0.75 also mark local lights the deferred pass adds
+    // (encodeSurfaceNormalMarks).
+    output.normal = float4(normal * 0.5 + 0.5, encodeSurfaceNormalMarks(gridDeferred && shaderGraph.header.y == 0 && !glass,
+                                                                      kSurfaceDeferredLocalLights && !transparentPass));
     // Alpha is the material occlusion that passes rebuilding ambient light apply (DiffuseResponse.slang).
     output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), materialOcclusion);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);

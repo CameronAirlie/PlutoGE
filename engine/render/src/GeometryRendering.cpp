@@ -6,6 +6,7 @@
 #include <algorithm>
 #include "FoliageWindDraws.h"
 #include "SurfaceFeatures.h"
+#include "DeferredLocalLights.h"
 
 namespace PlutoGE::render
 {
@@ -147,10 +148,15 @@ namespace PlutoGE::render
         const std::uint32_t features = depthOnly ? AllSurfaceFeatures : DrawSurfaceFeatures(m_surfaceFeatures, draw);
         // A prepassed shading pipeline's fragments are the coverage depth's, so it can read the frame's shadow mask.
         const bool shadowMask = !depthOnly && prepassed && m_shadowMaskActive;
+        // The frame's deferred local-light pass lights this draw (its layout always has the G-buffer it reads).
+        const bool deferredLocalLights = !depthOnly && m_deferredLocalLightsActive && standard &&
+            DeferredLocalLightEligible(draw) && layout >= GeometryOutputLayout::Surface &&
+            layout != GeometryOutputLayout::SurfaceIndirect;
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
                 (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
-                (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (features << 13) | (unsigned(shadowMask) << 19),
+                (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (features << 13) | (unsigned(shadowMask) << 19) |
+                (unsigned(deferredLocalLights) << 20),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -223,6 +229,7 @@ namespace PlutoGE::render
         if (graphFragment) descriptor.fragmentShader = {.glsl = {}, .spirv = *graphFragment};
         ApplySurfaceFeatures(descriptor, features);
         ApplySurfaceShadowMask(descriptor, shadowMask);
+        ApplySurfaceDeferredLocalLights(descriptor, deferredLocalLights);
         descriptor.debugName = impostor ? (depthOnly ? "Impostor coverage" : "Impostor cards")
             : terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
             : depthOnly ? "Geometry coverage" : "Geometry required outputs";
@@ -255,8 +262,10 @@ namespace PlutoGE::render
         const auto cull = GeometryCullMode(draw);
         const std::uint32_t features = DrawSurfaceFeatures(m_surfaceFeatures, draw);
         const bool shadowMask = prepassed && m_shadowMaskActive;
+        const bool deferredLocalLights = m_deferredLocalLightsActive && DeferredLocalLightEligible(draw) &&
+            layout >= GeometryOutputLayout::Surface && layout != GeometryOutputLayout::SurfaceIndirect;
         const unsigned key = static_cast<unsigned>(layout) | (unsigned(cull) << 3) | (unsigned(prepassed) << 5) | (features << 6) |
-                             (unsigned(shadowMask) << 12);
+                             (unsigned(shadowMask) << 12) | (unsigned(deferredLocalLights) << 13);
         if (const auto found = m_bindlessGeometryPipelines.find(key); found != m_bindlessGeometryPipelines.end())
             return found->second.Get();
         // The standard opaque surface with object and material inputs from GpuDrivenOpaque's tables: no material
@@ -282,6 +291,7 @@ namespace PlutoGE::render
             : layout == GeometryOutputLayout::SurfaceIndirect ? shaders.fragments[3] : shaders.fragments[0];
         ApplySurfaceFeatures(descriptor, features);
         ApplySurfaceShadowMask(descriptor, shadowMask);
+        ApplySurfaceDeferredLocalLights(descriptor, deferredLocalLights);
         descriptor.debugName = "GPU-driven opaque geometry";
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();

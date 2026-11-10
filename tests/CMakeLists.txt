@@ -205,6 +205,7 @@ add_test(NAME PlutoGEOpenGLCloudTransformTests COMMAND PlutoGEOpenGLRhiTests --c
 add_test(NAME PlutoGEOpenGLTransparencyTests COMMAND PlutoGEOpenGLRhiTests --transparency-only)
 add_test(NAME PlutoGEVulkanCompressedTextureTests COMMAND PlutoGEVulkanRhiTests --compressed-textures)
 add_test(NAME PlutoGEVulkanRenderScaleTests COMMAND PlutoGEVulkanRhiTests --render-scale)
+add_test(NAME PlutoGEVulkanDeferredLocalLightTests COMMAND PlutoGEVulkanRhiTests --deferred-local-lights)
 add_test(NAME PlutoGEVulkanTransparencyTests COMMAND PlutoGEVulkanRhiTests --transparency-only)
 add_test(NAME PlutoGEOpenGLTerrainLayerTests COMMAND PlutoGEOpenGLRhiTests --terrain-layers)
 add_test(NAME PlutoGEVulkanTerrainLayerTests COMMAND PlutoGEVulkanRhiTests --terrain-layers)

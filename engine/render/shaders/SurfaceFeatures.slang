@@ -22,4 +22,23 @@
 // (DirectionalShadowMask.slang) instead of filtering it. Off by default, so every other pipeline filters in place.
 [vk::constant_id(6)] const bool kSurfaceShadowMask = false;
 
+// Not a path but a destination: the pipeline leaves point, spot and rectangle lights to the deferred local-light pass
+// (DeferredLocalLights.slang), which adds them from the G-buffer, and marks its pixels for it. Off by default.
+[vk::constant_id(7)] const bool kSurfaceDeferredLocalLights = false;
+
+// The G-buffer normal's alpha: below one half marks deferred probe irradiance (DiffuseProbeResolve.slang), and 0.25 and
+// 0.75 mark surfaces whose local lights the deferred pass adds. RGBA8 keeps all four values exact.
+float encodeSurfaceNormalMarks(bool probePending, bool deferredLocalLights)
+{
+    if (probePending)
+        return deferredLocalLights ? 0.25 : 0.0;
+    return deferredLocalLights ? 0.75 : 1.0;
+}
+
+bool surfaceDefersLocalLights(float normalAlpha)
+{
+    const int mark = int(round(saturate(normalAlpha) * 4.0));
+    return mark == 1 || mark == 3;
+}
+
 #endif

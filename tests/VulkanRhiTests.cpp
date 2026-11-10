@@ -60,6 +60,7 @@
 #include "TextureMipRenderingChecks.h"
 #include "CompressedTextureRenderingChecks.h"
 #include "RenderScaleChecks.h"
+#include "DeferredLocalLightChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "GlobalIlluminationRenderingChecks.h"
 #include "VctPublicationChecks.h"
@@ -109,6 +110,8 @@ int main(int argc, char **argv)
         shaders.cloudTemporal = { { .spirv = ReadSpirv("CloudTemporal.vertex.spv") }, { .spirv = ReadSpirv("CloudTemporal.fragment.spv") } };
         shaders.directionalShadowMask = { { .spirv = ReadSpirv("DirectionalShadowMask.vertex.spv") },
                                           { .spirv = ReadSpirv("DirectionalShadowMask.fragment.spv") } };
+        shaders.deferredLocalLights = { { .spirv = ReadSpirv("DeferredLocalLights.vertex.spv") },
+                                        { .spirv = ReadSpirv("DeferredLocalLights.fragment.spv") } };
         shaders.ssrStages[0] = {{.spirv = ReadSpirv("SSRTrace.vertex.spv")}, {.spirv = ReadSpirv("SSRTrace.fragment.spv")}};
         shaders.ssrStages[1] = {{.spirv = ReadSpirv("SSRResolve.vertex.spv")}, {.spirv = ReadSpirv("SSRResolve.fragment.spv")}};
         shaders.ssrStages[2] = {{.spirv = ReadSpirv("SSRFilter.vertex.spv")}, {.spirv = ReadSpirv("SSRFilter.fragment.spv")}};
@@ -707,6 +710,9 @@ int main(int argc, char **argv)
         CheckLightClusters(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); },
                            device.GetImmediateContext().SupportsAsyncCompute());
         if (argc > 1 && std::string_view(argv[1]) == "--light-clusters")
+            return 0;
+        CheckDeferredLocalLights(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--deferred-local-lights")
             return 0;
         CheckContactShadows(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--contact-shadows")

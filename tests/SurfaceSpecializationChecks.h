@@ -119,6 +119,9 @@ void CheckSurfaceSpecialization(PlutoGE::render::BasicRenderer &renderer, ReadPi
         const auto render = [&](bool specialised)
         {
             renderer.SetSurfaceSpecialization(specialised);
+            // Deferred local lights need specialisation, so they would run in one image only; they are compared with
+            // the forward loop by CheckDeferredLocalLights.
+            renderer.SetDeferredLocalLights({.enabled = false});
             // Virtual shadow pages and temporal state converge over a few frames.
             for (int frame = 0; frame < 4; ++frame)
                 renderer.Render(projection * scene.lighting.view, scene.lighting, draws);
@@ -133,6 +136,7 @@ void CheckSurfaceSpecialization(PlutoGE::render::BasicRenderer &renderer, ReadPi
         require(specialised == general, std::string("Surface specialisation changed the image (") + scene.name + ")");
     }
     renderer.SetSurfaceSpecialization(true);
+    renderer.SetDeferredLocalLights({});
     renderer.Resize(width, height);
     std::cout << "Surface specialisation: " << scenes.size() << " scenes render identically" << std::endl;
 }

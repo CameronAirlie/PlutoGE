@@ -8,6 +8,7 @@
 #include "OpaqueShadowBatches.h"
 #include "SurfaceFeatures.h"
 #include "DirectionalShadowMask.h"
+#include "DeferredLocalLights.h"
 #include "OutlinePass.h"
 #include "FoliageWindDraws.h"
 #include "CascadedShadowLayers.h"
@@ -766,7 +767,12 @@ namespace PlutoGE::render
         }
     }
 
-    BasicRenderer::BasicRenderer() = default;
+    BasicRenderer::BasicRenderer()
+    {
+        // PLUTO_DEFERRED_LOCAL_LIGHTS=0 lights local lights in every surface shader, for comparisons.
+        if (const char *value = std::getenv("PLUTO_DEFERRED_LOCAL_LIGHTS"); value && std::string_view(value) == "0")
+            m_deferredLocalLightPolicy.enabled = false;
+    }
     // Geometry object constants, in blocks shaped like the instanced vertex input (BasicInstanceObjectParameters).
     class GeometryObjectStream : public ObjectStream<BasicObjectParameters, kMaxInstancesPerDraw>
     {
@@ -1526,6 +1532,10 @@ namespace PlutoGE::render
             if (shadowMask->Initialize(device, m_geometryDescriptors[0], shaders.directionalShadowMask.vertex,
                                        shaders.directionalShadowMask.fragment))
                 m_shadowMask = std::move(shadowMask);
+            auto deferredLocalLights = std::make_unique<DeferredLocalLights>();
+            if (deferredLocalLights->Initialize(device, m_geometryDescriptors[0], shaders.deferredLocalLights.vertex,
+                                                shaders.deferredLocalLights.fragment))
+                m_deferredLocalLights = std::move(deferredLocalLights);
             auto globalIllumination = std::make_unique<ScreenSpaceGlobalIllumination>();
             if (globalIllumination->Initialize(device, {shaders.ssgiTrace, fullscreen(shaders.ssgiFilter),
                                                         fullscreen(shaders.ssgiTemporal), fullscreen(shaders.ssgiComposite)}))
@@ -1722,6 +1732,8 @@ namespace PlutoGE::render
         m_globalIllumination.reset();
         m_shadowMask.reset();
         m_shadowMaskActive = false;
+        m_deferredLocalLights.reset();
+        m_deferredLocalLightsActive = false;
         m_ddgi.reset();
         m_rayQueryDdgiRays.reset();
         m_rayTracingScene.reset();
@@ -2481,6 +2493,22 @@ namespace PlutoGE::render
         if (geometryLayout == GeometryOutputLayout::SurfaceAllIndirect && lighting.diffuseProbeReflections &&
             m_deferredProbeIrradiance && m_deferredProbeIrradiance->ReflectionsAvailable())
             geometryLayout = GeometryOutputLayout::SurfaceReflections;
+        // Deferred local lights read the G-buffer's normal, material and albedo, so the layout must write them.
+        {
+            const DeferredLocalLightPolicy::Frame deferredFrame{
+                .deviceSupported = m_deferredLocalLights && m_deferredLocalLights->Available(),
+                .specialised = m_surfaceSpecialization && m_device->GetApi() == rhi::GraphicsApi::Vulkan,
+                .diagnosticOutput = geometryDebug || geometryLayout == GeometryOutputLayout::Diagnostics,
+                .localLights = lighting.pointLights.size() + lighting.spotLights.size() + lighting.rectLights.size(),
+                .surfaceTargets = geometryLayout >= GeometryOutputLayout::Surface && geometryLayout != GeometryOutputLayout::SurfaceIndirect,
+            };
+            m_deferredLocalLightsActive = m_deferredLocalLightPolicy.Active(deferredFrame);
+            if (m_deferredLocalLightsActive && geometryLayout < GeometryOutputLayout::Surface)
+                geometryLayout = GeometryOutputLayout::Surface;
+            else if (m_deferredLocalLightsActive && geometryLayout == GeometryOutputLayout::SurfaceIndirect)
+                geometryLayout = GeometryOutputLayout::SurfaceAllIndirect;
+            m_frameStats.deferredLocalLights = m_deferredLocalLightsActive;
+        }
         BasicFrameParameters frameParameters{
             viewProjection,
             glm::vec4(lighting.cameraPosition, lighting.ambientIntensity),
@@ -2658,6 +2686,13 @@ namespace PlutoGE::render
             jitter[3][0] = frameParameters.temporalClipOffset.x;
             jitter[3][1] = frameParameters.temporalClipOffset.y;
             m_shadowMask->Prepare(m_width, m_height, jitter * frameParameters.viewProjection);
+        }
+        if (m_deferredLocalLightsActive)
+        {
+            glm::mat4 jitter(1.0f);
+            jitter[3][0] = frameParameters.temporalClipOffset.x;
+            jitter[3][1] = frameParameters.temporalClipOffset.y;
+            m_deferredLocalLights->Prepare(m_width, m_height, jitter * frameParameters.viewProjection);
         }
         // Outlined geometry is rasterized once more into one depth mask per outline style, without temporal
         // jitter, and outlined over the final display output (OutlinePass).
@@ -4404,6 +4439,20 @@ namespace PlutoGE::render
         m_timingStats.geometryRecordingMs = recording.JobMilliseconds()[geometryJob] + elapsedMs(recordingEnd, geometryRecordingEnd) +
             (coverageDepthJob ? recording.JobMilliseconds()[*coverageDepthJob] : 0.0f);
 
+        // Local lights for the surfaces whose pipelines left them out, once per pixel from the G-buffer.
+        if (m_deferredLocalLightsActive)
+        {
+            commands.BeginGpuScope("RHI Deferred Local Lights");
+            m_deferredLocalLights->Record(commands, m_surfaceFeatures,
+                {.color = m_colorTarget.Get(), .depth = m_depthTarget.Get(), .normal = m_normalTarget.Get(),
+                 .albedo = m_albedoTarget.Get(), .material = m_materialTarget.Get(), .pointSampler = m_shadowSampler.Get()},
+                [&](rhi::ICommandContext &passCommands)
+                {
+                    bindFrameResources(passCommands);
+                    bindShadowResources(passCommands);
+                });
+            commands.EndGpuScope();
+        }
         m_outputColor = m_colorTarget.Get();
         core::CpuScope postScope("Post processing", core::CpuCategory::Rendering);
         if (!decals.empty() && m_decalPipeline && m_decalSnapshotPipeline)

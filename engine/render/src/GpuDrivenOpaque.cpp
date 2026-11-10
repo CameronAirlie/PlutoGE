@@ -13,7 +13,7 @@ namespace PlutoGE::render
     {
         // Matches BindlessMaterials.slang.
         constexpr std::uint32_t HasNormalTexture = 1, HasMetallicTexture = 2, HasRoughnessTexture = 4,
-                                FlipNormalY = 8, TwoSided = 16;
+                                FlipNormalY = 8, TwoSided = 16, NormalXy = 32;
         constexpr std::uint32_t NotTested = ~std::uint32_t{0};
         constexpr std::size_t CommandWords = 5;
 
@@ -49,7 +49,8 @@ namespace PlutoGE::render
             record.flags = {draw.alphaMode,
                             (draw.normalTexture ? HasNormalTexture : 0u) | (draw.metallicTexture ? HasMetallicTexture : 0u) |
                                 (draw.roughnessTexture ? HasRoughnessTexture : 0u) | (draw.flipNormalY ? FlipNormalY : 0u) |
-                                (draw.twoSided ? TwoSided : 0u),
+                                (draw.twoSided ? TwoSided : 0u) |
+                                (draw.normalTexture && draw.normalEncoding == NormalTextureEncoding::Xy ? NormalXy : 0u),
                             draw.metallicChannel, draw.roughnessChannel};
             record.subsurfaceColorStrength = {glm::max(draw.subsurfaceColor, glm::vec3(0.0f)), std::clamp(draw.subsurface, 0.0f, 1.0f)};
             record.subsurfaceRadiusPadding = {std::max(draw.subsurfaceRadius, 0.001f), 0.0f, 0.0f, 0.0f};

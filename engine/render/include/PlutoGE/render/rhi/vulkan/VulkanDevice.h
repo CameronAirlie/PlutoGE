@@ -62,6 +62,7 @@ namespace PlutoGE::render::rhi::vulkan
         VulkanDevice &operator=(const VulkanDevice &) = delete;
 
         [[nodiscard]] GraphicsApi GetApi() const noexcept override { return GraphicsApi::Vulkan; }
+        [[nodiscard]] bool SupportsSampledFormat(Format format) const noexcept override;
         [[nodiscard]] bool UsesZeroToOneClipDepth() const noexcept override { return true; }
         [[nodiscard]] TemporalUpscalerSupport GetTemporalUpscalerSupport(TemporalUpscaler) const override;
         [[nodiscard]] std::string GetTemporalUpscalerFailureReason(TemporalUpscaler) const override;

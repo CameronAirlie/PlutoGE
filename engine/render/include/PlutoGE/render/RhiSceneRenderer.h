@@ -7,6 +7,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Camera.h"
 #include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/render/TextureCompression.h"
 
 #include <algorithm>
 #include <compare>
@@ -32,6 +33,7 @@ namespace PlutoGE::render
     class RhiSkinnedShadowBounds;
     struct RhiSkinningJob;
     class RhiDrawPreparationCache;
+    class RhiTextureCompression;
     class DirectionalShadowCascadeRetention;
     struct ParticleInstanceKey;
     struct RhiSceneTimingStats
@@ -54,6 +56,9 @@ namespace PlutoGE::render
         std::size_t skinningUpdateCount = 0;
         std::size_t skinningVertexCount = 0;
         std::size_t textureUploadCount = 0;
+        // Material textures replaced by block-compressed uploads this frame, and encodes still running.
+        std::size_t compressedTextureUploads = 0;
+        std::size_t pendingTextureCompressions = 0;
         float sceneSetupMs = 0.0f;
         float renderRecordingMs = 0.0f;
         float beginFrameMs = 0.0f;
@@ -174,6 +179,15 @@ namespace PlutoGE::render
         void SetImmediateTextureUploads(bool enabled) noexcept
         {
             m_immediateTextureUploads = enabled;
+        }
+        // Block compression of material textures (TextureCompression.h). Renderers on one device share their
+        // texture caches, so this applies to all of them; changing whether it is enabled re-uploads every texture.
+        // Defaults to TextureCompressionSettings::FromEnvironment(). With immediate texture uploads, textures are
+        // encoded before their first use instead of in the background.
+        void SetTextureCompression(const TextureCompressionSettings &settings);
+        [[nodiscard]] const TextureCompressionSettings &GetTextureCompression() const noexcept
+        {
+            return m_textureCompressionSettings;
         }
         void InvalidateAssetCache();
         void SetSubmissionLabel(std::string label);
@@ -404,9 +418,21 @@ namespace PlutoGE::render
       struct TextureVersion { std::weak_ptr<const void> lifetime; std::uint64_t identity, revision; };
       // Immutable material images belong to the device, not an individual camera.
       // Keep one allocation across editor/game/secondary views on that device.
+      struct CachedTexture
+      {
+          rhi::Texture texture;
+          rhi::Format format = rhi::Format::R8G8B8A8Unorm;
+          // Some use needs the exact RGBA8 texels (shader graphs, impostors, painted maps): never compress it.
+          bool keepUncompressed = false;
+          // Compression was queued, or decided against, for this upload; otherwise the next compressible use asks.
+          bool compressionDecided = false;
+          [[nodiscard]] rhi::TextureHandle Get() const noexcept { return texture.Get(); }
+      };
       struct TextureCache
       {
-          std::unordered_map<const Texture *, rhi::Texture> srgb, linear, normal;
+          std::unordered_map<const Texture *, CachedTexture> srgb, linear, normal;
+          // Shared by every renderer on the device, like the caches it fills.
+          std::shared_ptr<RhiTextureCompression> compression;
           std::unordered_map<const Texture *, TextureVersion> versions;
           // Each read texture's mean: raw channels (linear data) and its colour decoded from sRGB (alpha raw).
           struct Mean { glm::vec4 raw{0.0f}, srgb{0.0f}; };
@@ -415,6 +441,7 @@ namespace PlutoGE::render
           RhiTerrainLayerCache terrainLayers;
       };
       std::shared_ptr<TextureCache> m_textureCache;
+      TextureCompressionSettings m_textureCompressionSettings = TextureCompressionSettings::FromEnvironment();
       struct CachedIblCapture
       {
           TextureVersion version;

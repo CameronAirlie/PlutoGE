@@ -60,6 +60,10 @@ add_library(PlutoGERender
     src/PostProcessResourcePool.cpp
     src/PostProcessGraphExecutor.cpp
     src/TextureManager.cpp
+    src/TextureCompression.cpp
+    src/CompressedTextureStore.cpp
+    src/TextureCompressionQueue.cpp
+    src/RhiTextureCompression.cpp
     src/ShaderArtifacts.cpp
     src/Texture.cpp
     src/TerrainLayers.cpp

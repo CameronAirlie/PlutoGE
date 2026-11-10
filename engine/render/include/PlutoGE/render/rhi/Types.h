@@ -24,7 +24,18 @@ namespace PlutoGE::render::rhi
         R32Uint,
         R32G32Float,
         R32G32B32Float,
-        R32G32B32A32Float
+        R32G32B32A32Float,
+        // Block-compressed sampled formats (4x4 texel blocks; see FormatInfo.h). Textures in these formats are
+        // sampled only, and are created with their complete mip chain (TextureDescriptor::mipmapsProvided).
+        // Query IRenderDevice::SupportsSampledFormat before use.
+        BC1RgbaUnorm,
+        BC1RgbaSrgb,
+        BC3RgbaUnorm,
+        BC3RgbaSrgb,
+        BC4RUnorm,
+        BC5RgUnorm,
+        BC7RgbaUnorm,
+        BC7RgbaSrgb
     };
     enum class BufferUsage : std::uint8_t
     {
@@ -289,6 +300,10 @@ namespace PlutoGE::render::rhi
         // layers; zero is an ordinary texture. Data is the layers' base levels in order,
         // and mips are generated per layer. Arrays are 2D, RGBA8 and never storage images.
         std::uint32_t arrayLayers = 0;
+        // Data contains every mip level, packed from level 0 down, each level sized by TextureLevelByteSize for
+        // `format`; the device uploads them as given instead of generating mips. Required for block-compressed
+        // formats, which cannot be filtered or rendered to by the device.
+        bool mipmapsProvided = false;
     };
 
     // A rectangle of a texture's base level (texels), and the array layer for texture arrays.

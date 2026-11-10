@@ -3,6 +3,7 @@
 #include "../HandleRegistry.h"
 #include "../NormalMipmaps.h"
 #include "../TextureUpdates.h"
+#include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <volk.h>
 #define VMA_STATIC_VULKAN_FUNCTIONS 0
@@ -96,6 +97,22 @@ namespace PlutoGE::render::rhi::vulkan
                 return VK_FORMAT_R32G32B32_SFLOAT;
             case Format::R32G32B32A32Float:
                 return VK_FORMAT_R32G32B32A32_SFLOAT;
+            case Format::BC1RgbaUnorm:
+                return VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+            case Format::BC1RgbaSrgb:
+                return VK_FORMAT_BC1_RGBA_SRGB_BLOCK;
+            case Format::BC3RgbaUnorm:
+                return VK_FORMAT_BC3_UNORM_BLOCK;
+            case Format::BC3RgbaSrgb:
+                return VK_FORMAT_BC3_SRGB_BLOCK;
+            case Format::BC4RUnorm:
+                return VK_FORMAT_BC4_UNORM_BLOCK;
+            case Format::BC5RgUnorm:
+                return VK_FORMAT_BC5_UNORM_BLOCK;
+            case Format::BC7RgbaUnorm:
+                return VK_FORMAT_BC7_UNORM_BLOCK;
+            case Format::BC7RgbaSrgb:
+                return VK_FORMAT_BC7_SRGB_BLOCK;
             default:
                 throw std::invalid_argument("Unsupported Vulkan RHI format");
             }
@@ -1207,6 +1224,8 @@ namespace PlutoGE::render::rhi::vulkan
         std::array<UniformArena, 3> uniformArenas;
         VkDeviceSize uniformAlignment = 256;
         float maxSamplerAnisotropy = 1.0f;
+        // VkPhysicalDeviceFeatures::textureCompressionBC, enabled when the device has it.
+        bool textureCompressionBC = false;
         std::uint32_t maxIndexedIndirectBatchSize = 0;
         // Preserve the original transient capacity. Immutable records occupy a
         // bounded tail, shared by offsets across all buffered arena copies.
@@ -4566,6 +4585,8 @@ namespace PlutoGE::render::rhi::vulkan
         vkGetPhysicalDeviceFeatures2(m_impl->physicalDevice, &supported);
         VkPhysicalDeviceFeatures enabledFeatures{};
         enabledFeatures.samplerAnisotropy = supported.features.samplerAnisotropy;
+        enabledFeatures.textureCompressionBC = supported.features.textureCompressionBC;
+        m_impl->textureCompressionBC = enabledFeatures.textureCompressionBC == VK_TRUE;
         enabledFeatures.shaderClipDistance = supported.features.shaderClipDistance;
         enabledFeatures.multiDrawIndirect = supported.features.multiDrawIndirect;
         enabledFeatures.drawIndirectFirstInstance = supported.features.drawIndirectFirstInstance;
@@ -4876,6 +4897,14 @@ namespace PlutoGE::render::rhi::vulkan
             throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (!descriptor.width || !descriptor.height || !descriptor.depth)
             throw std::invalid_argument("Invalid Vulkan texture dimensions");
+        const bool blockCompressed = IsBlockCompressed(descriptor.format);
+        if (blockCompressed && (descriptor.usage != TextureUsage::Sampled || descriptor.storage || descriptor.depth != 1 ||
+                                descriptor.arrayLayers > 0 || descriptor.normalMap || !descriptor.mipmapsProvided))
+            throw std::invalid_argument("Block-compressed textures are sampled 2D textures with provided mipmaps");
+        if (blockCompressed && !SupportsSampledFormat(descriptor.format))
+            throw std::invalid_argument("The Vulkan device cannot sample this block-compressed format");
+        if (descriptor.mipmapsProvided && (descriptor.depth != 1 || descriptor.arrayLayers > 0 || descriptor.normalMap))
+            throw std::invalid_argument("Provided mipmaps require an ordinary 2D texture");
         if (descriptor.arrayLayers > 0)
             return CreateTextureArray(descriptor, data);
         TextureResource resource;
@@ -4901,6 +4930,9 @@ namespace PlutoGE::render::rhi::vulkan
                               : descriptor.usage == TextureUsage::Sampled ? fullMipCount : 1u;
         if (descriptor.normalMipmapsProvided)
             ValidateNormalMipChain(data, descriptor.width, descriptor.height, resource.mipLevels);
+        if (descriptor.mipmapsProvided &&
+            data.size() != TextureChainByteSize(descriptor.format, descriptor.width, descriptor.height, resource.mipLevels))
+            throw std::invalid_argument("Provided mip chain does not match the texture's format and levels");
         VkImageCreateInfo image{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
         image.imageType = descriptor.depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
         image.extent = {descriptor.width, descriptor.height, descriptor.depth};
@@ -4939,7 +4971,37 @@ namespace PlutoGE::render::rhi::vulkan
         }
         handle = m_impl->textures.Insert(std::move(resource));
         auto *stored = m_impl->textures.Get(handle);
-        if (!data.empty())
+        if (!data.empty() && descriptor.mipmapsProvided)
+        {
+            // Every level is supplied: copy each one, packed from level 0 down.
+            std::vector<VkBufferImageCopy> copies;
+            copies.reserve(stored->mipLevels);
+            std::size_t offset = 0;
+            for (std::uint32_t level = 0, width = descriptor.width, height = descriptor.height; level < stored->mipLevels; ++level)
+            {
+                copies.push_back(VkBufferImageCopy{offset, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1}, {0, 0, 0}, {width, height, 1}});
+                offset += TextureLevelByteSize(descriptor.format, width, height);
+                width = (std::max)(1u, width / 2);
+                height = (std::max)(1u, height / 2);
+            }
+            const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Texture staging"}, data);
+            auto *staging = m_impl->buffers.Get(stagingHandle);
+            ScopeExit releaseStaging([&]
+            {
+                if (auto removed = m_impl->buffers.Remove(stagingHandle))
+                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
+            });
+            m_impl->Immediate([&](VkCommandBuffer command)
+            {
+                m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    static_cast<std::uint32_t>(copies.size()), copies.data());
+                m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+            });
+        }
+        else if (!data.empty())
         {
             VkFormatProperties formatProperties{};
             vkGetPhysicalDeviceFormatProperties(m_impl->physicalDevice, image.format, &formatProperties);
@@ -5793,6 +5855,20 @@ namespace PlutoGE::render::rhi::vulkan
         }
         return m_impl->timingStats;
     }
+    bool VulkanDevice::SupportsSampledFormat(Format format) const noexcept
+    {
+        if (IsBlockCompressed(format) && !m_impl->textureCompressionBC)
+            return false;
+        VkFormat native = VK_FORMAT_UNDEFINED;
+        try { native = ToVkFormat(format); }
+        catch (const std::invalid_argument &) { return false; }
+        VkFormatProperties properties{};
+        vkGetPhysicalDeviceFormatProperties(m_impl->physicalDevice, native, &properties);
+        constexpr VkFormatFeatureFlags required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        return (properties.optimalTilingFeatures & required) == required;
+    }
+
     TemporalUpscalerSupport VulkanDevice::GetTemporalUpscalerSupport(TemporalUpscaler upscaler) const
     {
         if (upscaler == TemporalUpscaler::Fsr2)

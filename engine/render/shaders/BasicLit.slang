@@ -243,6 +243,12 @@ bool lodDitherDiscards(float lodFade, float2 pixel)
     return lodFade > 0.0 ? noise < lodFade : noise >= -lodFade;
 }
 
+// MaterialParameters::hasNormalTexture: how the normal texture holds the normal (NormalTextureEncoding + 1).
+static const uint MaterialNormalNone = 0;
+static const uint MaterialNormalRgb = 1;
+// Block-compressed (BC5) normals keep X and Y; Z is rebuilt.
+static const uint MaterialNormalXy = 2;
+
 #ifdef PLUTO_BINDLESS_MATERIAL
 #include "BindlessMaterials.slang"
 // Draws carrying wind never take the bindless path (GpuDrivenOpaque::Eligible).
@@ -357,6 +363,21 @@ Sampler2D glassSceneDepth : register(t10, space1);
 };
 
 #endif
+// The tangent-space normal in a material normal texel ([-1, 1], not normalised).
+float3 decodeMaterialNormal(float4 texel)
+{
+    if (hasNormalTexture == MaterialNormalXy)
+    {
+        const float2 xy = texel.xy * 2.0 - 1.0;
+        return float3(xy, sqrt(saturate(1.0 - dot(xy, xy))));
+    }
+    return texel.xyz * 2.0 - 1.0;
+}
+// The texel re-expressed with Z in blue, so shader graphs read every encoding as RGB normals.
+float4 encodeMaterialNormalTexel(float4 texel)
+{
+    return hasNormalTexture == MaterialNormalXy ? float4(decodeMaterialNormal(texel) * 0.5 + 0.5, texel.w) : texel;
+}
 float2 shaderGraphScreenUV(float3 worldPosition) {
     float4 clip=mul(viewProjection,float4(worldPosition,1));
     float2 uv=(clip.xy/max(abs(clip.w),.000001)+temporalClipOffset.xy)*.5+.5;
@@ -373,7 +394,7 @@ float4 shaderGraphTexture(int slot, float2 uv)
     if(slot==6)return graphExtra2.SampleLevel(uv,0.0);
     if(slot==7)return graphExtra3.SampleLevel(uv,0.0);
     if(slot==0) return baseColorTexture.SampleLevel(uv, 0.0);
-    if(slot==1) return normalTexture.SampleLevel(uv, 0.0);
+    if(slot==1) return encodeMaterialNormalTexel(normalTexture.SampleLevel(uv, 0.0));
     if(slot==2) return metallicTexture.SampleLevel(uv, 0.0);
     return roughnessTexture.SampleLevel(uv, 0.0);
 }
@@ -1333,7 +1354,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     float3 normal = normalize(input.worldNormal);
     if (hasNormalTexture != 0 && !skipDetailTextures)
     {
-        float3 tangentNormal = normalTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy).xyz * 2.0 - 1.0;
+        float3 tangentNormal = decodeMaterialNormal(normalTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy));
         if (flipNormalY != 0)
             tangentNormal.y = -tangentNormal.y;
         const float3 tangent = normalize(input.worldTangent.xyz);

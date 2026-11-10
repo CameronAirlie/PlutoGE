@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/render/rhi/FormatInfo.h"
 #include "PlutoGE/render/rhi/Types.h"
 
 #include <array>
@@ -228,6 +229,9 @@ namespace PlutoGE::render::rhi
     public:
         virtual ~IRenderDevice() = default;
         [[nodiscard]] virtual GraphicsApi GetApi() const noexcept = 0;
+        // Whether CreateTexture accepts `format` for a filtered, sampled 2D texture. Devices that do not override
+        // this accept only uncompressed formats.
+        [[nodiscard]] virtual bool SupportsSampledFormat(Format format) const noexcept { return !IsBlockCompressed(format); }
         // True when clip-space Z is interpreted as [0, 1]. Vulkan always uses
         // this convention; OpenGL only does so when clip control is available.
         [[nodiscard]] virtual bool UsesZeroToOneClipDepth() const noexcept { return false; }

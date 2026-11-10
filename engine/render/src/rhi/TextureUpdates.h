@@ -17,6 +17,7 @@ namespace PlutoGE::render::rhi
         const bool sampled = descriptor.usage == TextureUsage::Sampled || descriptor.sampled;
         const bool rgba8 = descriptor.format == Format::R8G8B8A8Unorm || descriptor.format == Format::R8G8B8A8Srgb;
         return sampled && rgba8 && descriptor.depth == 1 && !descriptor.storage && !descriptor.normalMipmapsProvided &&
+               !descriptor.mipmapsProvided &&
                region.width > 0 && region.height > 0 && region.x + region.width <= descriptor.width &&
                region.y + region.height <= descriptor.height && region.layer < std::max(1u, descriptor.arrayLayers) &&
                data.size() == std::size_t(region.width) * region.height * 4;

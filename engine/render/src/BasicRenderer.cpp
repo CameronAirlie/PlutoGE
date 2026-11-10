@@ -84,6 +84,14 @@ namespace PlutoGE::render
             "RHI TAA", "RHI SSAO", "RHI SSGI", "RHI SSR", "RHI Volumetric Fog", "RHI Physical Sky",
             "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI", "RHI Ocean", "RHI DDGI"};
 
+        // MaterialParameters::hasNormalTexture (BasicLit.slang): 0 none, 1 RGB normals, 2 XY normals (BC5).
+        std::uint32_t MaterialNormalMode(const BasicDraw &draw)
+        {
+            if (!draw.normalTexture)
+                return 0u;
+            return draw.normalEncoding == NormalTextureEncoding::Xy ? 2u : 1u;
+        }
+
         // std140 mirror of TerrainLayers.slang's TerrainLayerParameters.
         struct alignas(16) BasicTerrainLayerParameters
         {
@@ -3768,7 +3776,7 @@ namespace PlutoGE::render
                     BasicMaterialParameters materialParameters{
                         draw.baseColor, draw.uvScale, draw.metallic, draw.roughness,
                         draw.emission, draw.alphaCutoff, draw.alphaMode,
-                        draw.normalTexture ? 1u : 0u,
+                        MaterialNormalMode(draw),
                         draw.metallicTexture ? 1u : 0u,
                         draw.roughnessTexture ? 1u : 0u,
                         draw.metallicChannel, draw.roughnessChannel,

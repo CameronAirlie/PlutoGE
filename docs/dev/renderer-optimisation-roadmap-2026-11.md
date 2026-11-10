@@ -1,0 +1,29 @@
+# Renderer optimisation roadmap (November 2026)
+
+A survey of the renderer on 2026-11-10 ranked the large optimisations still missing, by expected gain on the target
+machine (Ryzen 7 5700G, Vega 8 iGPU: bandwidth- and pixel-bound) and on discrete GPUs. Work already done or measured
+and rejected is listed in `renderer-modernisation.md`, `frame-pipeline.md`, `rendering-performance.md`,
+`vsm-dense-foliage.md` and `renderer-structural-review.md`; this roadmap does not repeat it.
+
+Each step lands as its own commit, keeps the previous path behind a switch, and adds checks on both RHI backends.
+
+| # | Step | Status | Doc |
+| --- | --- | --- | --- |
+| 1 | Block-compressed material textures (BC1/BC3/BC5), encoded in the background and cached by content | Done | [TEXTURE_COMPRESSION.md](../TEXTURE_COMPRESSION.md) |
+| 2 | Automatic resolution scaling from GPU time | Planned | |
+| 3 | Deferred lighting for standard opaque surfaces | Planned | |
+| 4 | Sparse VSM planning: casters binned to pages by footprint | Planned | |
+| 5 | Wider GPU-driven coverage: prepass and masked draws, occlusion for every mesh | Planned | |
+| 6 | Bandwidth: smaller target formats, discard load/store ops, fewer full-screen passes | Planned | |
+| 7 | Directional shadow mask at reduced cost | Planned | |
+| 8 | Shadow LOD independent of the camera, with hysteresis | Planned | |
+| 9 | Froxel volumetric fog with temporal reuse | Planned | |
+
+## Design rules for every step
+
+- New behaviour sits behind an interface or a policy object that can be replaced without touching its callers
+  (for example `TextureBlockEncoder`, `SelectCompressedFormat`).
+- Capabilities are queried from the device (`IRenderDevice::Supports*`), never inferred from the API name; the
+  fallback path stays the previous behaviour.
+- Pure decision logic (policies, controllers, planners) has no device dependency, so CPU tests cover it.
+- Image-equivalence or tolerance checks on Vulkan and OpenGL accompany every rendering change.

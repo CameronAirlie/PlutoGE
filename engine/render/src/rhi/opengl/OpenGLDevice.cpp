@@ -2,6 +2,7 @@
 #include "../HandleRegistry.h"
 #include "../NormalMipmaps.h"
 #include "../TextureUpdates.h"
+#include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -11,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace PlutoGE::render::rhi::opengl
@@ -63,6 +65,12 @@ namespace PlutoGE::render::rhi::opengl
             throw std::invalid_argument("Unsupported RHI buffer usage");
         }
 
+        // EXT_texture_compression_s3tc and its sRGB variants (EXT_texture_sRGB), which glad does not load.
+        constexpr GLenum kCompressedRgbaS3tcDxt1 = 0x83F1;
+        constexpr GLenum kCompressedRgbaS3tcDxt5 = 0x83F3;
+        constexpr GLenum kCompressedSrgbAlphaS3tcDxt1 = 0x8C4D;
+        constexpr GLenum kCompressedSrgbAlphaS3tcDxt5 = 0x8C4F;
+
         struct TextureFormat
         {
             GLint internalFormat;
@@ -90,6 +98,23 @@ namespace PlutoGE::render::rhi::opengl
                 return {GL_RGBA32F, GL_RGBA, GL_FLOAT};
             case Format::D32Float:
                 return {GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT};
+            // Compressed formats upload through glCompressedTexSubImage2D, which takes no format or type.
+            case Format::BC1RgbaUnorm:
+                return {kCompressedRgbaS3tcDxt1, GL_NONE, GL_NONE};
+            case Format::BC1RgbaSrgb:
+                return {kCompressedSrgbAlphaS3tcDxt1, GL_NONE, GL_NONE};
+            case Format::BC3RgbaUnorm:
+                return {kCompressedRgbaS3tcDxt5, GL_NONE, GL_NONE};
+            case Format::BC3RgbaSrgb:
+                return {kCompressedSrgbAlphaS3tcDxt5, GL_NONE, GL_NONE};
+            case Format::BC4RUnorm:
+                return {GL_COMPRESSED_RED_RGTC1, GL_NONE, GL_NONE};
+            case Format::BC5RgUnorm:
+                return {GL_COMPRESSED_RG_RGTC2, GL_NONE, GL_NONE};
+            case Format::BC7RgbaUnorm:
+                return {GL_COMPRESSED_RGBA_BPTC_UNORM, GL_NONE, GL_NONE};
+            case Format::BC7RgbaSrgb:
+                return {GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, GL_NONE, GL_NONE};
             default:
                 throw std::invalid_argument("Unsupported RHI texture format");
             }
@@ -146,6 +171,8 @@ namespace PlutoGE::render::rhi::opengl
         detail::HandleRegistry<PipelineHandle, PipelineResource> pipelines;
         std::unique_ptr<OpenGLCommandContext> context;
         GLuint framebuffer = 0;
+        // Optional compressed formats. RGTC (BC4/BC5) is core since 3.0 and BPTC (BC7) since 4.2.
+        bool s3tc = false, s3tcSrgb = false;
     };
 
     class OpenGLCommandContext final : public ICommandContext
@@ -671,7 +698,42 @@ namespace PlutoGE::render::rhi::opengl
             glClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
         // Filter across cube faces, as Vulkan always does, so cube sampling has no seams.
         glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+        GLint extensionCount = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &extensionCount);
+        bool textureSrgb = false, s3tcSrgb = false;
+        for (GLint index = 0; index < extensionCount; ++index)
+        {
+            const auto *name = reinterpret_cast<const char *>(glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(index)));
+            const std::string_view extension = name ? name : "";
+            m_impl->s3tc |= extension == "GL_EXT_texture_compression_s3tc";
+            textureSrgb |= extension == "GL_EXT_texture_sRGB";
+            s3tcSrgb |= extension == "GL_EXT_texture_compression_s3tc_srgb";
+        }
+        m_impl->s3tcSrgb = m_impl->s3tc && (textureSrgb || s3tcSrgb);
         m_impl->context = std::make_unique<OpenGLCommandContext>(*m_impl);
+    }
+
+    bool OpenGLDevice::SupportsSampledFormat(Format format) const noexcept
+    {
+        switch (format)
+        {
+        case Format::BC1RgbaUnorm:
+        case Format::BC3RgbaUnorm:
+            return m_impl->s3tc;
+        case Format::BC1RgbaSrgb:
+        case Format::BC3RgbaSrgb:
+            return m_impl->s3tcSrgb;
+        case Format::BC4RUnorm:
+        case Format::BC5RgUnorm:
+        case Format::BC7RgbaUnorm:
+        case Format::BC7RgbaSrgb:
+            return true;
+        case Format::D32Float:
+        case Format::Undefined:
+            return false;
+        default:
+            return !IsBlockCompressed(format);
+        }
     }
 
     bool OpenGLDevice::UsesZeroToOneClipDepth() const noexcept
@@ -720,6 +782,14 @@ namespace PlutoGE::render::rhi::opengl
             throw std::invalid_argument("Normal mipmaps require a linear RGBA8 2D texture");
         if (descriptor.width == 0 || descriptor.height == 0 || descriptor.depth == 0)
             throw std::invalid_argument("RHI texture dimensions must be non-zero");
+        const bool blockCompressed = IsBlockCompressed(descriptor.format);
+        if (blockCompressed && (descriptor.usage != TextureUsage::Sampled || descriptor.storage || descriptor.depth != 1 ||
+                                descriptor.arrayLayers > 0 || descriptor.normalMap || !descriptor.mipmapsProvided))
+            throw std::invalid_argument("Block-compressed textures are sampled 2D textures with provided mipmaps");
+        if (blockCompressed && !SupportsSampledFormat(descriptor.format))
+            throw std::invalid_argument("The OpenGL context cannot sample this block-compressed format");
+        if (descriptor.mipmapsProvided && (descriptor.depth != 1 || descriptor.arrayLayers > 0 || descriptor.normalMap))
+            throw std::invalid_argument("Provided mipmaps require an ordinary 2D texture");
         if (descriptor.arrayLayers > 0)
             return CreateTextureArray(descriptor, data);
         const auto format = ToTextureFormat(descriptor.format);
@@ -730,6 +800,9 @@ namespace PlutoGE::render::rhi::opengl
                                       : descriptor.usage == TextureUsage::Sampled ? fullMipCount : 1u;
         if (descriptor.normalMipmapsProvided)
             ValidateNormalMipChain(data, descriptor.width, descriptor.height, mipCount);
+        if (descriptor.mipmapsProvided &&
+            data.size() != TextureChainByteSize(descriptor.format, descriptor.width, descriptor.height, mipCount))
+            throw std::invalid_argument("Provided mip chain does not match the texture's format and levels");
         GLuint name = 0;
         glGenTextures(1, &name);
         glBindTexture(target, name);
@@ -740,7 +813,28 @@ namespace PlutoGE::render::rhi::opengl
         else
             glTexStorage2D(target, static_cast<GLsizei>(mipCount), format.internalFormat,
                            static_cast<GLsizei>(descriptor.width), static_cast<GLsizei>(descriptor.height));
-        if (!data.empty())
+        if (!data.empty() && descriptor.mipmapsProvided)
+        {
+            // Every level is supplied, packed from level 0 down.
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            std::size_t offset = 0;
+            for (std::uint32_t level = 0, width = descriptor.width, height = descriptor.height; level < mipCount; ++level)
+            {
+                const auto bytes = TextureLevelByteSize(descriptor.format, width, height);
+                if (blockCompressed)
+                    glCompressedTexSubImage2D(target, static_cast<GLint>(level), 0, 0, static_cast<GLsizei>(width),
+                                              static_cast<GLsizei>(height), static_cast<GLenum>(format.internalFormat),
+                                              static_cast<GLsizei>(bytes), data.data() + offset);
+                else
+                    glTexSubImage2D(target, static_cast<GLint>(level), 0, 0, static_cast<GLsizei>(width),
+                                    static_cast<GLsizei>(height), format.format, format.type, data.data() + offset);
+                offset += bytes;
+                width = std::max(1u, width / 2);
+                height = std::max(1u, height / 2);
+            }
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+        }
+        else if (!data.empty())
         {
             if (descriptor.depth > 1)
                 glTexSubImage3D(target, 0, 0, 0, 0, static_cast<GLsizei>(descriptor.width),

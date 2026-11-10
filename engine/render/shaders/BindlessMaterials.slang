@@ -39,6 +39,7 @@ static const uint BindlessMaterialHasMetallic = 2;
 static const uint BindlessMaterialHasRoughness = 4;
 static const uint BindlessMaterialFlipNormalY = 8;
 static const uint BindlessMaterialTwoSided = 16;
+static const uint BindlessMaterialNormalXy = 32;
 
 [[vk::binding(0, 4)]] Sampler2D bindlessTextures[] : register(t0, space4);
 [[vk::binding(1, 2)]] StructuredBuffer<BindlessInstance> bindlessInstances : register(t1, space2);
@@ -100,7 +101,8 @@ void loadBindlessMaterial(uint index)
     emission = material.emissionAlphaCutoff.xyz;
     alphaCutoff = material.emissionAlphaCutoff.w;
     alphaMode = material.flags.x;
-    hasNormalTexture = (material.flags.y & BindlessMaterialHasNormal) != 0 ? 1u : 0u;
+    hasNormalTexture = (material.flags.y & BindlessMaterialHasNormal) == 0 ? MaterialNormalNone
+        : (material.flags.y & BindlessMaterialNormalXy) != 0 ? MaterialNormalXy : MaterialNormalRgb;
     hasMetallicTexture = (material.flags.y & BindlessMaterialHasMetallic) != 0 ? 1u : 0u;
     hasRoughnessTexture = (material.flags.y & BindlessMaterialHasRoughness) != 0 ? 1u : 0u;
     flipNormalY = (material.flags.y & BindlessMaterialFlipNormalY) != 0 ? 1u : 0u;

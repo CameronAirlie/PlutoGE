@@ -39,6 +39,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include "RhiTextureCompression.h"
+#include "PlutoGE/render/rhi/FormatInfo.h"
+
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -50,6 +53,15 @@ namespace PlutoGE::render
 {
     namespace
     {
+        // Whether a sampling site can take a block-compressed copy of a texture (RhiTextureCompression).
+        enum class TextureUse : std::uint8_t
+        {
+            // The site reads the exact RGBA8 texels.
+            Exact,
+            // A standard material slot whose meaning the cache kind states.
+            Compressible,
+        };
+
         std::atomic_uint64_t g_nextUpscalerContextId{1};
 
         // An ambient volume's live sky scale and reflection occlusion strength, as
@@ -185,9 +197,23 @@ namespace PlutoGE::render
         m_textureCache = caches[&device].lock();
         if (!m_textureCache)
             caches[&device] = m_textureCache = std::make_shared<TextureCache>();
+        if (!m_textureCache->compression)
+            m_textureCache->compression = std::make_shared<RhiTextureCompression>(device, m_textureCompressionSettings);
         m_renderer = std::move(renderer);
         m_upscalerContextId = g_nextUpscalerContextId.fetch_add(1, std::memory_order_relaxed);
         return true;
+    }
+
+    void RhiSceneRenderer::SetTextureCompression(const TextureCompressionSettings &settings)
+    {
+        const bool toggled = settings.enabled != m_textureCompressionSettings.enabled;
+        m_textureCompressionSettings = settings;
+        if (!m_textureCache || !m_device)
+            return;
+        // Uploads made under the old setting stay valid until re-read; toggling re-reads them all.
+        if (toggled)
+            InvalidateAssetCache();
+        m_textureCache->compression = std::make_shared<RhiTextureCompression>(*m_device, m_textureCompressionSettings);
     }
 
     void RhiSceneRenderer::SetGpuInstanceCulling(bool enabled)
@@ -476,17 +502,72 @@ namespace PlutoGE::render
                      rhi::TextureUsage::Sampled, "Scene normal", false, 1, false, 0, true, true}, pixels));
                 if (uploaded)
                 {
-                    m_textureCache->normal.emplace(m_pendingNormalSource, std::move(uploaded));
+                    m_textureCache->normal.emplace(m_pendingNormalSource, CachedTexture{std::move(uploaded)});
                     ++m_textureCache->residencyRevision;
                 }
             }
             m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
             m_pendingNormalSource = nullptr;
         }
-        const auto uploadTexture = [&](const Texture *source, rhi::Format format,
-                                       auto &cache,
-                                       const char *debugName, bool normalMap = false) -> rhi::TextureHandle
+        const auto textureCacheFor = [&](TextureCacheKind kind) -> std::unordered_map<const Texture *, CachedTexture> & {
+            switch (kind)
+            {
+            case TextureCacheKind::Srgb:
+                return m_textureCache->srgb;
+            case TextureCacheKind::Normal:
+                return m_textureCache->normal;
+            case TextureCacheKind::Linear:
+            default:
+                return m_textureCache->linear;
+            }
+        };
+        const auto createCompressedTexture = [&](const EncodedTexture &encoded, const char *debugName) -> std::optional<CachedTexture> {
+            rhi::TextureDescriptor descriptor{encoded.width, encoded.height, encoded.format, rhi::TextureUsage::Sampled, debugName};
+            descriptor.mipLevels = encoded.mipLevels;
+            descriptor.mipmapsProvided = true;
+            try
+            {
+                rhi::Texture texture(*m_device, m_device->CreateTexture(descriptor, encoded.data));
+                if (texture)
+                    return CachedTexture{std::move(texture), encoded.format};
+            }
+            catch (const std::exception &)
+            {
+                // The device refused the chain; the texture keeps its RGBA8 upload.
+            }
+            return std::nullopt;
+        };
+        // Finished background encodes replace the RGBA8 upload of the revision they were encoded from. Materials
+        // sampling them re-prepare through the residency revision, like any other texture change.
+        if (m_textureCache->compression)
         {
+            for (auto &done : m_textureCache->compression->TakeCompleted())
+            {
+                const auto version = m_textureCache->versions.find(done.source);
+                if (done.lifetime.expired() || version == m_textureCache->versions.end() ||
+                    version->second.identity != done.identity || version->second.revision != done.revision)
+                    continue;
+                auto &cache = textureCacheFor(done.kind);
+                const auto existing = cache.find(done.source);
+                if (existing != cache.end() &&
+                    (existing->second.keepUncompressed || rhi::IsBlockCompressed(existing->second.format)))
+                    continue;
+                if (auto compressed = createCompressedTexture(done.texture, "Compressed material texture"))
+                {
+                    cache.insert_or_assign(done.source, std::move(*compressed));
+                    ++m_textureCache->residencyRevision;
+                    ++m_timingStats.compressedTextureUploads;
+                }
+            }
+            m_timingStats.pendingTextureCompressions = m_textureCache->compression->Pending();
+        }
+        // `use` says whether this sampling site can take a block-compressed copy. Sites that need the exact texels
+        // (shader graphs with arbitrary data, impostor atlases, painted weight maps) keep the texture RGBA8.
+        const auto uploadTexture = [&](const Texture *source, rhi::Format format, TextureCacheKind kind,
+                                       const char *debugName, TextureUse use = TextureUse::Exact) -> rhi::TextureHandle
+        {
+            auto &cache = textureCacheFor(kind);
+            const bool normalMap = kind == TextureCacheKind::Normal;
             if (!source || source->GetWidth() <= 0 || source->GetHeight() <= 0)
                 return {};
             m_textureCache->versions.try_emplace(source, TextureVersion{source->GetLifetimeToken(), source->GetIdentity(), source->GetContentRevision()});
@@ -497,7 +578,28 @@ namespace PlutoGE::render
             if (!texturePixelReader)
                 return {};
             if (const auto cached = cache.find(source); cached != cache.end())
-                return cached->second.Get();
+            {
+                auto &entry = cached->second;
+                if (use == TextureUse::Compressible || !rhi::IsBlockCompressed(entry.format))
+                {
+                    entry.keepUncompressed |= use == TextureUse::Exact;
+                    // An encode the pending budget deferred is queued once earlier ones have finished.
+                    if (use == TextureUse::Compressible && !entry.compressionDecided && !entry.keepUncompressed &&
+                        !rhi::IsBlockCompressed(entry.format) && m_textureCache->compression &&
+                        !m_textureCache->compression->IsPending(*source, kind) &&
+                        m_textureCache->compression->HasCapacityFor(*source))
+                    {
+                        auto pixels = texturePixelReader(*source);
+                        const auto format = m_textureCache->compression->SelectFormat(*source, kind, pixels);
+                        entry.compressionDecided =
+                            !format || m_textureCache->compression->Request(*source, kind, *format, std::move(pixels));
+                    }
+                    return entry.Get();
+                }
+                // An exact use needs the RGBA8 texels: replace the compressed upload and keep it uncompressed.
+                cache.erase(cached);
+                ++m_textureCache->residencyRevision;
+            }
             if (normalMap && m_normalMipJob.valid())
                 return {};
             core::CpuScope readScope("Texture pixel read", core::CpuCategory::Rendering);
@@ -513,6 +615,29 @@ namespace PlutoGE::render
                 const auto [raw, srgb] = TextureMean(pixels);
                 m_textureCache->means[source] = {raw, srgb};
             }
+            const bool keepUncompressed = use == TextureUse::Exact;
+            // Whether compression is settled for this upload (see CachedTexture::compressionDecided).
+            bool compressionDecided = true;
+            std::optional<rhi::Format> compressedFormat;
+            if (!keepUncompressed && m_textureCache->compression)
+                compressedFormat = m_textureCache->compression->SelectFormat(*source, kind, pixels);
+            if (compressedFormat && m_immediateTextureUploads)
+            {
+                // Immediate uploads never show an interim texture, so encode (or load the cached encode) now.
+                core::CpuScope encodeScope("Texture block compression", core::CpuCategory::Rendering);
+                const auto encodeStart = std::chrono::steady_clock::now();
+                auto encoded = m_textureCache->compression->EncodeNow(*source, kind, *compressedFormat, pixels);
+                auto compressed = encoded ? createCompressedTexture(*encoded, debugName) : std::nullopt;
+                m_timingStats.textureUploadMs += millisecondsBetween(encodeStart, std::chrono::steady_clock::now());
+                if (compressed)
+                {
+                    ++m_timingStats.textureUploadCount;
+                    ++m_timingStats.compressedTextureUploads;
+                    return cache.insert_or_assign(source, std::move(*compressed)).first->second.Get();
+                }
+            }
+            else if (compressedFormat)
+                compressionDecided = m_textureCache->compression->Request(*source, kind, *compressedFormat, pixels);
             if (normalMap && m_immediateTextureUploads)
             {
                 const auto width = static_cast<std::uint32_t>(source->GetWidth());
@@ -523,7 +648,9 @@ namespace PlutoGE::render
                                       m_device->CreateTexture({width, height, format, rhi::TextureUsage::Sampled,
                                                                debugName, false, 1, false, 0, true, true},
                                                               pixels));
-                return uploaded ? cache.emplace(source, std::move(uploaded)).first->second.Get() : rhi::TextureHandle{};
+                return uploaded ? cache.emplace(source, CachedTexture{std::move(uploaded), format, keepUncompressed,
+                                                                      compressionDecided}).first->second.Get()
+                                : rhi::TextureHandle{};
             }
             if (normalMap)
             {
@@ -549,7 +676,8 @@ namespace PlutoGE::render
                                                   format, rhi::TextureUsage::Sampled, debugName, false, 1, false, 0, normalMap},
                                                  pixels));
             m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
-            return uploaded ? cache.emplace(source, std::move(uploaded)).first->second.Get()
+            return uploaded ? cache.emplace(source, CachedTexture{std::move(uploaded), format, keepUncompressed,
+                                                                  compressionDecided}).first->second.Get()
                             : rhi::TextureHandle{};
         };
 
@@ -571,7 +699,7 @@ namespace PlutoGE::render
             auto terrain = std::make_shared<BasicTerrainLayers>();
             for (std::size_t index = 0; index < set->weightMaps.size(); ++index)
                 terrain->weights[index] = uploadTexture(set->weightMaps[index], rhi::Format::R8G8B8A8Unorm,
-                                                        m_textureCache->linear, "Terrain weights");
+                                                        TextureCacheKind::Linear, "Terrain weights");
             terrain->albedo = arrays->albedo.Get();
             terrain->normal = arrays->normal.Get();
             terrain->layerCount = arrays->layers;
@@ -615,8 +743,10 @@ namespace PlutoGE::render
             draw.emissionChannelMask = material.emissionChannelMask;
             draw.emissionChannels = material.emissionChannels;
             draw.emissionTexture = material.emissionChannelMask
-                ? uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, "Emission masks")
-                : uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Scene emission");
+                ? uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Unorm, TextureCacheKind::Linear, "Emission masks",
+                                TextureUse::Compressible)
+                : uploadTexture(material.emissionTexture, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb, "Scene emission",
+                                TextureUse::Compressible);
             draw.subsurface = material.subsurface;
             draw.subsurfaceColor = material.subsurfaceColor;
             draw.subsurfaceRadius = material.subsurfaceRadius;
@@ -637,7 +767,7 @@ namespace PlutoGE::render
             draw.graphSamplers = material.graphSamplers;
             for (size_t i = 0; i < draw.graphTextures.size(); ++i)
                 draw.graphTextures[i] = uploadTexture(material.graphTextures[i], rhi::Format::R8G8B8A8Unorm,
-                                                      m_textureCache->linear, "Graph texture");
+                                                      TextureCacheKind::Linear, "Graph texture");
             const bool transparent =
                 material.surfaceType == MaterialSurfaceType::Glass || material.alphaMode == AlphaMode::Blend;
             draw.contributesToGi = !transparent;
@@ -648,20 +778,27 @@ namespace PlutoGE::render
             draw.roughnessChannel = static_cast<std::uint32_t>(material.roughnessTextureChannel);
             draw.flipNormalY = material.flipNormalY;
             draw.baseColorTexture =
-                uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Scene albedo");
-            draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->normal,
-                                               "Scene normal", true);
+                uploadTexture(material.albedoTexture, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb, "Scene albedo",
+                              TextureUse::Compressible);
+            draw.normalTexture = uploadTexture(material.normalTexture, rhi::Format::R8G8B8A8Unorm, TextureCacheKind::Normal,
+                                               "Scene normal", TextureUse::Compressible);
+            if (const auto normal = draw.normalTexture ? m_textureCache->normal.find(material.normalTexture)
+                                                       : m_textureCache->normal.end();
+                normal != m_textureCache->normal.end())
+                draw.normalEncoding = NormalEncodingFor(normal->second.format);
             draw.metallicTexture =
-                uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, "Scene metallic");
+                uploadTexture(material.metallicTexture, rhi::Format::R8G8B8A8Unorm, TextureCacheKind::Linear, "Scene metallic",
+                              TextureUse::Compressible);
             draw.roughnessTexture = uploadTexture(material.roughnessTexture, rhi::Format::R8G8B8A8Unorm,
-                                                  m_textureCache->linear, "Scene roughness");
+                                                  TextureCacheKind::Linear, "Scene roughness", TextureUse::Compressible);
             const auto setSurfaceTexture = [&](BasicSurfaceTexture slot, Texture *texture, TextureChannel channel,
                                                const char *label, bool srgb = false)
             {
                 const auto index = static_cast<std::size_t>(slot);
                 draw.surfaceTextures[index] = srgb
-                    ? uploadTexture(texture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, label)
-                    : uploadTexture(texture, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear, label);
+                    ? uploadTexture(texture, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb, label, TextureUse::Compressible)
+                    : uploadTexture(texture, rhi::Format::R8G8B8A8Unorm, TextureCacheKind::Linear, label,
+                                    TextureUse::Compressible);
                 draw.surfaceTextureChannels[index] = static_cast<std::uint32_t>(channel);
             };
             setSurfaceTexture(BasicSurfaceTexture::Occlusion, material.occlusionTexture,
@@ -1071,8 +1208,8 @@ namespace PlutoGE::render
             {
                 auto impostor = std::make_shared<BasicImpostor>();
                 impostor->parameters = source.parameters;
-                impostor->albedo = uploadTexture(source.albedo, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Impostor albedo");
-                impostor->normalDepth = uploadTexture(source.normalDepth, rhi::Format::R8G8B8A8Unorm, m_textureCache->linear,
+                impostor->albedo = uploadTexture(source.albedo, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb, "Impostor albedo");
+                impostor->normalDepth = uploadTexture(source.normalDepth, rhi::Format::R8G8B8A8Unorm, TextureCacheKind::Linear,
                                                       "Impostor normal and depth");
                 if (!impostor->albedo || !impostor->normalDepth) return nullptr;
                 cached = std::move(impostor);
@@ -2010,7 +2147,7 @@ namespace PlutoGE::render
                         return;
                     const auto &config = material->ReadConfig();
                     packet.parameters.values[0] = config.color;
-                    packet.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb,
+                    packet.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb,
                                                    "Particle albedo");
                     packet.parameters.values[1] = {config.emission, packet.texture ? 1.0f : 0.0f};
                 };
@@ -2144,7 +2281,7 @@ namespace PlutoGE::render
                 draw.parameters.projectorNormal = {glm::normalize(glm::vec3(command.model[2])), command.normalCutoff};
                 draw.parameters.material = {config.uvScale, static_cast<float>(config.alphaMode),
                     config.alphaCutoff / std::max(config.color.a, 0.000001f)};
-                draw.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, m_textureCache->srgb, "Decal albedo");
+                draw.texture = uploadTexture(config.albedoTexture, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb, "Decal albedo");
                 // An unresolved textured decal must not become a solid square.
                 if (config.albedoTexture && !draw.texture)
                     continue;

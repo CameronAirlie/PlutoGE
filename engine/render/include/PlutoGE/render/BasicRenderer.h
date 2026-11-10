@@ -14,6 +14,7 @@
 #include "PlutoGE/render/Outline.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/TerrainLayerLimits.h"
+#include "PlutoGE/render/TextureCompression.h"
 #include "PlutoGE/render/OceanParameters.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
 #include "PlutoGE/render/SkyIrradiance.h"
@@ -666,6 +667,8 @@ namespace PlutoGE::render
         glm::vec2 uvScale{1.0f};
         rhi::TextureHandle baseColorTexture;
         rhi::TextureHandle normalTexture;
+        // How normalTexture's channels hold the normal (Xy for block-compressed BC5 normals).
+        NormalTextureEncoding normalEncoding = NormalTextureEncoding::Rgb;
         rhi::TextureHandle metallicTexture;
         rhi::TextureHandle roughnessTexture;
         rhi::TextureHandle emissionTexture;

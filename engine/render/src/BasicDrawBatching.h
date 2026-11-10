@@ -22,6 +22,7 @@ namespace PlutoGE::render
             && a.uvScale == b.uvScale
             && a.baseColorTexture == b.baseColorTexture
             && a.normalTexture == b.normalTexture
+            && a.normalEncoding == b.normalEncoding
             && a.metallicTexture == b.metallicTexture
             && a.roughnessTexture == b.roughnessTexture
             && a.surfaceTextures == b.surfaceTextures && a.surfaceTextureChannels == b.surfaceTextureChannels
@@ -146,6 +147,7 @@ namespace PlutoGE::render
         HashBatchValue(hash, draw.uvScale);
         HashBatchValue(hash, draw.baseColorTexture);
         HashBatchValue(hash, draw.normalTexture);
+        HashBatchValue(hash, draw.normalEncoding);
         HashBatchValue(hash, draw.metallicTexture);
         HashBatchValue(hash, draw.roughnessTexture);
         for (std::size_t index = 0; index < BasicSurfaceTextureCount; ++index)

@@ -67,4 +67,13 @@ namespace PlutoGE::render
     {
         if (deferred) descriptor.specializationConstants.push_back({SurfaceDeferredLocalLightsConstant, 1u});
     }
+
+    // kSurfacePrepassedCoverage's id: a shading pipeline drawing a depth prepass's surfaces with an equal depth test
+    // drops the alpha test's discard, which the prepass already applied, so depth is tested before shading.
+    inline constexpr std::uint32_t SurfacePrepassedCoverageConstant = 8;
+
+    inline void ApplySurfacePrepassedCoverage(rhi::GraphicsPipelineDescriptor &descriptor, bool prepassed)
+    {
+        if (prepassed) descriptor.specializationConstants.push_back({SurfacePrepassedCoverageConstant, 1u});
+    }
 }

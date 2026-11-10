@@ -1,7 +1,7 @@
 // Shared inline coverage for surface and depth shaders. Keep discard in the
 // caller: returning a material struct through a discard-capable helper can
 // leave derivative helper lanes undefined on some drivers.
-    if (alphaMode == 1 && sampledColor.a < alphaCutoff) discard;
+    if (alphaMode == 1 && !kSurfacePrepassedCoverage && sampledColor.a < alphaCutoff) discard;
     if (alphaMode == 2 && glassParameters.x < 0.5 && shaderGraphFrame.z < 0.5)
     {
         // Complementary coverage tests keep solid BLEND texels depth-correct,

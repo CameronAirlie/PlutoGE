@@ -61,6 +61,7 @@
 #include "CompressedTextureRenderingChecks.h"
 #include "RenderScaleChecks.h"
 #include "DeferredLocalLightChecks.h"
+#include "PrepassedCoverageChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "GlobalIlluminationRenderingChecks.h"
 #include "VctPublicationChecks.h"
@@ -713,6 +714,9 @@ int main(int argc, char **argv)
             return 0;
         CheckDeferredLocalLights(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--deferred-local-lights")
+            return 0;
+        CheckPrepassedCoverage(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--prepassed-coverage")
             return 0;
         CheckContactShadows(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--contact-shadows")

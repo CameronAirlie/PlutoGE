@@ -26,6 +26,13 @@
 // (DeferredLocalLights.slang), which adds them from the G-buffer, and marks its pixels for it. Off by default.
 [vk::constant_id(7)] const bool kSurfaceDeferredLocalLights = false;
 
+// Not a path but a guarantee: the pipeline shades a depth prepass's surfaces with an equal depth test, and the prepass
+// applied the same alpha test (SurfaceCoverage.slang), so a masked fragment that fails it never passes depth and the
+// shading pass need not discard. Without the discard the driver tests depth before shading, so the thin, overlapping
+// cards and blades of foliage no longer shade every fragment they rasterize. Off by default (depth passes and every
+// pipeline without a prepass keep their discard).
+[vk::constant_id(8)] const bool kSurfacePrepassedCoverage = false;
+
 // The G-buffer normal's alpha: below one half marks deferred probe irradiance (DiffuseProbeResolve.slang), and 0.25 and
 // 0.75 mark surfaces whose local lights the deferred pass adds. RGBA8 keeps all four values exact.
 float encodeSurfaceNormalMarks(bool probePending, bool deferredLocalLights)

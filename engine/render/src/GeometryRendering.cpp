@@ -152,11 +152,16 @@ namespace PlutoGE::render
         const bool deferredLocalLights = !depthOnly && m_deferredLocalLightsActive && standard &&
             DeferredLocalLightEligible(draw) && layout >= GeometryOutputLayout::Surface &&
             layout != GeometryOutputLayout::SurfaceIndirect;
+        // A prepassed masked standard surface: its prepass ran the same alpha test through the same vertex transform
+        // (GeometryDepthResources: standard coverage), so an equal depth test selects exactly its covered fragments
+        // and the shading pass drops the discard, letting depth be tested before shading (kSurfacePrepassedCoverage).
+        const bool prepassedCoverage = !depthOnly && prepassed && m_prepassedCoverage && draw.alphaMode == 1 &&
+            !draw.shaderGraphProgram && !impostor;
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
                 (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
                 (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (features << 13) | (unsigned(shadowMask) << 19) |
-                (unsigned(deferredLocalLights) << 20),
+                (unsigned(deferredLocalLights) << 20) | (unsigned(prepassedCoverage) << 21),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -230,6 +235,8 @@ namespace PlutoGE::render
         ApplySurfaceFeatures(descriptor, features);
         ApplySurfaceShadowMask(descriptor, shadowMask);
         ApplySurfaceDeferredLocalLights(descriptor, deferredLocalLights);
+        ApplySurfacePrepassedCoverage(descriptor, prepassedCoverage);
+        if (prepassedCoverage) descriptor.depthCompare = rhi::CompareOperation::Equal;
         descriptor.debugName = impostor ? (depthOnly ? "Impostor coverage" : "Impostor cards")
             : terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
             : depthOnly ? "Geometry coverage" : "Geometry required outputs";

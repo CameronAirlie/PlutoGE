@@ -791,6 +791,9 @@ namespace PlutoGE::render
         // PLUTO_DEFERRED_LOCAL_LIGHTS=0 lights local lights in every surface shader, for comparisons.
         if (const char *value = std::getenv("PLUTO_DEFERRED_LOCAL_LIGHTS"); value && std::string_view(value) == "0")
             m_deferredLocalLightPolicy.enabled = false;
+        // PLUTO_PREPASSED_COVERAGE=0 keeps the alpha test's discard in prepassed shading, for comparisons.
+        if (const char *value = std::getenv("PLUTO_PREPASSED_COVERAGE"); value && std::string_view(value) == "0")
+            m_prepassedCoverage = false;
     }
     // Geometry object constants, in blocks shaped like the instanced vertex input (BasicInstanceObjectParameters).
     class GeometryObjectStream : public ObjectStream<BasicObjectParameters, kMaxInstancesPerDraw>

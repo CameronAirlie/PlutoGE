@@ -13,7 +13,7 @@ Each step lands as its own commit, keeps the previous path behind a switch, and 
 | 2 | Automatic resolution scaling from GPU time | Done | [DYNAMIC_RESOLUTION.md](../DYNAMIC_RESOLUTION.md) |
 | 3 | Deferred local lights for standard opaque surfaces | Done (neutral on Settlement; see doc) | [deferred-local-lights.md](deferred-local-lights.md) |
 | 4 | VSM signature planning: per-page plane setup, parallel order-independent signatures | Done (signatures 16.4 -> 4.9 ms on Verdant) | [vsm-signature-planning.md](vsm-signature-planning.md) |
-| 5 | Wider GPU-driven coverage: prepass and masked draws, occlusion for every mesh | Planned | |
+| 5 | Geometry coverage: early depth for prepassed alpha-tested surfaces (rescoped: occlusion measured negligible) | Done (-6.4% scene GPU on Verdant and Wind Fields) | [prepassed-coverage.md](prepassed-coverage.md) |
 | 6 | Bandwidth: smaller target formats, discard load/store ops, fewer full-screen passes | Planned | |
 | 7 | Directional shadow mask at reduced cost | Planned | |
 | 8 | Shadow LOD independent of the camera, with hysteresis | Planned | |

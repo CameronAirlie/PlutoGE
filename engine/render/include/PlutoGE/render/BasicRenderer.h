@@ -1218,6 +1218,9 @@ namespace PlutoGE::render
         // (src/DeferredLocalLights.h, Vulkan). The policy decides per frame; enabled = false lights them in each
         // surface shader, for comparisons.
         void SetDeferredLocalLights(const DeferredLocalLightPolicy &policy) noexcept { m_deferredLocalLightPolicy = policy; }
+        // Prepassed alpha-tested standard surfaces shade with an equal depth test and no discard, so depth is tested
+        // before shading (kSurfacePrepassedCoverage, Vulkan). On by default; off keeps the discard, for comparisons.
+        void SetPrepassedCoverage(bool enabled) noexcept { m_prepassedCoverage = enabled; }
         [[nodiscard]] const DeferredLocalLightPolicy &GetDeferredLocalLights() const noexcept { return m_deferredLocalLightPolicy; }
         // Records shadows and geometry on worker threads when the device supports it. The output is identical;
         // switching it off is for comparisons and debugging.
@@ -1450,6 +1453,7 @@ namespace PlutoGE::render
         std::unique_ptr<DeferredLocalLights> m_deferredLocalLights;
         DeferredLocalLightPolicy m_deferredLocalLightPolicy;
         bool m_deferredLocalLightsActive = false;
+        bool m_prepassedCoverage = true;
         // Whether this frame's prepassed shading pipelines read m_shadowMask (BasicRenderer::Render).
         bool m_shadowMaskActive = false;
         std::unique_ptr<DdgiVolume> m_ddgi;

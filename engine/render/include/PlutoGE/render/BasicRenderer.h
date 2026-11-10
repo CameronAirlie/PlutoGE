@@ -1635,6 +1635,8 @@ namespace PlutoGE::render
             std::uint64_t lastUpdateFrame = 0;
             std::vector<BasicDraw> pendingDraws;
             std::vector<std::pair<const BasicMesh *, std::uint64_t>> pendingMeshes;
+            // The textures pendingDraws bind (packed handles, VctTextureKey): like the meshes, borrowed from the scene.
+            std::vector<std::uint64_t> pendingTextures;
             BasicLighting pendingLighting;
             float pendingGraphTime=0;
             bool pendingInjectLocalLights = false;

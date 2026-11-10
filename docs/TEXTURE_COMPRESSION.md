@@ -38,6 +38,19 @@ sRGB forms; BC4, BC5 and BC7 are core). Anything unsupported stays RGBA8.
 - **Memory bound.** Queued encodes hold a copy of their source texels, capped at 256 MB
   (`TextureCompressionSettings::maxPendingBytes`). Textures beyond it keep RGBA8 until earlier encodes finish.
 
+## Replaced textures
+
+Swapping an upload (RGBA8 to compressed, or back for an exact use) must not destroy a texture something may still
+bind. Renderers sharing a device's texture cache prepare and record on their own schedules, so a replaced upload is
+retired (`TextureCache::retired`): it is released only after every live renderer has prepared its materials at or
+past the residency revision that replaced it (`TextureCache::preparedResidency`), and the device has completed the
+submission pending at that point.
+
+Progressive VCT updates keep copies of GI draws across frames (`BasicRenderer` cascade `pendingDraws`). They now record
+the textures those draws bind and abandon the update when one is no longer bound by any live draw, as they already did
+for meshes; otherwise they bound the released texture (`Invalid Vulkan texture binding`, every frame, in Verdant).
+Vulkan binding errors now name the texture handle and the bound pipeline.
+
 ## Settings
 
 `RhiSceneRenderer::SetTextureCompression(TextureCompressionSettings)` (shared by every renderer on a device):

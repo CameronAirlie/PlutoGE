@@ -2059,7 +2059,9 @@ namespace PlutoGE::render::rhi::vulkan
             auto *sampler = m_impl.samplers.Get(samplerHandle);
             if (slot >= MaxResourceSlots || !texture || !sampler)
                 throw std::invalid_argument("Invalid Vulkan texture binding (slot " + std::to_string(slot) + ": " +
-                    (!texture ? "missing texture" : !sampler ? "missing sampler" : "out of range") + ")");
+                    (!texture ? "missing texture" : !sampler ? "missing sampler" : "out of range") + ", texture " +
+                    std::to_string(textureHandle.index) + "/" + std::to_string(textureHandle.generation) + ", pipeline " +
+                    (m_pipeline ? m_pipeline->descriptor.debugName : std::string("none")) + ")");
             if (texture->descriptor.usage != TextureUsage::Sampled && !texture->descriptor.sampled)
                 throw std::invalid_argument("Vulkan texture was not created with sampled usage");
             RequireImageLayout(*texture, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, ShaderReadStages(),

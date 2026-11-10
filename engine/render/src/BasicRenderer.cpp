@@ -60,6 +60,7 @@
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -84,6 +85,24 @@ namespace PlutoGE::render
             "RHI Bloom", "RHI Lens Flare", "RHI Motion Blur", "RHI Depth of Field", "RHI Auto Exposure",
             "RHI TAA", "RHI SSAO", "RHI SSGI", "RHI SSR", "RHI Volumetric Fog", "RHI Physical Sky",
             "RHI Volumetric Clouds", "RHI Scene Composite", "RHI VCT GI", "RHI Ocean", "RHI DDGI"};
+
+        // A texture handle as one value, for the sets of textures progressive VCT jobs borrow.
+        std::uint64_t VctTextureKey(rhi::TextureHandle texture)
+        {
+            return (std::uint64_t{texture.generation} << 32) | texture.index;
+        }
+        // Every texture a GI draw binds while voxelized or shadowed.
+        template <class Visit>
+        void ForEachDrawTexture(const BasicDraw &draw, Visit visit)
+        {
+            for (const auto texture : {draw.baseColorTexture, draw.normalTexture, draw.metallicTexture, draw.roughnessTexture,
+                                       draw.emissionTexture})
+                if (texture) visit(texture);
+            for (const auto texture : draw.surfaceTextures)
+                if (texture) visit(texture);
+            for (const auto texture : draw.graphTextures)
+                if (texture) visit(texture);
+        }
 
         // MaterialParameters::hasNormalTexture (BasicLit.slang): 0 none, 1 RGB normals, 2 XY normals (BC5).
         std::uint32_t MaterialNormalMode(const BasicDraw &draw)
@@ -5852,9 +5871,15 @@ namespace PlutoGE::render
         // identities using only live draws before touching any queued pointer.
         // Revisions also distinguish a replacement allocated at the same address.
         std::unordered_map<const BasicMesh *, std::uint64_t> liveMeshes;
+        // Textures too: a scene texture can be replaced (a reload, a block-compressed upload), after which the old
+        // one is released once every renderer has prepared past it, and a queued draw still binding it would fail.
+        std::unordered_set<std::uint64_t> liveTextures;
         for (const auto &draw : draws)
             if (draw.mesh && draw.contributesToGi && draw.surfaceType != 1 && draw.alphaMode != 2)
+            {
                 liveMeshes.emplace(draw.mesh, draw.mesh->GetRevision());
+                ForEachDrawTexture(draw, [&](rhi::TextureHandle texture) { liveTextures.insert(VctTextureKey(texture)); });
+            }
         const float updateSpeed = settings.updateSpeed;
         // Strength changes reuse the original injection and cached unit bounce.
         const auto updateInterval = settings.updateInterval;
@@ -5862,14 +5887,17 @@ namespace PlutoGE::render
         for (std::uint32_t index = 0; index < cascadeCount; ++index)
         {
             auto &cascade = m_vctCascades[index];
-            if (cascade.rebuilding && std::ranges::any_of(cascade.pendingMeshes,
+            if (cascade.rebuilding && (std::ranges::any_of(cascade.pendingMeshes,
                 [&](const auto &mesh) {
                     const auto live = liveMeshes.find(mesh.first);
                     return live == liveMeshes.end() || live->second != mesh.second;
-                }))
+                }) || std::ranges::any_of(cascade.pendingTextures, [&](std::uint64_t texture) {
+                    return !liveTextures.contains(texture);
+                })))
             {
                 cascade.pendingDraws.clear();
                 cascade.pendingMeshes.clear();
+                cascade.pendingTextures.clear();
                 cascade.rebuilding = false;
                 // Only the pending job borrowed these meshes. The published
                 // radiance is independent GPU data and remains usable until a
@@ -5914,6 +5942,7 @@ namespace PlutoGE::render
                 cascade.pendingGraphTime=ShaderGraphTimeSeconds();
                 cascade.pendingDraws.clear();
                 cascade.pendingMeshes.clear();
+                cascade.pendingTextures.clear();
                 if (geometryChanged || shadowChanged) for (const auto &draw : draws)
                 {
                     // This queue survives across frames. Animated meshes are
@@ -5924,6 +5953,9 @@ namespace PlutoGE::render
                         !draw.mesh || !draw.mesh->IsValid())
                         continue;
                     cascade.pendingMeshes.emplace_back(draw.mesh, draw.mesh->GetRevision());
+                    ForEachDrawTexture(draw, [&](rhi::TextureHandle texture) {
+                        cascade.pendingTextures.push_back(VctTextureKey(texture));
+                    });
                     if (draw.instanceModels && !draw.instanceModels->empty())
                         for (const auto &model : *draw.instanceModels)
                         {
@@ -6190,6 +6222,7 @@ namespace PlutoGE::render
                     if (!cascade.secondaryReady) cascade.secondaryDirty = true;
                     cascade.pendingDraws.clear();
                     cascade.pendingMeshes.clear();
+                    cascade.pendingTextures.clear();
                     cascade.rebuilding = false;
                     cascade.secondaryPass = false;
                     m_vctNextCascade = (std::uint32_t(rebuildIndex) + 1) % cascadeCount;

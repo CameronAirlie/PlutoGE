@@ -43,6 +43,7 @@
 #include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <atomic>
+#include <limits>
 #include <chrono>
 #include <cmath>
 #include <numeric>
@@ -199,6 +200,8 @@ namespace PlutoGE::render
             caches[&device] = m_textureCache = std::make_shared<TextureCache>();
         if (!m_textureCache->compression)
             m_textureCache->compression = std::make_shared<RhiTextureCompression>(device, m_textureCompressionSettings);
+        *m_preparedResidency = 0;
+        m_textureCache->preparedResidency.push_back(m_preparedResidency);
         m_renderer = std::move(renderer);
         m_upscalerContextId = g_nextUpscalerContextId.fetch_add(1, std::memory_order_relaxed);
         return true;
@@ -597,6 +600,24 @@ namespace PlutoGE::render
             }
             return std::nullopt;
         };
+        // Retire, rather than destroy, an upload this Prepare replaces (TextureCache::retired).
+        {
+            auto &observers = m_textureCache->preparedResidency;
+            std::erase_if(observers, [](const auto &observer) { return observer.expired(); });
+            std::uint64_t everyRenderer = std::numeric_limits<std::uint64_t>::max();
+            for (const auto &observer : observers)
+                everyRenderer = std::min(everyRenderer, *observer.lock());
+            std::erase_if(m_textureCache->retired, [&](TextureCache::RetiredTexture &retired) {
+                if (!retired.releaseSubmission && everyRenderer >= retired.residency)
+                    retired.releaseSubmission = m_device->PendingSubmission();
+                return retired.releaseSubmission && m_device->CompletedSubmission() >= *retired.releaseSubmission &&
+                       everyRenderer != std::numeric_limits<std::uint64_t>::max();
+            });
+        }
+        // The residency revision that supersedes the texture: renderers re-prepare once they have seen it.
+        const auto retire = [&](CachedTexture &cached) {
+            m_textureCache->retired.push_back({std::move(cached.texture), m_textureCache->residencyRevision + 1});
+        };
         // Finished background encodes replace the RGBA8 upload of the revision they were encoded from. Materials
         // sampling them re-prepare through the residency revision, like any other texture change.
         if (m_textureCache->compression)
@@ -614,6 +635,8 @@ namespace PlutoGE::render
                     continue;
                 if (auto compressed = createCompressedTexture(done.texture, "Compressed material texture"))
                 {
+                    if (existing != cache.end())
+                        retire(existing->second);
                     cache.insert_or_assign(done.source, std::move(*compressed));
                     ++m_textureCache->residencyRevision;
                     ++m_timingStats.compressedTextureUploads;
@@ -657,6 +680,7 @@ namespace PlutoGE::render
                     return entry.Get();
                 }
                 // An exact use needs the RGBA8 texels: replace the compressed upload and keep it uncompressed.
+                retire(entry);
                 cache.erase(cached);
                 ++m_textureCache->residencyRevision;
             }
@@ -2349,6 +2373,8 @@ namespace PlutoGE::render
                 decals.push_back(draw);
             }
         }
+        // Every material this frame draws was prepared at the current residency (TextureCache::retired).
+        *m_preparedResidency = m_textureCache->residencyRevision;
         PreparedFrame frame;
         frame.viewProjection = projection * cameraData.view;
         frame.lighting = effectiveLighting;

@@ -449,6 +449,20 @@ namespace PlutoGE::render
           std::unordered_map<const Texture *, CachedTexture> srgb, linear, normal;
           // Shared by every renderer on the device, like the caches it fills.
           std::shared_ptr<RhiTextureCompression> compression;
+          // Uploads replaced while renderers on the device may still hold them. Renderers sharing the cache prepare
+          // and record on their own schedules (render textures, camera layers), and keep prepared draws between
+          // Prepares, so a replaced texture lives until every renderer has prepared its materials since the
+          // replacement (`residency` versus each renderer's `preparedResidency`), and the device has completed the
+          // submission pending at that point.
+          struct RetiredTexture
+          {
+              rhi::Texture texture;
+              std::uint64_t residency = 0;
+              std::optional<std::uint64_t> releaseSubmission;
+          };
+          std::vector<RetiredTexture> retired;
+          // Each live renderer's residencyRevision as of its last material preparation.
+          std::vector<std::weak_ptr<const std::uint64_t>> preparedResidency;
           std::unordered_map<const Texture *, TextureVersion> versions;
           // Each read texture's mean: raw channels (linear data) and its colour decoded from sRGB (alpha raw).
           struct Mean { glm::vec4 raw{0.0f}, srgb{0.0f}; };
@@ -458,6 +472,8 @@ namespace PlutoGE::render
       };
       std::shared_ptr<TextureCache> m_textureCache;
       TextureCompressionSettings m_textureCompressionSettings = TextureCompressionSettings::FromEnvironment();
+      // This renderer's TextureCache::preparedResidency entry.
+      std::shared_ptr<std::uint64_t> m_preparedResidency = std::make_shared<std::uint64_t>(0);
       struct CachedIblCapture
       {
           TextureVersion version;

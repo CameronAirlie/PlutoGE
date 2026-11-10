@@ -267,9 +267,10 @@ These are recommended scene changes; this work does not apply them.
   depend on the camera (or that have hysteresis) would keep pages cached.
 - **Resolution policy recovery.** Recovery needs nothing deferred. In a scene that always has deferred updates, the
   scale never returns to 1, even when the pool would fit.
-- **Signature planning cost.** Every requested page still loops over every caster chunk (about 5 ms on the Vega 8
-  while the camera moves). Binning casters to pages from each caster's footprint would make it proportional to the
-  pairs that meet.
+- **Signature planning cost.** Every requested page still loops over every caster chunk, but each test is now six dot
+  products against planes built once per page, and signatures are reduced in parallel
+  ([VSM signature planning](vsm-signature-planning.md): 16.4 to 4.9 ms on Verdant while the camera travels). Binning
+  casters to pages from each caster's footprint would make it proportional to the pairs that meet.
 - **Fine-level caster cost.** Fine levels draw each caster's own (floored) LOD; L4 holds the most dirty triangles
   while the camera moves. Per-instance LODs, as cascades have, would help there.
 - **Culling bounds.** `InstanceBinning` and `RhiSceneRenderer` still pad culling bounds with the any-wind bound.

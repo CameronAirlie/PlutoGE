@@ -303,22 +303,38 @@ void allocateMain(uint lane : SV_GroupIndex)
     }
 }
 
-// Conservative bounds/page test. `extents` is a world AABB around sphere.xyz, or negative to test the sphere alone.
-bool intersects(float4 sphere, float4 extents, VirtualShadowPage page)
+// A page's six bounding planes in world space, and the root level's smallest caster: what intersects tests every caster
+// against. A page's planes are the same for every caster, so planning builds them once per page (PageBounds) rather
+// than transforming six planes by the level's matrix for every caster and model it tests.
+struct PageBounds
 {
-    if (sphere.w < 0) return true;
-    uint level = page.address.z;
-    if (level == virtualRootLevel(vsm) && sphere.w < vsm.metrics[level].x * vsm.culling.x) return false;
+    float4 planes[6];
+    float minimumRadius; // casters smaller than this skip the page (the root level culls tiny casters); else -1
+};
+PageBounds pageBounds(VirtualShadowPage page)
+{
+    PageBounds bounds;
+    const uint level = page.address.z;
     // Homogeneous page planes support both orthographic and perspective
     // projections. The AABB support function is tighter than a sphere for
     // architectural surfaces, while remaining conservative under clipping.
-    float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(vsm, level) * 2.0 - 1.0;
-    float2 hi = lo + 2.0 / virtualGrid(vsm, level);
-    float4 planes[6] = {float4(1,0,0,-lo.x), float4(-1,0,0,hi.x),
+    const float2 lo = float2(virtualPageCoordinate(page.state.x)) / virtualGrid(vsm, level) * 2.0 - 1.0;
+    const float2 hi = lo + 2.0 / virtualGrid(vsm, level);
+    const float4 clipPlanes[6] = {float4(1,0,0,-lo.x), float4(-1,0,0,hi.x),
         float4(0,1,0,-lo.y), float4(0,-1,0,hi.y), float4(0,0,1,0), float4(0,0,-1,1)};
     for (int i = 0; i < 6; ++i)
+        bounds.planes[i] = mul(clipPlanes[i], vsm.matrices[level]);
+    bounds.minimumRadius = level == virtualRootLevel(vsm) ? vsm.metrics[level].x * vsm.culling.x : -1.0;
+    return bounds;
+}
+// Conservative bounds/page test. `extents` is a world AABB around sphere.xyz, or negative to test the sphere alone.
+bool intersects(float4 sphere, float4 extents, PageBounds page)
+{
+    if (sphere.w < 0) return true;
+    if (sphere.w < page.minimumRadius) return false;
+    for (int i = 0; i < 6; ++i)
     {
-        float4 plane = mul(planes[i], vsm.matrices[level]);
+        const float4 plane = page.planes[i];
         float radius = extents.x >= 0 ? dot(abs(plane.xyz), extents.xyz) : sphere.w * length(plane.xyz);
         float distance = dot(plane, float4(sphere.xyz, 1));
         float tolerance = 1.e-5 * (1.0 + abs(distance) + radius);
@@ -326,11 +342,15 @@ bool intersects(float4 sphere, float4 extents, VirtualShadowPage page)
     }
     return true;
 }
+bool intersects(float4 sphere, float4 extents, VirtualShadowPage page)
+{
+    return intersects(sphere, extents, pageBounds(page));
+}
 // Whether a caster chunk can draw into the page at all: the page's level is one the chunk serves (a LOD variant serves
 // only the levels whose texels its detail suits), and the chunk's whole bounds reach it.
-bool casterReaches(VirtualShadowCaster caster, VirtualShadowPage page)
+bool casterReaches(VirtualShadowCaster caster, VirtualShadowPage page, PageBounds bounds)
 {
-    return virtualCasterServesLevel(caster, page.address.z) && intersects(caster.bounds, caster.extents, page);
+    return virtualCasterServesLevel(caster, page.address.z) && intersects(caster.bounds, caster.extents, bounds);
 }
 // A caster/page pair's membership record. Records are page-major, so the consecutive casters a wave evaluates for one
 // page (signatureMain), and for each updated page (binMain), read one contiguous block rather than a record per cache
@@ -338,13 +358,13 @@ bool casterReaches(VirtualShadowCaster caster, VirtualShadowPage page)
 uint membershipRecord(uint caster, uint slot) { return slot * virtualMembershipStride(vsm) + caster; }
 // Which of a caster's models reach the page: a bit per chunk-local model for masked chunks of several models, otherwise
 // 1 when the chunk does (its page entry then draws every model). Zero when none does.
-uint intersectionMask(uint index, VirtualShadowCaster caster, VirtualShadowPage page)
+uint intersectionMask(uint index, VirtualShadowCaster caster, VirtualShadowPage page, PageBounds bounds)
 {
-    if (!casterReaches(caster, page)) return 0;
+    if (!casterReaches(caster, page, bounds)) return 0;
     if (caster.draw.z <= 1 || !virtualMaskedCaster(caster)) return 1;
     uint mask = 0;
     for (uint model = 0; model < caster.draw.z; ++model)
-        if (intersects(instanceBounds[index * PLUTO_VSM_MASKED_INSTANCES + model], float4(-1, -1, -1, 0), page))
+        if (intersects(instanceBounds[index * PLUTO_VSM_MASKED_INSTANCES + model], float4(-1, -1, -1, 0), bounds))
             mask |= 1u << model;
     return mask;
 }
@@ -362,81 +382,102 @@ uint swayingMask(VirtualShadowCaster caster, VirtualShadowPage page, uint mask)
 {
     return caster.still.z != 0 && pageSways(page) ? mask : 0;
 }
-uint mixHash(uint hash, uint value) { return (hash ^ value) * 16777619u; }
-groupshared uint4 signatureItems[64];
-// Whether any caster of the current block of 64 reaches the page. A page reaches few casters, so most blocks have
-// nothing to hash, and lane 0 skips them rather than stepping over 64 empty items.
-groupshared uint signatureBlockUsed;
-[shader("compute")][numthreads(64, 1, 1)]
+// A strong 32-bit mix (murmur3's finaliser), for the order-independent page signatures below.
+uint finalMix(uint value)
+{
+    value ^= value >> 16; value *= 0x85ebca6bu;
+    value ^= value >> 13; value *= 0xc2b2ae35u;
+    return value ^ (value >> 16);
+}
+// Adds `value` to the 64-bit sum (lo, hi), so a sum of 32-bit costs saturates exactly at the end (signatureCost).
+void addWide(inout uint2 sum, uint value)
+{
+    const uint previous = sum.x;
+    sum.x += value;
+    if (sum.x < previous) ++sum.y;
+}
+uint signatureCost(uint2 sum) { return sum.y != 0 ? 0xffffffffu : sum.x; }
+
+// A page's signature is the set of (caster, models, pose) items that reach it, each hashed on its own and summed, with
+// the static casters' items summed apart; costs are summed exactly and saturate. Every lane evaluates its own casters
+// and the group adds the sums once, so planning a page takes no serial step per caster: the previous ordered hash ran
+// on one lane, item by item, behind two barriers per block of 64 casters, and dominated planning.
+#define VSM_SIGNATURE_LANES 256
+groupshared uint signatureSums[12]; // hash lo/hi, static hash lo/hi, static cost lo/hi, dynamic cost lo/hi
+[shader("compute")][numthreads(VSM_SIGNATURE_LANES, 1, 1)]
 void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
 {
     VirtualShadowPage p = pages[group.x];
     if (p.state.y != vsm.limits.y) return;
-    uint2 hash = uint2(2166136261u, 3339675911u), staticHash = hash;
-    uint staticCost = 0, dynamicCost = 0;
-    if (lane == 0) signatureBlockUsed = 0;
+    if (lane < 12) signatureSums[lane] = 0;
     GroupMemoryBarrierWithGroupSync();
-    for (uint first = 0; first < vsm.limits.x; first += 64)
+    const PageBounds bounds = pageBounds(p);
+    const bool swaying = pageSways(p);
+    uint2 hash = 0, staticHash = 0, staticCost = 0, dynamicCost = 0;
+    for (uint index = lane; index < vsm.limits.x; index += VSM_SIGNATURE_LANES)
     {
-        uint index = first + lane;
-        uint4 item = 0;
-        VirtualShadowCaster caster;
-        if (index < vsm.limits.x) caster = casters[index];
+        // Most casters miss most pages, and a valid cached record says so without the rest of the caster: read its
+        // identity (levels served, membership generation) first, and the whole record only when the membership must
+        // be evaluated or the caster reaches the page.
+        const uint4 casterIdentity = casters[index].identity;
         // A chunk serving other levels (a LOD variant) never reaches the page, and its membership record for the page
         // is neither read nor written: binMain applies the same test before reading one.
-        if (index < vsm.limits.x && virtualCasterServesLevel(caster, p.address.z))
+        if (((casterIdentity.w >> p.address.z) & 1u) == 0) continue;
+        const uint at = membershipRecord(index, group.x);
+        uint2 cached = membership[at];
+        const bool stale = cached.x == 0 || cached.x < casterIdentity.z || cached.x < p.pending.w;
+        if (!stale && cached.y == 0) continue;
+        const VirtualShadowCaster caster = casters[index];
+        if (stale)
         {
-            uint at = membershipRecord(index, group.x);
-            uint2 cached = membership[at];
-            if (cached.x == 0 || cached.x < caster.identity.z || cached.x < p.pending.w)
-            {
-                cached = uint2(vsm.limits.y, intersectionMask(index, caster, p));
-                membership[at] = cached;
-            }
-            const uint mask = cached.y;
-            if (mask != 0)
-            {
-                // The page's content is the rest pose unless it sways; the masks distinguish which models it holds.
-                const uint sways = swayingMask(caster, p, mask);
-                const uint2 identity = sways != 0 ? caster.identity.xy : caster.still.xy;
-                const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(mask) : caster.draw.z;
-                // w: 1 for a static caster, 2 for a dynamic one.
-                item = uint4(mixHash(identity.x, mask), mixHash(identity.y, sways), (caster.draw.x / 3) * models,
-                             caster.still.w != 0 ? 2u : 1u);
-            }
+            cached = uint2(vsm.limits.y, intersectionMask(index, caster, p, bounds));
+            membership[at] = cached;
         }
-        signatureItems[lane] = item;
-        if (item.w != 0) InterlockedOr(signatureBlockUsed, 1u);
-        GroupMemoryBarrierWithGroupSync();
-        // Retain the exact ordered hash and saturating cost; parallelising the
-        // intersection/cache loads must not change cache identity or budgets.
-        if (lane == 0 && signatureBlockUsed != 0) for (uint itemIndex = 0; itemIndex < min(64u, vsm.limits.x - first); ++itemIndex)
+        const uint mask = cached.y;
+        if (mask == 0) continue;
+        // The page's content is the rest pose unless it sways; the masks distinguish which models it holds.
+        const uint sways = caster.still.z != 0 && swaying ? mask : 0u; // swayingMask, with the page's test hoisted
+        const uint2 identity = sways != 0 ? caster.identity.xy : caster.still.xy;
+        const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(mask) : caster.draw.z;
+        // Only content takes part, not the chunk's index: chunks shift as casters enter and leave the list, and a page
+        // whose casters did not change must keep its signature (and its cached depth).
+        const uint2 item = uint2(finalMix(identity.x ^ finalMix(mask + 0x7f4a7c15u)),
+                                 finalMix(identity.y ^ finalMix(sways + 0x9e3779b9u)));
+        hash += item;
+        const uint cost = (caster.draw.x / 3) * models;
+        if (caster.still.w != 0)
+            addWide(dynamicCost, cost);
+        else
         {
-            uint4 next = signatureItems[itemIndex];
-            if (next.w == 0) continue;
-            hash.x = mixHash(mixHash(hash.x, next.x), next.y);
-            hash.y = mixHash(mixHash(hash.y, next.y), next.x);
-            if (next.w == 1)
-            {
-                staticHash.x = mixHash(mixHash(staticHash.x, next.x), next.y);
-                staticHash.y = mixHash(mixHash(staticHash.y, next.y), next.x);
-                staticCost += min(next.z, 0xffffffffu - staticCost);
-            }
-            else dynamicCost += min(next.z, 0xffffffffu - dynamicCost);
+            staticHash += item;
+            addWide(staticCost, cost);
         }
-        // Only lane 0 reads the flag; it clears it before the barrier that precedes the next block's writes.
-        if (lane == 0) signatureBlockUsed = 0;
-        GroupMemoryBarrierWithGroupSync();
     }
+    InterlockedAdd(signatureSums[0], hash.x);
+    InterlockedAdd(signatureSums[1], hash.y);
+    InterlockedAdd(signatureSums[2], staticHash.x);
+    InterlockedAdd(signatureSums[3], staticHash.y);
+    // Wide sums: add the low words, carrying into the high words.
+    uint previous;
+    InterlockedAdd(signatureSums[4], staticCost.x, previous);
+    InterlockedAdd(signatureSums[5], staticCost.y + (previous + staticCost.x < previous ? 1u : 0u));
+    InterlockedAdd(signatureSums[6], dynamicCost.x, previous);
+    InterlockedAdd(signatureSums[7], dynamicCost.y + (previous + dynamicCost.x < previous ? 1u : 0u));
+    GroupMemoryBarrierWithGroupSync();
     if (lane == 0)
     {
+        // Seeded so a page reaching no caster keeps the empty signature it always had.
+        const uint2 pageHash = uint2(signatureSums[0], signatureSums[1]) + uint2(2166136261u, 3339675911u);
+        const uint2 pageStaticHash = uint2(signatureSums[2], signatureSums[3]) + uint2(2166136261u, 3339675911u);
+        const uint staticTotal = signatureCost(uint2(signatureSums[4], signatureSums[5]));
+        const uint dynamicTotal = signatureCost(uint2(signatureSums[6], signatureSums[7]));
         // An update redraws the static layer when its casters changed, the page has no depth yet, or the layer was
         // (re)created since; otherwise it restores the layer and costs only the dynamic casters.
         const bool redrawStatic = !virtualStaticLayer(vsm) || p.state.z == 0 || p.layer.z != vsm.levels.y ||
-            any(p.layer.xy != staticHash);
-        const uint cost = redrawStatic ? staticCost + min(dynamicCost, 0xffffffffu - staticCost) : dynamicCost;
-        p.pending = uint4(hash, cost, p.pending.w);
-        p.freshness.yzw = uint3(staticHash, redrawStatic ? 1u : 0u);
+            any(p.layer.xy != pageStaticHash);
+        const uint cost = redrawStatic ? staticTotal + min(dynamicTotal, 0xffffffffu - staticTotal) : dynamicTotal;
+        p.pending = uint4(pageHash, cost, p.pending.w);
+        p.freshness.yzw = uint3(pageStaticHash, redrawStatic ? 1u : 0u);
         pages[group.x] = p;
     }
 }

@@ -23,6 +23,10 @@
 [[vk::binding(12, 0)]] cbuffer VirtualShadowData : register(b12, space0) { VirtualShadowParameters vsm; };
 [[vk::binding(13, 0)]] Sampler2D virtualShadowAtlas : register(t13, space0);
 [[vk::binding(14, 0)]] Sampler2D virtualShadowTable : register(t14, space0);
+// The froxel lighting volume (FogFroxels.slang): this frame's, and the previous frame's for the injection's
+// temporal reuse. Bound only by the froxel pipelines.
+[[vk::binding(3, 0)]] Sampler2D fogFroxels : register(t3, space0);
+[[vk::binding(4, 0)]] Sampler2D fogFroxelHistory : register(t4, space0);
 
 static const float PI = 3.14159265359;
 #include "PhysicalSkyEnvironment.slang"
@@ -138,7 +142,79 @@ float directionalVisibility(float3 worldPosition)
 
 [shader("vertex")] FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
 
-float4 integrateFog(FullscreenVertexOutput input)
+// Distance along `rayDirection` over which fog lighting has shadow and density detail: Shadow Detail Distance, cut
+// to the cascades' reach (virtual shadow maps reach any distance).
+float fogDetailDistance(float3 rayDirection)
+{
+    float detailDistance = max(pass.parameters[1].z, 0.001);
+    if (fogShadowsEnabled != 0 && fogShadowCascadeParameters.w <= 0.5)
+    {
+        const int count = clamp((int)fogShadowCascadeParameters.x, 1, 4);
+        const float viewScale = max(-mul((float3x3)fogView, rayDirection).z, 0.0001);
+        detailDistance = min(detailDistance, max(fogShadowCascadeSplits[count - 1], 0.001) / viewScale);
+    }
+    return detailDistance;
+}
+
+// The medium's lighting along one ray.
+struct FogRayLighting
+{
+    FogMedium medium;
+    FogLighting lighting;
+    float3 lightDirection;
+    bool hasDirectionalLight;
+};
+
+FogRayLighting fogRayLighting(float3 rayDirection)
+{
+    FogRayLighting result;
+    result.lightDirection = normalize(-fogDirectionalDirectionIntensity.xyz);
+    // Keep the phase normalized: multiplying by 4 PI creates excess radiance.
+    const float phase = henyeyGreenstein(dot(rayDirection, result.lightDirection));
+    const float scattering = max(pass.parameters[1].w, 0.0);
+    const float3 fogColor = max(pass.parameters[0].rgb, 0.0);
+    result.hasDirectionalLight = fogDirectionalDirectionIntensity.w > 0.0 &&
+                                 any(fogDirectionalColor.rgb > 0.0) &&
+                                 pass.parameters[2].z > 0.0;
+    result.medium = makeFogMedium(pass.parameters[0].w, pass.parameters[1].x, pass.parameters[1].y);
+    result.lighting.ambientAlbedo = fogColor * max(pass.parameters[2].y, 0.0) * scattering;
+    result.lighting.environment = fogEnvironmentLighting(fogCameraPositionAmbient.w);
+    result.lighting.sunRadiance = result.hasDirectionalLight
+        ? fogColor * max(fogDirectionalColor.rgb, 0.0) *
+              fogDirectionalDirectionIntensity.w * phase * pass.parameters[2].z * scattering
+        : 0.0;
+    return result;
+}
+
+// One cell of the march: the light it scatters toward the camera and its density variation, both faded by
+// `detailWeight` toward the distant model (unshadowed, mean density).
+struct FogCell
+{
+    float3 radiance;
+    float densityScale;
+};
+
+FogCell evaluateFogCell(FogRayLighting ray, float3 position, float detailWeight, bool lit)
+{
+    FogCell cell;
+    cell.radiance = 0.0;
+    if (lit)
+    {
+        const float lightVisibility = ray.hasDirectionalLight
+            ? lerp(1.0, directionalVisibility(position), detailWeight)
+            : 1.0;
+        cell.radiance = fogPointRadiance(ray.lighting, ray.medium, fogCloudOcclusion, position, ray.lightDirection,
+                                         lightVisibility);
+    }
+    cell.densityScale = fogDensityScale(position, detailWeight);
+    return cell;
+}
+
+#include "FogFroxels.slang"
+
+// `froxels`: read each cell's lighting and density from the froxel volume (FogFroxels.slang) rather than evaluating
+// shadows and noise per step. A compile-time constant at each entry point.
+float4 integrateFog(FullscreenVertexOutput input, bool froxels)
 {
     // Depth is fetched with nearest filtering at full resolution. Reconstruct
     // its ray from that texel's centre, not the half-resolution sample location.
@@ -147,7 +223,6 @@ float4 integrateFog(FullscreenVertexOutput input)
     const float2 uv = (floor(orientFullscreenUv(input.uv, pass.flipY) / pass.inverseResolution) + 0.5) *
                       pass.inverseResolution;
     const float sceneDepth = depthTexture.Sample(uv).r;
-    const float configuredDetailDistance = max(pass.parameters[1].z, 0.001);
     const float3 rayDirection = reconstructWorldRay(uv, pass.view, pass.projection, pass.flipY);
 
     const bool sky = sceneDepth <= 0.0;
@@ -165,13 +240,7 @@ float4 integrateFog(FullscreenVertexOutput input)
             surfaceDistance = length(surfacePosition - pass.cameraPosition.xyz);
         }
     }
-    float detailDistance = configuredDetailDistance;
-    if (fogShadowsEnabled != 0 && fogShadowCascadeParameters.w <= 0.5)
-    {
-        const int count = clamp((int)fogShadowCascadeParameters.x, 1, 4);
-        const float viewScale = max(-mul((float3x3)fogView, rayDirection).z, 0.0001);
-        detailDistance = min(detailDistance, max(fogShadowCascadeSplits[count - 1], 0.001) / viewScale);
-    }
+    const float detailDistance = fogDetailDistance(rayDirection);
     const float marchDistance = sky ? detailDistance : min(surfaceDistance, detailDistance);
     if ((!sky && surfaceDistance <= 0.0001) || (pass.parameters[0].w <= 0.0 && pass.parameters[3].y <= 0.0))
         return float4(0, 0, 0, 1);
@@ -180,22 +249,10 @@ float4 integrateFog(FullscreenVertexOutput input)
     const int shadowStepStride = clamp((int)pass.parameters[3].x, 1, 4);
     const float stepLength = marchDistance / (float)stepCount;
     const float jitter = interleavedGradientNoise(input.position.xy, pass.time * 60.0);
-    const float3 lightDirection = normalize(-fogDirectionalDirectionIntensity.xyz);
-    // Keep the phase normalized: multiplying by 4 PI creates excess radiance.
-    const float phase = henyeyGreenstein(dot(rayDirection, lightDirection));
-    const float scattering = max(pass.parameters[1].w, 0.0);
-    const float3 fogColor = max(pass.parameters[0].rgb, 0.0);
-    const bool hasDirectionalLight = fogDirectionalDirectionIntensity.w > 0.0 &&
-                                     any(fogDirectionalColor.rgb > 0.0) &&
-                                     pass.parameters[2].z > 0.0;
-    const FogMedium medium = makeFogMedium(pass.parameters[0].w, pass.parameters[1].x, pass.parameters[1].y);
-    FogLighting lighting;
-    lighting.ambientAlbedo = fogColor * max(pass.parameters[2].y, 0.0) * scattering;
-    lighting.environment = fogEnvironmentLighting(fogCameraPositionAmbient.w);
-    lighting.sunRadiance = hasDirectionalLight
-        ? fogColor * max(fogDirectionalColor.rgb, 0.0) *
-              fogDirectionalDirectionIntensity.w * phase * pass.parameters[2].z * scattering
-        : 0.0;
+    const FogRayLighting ray = fogRayLighting(rayDirection);
+    const FogMedium medium = ray.medium;
+    const FogLighting lighting = ray.lighting;
+    const float3 lightDirection = ray.lightDirection;
 
     float transmittance = 1.0;
     float3 accumulatedLight = 0.0;
@@ -213,20 +270,17 @@ float4 integrateFog(FullscreenVertexOutput input)
             frac(jitter + (float)stepIndex * 0.61803398875)) * stepLength;
         const float3 cellPosition = pass.cameraPosition.xyz + rayDirection * cellDistance;
         const float detailWeight = fogShadowWeight(cellDistance, detailDistance);
-        if ((stepIndex % shadowStepStride) == 0)
-        {
-            const float lightVisibility = hasDirectionalLight
-                ? lerp(1.0, directionalVisibility(cellPosition), detailWeight)
-                : 1.0;
-            pointRadiance = fogPointRadiance(lighting, medium, fogCloudOcclusion, cellPosition,
-                                             lightDirection, lightVisibility);
-        }
-
         // Density variation fades with shadow detail so the march meets the
         // analytic mean-density tail without a visible boundary.
+        FogCell cell;
+        if (froxels)
+            cell = sampleFogFroxels(fogFroxels, uv, cellDistance);
+        else
+            cell = evaluateFogCell(ray, cellPosition, detailWeight, (stepIndex % shadowStepStride) == 0);
+        if (froxels || (stepIndex % shadowStepStride) == 0)
+            pointRadiance = cell.radiance;
         const float segmentTransmittance = exp(-heightFogOpticalDepth(medium.density, medium.falloff,
-            medium.heightOffset, samplePosition.y, rayDirection.y, stepLength) *
-            fogDensityScale(cellPosition, detailWeight));
+            medium.heightOffset, samplePosition.y, rayDirection.y, stepLength) * cell.densityScale);
         const float segmentWeight = transmittance * (1.0 - segmentTransmittance);
         accumulatedLight += segmentWeight * pointRadiance;
         scatterDistance += segmentWeight * cellDistance;
@@ -280,12 +334,24 @@ float4 integrateFog(FullscreenVertexOutput input)
 }
 
 [shader("fragment")]
-float4 traceMain(FullscreenVertexOutput input) : SV_Target { return integrateFog(input); }
+float4 traceMain(FullscreenVertexOutput input) : SV_Target { return integrateFog(input, false); }
 
 [shader("fragment")]
-float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
+float4 traceFroxelMain(FullscreenVertexOutput input) : SV_Target { return integrateFog(input, true); }
+
+float4 composeFog(FullscreenVertexOutput input, bool froxels)
 {
     const float4 scene = sceneTexture.Sample(orientFullscreenUv(input.uv, pass.flipY));
-    const float4 volume = integrateFog(input);
+    const float4 volume = integrateFog(input, froxels);
     return float4(scene.rgb * volume.a + volume.rgb, scene.a);
 }
+
+[shader("fragment")]
+float4 fragmentMain(FullscreenVertexOutput input) : SV_Target { return composeFog(input, false); }
+
+[shader("fragment")]
+float4 fragmentFroxelMain(FullscreenVertexOutput input) : SV_Target { return composeFog(input, true); }
+
+// Lights one froxel of this frame's volume (FogFroxels.slang) and blends it with the previous frame's.
+[shader("fragment")]
+float4 froxelMain(FullscreenVertexOutput input) : SV_Target { return injectFogFroxel(int2(input.position.xy)); }

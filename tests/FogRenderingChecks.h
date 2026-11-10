@@ -7,7 +7,104 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <span>
+#include <utility>
+#include <vector>
 #include <glm/gtc/matrix_transform.hpp>
+
+// The froxel lighting volume (FogFroxels.h) against fog that evaluates its lighting at every step: cascade-shadowed
+// sunlight under a roof over the left half of the view must give the same shafts once the volume has converged.
+template <class ReadPixels>
+void CheckFogFroxels(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    constexpr int width = 96, height = 64;
+    renderer.Resize(width, height);
+    BasicLighting lighting;
+    lighting.cameraPosition = {0, 1, 0};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0, 1, -1), glm::vec3(0, 1, 0));
+    lighting.ambientIntensity = 0;
+    lighting.directionalIntensity = 4;
+    lighting.directionalColor = {1, 1, 1};
+    lighting.directionalDirection = {0, -1, 0};
+    lighting.shadowsEnabled = true;
+    lighting.shadowResolution = 512;
+    lighting.shadowCascadeCount = 1;
+    lighting.shadowCascadeSplits = glm::vec4(80.0f);
+    // Reverse depth, as CheckFogRendering builds it, with a 70 degree vertical field of view.
+    glm::mat4 projection(0);
+    projection[1][1] = 1.0f / std::tan(glm::radians(35.0f));
+    projection[0][0] = projection[1][1] * float(height) / float(width);
+    projection[2][2] = .1f / (2000.f - .1f);
+    projection[2][3] = -1;
+    projection[3][2] = 2000.f * .1f / (2000.f - .1f);
+    constexpr std::array<BasicVertex, 4> vertices = {{
+        {{{-1,-1,0}}, {{0,0,1}}, {{0,0}}},
+        {{{1,-1,0}}, {{0,0,1}}, {{1,0}}},
+        {{{1,1,0}}, {{0,0,1}}, {{1,1}}},
+        {{{-1,1,0}}, {{0,0,1}}, {{0,1}}}
+    }};
+    constexpr std::array<std::uint32_t, 6> indices{0,1,2,0,2,3};
+    auto mesh = renderer.CreateMesh({vertices, indices});
+    BasicDraw roof;
+    roof.mesh = &mesh;
+    roof.baseColor = {0, 0, 0, 1};
+    roof.model = glm::translate(glm::mat4(1), glm::vec3(-25, 6, -30)) *
+                 glm::rotate(glm::mat4(1), glm::radians(-90.f), glm::vec3(1, 0, 0)) * glm::scale(glm::mat4(1), glm::vec3(25, 30, 1));
+    BasicPostProcessEffect fog{BasicPostProcessEffectType::VolumetricFog};
+    fog.quality = 32;
+    fog.parameters[0] = {1, 1, 1, .06f};
+    // A height falloff lets sunlight in from above (an infinite homogeneous medium extinguishes it).
+    fog.parameters[1] = {.1f, 0, 40, 1};
+    fog.parameters[2] = {0, 0, 1, 1};
+    fog.parameters[3] = {1, 0, 0, 0};
+    // Mean red left (under the roof) and right of the centre column.
+    const auto halves = [&](const auto &pixels)
+    {
+        double left = 0, right = 0;
+        for (int y = 0; y < height; ++y)
+            for (int x = 0; x < width; ++x)
+                (x < width / 2 ? left : right) += static_cast<int>(pixels[(y * width + x) * 4]) / 255.0;
+        const double count = height * (width / 2);
+        return std::pair{left / count, right / count};
+    };
+    const auto render = [&](int frames)
+    {
+        decltype(readPixels(renderer.GetColorTexture())) pixels;
+        for (int frame = 0; frame < frames; ++frame)
+        {
+            renderer.Render(projection * lighting.view, lighting, std::span(&roof, 1), std::span(&fog, 1));
+            pixels = readPixels(renderer.GetColorTexture());
+        }
+        return pixels;
+    };
+    // Froxels as fine in angle as the default 16-pixel tiles are at 1080p (this view is 64 pixels high).
+    const auto defaults = renderer.GetFogFroxels();
+    auto settings = defaults;
+    settings.tilePixels = 2;
+    for (const unsigned divisor : {1u, 2u})
+    {
+        fog.volumetricResolutionDivisor = divisor;
+        renderer.SetFogFroxels({.enabled = false});
+        const auto reference = render(8);
+        renderer.SetFogFroxels(settings);
+        const auto froxels = render(24);
+        double difference = 0;
+        for (std::size_t pixel = 0; pixel < reference.size(); pixel += 4)
+            difference += std::abs(int(reference[pixel]) - int(froxels[pixel])) / 255.0;
+        difference /= reference.size() / 4;
+        const auto [referenceLeft, referenceRight] = halves(reference);
+        const auto [froxelLeft, froxelRight] = halves(froxels);
+        std::cout << "Fog froxels (divisor " << divisor << "): mean difference " << difference << ", shaft contrast "
+                  << referenceRight - referenceLeft << " reference, " << froxelRight - froxelLeft << " froxels\n";
+        if (referenceRight - referenceLeft < .05)
+            throw std::runtime_error("Fog froxel check must render a shadowed and a lit half");
+        if (difference > .02 || std::abs((froxelRight - froxelLeft) - (referenceRight - referenceLeft)) > .02)
+            throw std::runtime_error("Fog froxels must reproduce per-step fog lighting and its shafts");
+    }
+    renderer.SetFogFroxels(defaults);
+    std::cout << "Fog froxel checks passed\n";
+}
 
 template <class ReadPixels>
 void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels, unsigned divisor = 1)
@@ -295,5 +392,8 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
         throw std::runtime_error("Fog silhouette regression did not render its foreground");
     std::cout << "Fog distance, height, integration and lighting checks passed\n";
     if (divisor == 1)
+    {
         CheckFogRendering(renderer, readPixels, 2);
+        CheckFogFroxels(renderer, readPixels);
+    }
 }

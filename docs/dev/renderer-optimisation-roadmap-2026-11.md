@@ -17,7 +17,7 @@ Each step lands as its own commit, keeps the previous path behind a switch, and 
 | 6 | Bandwidth: DDGI apply gathered at half resolution (the largest measured full-screen pass) | Done (apply 5.9 -> 2.8 ms, -4.4% scene GPU on Verdant) | [DDGI.md](../DDGI.md#half-resolution-gather) |
 | 7 | Directional shadow mask at reduced cost | Investigated, no change (see [Step 7](#step-7-findings)) | |
 | 8 | Shadow LOD independent of the camera, with hysteresis | Investigated, no change: already provided (see [Step 8](#step-8-findings)) | |
-| 9 | Froxel volumetric fog with temporal reuse | Planned | |
+| 9 | Froxel volumetric fog with temporal reuse | Done (fog 6.9 -> 2.0 ms, -9% scene GPU on Verdant) | [fog-froxels.md](fog-froxels.md) |
 
 ## Design rules for every step
 

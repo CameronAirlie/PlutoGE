@@ -40,6 +40,7 @@ add_library(PlutoGERender
     src/CloudOcclusion.cpp
     src/CloudShadowMap.cpp
     src/atmosphere/CloudTemporalFilter.cpp
+    src/atmosphere/FogFroxelVolume.cpp
     src/DirectionalShadowMask.cpp
     src/DeferredLocalLights.cpp
     src/OutlinePass.cpp
@@ -279,7 +280,11 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(CameraStackTemporalMetadata "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CameraStackTemporalComposite.slang" vertexMain metadataMain)
     pluto_add_slang_graphics_shader(CameraStackTemporalTransparency "${CMAKE_CURRENT_SOURCE_DIR}/shaders/CameraStackTemporalComposite.slang" vertexMain transparencyMain)
     pluto_add_slang_graphics_shader(ParticlesInstanced "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Particles.slang" instancedVertexMain fragmentMain)
-    pluto_add_slang_graphics_shader(VolumetricFogTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain traceMain)
+    pluto_add_slang_graphics_shader(VolumetricFogTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain traceMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogFroxels.slang")
+    # The froxel lighting volume's injection, and the march that reads it (FogFroxels.slang).
+    pluto_add_slang_graphics_shader(VolumetricFogFroxels "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain froxelMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogFroxels.slang")
+    pluto_add_slang_graphics_shader(VolumetricFogFroxelTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain traceFroxelMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogFroxels.slang")
+    pluto_add_slang_graphics_shader(VolumetricFogFroxelApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentFroxelMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogFroxels.slang")
     pluto_add_slang_graphics_shader(VolumetricCloudTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudBaked.slang" vertexMain traceMain
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang")
     pluto_add_slang_graphics_shader(VolumetricComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricComposite.slang" vertexMain fragmentMain)
@@ -417,7 +422,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSRReuse "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain reuseMain)
     pluto_add_slang_graphics_shader(SSRTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain temporalMain)
     pluto_add_slang_graphics_shader(SSRComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain compositeMain)
-    pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain)
+    pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogFroxels.slang")
     pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
     if(BUILD_TESTING)
         pluto_add_slang_graphics_shader(CloudTransformReference "${PROJECT_SOURCE_DIR}/tests/shaders/CloudTransformReference.slang" vertexMain fragmentMain

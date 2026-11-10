@@ -274,6 +274,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         shaders.volumetricTrace[0].vertex.glsl = ReadText("VolumetricFogTrace.vertex.glsl");
         shaders.volumetricTrace[0].fragment.glsl = ReadText("VolumetricFogTrace.fragment.glsl");
+        shaders.fogFroxels = fullscreen("VolumetricFogFroxels");
+        shaders.fogFroxelMarch = {fullscreen("VolumetricFogFroxelApply"), fullscreen("VolumetricFogFroxelTrace")};
         shaders.volumetricComposite.vertex.glsl = ReadText("VolumetricComposite.vertex.glsl");
         shaders.volumetricComposite.fragment.glsl = ReadText("VolumetricComposite.fragment.glsl");
         loadPostProcess(render::BasicPostProcessEffectType::ToneMapping, "ToneMapping");

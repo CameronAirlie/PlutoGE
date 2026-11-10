@@ -47,6 +47,7 @@
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/CloudShadowMap.h"
 #include "atmosphere/CloudTemporalFilter.h"
+#include "atmosphere/FogFroxelVolume.h"
 #include "InstanceStorage.h"
 #include "PostProcessParameterBlock.h"
 
@@ -794,6 +795,15 @@ namespace PlutoGE::render
         // PLUTO_PREPASSED_COVERAGE=0 keeps the alpha test's discard in prepassed shading, for comparisons.
         if (const char *value = std::getenv("PLUTO_PREPASSED_COVERAGE"); value && std::string_view(value) == "0")
             m_prepassedCoverage = false;
+        // PLUTO_FOG_FROXELS=0 evaluates fog lighting at every march step, for comparisons.
+        if (const char *value = std::getenv("PLUTO_FOG_FROXELS"); value && std::string_view(value) == "0")
+            m_fogFroxelSettings.enabled = false;
+    }
+
+    void BasicRenderer::SetFogFroxels(const FogFroxelSettings &settings)
+    {
+        m_fogFroxelSettings = settings;
+        if (m_fogFroxels) m_fogFroxels->SetSettings(settings);
     }
     // Geometry object constants, in blocks shaped like the instanced vertex input (BasicInstanceObjectParameters).
     class GeometryObjectStream : public ObjectStream<BasicObjectParameters, kMaxInstancesPerDraw>
@@ -1164,7 +1174,8 @@ namespace PlutoGE::render
                 m_outlines = std::move(outlines);
             const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
                                                        const char *debugName, BasicPostProcessEffectType type,
-                                                       rhi::Format outputFormat = rhi::Format::R16G16B16A16Float)
+                                                       rhi::Format outputFormat = rhi::Format::R16G16B16A16Float,
+                                                       std::initializer_list<std::uint32_t> extraTextures = {})
             {
                 rhi::GraphicsPipelineDescriptor postDescriptor;
                 postDescriptor.vertexShader = vertex;
@@ -1235,6 +1246,9 @@ namespace PlutoGE::render
                     postDescriptor.resourceBindings.push_back(
                         {CloudShadowAtlasSlot, 0, CloudShadowAtlasSlot, rhi::ResourceBindingType::SampledTexture,
                          rhi::ShaderStageMask::Fragment});
+                for (const auto slot : extraTextures)
+                    postDescriptor.resourceBindings.push_back(
+                        {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
                 postDescriptor.cullMode = rhi::CullMode::None;
                 postDescriptor.depthTest = false;
                 postDescriptor.depthWrite = false;
@@ -1280,6 +1294,20 @@ namespace PlutoGE::render
                     m_volumetricTracePipelines[index] = createPostProcessPipeline(shader.vertex, shader.fragment,
                         index == 0 ? "Fog trace" : "Cloud trace", index == 0 ?
                         BasicPostProcessEffectType::VolumetricFog : BasicPostProcessEffectType::VolumetricCloud);
+            }
+            // The fog's froxel volume: the injection reads last frame's volume (slot 4), the marches this frame's (3).
+            if (hasShader(shaders.fogFroxels) && hasShader(shaders.fogFroxelMarch[0]) && hasShader(shaders.fogFroxelMarch[1]))
+            {
+                m_fogFroxelPipeline = createPostProcessPipeline(shaders.fogFroxels.vertex, shaders.fogFroxels.fragment,
+                    "Fog froxel injection", BasicPostProcessEffectType::VolumetricFog, rhi::Format::R16G16B16A16Float,
+                    {FogFroxelHistorySlot});
+                for (std::size_t index = 0; index < m_fogFroxelMarchPipelines.size(); ++index)
+                    m_fogFroxelMarchPipelines[index] = createPostProcessPipeline(
+                        shaders.fogFroxelMarch[index].vertex, shaders.fogFroxelMarch[index].fragment,
+                        index == 0 ? "Volumetric fog (froxels)" : "Fog trace (froxels)",
+                        BasicPostProcessEffectType::VolumetricFog, rhi::Format::R16G16B16A16Float, {FogFroxelSlot});
+                m_fogFroxels = std::make_unique<FogFroxelVolume>();
+                m_fogFroxels->SetSettings(m_fogFroxelSettings);
             }
             if (hasShader(shaders.volumetricComposite))
             {
@@ -1703,6 +1731,10 @@ namespace PlutoGE::render
         m_fusedColorBuffers.clear();
         m_volumetricCompositePipeline.Reset();
         m_oceanVolumeDepthPipeline.Reset();
+        m_fogFroxelPipeline.Reset();
+        for (auto &pipeline : m_fogFroxelMarchPipelines)
+            pipeline.Reset();
+        m_fogFroxels.reset();
         for (auto &pipeline : m_volumetricTracePipelines)
             pipeline.Reset();
         m_particleDepthCopy.Reset();
@@ -5108,6 +5140,26 @@ namespace PlutoGE::render
             const auto passHeight = (m_postProcessHeight + divisor - 1u) / divisor;
             if (reducedVolume)
                 pipeline = m_volumetricTracePipelines[volumeIndex].Get();
+            // Fog lighting through the froxel volume: light it, then march reading it (FogFroxels.slang).
+            std::optional<FogFroxelVolume::Frame> fogFroxels;
+            if (effect.type == BasicPostProcessEffectType::VolumetricFog && m_fogFroxels && m_fogFroxelPipeline &&
+                m_fogFroxelMarchPipelines[reducedVolume ? 1 : 0])
+            {
+                FogFroxelHistory::Appearance appearance;
+                std::copy_n(effect.parameters.begin(), appearance.size(), appearance.begin());
+                FogFroxelLighting froxelLighting{
+                    .sunDirection = lighting.directionalDirection,
+                    .sunRadiance = lighting.directionalColor * lighting.directionalIntensity,
+                    .ambient = lighting.ambientIntensity,
+                    .shadows = lighting.shadowsEnabled,
+                    .cloudShadows = m_frameCloudOcclusion.shadowLight.w > 0.0f,
+                    .physicalSky = lighting.physicalSkyEnabled};
+                for (int volume = 0; volume < 4 && volume < PLUTO_CLOUD_OCCLUSION_VOLUMES; ++volume)
+                    froxelLighting.cloudExtinction[volume] = m_frameCloudOcclusion.volumes[volume].w;
+                fogFroxels = m_fogFroxels->Begin(*m_device, m_postProcessWidth, m_postProcessHeight, m_postProcessView,
+                                                 appearance, froxelLighting, m_frameIndex);
+                if (fogFroxels) pipeline = m_fogFroxelMarchPipelines[reducedVolume ? 1 : 0].Get();
+            }
             // Clouds with a temporal filter trace as it plans: interleaved, a quarter of the pixels, while it reprojects.
             CloudTemporalFilter::TracePlan cloudTrace{passWidth, passHeight};
             if (effect.type == BasicPostProcessEffectType::VolumetricCloud && reducedVolume && cloudTemporal)
@@ -5126,6 +5178,11 @@ namespace PlutoGE::render
             {
                 effectParameters[4].x = volumeDepth ? 1.0f : 0.0f;
                 effectParameters[5] = glm::vec4(FogNoiseWindOffset(effect), 0.0f);
+                if (fogFroxels)
+                {
+                    effectParameters[6] = fogFroxels->lanes[0];
+                    effectParameters[7] = fogFroxels->lanes[1];
+                }
             }
             if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
             {
@@ -5160,7 +5217,8 @@ namespace PlutoGE::render
                 m_postProcessView,
                 m_postProcessProjection,
                 m_postProcessCameraPosition,
-                effect.type == BasicPostProcessEffectType::TAA ? m_previousMotionViewProjection : effect.worldToLocal,
+                effect.type == BasicPostProcessEffectType::TAA ? m_previousMotionViewProjection
+                    : fogFroxels ? fogFroxels->previousView : effect.worldToLocal,
             };
             auto &parameterBuffer = AcquirePostProcessBuffer(m_postProcessBufferCursor++);
             m_device->UpdateBuffer(parameterBuffer.Get(), 0, Bytes(parameters));
@@ -5188,6 +5246,51 @@ namespace PlutoGE::render
             // Reuse the ocean intersection in a depth-only draw for fog/clouds,
             // accumulating the nearest surface across all enabled oceans.
             const bool writeOceanDepth = effect.type == BasicPostProcessEffectType::Ocean && needsOceanVolumeDepth;
+            // The frame's directional light and shadows, which fog and water read as opaque lighting does.
+            const auto bindSceneLighting = [&]
+            {
+                commands.BindUniformBuffer(12, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
+                commands.BindTexture(13, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+                commands.BindTexture(14, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+                commands.BindUniformBuffer(7, m_cameraBuffer.Get());
+                const auto fallbackShadow = m_fallbackDataTexture.Get();
+                for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+                    commands.BindTexture(8 + cascade,
+                                         m_shadowDepthTargets[cascade]
+                                             ? m_shadowDepthTargets[cascade].Get()
+                                             : fallbackShadow,
+                                         m_shadowSampler.Get());
+            };
+            // Fog adds the cloud shadow map (sky lighting atlas) and the noise lattice of its density variation.
+            const auto bindFogLighting = [&]
+            {
+                commands.BindTexture(CloudShadowAtlasSlot,
+                                     m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(),
+                                     m_screenSampler.Get());
+                commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
+                bindSceneLighting();
+            };
+            if (fogFroxels)
+            {
+                commands.BeginGpuScope("RHI Volumetric Fog / Froxels");
+                rhi::RenderingInfo froxelInfo;
+                froxelInfo.colorAttachments = {fogFroxels->target};
+                froxelInfo.width = fogFroxels->grid.AtlasWidth();
+                froxelInfo.height = fogFroxels->grid.AtlasHeight();
+                froxelInfo.clearDepth = false;
+                commands.BeginRendering(froxelInfo);
+                commands.BindPipeline(m_fogFroxelPipeline.Get());
+                commands.BindUniformBuffer(0, parameterBuffer.Get());
+                commands.BindTexture(1, m_outputColor, m_screenSampler.Get());
+                commands.BindTexture(2, volumeDepth ? volumeDepth : m_depthTarget.Get(), m_shadowSampler.Get());
+                commands.BindTexture(FogFroxelHistorySlot,
+                                     fogFroxels->history ? fogFroxels->history : m_fallbackDataTexture.Get(),
+                                     m_screenSampler.Get());
+                bindFogLighting();
+                commands.Draw(3);
+                commands.EndRendering();
+                commands.EndGpuScope();
+            }
             const auto depthDestination = writeOceanDepth
                 ? AcquirePostProcessTarget(targetIndex++, passWidth, passHeight, rhi::Format::R32Float).Get() : rhi::TextureHandle{};
             for (int drawPass = 0; drawPass < (writeOceanDepth ? 2 : 1); ++drawPass)
@@ -5237,23 +5340,11 @@ namespace PlutoGE::render
                     commands.BindTexture(10, m_taaDepthHistoryTargets[m_taaHistoryIndex].Get(), m_screenSampler.Get());
                 }
                 if (effect.type == BasicPostProcessEffectType::VolumetricFog)
-                    commands.BindTexture(CloudShadowAtlasSlot,
-                                         m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(),
-                                         m_screenSampler.Get());
-                if (effect.type == BasicPostProcessEffectType::VolumetricFog || effect.type == BasicPostProcessEffectType::Ocean)
-                {
-                    commands.BindUniformBuffer(12, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
-                    commands.BindTexture(13, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                    commands.BindTexture(14, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
-                    commands.BindUniformBuffer(7, m_cameraBuffer.Get());
-                    const auto fallbackShadow = m_fallbackDataTexture.Get();
-                    for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
-                        commands.BindTexture(8 + cascade,
-                                             m_shadowDepthTargets[cascade]
-                                                 ? m_shadowDepthTargets[cascade].Get()
-                                                 : fallbackShadow,
-                                             m_shadowSampler.Get());
-                }
+                    bindFogLighting();
+                if (effect.type == BasicPostProcessEffectType::Ocean)
+                    bindSceneLighting();
+                if (fogFroxels && drawPass == 0)
+                    commands.BindTexture(FogFroxelSlot, fogFroxels->target, m_screenSampler.Get());
                 commands.Draw(3);
                 commands.EndRendering();
             }

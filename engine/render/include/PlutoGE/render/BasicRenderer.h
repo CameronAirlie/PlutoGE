@@ -16,6 +16,7 @@
 #include "PlutoGE/render/TerrainLayerLimits.h"
 #include "PlutoGE/render/TextureCompression.h"
 #include "PlutoGE/render/DeferredLocalLightPolicy.h"
+#include "PlutoGE/render/FogFroxels.h"
 #include "PlutoGE/render/OceanParameters.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
 #include "PlutoGE/render/SkyIrradiance.h"
@@ -52,6 +53,7 @@ namespace PlutoGE::render
     class BackgroundMotion;
     class UpscalerSharpening;
     class CloudTemporalFilter;
+    class FogFroxelVolume;
     class InstanceStorage;
     class InstanceBinning;
     class CloudNoiseVolume;
@@ -404,6 +406,10 @@ namespace PlutoGE::render
         rhi::GraphicsPipelineDescriptor::ShaderCode particleInstancedVertex;
         std::array<BasicPostProcessShaderPackage, 2> volumetricTrace; // fog, clouds
         BasicPostProcessShaderPackage volumetricComposite;
+        // Optional: the fog's froxel lighting volume (FogFroxels.slang): its injection, and the march reading it at
+        // full resolution and as the reduced-resolution trace. Without them fog evaluates its lighting per step.
+        BasicPostProcessShaderPackage fogFroxels;
+        std::array<BasicPostProcessShaderPackage, 2> fogFroxelMarch; // full resolution, trace
         BasicPostProcessShaderPackage fusedColor;
         rhi::GraphicsPipelineDescriptor vctVoxelization;
         std::array<BasicPostProcessShaderPackage, 2> vctPostProcess; // cone trace, temporal resolve
@@ -1150,6 +1156,9 @@ namespace PlutoGE::render
         static constexpr std::uint32_t InstanceStorageSlot = 18;
         // The sky lighting atlas in volumetric fog, for the cloud shadow map (VolumetricFog.slang cloudShadowAtlas).
         static constexpr std::uint32_t CloudShadowAtlasSlot = 16;
+        // The fog's froxel volume (FogFroxels.slang): this frame's, read by the march, and last frame's, read by the
+        // injection. Fog has no normal or material input, so these slots are free.
+        static constexpr std::uint32_t FogFroxelSlot = 3, FogFroxelHistorySlot = 4;
         static constexpr std::uint32_t SurfaceTextureBinding = 26;
 
         // Runs outside a rendering pass with command recording open. The
@@ -1223,6 +1232,9 @@ namespace PlutoGE::render
         // Prepassed alpha-tested standard surfaces shade with an equal depth test and no discard, so depth is tested
         // before shading (kSurfacePrepassedCoverage, Vulkan). On by default; off keeps the discard, for comparisons.
         void SetPrepassedCoverage(bool enabled) noexcept { m_prepassedCoverage = enabled; }
+        // Volumetric fog lighting through a froxel volume (FogFroxels.h); on by default where its shaders exist.
+        void SetFogFroxels(const FogFroxelSettings &settings);
+        [[nodiscard]] const FogFroxelSettings &GetFogFroxels() const noexcept { return m_fogFroxelSettings; }
         [[nodiscard]] const DeferredLocalLightPolicy &GetDeferredLocalLights() const noexcept { return m_deferredLocalLightPolicy; }
         // Records shadows and geometry on worker threads when the device supports it. The output is identical;
         // switching it off is for comparisons and debugging.
@@ -1456,6 +1468,10 @@ namespace PlutoGE::render
         DeferredLocalLightPolicy m_deferredLocalLightPolicy;
         bool m_deferredLocalLightsActive = false;
         bool m_prepassedCoverage = true;
+        FogFroxelSettings m_fogFroxelSettings;
+        std::unique_ptr<FogFroxelVolume> m_fogFroxels;
+        rhi::GraphicsPipeline m_fogFroxelPipeline;
+        std::array<rhi::GraphicsPipeline, 2> m_fogFroxelMarchPipelines; // full resolution, trace
         // Whether this frame's prepassed shading pipelines read m_shadowMask (BasicRenderer::Render).
         bool m_shadowMaskActive = false;
         std::unique_ptr<DdgiVolume> m_ddgi;

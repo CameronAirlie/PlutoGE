@@ -194,6 +194,9 @@ int main(int argc, char **argv)
         loadPostProcess(BasicPostProcessEffectType::PhysicalSky, "PhysicalSky");
         shaders.volumetricTrace[0].vertex.spirv = ReadSpirv("VolumetricFogTrace.vertex.spv");
         shaders.volumetricTrace[0].fragment.spirv = ReadSpirv("VolumetricFogTrace.fragment.spv");
+        shaders.fogFroxels = {{.spirv = ReadSpirv("VolumetricFogFroxels.vertex.spv")}, {.spirv = ReadSpirv("VolumetricFogFroxels.fragment.spv")}};
+        shaders.fogFroxelMarch[0] = {{.spirv = ReadSpirv("VolumetricFogFroxelApply.vertex.spv")}, {.spirv = ReadSpirv("VolumetricFogFroxelApply.fragment.spv")}};
+        shaders.fogFroxelMarch[1] = {{.spirv = ReadSpirv("VolumetricFogFroxelTrace.vertex.spv")}, {.spirv = ReadSpirv("VolumetricFogFroxelTrace.fragment.spv")}};
         shaders.volumetricComposite.vertex.spirv = ReadSpirv("VolumetricComposite.vertex.spv");
         shaders.volumetricComposite.fragment.spirv = ReadSpirv("VolumetricComposite.fragment.spv");
         loadPostProcess(BasicPostProcessEffectType::ToneMapping, "ToneMapping");

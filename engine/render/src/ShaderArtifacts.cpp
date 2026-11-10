@@ -84,6 +84,9 @@ namespace PlutoGE::render
         result.volumetricTrace[0] = {Load("VolumetricFogTrace", "vertex"), Load("VolumetricFogTrace", "fragment")};
         result.volumetricTrace[1] = {Load("VolumetricCloudTrace", "vertex"), Load("VolumetricCloudTrace", "fragment")};
         result.volumetricComposite = {Load("VolumetricComposite", "vertex"), Load("VolumetricComposite", "fragment")};
+        result.fogFroxels = {Load("VolumetricFogFroxels", "vertex"), Load("VolumetricFogFroxels", "fragment")};
+        result.fogFroxelMarch[0] = {Load("VolumetricFogFroxelApply", "vertex"), Load("VolumetricFogFroxelApply", "fragment")};
+        result.fogFroxelMarch[1] = {Load("VolumetricFogFroxelTrace", "vertex"), Load("VolumetricFogFroxelTrace", "fragment")};
         result.fusedColor = {Load("FusedColor", "vertex"), Load("FusedColor", "fragment")};
         result.skyQuadrature = {Load("SkyQuadrature", "vertex"), Load("SkyQuadrature", "fragment")};
         result.cloudShadow = {Load("CloudShadow", "vertex"), Load("CloudShadow", "fragment")};

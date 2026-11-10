@@ -43,6 +43,27 @@ source animated rotation delta; a single segment cannot establish an absolute tw
 The cache signature includes target local bind matrices, so edited reference poses
 invalidate the correction. Replacing clips already invalidates the clip caches.
 
+### Fingers and other unmapped joints
+
+Fingers and twist bones have no humanoid slot; their channels bind by joint name. Once a
+mesh has a humanoid map, a name-bound joint below a mapped one is retargeted like a limb
+(`ResolveUnmappedBodyCorrections`): it receives the source's global rotation delta, and
+where both rigs have a name-matched child, the segment is aligned to the source's
+reference direction. Joints without such a child (finger tips, twist bones) inherit their
+parent's correction. These joints keep their own bind translation, so source bone lengths
+never reach the target.
+
+Copying the source's local transform instead mangles fingers between unrelated rigs. An
+Unreal mannequin hangs each finger off a metacarpal and points bones along local +X; an
+MPFB `game_engine` rig parents fingers to the hand and points them along local +Y. Thumbs
+differ most: their rest direction can lie close to the source's curl axis, so a rotation
+delta alone barely moves them. On SurvivalGame's Character6 with Unreal clips, the worst
+finger segment error dropped from 95 to under 5 degrees, the same residual as the arms.
+
+Joints with no mapped ancestor (Unreal `ik_*` bones under `root`, for example) still copy
+the source's local transform by name. Mixamo-named fingers do not bind to Unreal-named
+fingers, so those fingers keep their bind pose.
+
 ## Usage
 
 Configure and save the target mesh's Humanoid Rig mapping, then play the existing
@@ -123,6 +144,10 @@ For the soldier traversal baseline after changing the project prefab, set
 `TRAVERSAL_TEST_MESH=project://Characters/Soldier/Model/Soldier.plutomesh` when running
 `Tests/run_traversal_tests.py`. This overrides only the temporary test fixture, preserving
 the user's current prefab and scene.
+
+With a real mesh and clip, the same run also reports a finger pose error: the direction of
+each finger's 01-02 and 02-03 segments and the bend between them, for Unreal-named fingers
+present in both rigs. It fails above 5 degrees.
 
 The ninja also passed read-only walk/run pose checks (maximum arm direction error below
 1.2 degrees at clip start). The soldier traversal baseline passed all 60 scenarios at

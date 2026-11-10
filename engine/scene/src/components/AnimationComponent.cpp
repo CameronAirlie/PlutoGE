@@ -207,6 +207,43 @@ namespace PlutoGE::scene
             return nullptr;
         }
 
+        // Shortest-arc swing (x, y, z, w) turning the target bind segment start->end onto the
+        // source one, expressed in target skeleton space. False for unusable segments.
+        bool AlignSegment(const glm::mat4 &targetStart, const glm::mat4 &targetEnd,
+                          const glm::mat4 &sourceStart, const glm::mat4 &sourceEnd,
+                          const glm::quat &sourceToTarget, glm::vec4 &swingOut)
+        {
+            glm::vec3 from = glm::vec3(targetEnd[3] - targetStart[3]);
+            glm::vec3 to = sourceToTarget * glm::vec3(sourceEnd[3] - sourceStart[3]);
+            const auto usable = [](glm::vec3 v)
+            { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) && glm::dot(v, v) > 1e-10f; };
+            if (!usable(from) || !usable(to))
+                return false;
+            from = glm::normalize(from);
+            to = glm::normalize(to);
+            const float cosine = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
+            glm::quat swing;
+            if (cosine < -0.99999f)
+            {
+                // The shortest arc is ambiguous at 180 degrees; choose a stable
+                // perpendicular axis rather than normalizing a zero quaternion.
+                const glm::vec3 axis = glm::normalize(glm::cross(from,
+                    std::abs(from.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
+                swing = glm::angleAxis(glm::radians(180.0f), axis);
+            }
+            else
+            {
+                const glm::vec3 axis = glm::cross(from, to);
+                swing = glm::normalize(glm::quat(1 + cosine, axis.x, axis.y, axis.z));
+            }
+            swingOut = {swing.x, swing.y, swing.z, swing.w};
+            return true;
+        }
+
+        void ResolveUnmappedBodyCorrections(const std::vector<render::AnimationChannel> &channels,
+            AnimationRetargetClipCache &cache, const render::Skeleton &skeleton,
+            const std::vector<glm::mat4> &targetBind, const glm::quat &basis);
+
         // Align reference segment directions rather than copying bone Euler angles: local
         // axes, roll, proportions and intermediary twist joints differ between DCC rigs.
         void ResolveReferencePoseCorrections(const std::vector<render::AnimationChannel> &channels,
@@ -251,29 +288,11 @@ namespace PlutoGE::scene
                     if (se < 0 || te < 0 ||
                         !descendant(se, sj, [&](int i) { return cache.sourceParentIndices[static_cast<size_t>(i)]; }, cache.sourceParentIndices.size()) ||
                         !descendant(te, tj, [&](int i) { return skeleton.joints[static_cast<size_t>(i)].parentJointIndex; }, skeleton.joints.size())) continue;
-                    glm::vec3 from = glm::vec3(targetBind[static_cast<size_t>(te)][3] - targetBind[static_cast<size_t>(tj)][3]);
-                    glm::vec3 to = basis * glm::vec3(cache.sourceGlobalBindTransforms[static_cast<size_t>(se)][3] -
-                                                  cache.sourceGlobalBindTransforms[static_cast<size_t>(sj)][3]);
-                    const auto usable = [](glm::vec3 v)
-                    { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z) && glm::dot(v, v) > 1e-10f; };
-                    if (!usable(from) || !usable(to)) continue;
-                    from = glm::normalize(from); to = glm::normalize(to);
-                    const float cosine = std::clamp(glm::dot(from, to), -1.0f, 1.0f);
-                    glm::quat swing;
-                    if (cosine < -0.99999f)
-                    {
-                        // The shortest arc is ambiguous at 180 degrees; choose a stable
-                        // perpendicular axis rather than normalizing a zero quaternion.
-                        const glm::vec3 axis = glm::normalize(glm::cross(from,
-                            std::abs(from.y) < .9f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0)));
-                        swing = glm::angleAxis(glm::radians(180.0f), axis);
-                    }
-                    else
-                    {
-                        const glm::vec3 axis = glm::cross(from, to);
-                        swing = glm::normalize(glm::quat(1 + cosine, axis.x, axis.y, axis.z));
-                    }
-                    cache.referencePoseCorrections[static_cast<size_t>(tj)] = {swing.x, swing.y, swing.z, swing.w};
+                    if (!AlignSegment(targetBind[static_cast<size_t>(tj)], targetBind[static_cast<size_t>(te)],
+                                      cache.sourceGlobalBindTransforms[static_cast<size_t>(sj)],
+                                      cache.sourceGlobalBindTransforms[static_cast<size_t>(se)], basis,
+                                      cache.referencePoseCorrections[static_cast<size_t>(tj)]))
+                        continue;
                     return;
                 }
             };
@@ -303,6 +322,109 @@ namespace PlutoGE::scene
                 if (e >= 0 && p >= 0 && source[static_cast<size_t>(end)] >= 0)
                     cache.referencePoseCorrections[static_cast<size_t>(e)] = cache.referencePoseCorrections[static_cast<size_t>(p)];
             }
+
+            ResolveUnmappedBodyCorrections(channels, cache, skeleton, targetBind, basis);
+        }
+
+        // Unmapped joints below a mapped one (fingers, twist bones) bind by name. Where both
+        // rigs have the joint and a name-matched child, the segment is aligned like a mapped
+        // limb: thumbs in particular point quite differently between rigs, and a global delta
+        // about the source's curl axis barely moves a thumb pointing along that axis. Joints
+        // without such a segment (finger tips, twist bones) inherit their parent's correction,
+        // so they do not keep the uncorrected bind frame while the hand swings.
+        void ResolveUnmappedBodyCorrections(const std::vector<render::AnimationChannel> &channels,
+            AnimationRetargetClipCache &cache, const render::Skeleton &skeleton,
+            const std::vector<glm::mat4> &targetBind, const glm::quat &basis)
+        {
+            const size_t jointCount = skeleton.joints.size();
+            const auto parentOf = [&](size_t joint) { return skeleton.joints[joint].parentJointIndex; };
+            std::vector<uint8_t> mapped(jointCount, 0);
+            for (const auto &mapping : skeleton.humanoidBoneMappings)
+                if (mapping.targetJointIndex >= 0 && mapping.targetJointIndex < static_cast<int>(jointCount))
+                    mapped[static_cast<size_t>(mapping.targetJointIndex)] = 1;
+
+            cache.unmappedBodyJoints.assign(jointCount, 0);
+            for (size_t joint = 0; joint < jointCount; ++joint)
+            {
+                if (mapped[joint])
+                    continue;
+                int ancestor = parentOf(joint);
+                for (size_t depth = 0; depth < jointCount && ancestor >= 0 && ancestor < static_cast<int>(jointCount); ++depth)
+                {
+                    if (mapped[static_cast<size_t>(ancestor)])
+                    {
+                        cache.unmappedBodyJoints[joint] = 1;
+                        break;
+                    }
+                    const int next = parentOf(static_cast<size_t>(ancestor));
+                    if (next == ancestor)
+                        break;
+                    ancestor = next;
+                }
+            }
+
+            std::vector<int> sourceOf(jointCount, -1);
+            for (size_t i = 0; i < channels.size() && i < cache.jointBindings.size(); ++i)
+            {
+                const int joint = cache.jointBindings[i], node = channels[i].nodeIndex;
+                if (cache.mappingBindings[i] < 0 && joint >= 0 && joint < static_cast<int>(jointCount) &&
+                    cache.unmappedBodyJoints[static_cast<size_t>(joint)] && node >= 0 &&
+                    node < static_cast<int>(cache.sourceNodesPresent.size()) && cache.sourceNodesPresent[static_cast<size_t>(node)])
+                    sourceOf[static_cast<size_t>(joint)] = node;
+            }
+            const auto sourceDescends = [&](int child, int ancestor)
+            {
+                for (size_t depth = 0; depth < cache.sourceParentIndices.size() && child >= 0 &&
+                                       child < static_cast<int>(cache.sourceParentIndices.size()); ++depth)
+                {
+                    child = cache.sourceParentIndices[static_cast<size_t>(child)];
+                    if (child == ancestor)
+                        return true;
+                }
+                return false;
+            };
+
+            // 0 unresolved, 1 resolving, 2 resolved. Joint order need not be topological.
+            std::vector<std::vector<size_t>> children(jointCount);
+            for (size_t joint = 0; joint < jointCount; ++joint)
+                if (const int parent = parentOf(joint); parent >= 0 && parent < static_cast<int>(jointCount) &&
+                                                        parent != static_cast<int>(joint))
+                    children[static_cast<size_t>(parent)].push_back(joint);
+            std::vector<uint8_t> state(jointCount, 0);
+            for (size_t joint = 0; joint < jointCount; ++joint)
+            {
+                if (!cache.unmappedBodyJoints[joint] || sourceOf[joint] < 0)
+                    continue;
+                for (const size_t child : children[joint])
+                {
+                    if (sourceOf[child] < 0 ||
+                        !sourceDescends(sourceOf[child], sourceOf[joint]))
+                        continue;
+                    if (AlignSegment(targetBind[joint], targetBind[child],
+                                     cache.sourceGlobalBindTransforms[static_cast<size_t>(sourceOf[joint])],
+                                     cache.sourceGlobalBindTransforms[static_cast<size_t>(sourceOf[child])], basis,
+                                     cache.referencePoseCorrections[joint]))
+                    {
+                        state[joint] = 2;
+                        break;
+                    }
+                }
+            }
+            std::function<void(size_t)> inherit = [&](size_t joint)
+            {
+                if (state[joint] != 0 || !cache.unmappedBodyJoints[joint])
+                    return;
+                state[joint] = 1;
+                const int parent = parentOf(joint);
+                if (parent >= 0 && parent < static_cast<int>(jointCount))
+                {
+                    inherit(static_cast<size_t>(parent));
+                    cache.referencePoseCorrections[joint] = cache.referencePoseCorrections[static_cast<size_t>(parent)];
+                }
+                state[joint] = 2;
+            };
+            for (size_t joint = 0; joint < jointCount; ++joint)
+                inherit(joint);
         }
 
         bool IsReservedRetargetJoint(int jointIndex, const render::Skeleton &skeleton)
@@ -1008,11 +1130,24 @@ namespace PlutoGE::scene
                     animatedLocals[jointIndex] = 1;
                 }
 
+                // A name-bound joint below a mapped one (a finger) gets the same global-delta
+                // treatment as mapped joints. Copying its local transform would reuse the source
+                // rig's parent frame and bone roll, e.g. Unreal fingers hang off metacarpals that
+                // other rigs lack, which twists and stretches the fingers.
+                const bool retargetUnmappedBodyJoint =
+                    !mapping && jointIndex < cache.unmappedBodyJoints.size() && cache.unmappedBodyJoints[jointIndex] &&
+                    channel.hasSourceLocalBindTransform && channel.hasSourceGlobalBindTransform &&
+                    channel.nodeIndex >= 0 && channel.nodeIndex < sourceNodeCount;
+                if (retargetUnmappedBodyJoint && channel.path == render::AnimationTargetPath::Translation)
+                    continue; // keep the target's own bone length
+
                 glm::vec4 sample = SampleChannelValue(channel, time);
                 glm::vec3 sourceBindTranslation{0.0f};
                 glm::vec4 sourceBindRotation{0.0f, 0.0f, 0.0f, 1.0f};
                 glm::vec3 sourceBindScale{1.0f};
-                const bool applyBindRelativeRetarget = mapping && channel.hasSourceLocalBindTransform;
+                const bool applyBindRelativeRetarget = (mapping || retargetUnmappedBodyJoint) && channel.hasSourceLocalBindTransform;
+                const glm::vec3 rotationOffsetDegrees = mapping ? mapping->rotationOffsetDegrees : glm::vec3(0.0f);
+                const float translationScale = mapping ? mapping->translationScale : 1.0f;
                 if (applyBindRelativeRetarget && channel.nodeIndex >= 0 && channel.nodeIndex < sourceNodeCount)
                 {
                     const size_t sourceNodeIndex = static_cast<size_t>(channel.nodeIndex);
@@ -1037,11 +1172,11 @@ namespace PlutoGE::scene
                                                                 ? glm::mat3(targetGlobalBindTransforms[static_cast<size_t>(parentIndex)])
                                                                 : glm::mat3(1.0f);
                         translations[jointIndex] += glm::inverse(targetParentBasis) * (sourceToTarget * sourceDelta) *
-                                                    mapping->translationScale;
+                                                    translationScale;
                     }
                     else if (applyBindRelativeRetarget)
                     {
-                        translations[jointIndex] += (glm::vec3(sample) - sourceBindTranslation) * mapping->translationScale;
+                        translations[jointIndex] += (glm::vec3(sample) - sourceBindTranslation) * translationScale;
                     }
                     else
                     {
@@ -1068,7 +1203,7 @@ namespace PlutoGE::scene
                                                          targetGlobalBindRotation.x,
                                                          targetGlobalBindRotation.y,
                                                          targetGlobalBindRotation.z);
-                        const glm::quat correction = glm::quat(glm::radians(mapping->rotationOffsetDegrees));
+                        const glm::quat correction = glm::quat(glm::radians(rotationOffsetDegrees));
                         const glm::quat sourceGlobalDelta = glm::normalize(
                             sourceToTarget * sourceGlobalAnimated * glm::inverse(sourceGlobalBind) * glm::inverse(sourceToTarget));
                         const auto &alignment = cache.referencePoseCorrections[jointIndex];
@@ -1082,7 +1217,7 @@ namespace PlutoGE::scene
                         const glm::quat sourceBind(sourceBindRotation.w, sourceBindRotation.x, sourceBindRotation.y, sourceBindRotation.z);
                         const glm::quat sourceAnimated(sample.w, sample.x, sample.y, sample.z);
                         const glm::quat targetBind(rotations[jointIndex].w, rotations[jointIndex].x, rotations[jointIndex].y, rotations[jointIndex].z);
-                        const glm::quat correction = glm::quat(glm::radians(mapping->rotationOffsetDegrees));
+                        const glm::quat correction = glm::quat(glm::radians(rotationOffsetDegrees));
                         const glm::quat sourceDelta = glm::normalize(glm::inverse(sourceBind) * sourceAnimated);
                         const glm::quat corrected = glm::normalize(targetBind * correction * sourceDelta);
                         sample = glm::vec4(corrected.x, corrected.y, corrected.z, corrected.w);

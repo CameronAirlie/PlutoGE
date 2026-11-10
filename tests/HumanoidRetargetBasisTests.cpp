@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <iostream>
@@ -244,6 +245,78 @@ namespace
         }
     }
 
+    // Fingers have no humanoid slot and bind by name. An Unreal source hangs them off a
+    // metacarpal and points bones along local +X; a Blender rig (MPFB) parents them to the
+    // hand and points bones along local +Y. The curl must transfer as a global rotation and
+    // the target must keep its own finger offsets.
+    void CheckUnmappedFingerFollowsSource()
+    {
+        auto target = MakeTargetSkeleton();
+        std::vector<SourceNode> nodes = {
+            {"pelvis", -1, target.joints[0].localBindTransform},
+            {"head", 0, target.joints[1].localBindTransform},
+            {"thigh_l", 0, target.joints[2].localBindTransform},
+            {"thigh_r", 0, target.joints[3].localBindTransform},
+            {"hand_l", 0, glm::translate(glm::mat4(1), glm::vec3(.2f, .4f, 0))},
+            {"index_metacarpal_l", 4, glm::translate(glm::mat4(1), glm::vec3(.03f, 0, 0))},
+            {"index_01_l", 5, glm::translate(glm::mat4(1), glm::vec3(.07f, 0, 0)) *
+                                  glm::rotate(glm::mat4(1), glm::radians(90.f), glm::vec3(1, 0, 0))},
+            {"index_02_l", 6, glm::translate(glm::mat4(1), glm::vec3(.05f, 0, 0))}};
+        const auto addJoint = [&](const char *name, int parent, glm::mat4 local)
+        {
+            render::SkeletonJoint joint;
+            joint.name = name;
+            joint.nodeIndex = static_cast<int>(target.joints.size());
+            joint.parentJointIndex = parent;
+            joint.localBindTransform = local;
+            target.joints.push_back(joint);
+        };
+        addJoint("hand_l", 0, glm::translate(glm::mat4(1), glm::vec3(.2f, .4f, 0)));
+        addJoint("index_01_l", 4, glm::translate(glm::mat4(1), glm::vec3(.1f, 0, 0)) *
+                                      glm::rotate(glm::mat4(1), glm::radians(-90.f), glm::vec3(0, 0, 1)));
+        addJoint("index_02_l", 5, glm::translate(glm::mat4(1), glm::vec3(0, .06f, 0)));
+        target.humanoidBoneMappings.push_back({.bone = render::HumanoidBone::LeftHand, .targetJointIndex = 4});
+        std::vector<glm::mat4> targetGlobals;
+        for (auto &joint : target.joints)
+        {
+            targetGlobals.push_back(joint.parentJointIndex < 0 ? joint.localBindTransform
+                                                                : targetGlobals[joint.parentJointIndex] * joint.localBindTransform);
+            joint.inverseBindMatrix = glm::inverse(targetGlobals.back());
+        }
+
+        // Curl the source finger 90 degrees about world Z: its local Y axis, given the roll.
+        std::vector<glm::mat4> sourceBind;
+        render::AnimationClip clip;
+        clip.name = "Curl";
+        clip.duration = 1;
+        for (size_t i = 0; i < nodes.size(); ++i)
+            sourceBind.push_back(nodes[i].parent < 0 ? nodes[i].local : sourceBind[nodes[i].parent] * nodes[i].local);
+        for (size_t i = 0; i < nodes.size(); ++i)
+        {
+            glm::mat4 animated = nodes[i].local;
+            if (i == 6)
+                animated *= glm::rotate(glm::mat4(1), glm::radians(90.f), glm::vec3(0, 1, 0));
+            const auto q = glm::normalize(glm::quat_cast(glm::mat3(animated)));
+            AddChannel(clip, nodes, sourceBind, static_cast<int>(i), render::AnimationTargetPath::Rotation, {q.x, q.y, q.z, q.w});
+            AddChannel(clip, nodes, sourceBind, static_cast<int>(i), render::AnimationTargetPath::Translation,
+                       glm::vec4(glm::vec3(animated[3]), 0));
+        }
+        clip.channelCount = static_cast<int>(clip.channels.size());
+
+        Scene scene;
+        auto *owner = scene.AddEntity(std::make_unique<Entity>());
+        auto *animation = owner->CreateComponent<AnimationComponent>();
+        animation->SetClipsFromImportedAnimations({clip});
+        const auto palette = animation->GetJointMatrices(target);
+        const auto position = [&](int i) { return glm::vec3((palette[i] * targetGlobals[i])[3]); };
+        Require(glm::length(position(5) - position(4) - glm::vec3(.1f, 0, 0)) < .001f,
+                "Unmapped finger took the source rig's offset instead of its own");
+        const glm::vec3 segment = position(6) - position(5);
+        Require(std::abs(glm::length(segment) - .06f) < .001f, "Unmapped finger changed length");
+        Require(glm::length(glm::normalize(segment) - glm::vec3(0, 1, 0)) < .001f,
+                "Unmapped finger did not curl with the source");
+    }
+
     // Optional read-only validation against an actual extracted mesh and native clip.
     void CheckImportedPose(const char *meshPath, const char *clipPath)
     {
@@ -334,6 +407,54 @@ namespace
         }
         std::cout<<"Imported arm pose max error: "<<worst<<" degrees\n";
         Require(worst<5.f,"Imported arms do not follow the source pose");
+
+        // Fingers bind by name and are aligned like limbs: each segment (01-02, 02-03) should
+        // point where the source's does, so the bend at the middle joint matches too.
+        const auto sourceNode=[&](const std::string &name)
+        {
+            for(const auto &c:clip.channels) if(c.targetName==name && c.nodeIndex>=0 && present[c.nodeIndex]) return c.nodeIndex;
+            return -1;
+        };
+        const auto targetJoint=[&](const std::string &name)
+        {
+            for(size_t i=0;i<target.skeleton.joints.size();++i) if(target.skeleton.joints[i].name==name) return static_cast<int>(i);
+            return -1;
+        };
+        const auto bend=[](glm::vec3 a,glm::vec3 b,glm::vec3 c)
+        { return glm::degrees(std::acos(std::clamp(glm::dot(glm::normalize(b-a),glm::normalize(c-b)),-1.f,1.f))); };
+        float worstFinger=0; int fingers=0;
+        for(const char *finger:{"thumb","index","middle","ring","pinky"})
+            for(const char *side:{"l","r"})
+            {
+                std::array<int,3> s{},t{};
+                for(int k=0;k<3;++k)
+                {
+                    const std::string name=std::string(finger)+"_0"+std::to_string(k+1)+"_"+side;
+                    s[k]=sourceNode(name);t[k]=targetJoint(name);
+                }
+                if(std::find(s.begin(),s.end(),-1)!=s.end() || std::find(t.begin(),t.end(),-1)!=t.end()) continue;
+                const auto tw=[&](int i){return glm::vec3((palette[i]*glm::inverse(target.skeleton.joints[i].inverseBindMatrix))[3]);};
+                const auto tb=[&](int i){return glm::vec3(targetBind[i][3]);};
+                const auto sw=[&](int i){return glm::vec3(globals[i][3]);};
+                const auto sb=[&](int i){return glm::vec3(binds[i][3]);};
+                for(int k=0;k<2;++k)
+                {
+                    const auto actual=glm::normalize(tw(t[k+1])-tw(t[k]));
+                    const auto expected=glm::normalize(basis*(sw(s[k+1])-sw(s[k])));
+                    worstFinger=std::max(worstFinger,glm::degrees(std::acos(std::clamp(glm::dot(actual,expected),-1.f,1.f))));
+                }
+                worstFinger=std::max(worstFinger,std::abs(bend(tw(t[0]),tw(t[1]),tw(t[2]))-bend(sw(s[0]),sw(s[1]),sw(s[2]))));
+                ++fingers;
+                if(std::getenv("PLUTOGE_FINGER_DETAIL"))
+                    std::cout<<"  "<<finger<<"_"<<side<<" source bind/anim "<<bend(sb(s[0]),sb(s[1]),sb(s[2]))<<"/"<<bend(sw(s[0]),sw(s[1]),sw(s[2]))
+                             <<" target bind/anim "<<bend(tb(t[0]),tb(t[1]),tb(t[2]))<<"/"<<bend(tw(t[0]),tw(t[1]),tw(t[2]))
+                             <<" seg01 src "<<glm::length(sb(s[1])-sb(s[0]))<<" tgt "<<glm::length(tb(t[1])-tb(t[0]))<<"\n";
+            }
+        if(fingers>0)
+        {
+            std::cout<<"Imported finger pose max error: "<<worstFinger<<" degrees over "<<fingers<<" fingers\n";
+            Require(worstFinger<5.f,"Imported fingers do not follow the source pose");
+        }
     }
 
     // A clip authored on the target rig itself: channel names are the target joint names and
@@ -522,6 +643,7 @@ int main(int argc, char **argv)
                         for (float roll : {0.f,90.f})
                             CheckReferencePose(targetRest,sourceRest,animated,roll,zUp);
         CheckReferencePose(180.f,0.f,90.f,0.f,false);
+        CheckUnmappedFingerFollowsSource();
         const auto skeleton = MakeTargetSkeleton();
         // Unreal FBX: Z-up with +X left (forward -Y).
         RequireHipsPose(EvaluateHips(MakeSourceClip({0, 0, 1}, {1, 0, 0}), skeleton), "Z-up source");

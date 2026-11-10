@@ -40,6 +40,10 @@ namespace PlutoGE::scene
         // Swing alignment from target reference segments to the source reference pose,
         // expressed in target skeleton space. Cached once per rig/clip, identity when unknown.
         std::vector<glm::vec4> referencePoseCorrections;
+        // 1 for unmapped target joints below a mapped joint (fingers, twist bones). They
+        // inherit that joint's correction and are retargeted by global rotation delta
+        // rather than receiving the source rig's local transform.
+        std::vector<uint8_t> unmappedBodyJoints;
         // Source node mapped to Hips, used to find root-motion ancestors.
         int sourceHipsNodeIndex = -1;
         // Unmapped skeleton roots above mapped joints when the rig has no single pelvis

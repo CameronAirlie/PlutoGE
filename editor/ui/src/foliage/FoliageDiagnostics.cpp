@@ -30,6 +30,12 @@ namespace PlutoGE::ui
                                   "This mesh has no LODs or impostor, so every instance draws at full detail. "
                                   "Turn on Vegetation LODs in the model's import settings."});
         }
+        if (!asset.proxyPrefabReference.empty() && !asset.collisionEnabled)
+        {
+            issues.push_back({FoliageIssueSeverity::Warning,
+                              "This type has a proxy prefab but no collision, so rays and weapons pass through its "
+                              "instances. Turn on Capsule Collision so gameplay can find the instance it hits."});
+        }
         return issues;
     }
 

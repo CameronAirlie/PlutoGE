@@ -95,6 +95,7 @@ namespace PlutoGE::scene
         add(before.wind.flutter != after.wind.flutter, {"WindFlutter"});
         add(before.wind.bendHeight != after.wind.bendHeight, {"WindBendHeight"});
         add(before.wind.pivotHeight != after.wind.pivotHeight, {"WindPivotHeight"});
+        add(before.proxyPrefabReference != after.proxyPrefabReference, {"ProxyPrefab"});
         return changed;
     }
 
@@ -127,6 +128,8 @@ namespace PlutoGE::scene
                << "WIND_ENABLED\t" << (asset.wind.enabled ? 1 : 0) << '\n'
                << "WIND_RESPONSE\t" << asset.wind.stiffness << '\t' << asset.wind.flutter << '\t'
                << asset.wind.bendHeight << '\t' << asset.wind.pivotHeight << '\n';
+        // Readers that predate proxies skip the record, so it needs no new version.
+        if (!asset.proxyPrefabReference.empty()) output << "PROXY_PREFAB\t" << asset.proxyPrefabReference << '\n';
         return output.good();
     }
 
@@ -185,6 +188,7 @@ namespace PlutoGE::scene
             else if (key == "WIND_ENABLED") { int enabled = 0; stream >> enabled; loaded.wind.enabled = enabled != 0; }
             else if (key == "WIND_RESPONSE")
                 stream >> loaded.wind.stiffness >> loaded.wind.flutter >> loaded.wind.bendHeight >> loaded.wind.pivotHeight;
+            else if (key == "PROXY_PREFAB") loaded.proxyPrefabReference = RestOfLine(stream);
         }
         loaded.assetReference = asset.assetReference;
         SanitizeFoliageTypeAsset(loaded);

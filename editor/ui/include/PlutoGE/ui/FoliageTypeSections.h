@@ -45,6 +45,7 @@ namespace PlutoGE::ui
     bool DrawFoliageRenderingSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context);
     bool DrawFoliageCollisionSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context);
     bool DrawFoliageWindSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context);
+    bool DrawFoliageInteractionSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context);
 
     // All of them, in order.
     bool DrawFoliageTypeSections(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context);

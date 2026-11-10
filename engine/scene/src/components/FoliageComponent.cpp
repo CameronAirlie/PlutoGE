@@ -518,6 +518,33 @@ namespace PlutoGE::scene
             return "Foliage " + std::to_string(index + 1);
         }
 
+        // FNV-1a over everything that shapes a cell's capsules, in order.
+        std::uint64_t ComputeCollisionCellSignature(const FoliageCollisionCell &cell)
+        {
+            std::uint64_t hash = 14695981039346656037ull;
+            const auto mix = [&hash](const void *data, std::size_t size)
+            {
+                const auto *bytes = static_cast<const unsigned char *>(data);
+                for (std::size_t index = 0; index < size; ++index)
+                {
+                    hash ^= bytes[index];
+                    hash *= 1099511628211ull;
+                }
+            };
+            mix(&cell.coordinate.x, sizeof(cell.coordinate.x));
+            mix(&cell.coordinate.z, sizeof(cell.coordinate.z));
+            for (const auto &instance : cell.instances)
+            {
+                mix(&instance.instanceId, sizeof(instance.instanceId));
+                mix(&instance.worldTransform, sizeof(instance.worldTransform));
+                mix(&instance.center, sizeof(instance.center));
+                mix(&instance.radius, sizeof(instance.radius));
+                mix(&instance.height, sizeof(instance.height));
+            }
+            // Never 0, so a default-constructed record never matches a real cell.
+            return hash == 0 ? 1 : hash;
+        }
+
         bool AreMatricesApproximatelyEqual(const glm::mat4 &a, const glm::mat4 &b, float epsilon = 0.0001f)
         {
             for (int column = 0; column < 4; ++column)
@@ -862,6 +889,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "WindFlutter", PropertyType::Float, std::to_string(type.asset.wind.flutter)});
             properties.push_back({prefix + "WindBendHeight", PropertyType::Float, std::to_string(type.asset.wind.bendHeight)});
             properties.push_back({prefix + "WindPivotHeight", PropertyType::Float, std::to_string(type.asset.wind.pivotHeight)});
+            properties.push_back({prefix + "ProxyPrefab", PropertyType::String, type.asset.proxyPrefabReference});
             if (detail == HeavyDetail::Shared)
             {
                 Property instances{prefix + "Instances", PropertyType::String};
@@ -1004,6 +1032,8 @@ namespace PlutoGE::scene
                     type.asset.wind.bendHeight = ParseFloatOr(property.value, type.asset.wind.bendHeight);
                 else if (fieldName == "WindPivotHeight")
                     type.asset.wind.pivotHeight = ParseFloatOr(property.value, type.asset.wind.pivotHeight);
+                else if (fieldName == "ProxyPrefab")
+                    type.asset.proxyPrefabReference = property.value;
                 else if (fieldName == "Instances")
                 {
                     type.instances = DeserializeInstances(property.Text());
@@ -1744,6 +1774,43 @@ namespace PlutoGE::scene
         return ComposeInstanceTransform(owner->GetWorldTransform(), *instance, glm::vec3(0.0f), false);
     }
 
+    std::optional<glm::mat4> FoliageComponent::GetInstanceWorldTransform(const FoliageInstanceLocation &location) const
+    {
+        const auto *instance = GetInstance(location);
+        const auto *owner = GetOwner();
+        if (!instance || !owner) return std::nullopt;
+        return ComposeInstanceTransform(owner->GetWorldTransform(), *instance);
+    }
+
+    std::vector<FoliageInstanceLocation> FoliageComponent::FindInstancesInRadius(const glm::vec3 &worldCenter, float radius) const
+    {
+        std::vector<FoliageInstanceLocation> found;
+        const auto *owner = GetOwner();
+        if (!owner || !(radius >= 0.0f)) return found;
+        const glm::mat4 ownerTransform = owner->GetWorldTransform();
+        const float radiusSquared = radius * radius;
+        std::vector<float> distances;
+        for (std::size_t typeIndex = 0; typeIndex < m_types.size(); ++typeIndex)
+        {
+            const auto &instances = m_types[typeIndex].instances;
+            for (std::size_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
+            {
+                const glm::vec3 pivot = glm::vec3(ownerTransform * glm::vec4(instances[instanceIndex].position, 1.0f));
+                const float distanceSquared = glm::length2(pivot - worldCenter);
+                if (distanceSquared > radiusSquared) continue;
+                found.push_back({typeIndex, instanceIndex});
+                distances.push_back(distanceSquared);
+            }
+        }
+        std::vector<std::size_t> order(found.size());
+        for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
+        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return distances[a] < distances[b]; });
+        std::vector<FoliageInstanceLocation> sorted;
+        sorted.reserve(found.size());
+        for (const auto index : order) sorted.push_back(found[index]);
+        return sorted;
+    }
+
     std::size_t FoliageComponent::GetTotalInstanceCount() const
     {
         std::size_t count = 0;
@@ -1828,6 +1895,7 @@ namespace PlutoGE::scene
         for (auto &[coordinate, cell] : cells)
         {
             (void)coordinate;
+            cell.signature = ComputeCollisionCellSignature(cell);
             m_cachedCollisionCells.push_back(std::move(cell));
         }
         m_collisionCacheRevision = m_revision;

@@ -16,6 +16,7 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
+#include "PlutoGE/scene/components/FoliageProxyComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -132,8 +133,10 @@ namespace PlutoGE::scene
             foliage.isAssetPathProperty = [](std::string_view name)
             {
                 return name == "SourceMesh" || name == "MaterialAsset" ||
-                       name.ends_with(".SourceMesh") || name.ends_with(".MaterialAsset");
+                       name.ends_with(".SourceMesh") || name.ends_with(".MaterialAsset") || name.ends_with(".ProxyPrefab");
             };
+            // Created only by PromoteFoliageInstance, so it has no Add Component menu item.
+            registry.Register<FoliageProxyComponent>("FoliageProxyComponent", "Foliage Proxy");
 
             registry.Register<ClothComponent>("ClothComponent", "Cloth Component");
 

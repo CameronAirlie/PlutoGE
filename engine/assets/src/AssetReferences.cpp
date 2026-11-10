@@ -448,9 +448,10 @@ namespace PlutoGE::assets
             }
             if (extension == ".plutofoliage")
             {
-                // Tab-delimited records; only the prototype's mesh and material name other assets.
+                // Tab-delimited records; the prototype's mesh and material and the proxy prefab name other assets.
                 const auto tab = line.find('\t');
-                if (tab != std::string_view::npos && (line.substr(0, tab) == "MESH" || line.substr(0, tab) == "MATERIAL"))
+                const auto key = tab != std::string_view::npos ? line.substr(0, tab) : std::string_view{};
+                if (key == "MESH" || key == "MATERIAL" || key == "PROXY_PREFAB")
                     Add(scan, line.substr(tab + 1), number);
                 return;
             }

@@ -41,6 +41,13 @@ namespace PlutoGE::scripting
                     value = property.value;
                     return true;
                 }
+            // Every component can be switched on and off; most do not serialize it as a property (the scene file keeps
+            // it on the COMPONENT line), so managed ComponentReference.Enabled reaches the flag itself.
+            if (name == "Enabled")
+            {
+                value = component.IsEnabled() ? "true" : "false";
+                return true;
+            }
             return false;
         }
 
@@ -54,7 +61,12 @@ namespace PlutoGE::scripting
             const auto found = std::find_if(properties.begin(), properties.end(),
                                             [&](const scene::Property &property) { return property.name == name; });
             if (found == properties.end())
-                return false;
+            {
+                if (name != "Enabled")
+                    return false;
+                component.SetEnabled(value == "true" || value == "1");
+                return true;
+            }
             scene::Property update = *found;
             update.value = std::string(value);
             component.Deserialize({update});

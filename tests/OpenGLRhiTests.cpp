@@ -30,6 +30,7 @@
 #include "OpaqueBatchingChecks.h"
 #include "TemporalMotionRenderingChecks.h"
 #include "CameraStackRenderingChecks.h"
+#include "SceneOutlineRenderingChecks.h"
 #include "SkinningRenderingChecks.h"
 #include "GpuSkinningChecks.h"
 #include "GlassRenderingChecks.h"
@@ -226,6 +227,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.maskedShadowFragment.glsl = ReadText("DirectionalShadowMasked.fragment.glsl");
         shaders.displayOutput.vertex.glsl = ReadText("DisplayOutput.vertex.glsl");
         shaders.displayOutput.fragment.glsl = ReadText("DisplayOutput.fragment.glsl");
+        shaders.outline = {{.glsl = ReadText("SelectionOutline.vertex.glsl")}, {.glsl = ReadText("SelectionOutline.fragment.glsl")}};
         shaders.backgroundMotion = {{.glsl = ReadText("BackgroundMotion.vertex.glsl")}, {.glsl = ReadText("BackgroundMotion.fragment.glsl")}};
         shaders.upscalerSharpening = {{.glsl = ReadText("UpscalerSharpening.vertex.glsl")}, {.glsl = ReadText("UpscalerSharpening.fragment.glsl")}};
         shaders.occlusion.vertex.glsl = ReadText("OcclusionDepth.vertex.glsl");
@@ -339,6 +341,7 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             // limits on older OpenGL drivers from blocking particle/point checks.
             if (argc > 1 && (std::string_view(argv[1]) == "--shader-graphs" ||
                              std::string_view(argv[1]) == "--outline" ||
+                             std::string_view(argv[1]) == "--screen-outline" ||
                              std::string_view(argv[1]) == "--temporal-motion" ||
                              std::string_view(argv[1]) == "--particles-points-only" ||
                              std::string_view(argv[1]) == "--decals-only" ||
@@ -569,6 +572,24 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
             });
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && (std::string_view(argv[1]) == "--screen-outline" || std::string_view(argv[1]) == "--scene-outline"))
+        {
+            const auto readPixels = [&](render::rhi::TextureHandle texture)
+            {
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                int width = 0, height = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+                std::vector<std::byte> pixels(width * height * 4);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            };
+            if (std::string_view(argv[1]) == "--screen-outline")
+                CheckScreenOutlineRendering(basicRenderer, readPixels);
+            else
+                CheckSceneOutlineRendering(device, shaders, readPixels);
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--camera-stack")

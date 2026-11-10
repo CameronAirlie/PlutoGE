@@ -8,6 +8,7 @@
 #include "OpaqueShadowBatches.h"
 #include "SurfaceFeatures.h"
 #include "DirectionalShadowMask.h"
+#include "OutlinePass.h"
 #include "FoliageWindDraws.h"
 #include "CascadedShadowLayers.h"
 #include "PointShadowLayers.h"
@@ -265,13 +266,6 @@ namespace PlutoGE::render
                 features |= frame.shadowCascadeParameters.w > 0.5f ? SurfaceVirtualShadows : SurfaceCascadedShadows;
             return features;
         }
-
-        struct alignas(16) SelectionOutlineParameters
-        {
-            glm::vec4 color{1.0f};
-            glm::vec4 settings{0.0f}; // radius in output pixels, hidden opacity
-            glm::vec4 outputSize{0.0f};
-        };
 
         struct alignas(16) BasicObjectParameters
         {
@@ -1129,29 +1123,9 @@ namespace PlutoGE::render
                 displayDescriptor.debugName = "Display output";
                 m_displayPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(displayDescriptor));
             }
-            if ((!shaders.selectionOutline.vertex.glsl.empty() || !shaders.selectionOutline.vertex.spirv.empty()) &&
-                (!shaders.selectionOutline.fragment.glsl.empty() || !shaders.selectionOutline.fragment.spirv.empty()))
-            {
-                rhi::GraphicsPipelineDescriptor outlineDescriptor;
-                outlineDescriptor.vertexShader = shaders.selectionOutline.vertex;
-                outlineDescriptor.fragmentShader = shaders.selectionOutline.fragment;
-                outlineDescriptor.depthFormat = rhi::Format::Undefined;
-                outlineDescriptor.colorFormat = rhi::Format::R8G8B8A8Unorm;
-                outlineDescriptor.resourceBindings = {
-                    {0, 0, 0, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
-                    {1, 0, 1, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
-                outlineDescriptor.cullMode = rhi::CullMode::None;
-                outlineDescriptor.depthTest = false;
-                outlineDescriptor.depthWrite = false;
-                outlineDescriptor.blend = {.enabled = true, .preserveDestinationAlpha = true};
-                outlineDescriptor.debugName = "Selection outline";
-                m_selectionOutlinePipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(outlineDescriptor));
-                m_selectionOutlineBuffer = rhi::Buffer(device, device.CreateBuffer(
-                    {sizeof(SelectionOutlineParameters), rhi::BufferUsage::Uniform, "Selection outline parameters"}));
-                m_selectionCameraBuffer = rhi::Buffer(device, device.CreateBuffer(
-                    {sizeof(BasicFrameParameters), rhi::BufferUsage::Uniform, "Selection outline frame"}));
-            }
+            if (auto outlines = std::make_unique<OutlinePass>();
+                outlines->Initialize(device, shaders.outline.vertex, shaders.outline.fragment, sizeof(BasicFrameParameters)))
+                m_outlines = std::move(outlines);
             const auto createPostProcessPipeline = [&](const auto &vertex, const auto &fragment,
                                                        const char *debugName, BasicPostProcessEffectType type,
                                                        rhi::Format outputFormat = rhi::Format::R16G16B16A16Float)
@@ -1799,11 +1773,8 @@ namespace PlutoGE::render
         m_shadowMaterialBuffers.clear();
         m_shadowSignatureCache.clear();
         m_displayPipeline.Reset();
-        m_selectionOutlinePipeline.Reset();
-        m_selectionOutlineBuffer.Reset();
-        m_selectionCameraBuffer.Reset();
-        m_selectionDepthTarget.Reset();
-        m_selectionDraws = {};
+        m_outlines.reset();
+        m_outlineLayers = {};
         m_transparentPipeline.Reset();
         m_transparentTwoSidedPipeline.Reset();
         m_glassSceneCopyPipeline.Reset();
@@ -2047,7 +2018,6 @@ namespace PlutoGE::render
                                              {width, height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
                                               "BasicRenderer depth", true}));
         m_glassDepthCopy.Reset();
-        m_selectionDepthTarget.Reset();
         for (auto &texture : m_particleTransparencyDepth) texture.Reset();
         m_colorTarget = std::move(newColor);
         m_outputCoverage = {};
@@ -2690,20 +2660,15 @@ namespace PlutoGE::render
             jitter[3][1] = frameParameters.temporalClipOffset.y;
             m_shadowMask->Prepare(m_width, m_height, jitter * frameParameters.viewProjection);
         }
-        // Selected geometry is rasterized once more into its own depth mask,
-        // without temporal jitter, and outlined over the final display output.
-        const bool selectionOutlineActive = !m_selectionDraws.empty() && m_selectionOutlinePipeline &&
-            m_displayPipeline && m_displayTarget && !linearOutput;
-        if (selectionOutlineActive)
+        // Outlined geometry is rasterized once more into one depth mask per outline style, without temporal
+        // jitter, and outlined over the final display output (OutlinePass).
+        std::size_t outlineLayerCount = 0;
+        if (m_outlines && m_displayPipeline && m_displayTarget && !linearOutput)
         {
-            auto selectionParameters = frameParameters;
-            selectionParameters.temporalClipOffset.x = 0.0f;
-            selectionParameters.temporalClipOffset.y = 0.0f;
-            m_device->UpdateBuffer(m_selectionCameraBuffer.Get(), 0, Bytes(selectionParameters));
-            if (!m_selectionDepthTarget)
-                m_selectionDepthTarget = rhi::Texture(*m_device, m_device->CreateTexture(
-                    {m_width, m_height, rhi::Format::D32Float, rhi::TextureUsage::DepthStencilAttachment,
-                     "Selection outline depth", true}));
+            auto outlineCamera = frameParameters;
+            outlineCamera.temporalClipOffset.x = 0.0f;
+            outlineCamera.temporalClipOffset.y = 0.0f;
+            outlineLayerCount = m_outlines->Prepare(m_outlineLayers, m_width, m_height, Bytes(outlineCamera));
         }
         if (lighting.physicalSkyEnabled && m_skyQuadraturePipeline && geometryMode != GeometryDiagnosticMode::ReferenceSky)
         {
@@ -2765,7 +2730,8 @@ namespace PlutoGE::render
                                            draw.preparationRevision != 0);
             };
             for (const auto &draw : draws) prepare(draw);
-            for (const auto &draw : m_selectionDraws) prepare(draw);
+            for (std::size_t layer = 0; layer < outlineLayerCount; ++layer)
+                for (const auto &draw : m_outlines->Draws(layer)) prepare(draw);
             // Shadow casters record on worker threads, which must neither touch the storage nor the parameter
             // cache: their records and first-record blocks are prepared here.
             shadowInstanceRecords.assign(shadowDraws.size(), {});
@@ -4344,9 +4310,9 @@ namespace PlutoGE::render
             for (const auto index : transparentOrder) sortedTransparency.push_back(std::move(transparentDraws[index]));
             transparentDraws.swap(sortedTransparency);
             commands.EndRendering();
-            if (selectionOutlineActive)
+            if (outlineLayerCount > 0)
             {
-                commands.BeginGpuScope("RHI Geometry / Selection mask");
+                commands.BeginGpuScope("RHI Geometry / Outline masks");
                 const auto geometryDraws = m_frameStats.geometryDraws;
                 const auto geometryInstances = m_frameStats.geometryInstances;
                 const auto geometryTriangles = m_frameStats.geometryTriangles;
@@ -4357,22 +4323,25 @@ namespace PlutoGE::render
                 skyTextureBound = false;
                 boundMaterial = {};
                 boundObjectBlock = {};
-                drawCameraBuffer = m_selectionCameraBuffer.Get();
-                rhi::RenderingInfo selection;
-                selection.depthAttachment = m_selectionDepthTarget.Get();
-                selection.width = m_width;
-                selection.height = m_height;
-                selection.clearColor = false;
-                commands.BeginRendering(selection);
+                drawCameraBuffer = m_outlines->Camera();
                 // Every surface type is drawn as coverage: glass and blended
                 // materials are outlined by their shape, not their opacity.
                 recordingDepth = true;
-                for (const auto &draw : m_selectionDraws)
-                    recordDraw(commands, draw, false, m_previousModels.size());
+                for (std::size_t layer = 0; layer < outlineLayerCount; ++layer)
+                {
+                    rhi::RenderingInfo mask;
+                    mask.depthAttachment = m_outlines->Mask(layer);
+                    mask.width = m_width;
+                    mask.height = m_height;
+                    mask.clearColor = false;
+                    commands.BeginRendering(mask);
+                    for (const auto &draw : m_outlines->Draws(layer))
+                        recordDraw(commands, draw, false, m_previousModels.size());
+                    commands.EndRendering();
+                }
                 recordingDepth = false;
-                commands.EndRendering();
                 drawCameraBuffer = m_cameraBuffer.Get();
-                // The mask is editor presentation, not scene geometry.
+                // The masks are presentation, not scene geometry.
                 m_frameStats.geometryDraws = geometryDraws;
                 m_frameStats.geometryInstances = geometryInstances;
                 m_frameStats.geometryTriangles = geometryTriangles;
@@ -5275,31 +5244,17 @@ namespace PlutoGE::render
             commands.Draw(3);
             commands.EndRendering();
             m_outputColor = m_displayTarget.Get();
-            if (selectionOutlineActive)
+            if (outlineLayerCount > 0)
             {
-                const ScopedGpuTiming outlineTiming(commands, "RHI Selection outline");
-                const SelectionOutlineParameters outlineParameters{
-                    m_selectionOutline.color,
-                    glm::vec4(m_selectionOutline.radius, std::clamp(m_selectionOutline.hiddenOpacity, 0.0f, 1.0f), 0.0f, 0.0f),
-                    glm::vec4(static_cast<float>(m_outputWidth), static_cast<float>(m_outputHeight), 0.0f, 0.0f)};
-                m_device->UpdateBuffer(m_selectionOutlineBuffer.Get(), 0, Bytes(outlineParameters));
-                rhi::RenderingInfo outlineInfo;
-                outlineInfo.colorAttachments = {m_displayTarget.Get()};
-                outlineInfo.width = m_outputWidth;
-                outlineInfo.height = m_outputHeight;
-                outlineInfo.clearColor = false;
-                outlineInfo.clearDepth = false;
-                commands.BeginRendering(outlineInfo);
-                commands.BindPipeline(m_selectionOutlinePipeline.Get());
-                commands.BindUniformBuffer(0, m_selectionOutlineBuffer.Get());
-                commands.BindTexture(1, m_selectionDepthTarget.Get(), m_shadowSampler.Get());
-                commands.BindTexture(2, m_depthTarget.Get(), m_shadowSampler.Get());
-                commands.Draw(3);
-                commands.EndRendering();
+                const ScopedGpuTiming outlineTiming(commands, "RHI Outlines");
+                m_outlines->Composite(commands, m_displayTarget.Get(), m_outputWidth, m_outputHeight,
+                                      m_depthTarget.Get(), m_shadowSampler.Get());
             }
         }
-        // The selection span is borrowed for this frame only.
-        m_selectionDraws = {};
+        // The outline layers are borrowed for this frame only.
+        if (m_outlines)
+            m_outlines->EndFrame();
+        m_outlineLayers = {};
         commands.EndGpuScope();
         postScope.End();
         const auto postProcessRecordingEnd = std::chrono::steady_clock::now();

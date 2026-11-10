@@ -197,6 +197,28 @@ namespace PlutoGE::render
             m_renderer->SetGpuInstanceCulling(enabled);
     }
 
+    void RhiSceneRenderer::SetOutlines(std::span<const OutlineLayer> layers)
+    {
+        // Reuses the layers' entity storage across frames; Prepare looks owners up by binary search.
+        std::size_t count = 0;
+        for (const auto &layer : layers)
+        {
+            if (count == MaxOutlineLayers)
+                break;
+            if (layer.entities.empty())
+                continue;
+            if (count == m_outlineLayers.size())
+                m_outlineLayers.emplace_back();
+            auto &stored = m_outlineLayers[count++];
+            stored.style = layer.style;
+            stored.entities.assign(layer.entities.begin(), layer.entities.end());
+            std::erase(stored.entities, 0u);
+            std::ranges::sort(stored.entities);
+            stored.entities.erase(std::unique(stored.entities.begin(), stored.entities.end()), stored.entities.end());
+        }
+        m_outlineLayers.resize(count);
+    }
+
     void RhiSceneRenderer::SetSubmissionLabel(std::string label)
     {
         m_submissionLabel = std::move(label);
@@ -1357,17 +1379,27 @@ namespace PlutoGE::render
         }
         auto &draws = preparation.batched;
         batchingScope.End();
-        // Selected commands keep their own unbatched packets: batching would
-        // merge them with unselected instances of the same mesh and material.
-        std::span<const BasicDraw> selectionDraws;
-        if (!m_selectedEntities.empty())
+        // Outlined commands keep their own unbatched packets, one list per layer: batching would merge them with
+        // instances of the same mesh and material that are not outlined, or are outlined in another style.
+        std::array<BasicOutlineLayer, MaxOutlineLayers> outlineLayers{};
+        std::size_t outlineLayerCount = 0;
+        for (std::size_t layer = 0; layer < MaxOutlineLayers; ++layer)
         {
-            m_selectionCommands.clear();
+            auto &list = preparation.outlines[layer];
+            if (layer >= m_outlineLayers.size())
+            {
+                if (!list.entries.empty())
+                    list = {};
+                continue;
+            }
+            const auto &entities = m_outlineLayers[layer].entities;
+            m_outlineCommands.clear();
             for (const auto &command : commands)
-                if (command.ownerEntity && std::ranges::binary_search(m_selectedEntities, command.ownerEntity))
-                    m_selectionCommands.push_back(&command);
-            appendDraws(RenderCommandView(m_selectionCommands), preparation.selection, false);
-            selectionDraws = preparation.selection.draws;
+                if (command.ownerEntity && std::ranges::binary_search(entities, command.ownerEntity))
+                    m_outlineCommands.push_back(&command);
+            appendDraws(RenderCommandView(m_outlineCommands), list, false);
+            if (!list.draws.empty())
+                outlineLayers[outlineLayerCount++] = {m_outlineLayers[layer].style, list.draws};
         }
         const auto shadowStart = std::chrono::steady_clock::now();
         m_timingStats.batchingMs = millisecondsBetween(batchingStart, shadowStart);
@@ -2126,8 +2158,8 @@ namespace PlutoGE::render
         m_timingStats.impostorDrawCount = preparation.impostors.Count();
         frame.shadowDraws = shadowDraws;
         frame.giDraws = giDraws;
-        frame.selectionDraws = selectionDraws;
-        frame.selectionOutline = m_selectionOutline;
+        frame.outlines = outlineLayers;
+        frame.outlineCount = outlineLayerCount;
         frame.particles = std::span<const BasicParticleDraw>(m_orderedParticleDraws.data(), orderedParticleDrawCount);
         frame.effects = std::move(basicEffects);
         frame.decals = std::move(decals);
@@ -2159,7 +2191,7 @@ namespace PlutoGE::render
         core::CpuScope recordingScope("Render recording", core::CpuCategory::Rendering);
         const ScopedShaderGraphClock clock(frame.clock);
         const auto recordStart = std::chrono::steady_clock::now();
-        m_renderer->SetSelectionOutline(frame.selectionDraws, frame.selectionOutline);
+        m_renderer->SetOutlines(std::span(frame.outlines).first(frame.outlineCount));
         m_renderer->Render(frame.viewProjection, frame.lighting, frame.draws, frame.effects, frame.shadowDraws, frame.debugView,
                            frame.upscalerFrame ? &*frame.upscalerFrame : nullptr,
                            frame.useTemporalUpscaler ? &frame.unjitteredViewProjection : nullptr, frame.submit, frame.giDraws,

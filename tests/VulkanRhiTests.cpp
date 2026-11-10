@@ -34,6 +34,7 @@
 #include "SurfaceSpecializationChecks.h"
 #include "DirectionalShadowMaskChecks.h"
 #include "OutlineRenderingChecks.h"
+#include "SceneOutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
 #include "DecalRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
@@ -153,6 +154,7 @@ int main(int argc, char **argv)
         }
         shaders.displayOutput.vertex.spirv = ReadSpirv("DisplayOutput.vertex.spv");
         shaders.displayOutput.fragment.spirv = ReadSpirv("DisplayOutput.fragment.spv");
+        shaders.outline = {{.spirv = ReadSpirv("SelectionOutline.vertex.spv")}, {.spirv = ReadSpirv("SelectionOutline.fragment.spv")}};
         shaders.backgroundMotion = {{.spirv = ReadSpirv("BackgroundMotion.vertex.spv")}, {.spirv = ReadSpirv("BackgroundMotion.fragment.spv")}};
         shaders.upscalerSharpening = {{.spirv = ReadSpirv("UpscalerSharpening.vertex.spv")}, {.spirv = ReadSpirv("UpscalerSharpening.fragment.spv")}};
         const auto loadPostProcess = [&](BasicPostProcessEffectType type, const char *module)
@@ -258,6 +260,12 @@ int main(int argc, char **argv)
         if (!renderer.Initialize(device, shaders) || !renderer.Resize(96, 64))
             return 1;
 
+        if (argc > 1 && std::string_view(argv[1]) == "--shadow-mask")
+        {
+            CheckDirectionalShadowMask(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+
         // Before the other checks: parallel and streamed recording must match serial, bound recording exactly.
         if (argc <= 1)
         {
@@ -293,6 +301,22 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--outline")
         {
             CheckOutlineRendering(renderer, [&](rhi::TextureHandle texture)
+            {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--scene-outline")
+        {
+            CheckSceneOutlineRendering(device, shaders, [&](rhi::TextureHandle texture)
+            {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--screen-outline")
+        {
+            CheckScreenOutlineRendering(renderer, [&](rhi::TextureHandle texture)
             {
                 return device.ReadTextureRgba8(texture);
             });

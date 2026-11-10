@@ -4,13 +4,16 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
+#include <utility>
+
 namespace PlutoGE::ui
 {
     bool Panel::HasKeyboardFocus() const
     {
         if (!IsOpen() || !ImGui::GetCurrentContext())
             return false;
-        auto *window = ImGui::FindWindowByName(GetName().c_str());
+        auto *window = ImGui::FindWindowByName(GetHostWindowName().c_str());
         auto *focused = ImGui::GetCurrentContext()->NavWindow;
         return window && focused && ImGui::IsWindowChildOf(focused, window, true, false);
     }
@@ -19,7 +22,22 @@ namespace PlutoGE::ui
     {
         SetOpen(true);
         if (ImGui::GetCurrentContext())
-            ImGui::SetWindowFocus(GetName().c_str());
+            ImGui::SetWindowFocus(GetHostWindowName().c_str());
+    }
+
+    std::string Panel::GetHostWindowName() const
+    {
+        return m_isFullscreen ? "###PanelFullscreen" + m_config.name : m_config.name;
+    }
+
+    void Panel::SetFullscreen(bool fullscreen)
+    {
+        if (fullscreen == m_isFullscreen)
+            return;
+        m_isFullscreen = fullscreen;
+        m_fullscreenChanged = true;
+        if (fullscreen)
+            m_isOpen = true;
     }
 
     namespace
@@ -74,14 +92,90 @@ namespace PlutoGE::ui
 
     bool Panel::BeginPanel()
     {
+        if (m_isFullscreen)
+            return BeginFullscreenPanel();
+        // Restoring: the panel's own window reappears in its dock node; give it focus back.
+        if (std::exchange(m_fullscreenChanged, false))
+            ImGui::SetNextWindowFocus();
         const bool shouldRender = ImGui::Begin(m_config.name.c_str(), &m_isOpen, ImGuiWindowFlags_None);
         ApplyFloatingWindowState();
         DrawFloatingWindowControls();
         return shouldRender;
     }
 
+    bool Panel::BeginFullscreenPanel()
+    {
+        // A separate window covers the work area, so the panel's docked window simply isn't
+        // submitted meanwhile: ImGui keeps its dock node and tab for when it comes back.
+        const ImGuiViewport *viewport = ImGui::GetMainViewport();
+        ImGui::SetNextWindowViewport(viewport->ID);
+        ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(viewport->WorkSize, ImGuiCond_Always);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        // Like the dockspace host it never jumps in front of its own overlay windows on click.
+        const bool shouldRender = ImGui::Begin(GetHostWindowName().c_str(), nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+            ImGuiWindowFlags_NoScrollWithMouse);
+        ImGui::PopStyleVar(3);
+
+        m_fullscreenBeginOrder = -1;
+        if (std::exchange(m_fullscreenChanged, false))
+        {
+            ImGuiWindow *window = ImGui::GetCurrentWindow();
+            ImGui::BringWindowToDisplayFront(window);
+            ImGui::FocusWindow(window);
+            m_fullscreenBeginOrder = window->BeginOrderWithinContext;
+        }
+        return shouldRender;
+    }
+
+    void Panel::DrawFullscreenRestoreButton()
+    {
+        ImGuiWindow *window = ImGui::GetCurrentWindow();
+        if (window == nullptr || window->SkipItems)
+            return;
+
+        // Revealed only when the pointer nears the top-right corner, so it never covers gameplay.
+        const float buttonSize = ImGui::GetFrameHeight() * 1.25f;
+        const float margin = ImGui::GetStyle().ItemSpacing.x;
+        const ImVec2 max(window->Pos.x + window->Size.x - margin, window->Pos.y + margin + buttonSize);
+        const ImVec2 min(max.x - buttonSize, max.y - buttonSize);
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const float revealDistance = buttonSize * 3.0f;
+        if (!ImGui::IsMousePosValid(&mouse) || mouse.x < max.x - revealDistance || mouse.y > min.y + revealDistance ||
+            !ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
+            return;
+
+        window->DrawList->AddRectFilled(min, max, IM_COL32(32, 33, 36, 210), ImGui::GetStyle().FrameRounding);
+        if (DrawTitleBarButton("##PanelExitFullscreen", ImRect(min, max), icons::WindowRestore, "Exit fullscreen"))
+            SetFullscreen(false);
+    }
+
     void Panel::EndPanel()
     {
+        if (m_isFullscreen)
+        {
+            DrawFullscreenRestoreButton();
+            // On the frame it appears, windows the panel submitted from Render() (viewport
+            // overlays and toolbars) go back above it, keeping their relative order.
+            if (m_fullscreenBeginOrder >= 0)
+            {
+                ImGuiContext &g = *ImGui::GetCurrentContext();
+                ImVector<ImGuiWindow *> submitted;
+                for (ImGuiWindow *other : g.Windows)
+                    if (other->Active && !(other->Flags & ImGuiWindowFlags_ChildWindow) &&
+                        other->BeginOrderWithinContext > m_fullscreenBeginOrder)
+                        submitted.push_back(other);
+                std::sort(submitted.begin(), submitted.end(), [](const ImGuiWindow *a, const ImGuiWindow *b)
+                          { return a->BeginOrderWithinContext < b->BeginOrderWithinContext; });
+                for (ImGuiWindow *other : submitted)
+                    ImGui::BringWindowToDisplayFront(other);
+                m_fullscreenBeginOrder = -1;
+            }
+        }
         ImGui::End();
     }
 
@@ -173,6 +267,9 @@ namespace PlutoGE::ui
     {
         if (!m_isOpen)
         {
+            // Closing a fullscreen panel restores it, so reopening docks it where it was.
+            m_isFullscreen = false;
+            m_fullscreenChanged = false;
             m_wasVisibleLastFrame = false;
             return;
         }

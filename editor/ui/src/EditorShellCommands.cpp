@@ -15,6 +15,7 @@
 #include "PlutoGE/ui/panels/ProfilerPanel.h"
 #include "PlutoGE/ui/panels/RmlDocumentEditorPanel.h"
 #include "PlutoGE/ui/panels/UIThemeEditorPanel.h"
+#include "PlutoGE/ui/panels/ViewportPanel.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -65,6 +66,8 @@ namespace PlutoGE::ui
                              .alternateShortcut = ImGuiKey_Pause, .scope = Scope::Editor});
         add("play.step", "Step Frame", "Play", CtrlAlt(ImGuiKey_P), Scope::Editor);
 
+        add("view.gameViewportFullscreen", "Toggle Game Viewport Fullscreen", "View", ImGuiKey_F11);
+
         add("build.build", "Build Project...", "Build", Ctrl(ImGuiKey_B));
         add("build.buildAndRun", "Build and Run Project...", "Build", CtrlShift(ImGuiKey_B));
         add("build.scripts", "Build Scripts", "Build", ImGuiKey_None);
@@ -109,6 +112,8 @@ namespace PlutoGE::ui
         m_commands.Bind("scene.delete", [this] { DeleteSelectedEntity(); }, editing && hasSelection && !foliageToolHandledKey);
         m_commands.Bind("scene.deselect", [this] { SetSelectedEntity(nullptr); }, editing && hasSelection && !foliageToolHandledKey);
         m_commands.Bind("scene.dropToGround", [this] { m_showGroundPlacement = true; }, editing && hasSelection && !m_activeBakeTask);
+        if (m_gameViewportPanel)
+            m_commands.Bind("view.gameViewportFullscreen", [this] { m_gameViewportPanel->ToggleFullscreen(); });
         m_commands.Bind("build.scripts", [this] { BuildProjectScripts(); }, m_project && !IsRuntimeExportProject());
         m_commands.Bind("editor.commandPalette", [this] { m_openCommandPalette = true; });
         m_commands.Bind("editor.preferences", [this] { m_showPreferences = true; });

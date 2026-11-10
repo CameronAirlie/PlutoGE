@@ -31,6 +31,11 @@ namespace PlutoGE::ui
         void Focus();
         void SetInteractionEnabled(bool enabled) { m_isInteractionEnabled = enabled; }
         void SetVisualAlpha(float alpha) { m_visualAlpha = alpha; }
+        // Fullscreen shows the panel over the whole editor work area (everything below the
+        // title bar) and hides it from its dock node; restoring returns it to that node.
+        bool IsFullscreen() const { return m_isFullscreen; }
+        void SetFullscreen(bool fullscreen);
+        void ToggleFullscreen() { SetFullscreen(!m_isFullscreen); }
 
         virtual void Initialize() {} // Optional initialization logic for the panel
         virtual void Render() = 0;   // Pure virtual function to render the panel
@@ -41,8 +46,15 @@ namespace PlutoGE::ui
         void ApplyFloatingWindowState();
         void DrawFloatingWindowControls();
         void ToggleMaximized();
+        bool BeginFullscreenPanel();
+        void DrawFullscreenRestoreButton();
+        // The ImGui window currently hosting the panel: its own, or the fullscreen one.
+        std::string GetHostWindowName() const;
 
         PanelConfig m_config;
+        bool m_isFullscreen = false;
+        bool m_fullscreenChanged = false;
+        int m_fullscreenBeginOrder = -1;
         bool m_isOpen = true; // Panels are open by default, can be toggled by user
         bool m_wasVisibleLastFrame = true;
         bool m_isMaximized = false;

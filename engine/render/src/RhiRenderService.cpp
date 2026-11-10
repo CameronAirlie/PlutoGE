@@ -189,6 +189,8 @@ namespace PlutoGE::render
                                                 m_device->GetApi() == rhi::GraphicsApi::Vulkan;
         if (runtimeUi) RmlUiRuntime::Get().PrepareScenePortraits(*scene, *m_device);
         const auto atmosphere = BuildSceneAtmosphere(scene, lighting, cameraData.tagFilter);
+        BuildSceneOutline(scene, static_cast<float>(m_swapchain->GetHeight()), m_sceneOutline);
+        m_sceneRenderer->SetOutlines(m_sceneOutline.layers);
         BasicRenderer::BeforeTemporalResolve compose;
         if (const auto *source = m_renderTextures.TakeSkinningSource())
             m_sceneRenderer->ReuseSkinningForFrame(*source);

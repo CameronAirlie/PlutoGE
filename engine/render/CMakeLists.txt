@@ -15,6 +15,7 @@ add_library(PlutoGERender
     src/ParallelRecording.cpp
     src/GeometryArena.cpp
     src/SceneEnvironment.cpp
+    src/SceneOutline.cpp
     src/FoliageWind.cpp
     src/PhysicalSkyModel.cpp
     src/SkyIrradiance.cpp
@@ -40,6 +41,7 @@ add_library(PlutoGERender
     src/CloudShadowMap.cpp
     src/atmosphere/CloudTemporalFilter.cpp
     src/DirectionalShadowMask.cpp
+    src/OutlinePass.cpp
     src/InstanceStorage.cpp
     src/InstanceBinning.cpp
     src/ImpostorDraws.cpp

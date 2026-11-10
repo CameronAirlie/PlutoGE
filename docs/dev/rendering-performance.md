@@ -292,8 +292,12 @@ pipelines carry no fallback filter at all. Transparent, outline and diagnostic p
   the filter to keep in step.
 - **Receivers from depth.** The world position comes from the inverse of the jittered view-projection the coverage
   depth was drawn with. Each screen derivative comes from the neighbour on the same surface: the one nearer in world
-  space. A sliver whose nearer neighbour is still more than 12 pixel footprints away (a distant blade with no
-  neighbour on its surface) takes the view-facing plane instead, rather than a step to another surface.
+  space. Steps that continue in one direction (within about 18 degrees) belong to one surface however long they are,
+  which keeps ground seen at grazing angles on its own plane; otherwise a sliver whose nearer neighbour is still more
+  than 12 pixel footprints away (a distant blade with no neighbour on its surface) takes the view-facing plane
+  instead, rather than a step to another surface. At the screen edge the step inside is used alone. (A length test
+  alone took grazing ground for a sliver from about 85 degrees, turned its receiver towards the camera and shadowed
+  it in a dark band; `CheckDirectionalShadowMask` covers this with a low camera over open ground.)
 - **Receiver orientation.** The receiver plane now faces the camera in both paths. Before, the surface shader turned it
   toward the interpolated vertex normal, which on authored foliage normals (vertical on grass, outward on leaf cards)
   need not be the side in view. For ordinary single-sided geometry the two are the same.

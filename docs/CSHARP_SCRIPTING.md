@@ -477,6 +477,26 @@ Properties: `IsMainCamera`, `Fov`.
 
 Properties: `Intensity`, `Color`.
 
+### OutlineComponent
+
+Outlines everything its entity renders, and by default everything its children render ([outlines](OUTLINES.md)). It
+is reached through the generic property bridge. Properties: `Color` (linear RGBA), `Width` (pixels on a 1080-line
+output, 0.5 to 6), `HiddenOpacity` (0 to 1: how much shows through walls) and `IncludeChildren`. Switch it with
+`Enabled`; that is cheaper than adding and removing the component. Every outline keeps its own style; outlines with
+the same style share a layer, and up to four distinct styles draw in one frame.
+
+```csharp
+var outline = pickup.GetComponent<OutlineComponent>() ?? pickup.AddComponent<OutlineComponent>();
+if (outline is not null)
+{
+    outline.Color = new Vector4(1.0f, 0.82f, 0.36f, 0.9f);
+    outline.Enabled = true;
+}
+```
+
+`Enabled` works on every `RegisteredComponent`, including components that do not serialize an `Enabled` property
+(the property bridge falls back to the component's own enabled flag).
+
 ### WindComponent
 
 The scene's wind ([foliage wind](FOLIAGE_WIND.md)), reached through the generic property bridge. Foliage types with

@@ -36,15 +36,33 @@ float3 maskWorldPosition(int2 pixel, float depth)
 // neighbour after or before, whichever lies closer, so a step across a silhouette is not taken for the surface. A
 // sliver (a distant grass blade) has neither neighbour on its surface: when even the closer step spans more than
 // SliverSteps pixel footprints, the plane facing the view through this pixel stands in, rather than a step to a
-// different surface (whose receiver-plane gradient would bias the filter wildly). Grazing surfaces up to about 85
-// degrees stay below it.
+// different surface (whose receiver-plane gradient would bias the filter wildly).
+//
+// Length alone cannot tell a sliver from ground seen at a grazing angle, whose steps also span many footprints (beyond
+// about 85 degrees from the view, which a camera at eye height reaches a few tens of metres out). Taking the facing
+// plane there turned the ground's receiver towards the camera, and the wrong bias and filter plane shadowed it in a
+// dark band. A row or column of pixels meets a plane along a line, so steps on one surface continue in one direction
+// (nearly, on a curved one) even as perspective stretches them, while a sliver's two steps leave and return to the
+// surface behind it and point in nearly opposite directions: steps within about 18 degrees of each other
+// (StepAlignment) are one surface, however long.
+//
+// At the screen edge the neighbour outside has no depth of its own, so the step inside stands alone.
 static const float SliverSteps = 12.0;
+static const float StepAlignment = 0.95;
 float3 maskDerivative(int2 pixel, int2 axis, float3 world, float depth)
 {
-    const float3 after = maskWorldPosition(pixel + axis, maskDepth(pixel + axis)) - world;
-    const float3 before = world - maskWorldPosition(pixel - axis, maskDepth(pixel - axis));
-    const float3 nearer = dot(after, after) <= dot(before, before) ? after : before;
-    const float3 facing = maskWorldPosition(pixel + axis, depth) - world;
+    const int2 next = pixel + axis, previous = pixel - axis;
+    const bool hasNext = all(next < int2(maskResolution.xy)), hasPrevious = all(previous >= 0);
+    const float3 after = maskWorldPosition(next, maskDepth(next)) - world;
+    const float3 before = world - maskWorldPosition(previous, maskDepth(previous));
+    if (!hasNext || !hasPrevious)
+        return hasNext ? after : before;
+    const float afterLength = dot(after, after), beforeLength = dot(before, before);
+    const float3 nearer = afterLength <= beforeLength ? after : before;
+    const float alignment = dot(after, before);
+    if (alignment > 0.0 && alignment * alignment >= StepAlignment * StepAlignment * afterLength * beforeLength)
+        return nearer;
+    const float3 facing = maskWorldPosition(next, depth) - world;
     return dot(nearer, nearer) > SliverSteps * SliverSteps * dot(facing, facing) ? facing : nearer;
 }
 

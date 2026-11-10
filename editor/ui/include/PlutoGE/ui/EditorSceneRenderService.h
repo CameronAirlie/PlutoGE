@@ -6,6 +6,7 @@
 #include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/render/SceneOutline.h"
 
 #include <cstdint>
 #include <memory>
@@ -58,12 +59,12 @@ namespace PlutoGE::ui
         // The project's rendering settings, with any diagnostic override already applied.
         void SetRenderingSettings(const render::RenderingSettings &settings) noexcept;
         void SetGeometryDiagnosticMode(render::GeometryDiagnosticMode mode) noexcept { m_geometryDiagnosticMode = mode; }
-        // Outlines these entities in the next Render only; viewports sharing
+        // Outlines these entities in the next Render only, over the scene's own outlines; viewports sharing
         // this service set their own selection before each frame.
-        void SetSelectionOutline(std::span<const std::uint32_t> entities, const render::BasicSelectionOutline &style = {})
+        void SetSelectionOutline(std::span<const std::uint32_t> entities, const render::OutlineStyle &style = {})
         {
-            m_selectedEntities.assign(entities.begin(), entities.end());
-            m_selectionOutline = style;
+            m_selectionOutline.entities.assign(entities.begin(), entities.end());
+            m_selectionOutline.style = style;
         }
         // Renders cameras into their render textures; call once per frame
         // before the viewports so materials sample this frame's images.
@@ -105,8 +106,10 @@ namespace PlutoGE::ui
         std::optional<render::GraphicsQuality> m_runtimeGraphicsQuality;
         render::RenderingSettings m_renderingSettings;
         render::GeometryDiagnosticMode m_geometryDiagnosticMode = render::GeometryDiagnosticMode::None;
-        std::vector<std::uint32_t> m_selectedEntities;
-        render::BasicSelectionOutline m_selectionOutline;
+        // The editor selection, outlined for one Render as the last layer.
+        render::OutlineLayer m_selectionOutline;
+        // The scene's OutlineComponents and the selection, the layers each Render draws (storage reused).
+        render::SceneOutline m_sceneOutline;
         std::unique_ptr<render::rhi::IRenderDevice> m_ownedDevice;
         render::rhi::IRenderDevice *m_device = nullptr;
         std::unique_ptr<render::RhiSceneRenderer> m_sceneRenderer;

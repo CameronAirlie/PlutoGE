@@ -220,9 +220,15 @@ namespace PlutoGE::render
         }
         void InvalidateMesh(const Mesh *mesh)
         {
-            for (auto *list : {&visible, &shadows, &gi, &selection})
-                for (auto &entry : list->entries)
+            const auto invalidate = [&](List &list)
+            {
+                for (auto &entry : list.entries)
                     if (entry.input.mesh == mesh) entry.valid = false;
+            };
+            for (auto *list : {&visible, &shadows, &gi})
+                invalidate(*list);
+            for (auto &list : outlines)
+                invalidate(list);
             std::erase_if(retained, [&](const auto &item) { return item.second.packet.input.mesh == mesh; });
         }
         void Reset()
@@ -232,7 +238,7 @@ namespace PlutoGE::render
             visible = {};
             shadows = {};
             gi = {};
-            selection = {};
+            outlines = {};
             batched.clear();
             opaqueBatches = {};
             // Never recycle tokens while the downstream renderer is alive.
@@ -240,8 +246,9 @@ namespace PlutoGE::render
 
         std::unordered_map<const Material *, MaterialEntry> materials;
         std::unordered_map<RetainedKey, RetainedEntry, RetainedHash> retained;
-        // Selection holds the editor-outlined subset of the visible commands.
-        List visible, shadows, gi, selection;
+        List visible, shadows, gi;
+        // Each outline layer's subset of the visible commands (RhiSceneRenderer::SetOutlines), drawn into its mask.
+        std::array<List, MaxOutlineLayers> outlines;
         std::vector<BasicDraw> batched;
         RetainedOpaqueBatches opaqueBatches;
 

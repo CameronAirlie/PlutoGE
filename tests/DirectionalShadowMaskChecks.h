@@ -3,6 +3,7 @@
 #include "PlutoGE/render/Camera.h"
 #include "../engine/render/src/DirectionalShadowCascades.h"
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -112,6 +113,49 @@ void CheckDirectionalShadowMask(PlutoGE::render::BasicRenderer &renderer, ReadPi
         require(shadowed / channels > 1.5, std::string(name) + ": the fixture must cast visible shadows");
         require(difference / channels < 0.6, std::string(name) + ": the mask must match the surfaces' own filter");
         require(double(different) / channels < 0.015, std::string(name) + ": only silhouette pixels may differ");
+    }
+
+    // A camera low over open ground sees it at grazing angles: one pixel's step across the ground grows to many pixel
+    // footprints near the horizon. The mask must still rebuild the ground plane there, or the receiver turns towards
+    // the camera, its bias and filter plane go wrong, and the ground shadows itself in a dark band (no caster here).
+    {
+        BasicDraw field;
+        field.mesh = &plane;
+        field.model = glm::scale(glm::mat4(1), glm::vec3(400.0f, 1.0f, 400.0f));
+        field.baseColor = {0.7f, 0.65f, 0.6f, 1};
+        auto grazing = lighting;
+        grazing.shadowMethod = ShadowMethod::Virtual;
+        grazing.directionalDirection = glm::normalize(glm::vec3(-0.5f, -0.35f, -0.8f));
+        grazing.cameraPosition = {0, 1.0f, 0};
+        grazing.view = glm::lookAtRH(grazing.cameraPosition, glm::vec3(0, 0.6f, -20.0f), glm::vec3(0, 1, 0));
+        const auto render = [&](bool mask, bool shadows)
+        {
+            renderer.SetDirectionalShadowMask(mask);
+            auto frameLighting = grazing;
+            frameLighting.shadowsEnabled = shadows;
+            for (int frame = 0; frame < 6; ++frame)
+                renderer.Render(projection * frameLighting.view, frameLighting, {&field, 1});
+            return readPixels(renderer.GetColorTexture());
+        };
+        const auto unshadowed = render(false, false);
+        const auto filtered = render(false, true);
+        const auto masked = render(true, true);
+        double filterDarkening = 0.0, maskDarkening = 0.0;
+        std::size_t different = 0;
+        for (std::size_t i = 0; i < filtered.size(); ++i)
+        {
+            if (i % 4 == 3) continue;
+            filterDarkening += std::max(int(unshadowed[i]) - int(filtered[i]), 0);
+            maskDarkening += std::max(int(unshadowed[i]) - int(masked[i]), 0);
+            if (std::abs(int(masked[i]) - int(filtered[i])) > 16) ++different;
+        }
+        const double channels = double(Width) * Height * 3.0;
+        std::cout << "Directional shadow mask (grazing ground): filter darkening " << filterDarkening / channels
+                  << ", mask darkening " << maskDarkening / channels << ", "
+                  << 100.0 * double(different) / channels << "% beyond 16\n";
+        require(filterDarkening / channels < 0.5, "grazing ground: an uncovered ground must not shadow itself");
+        require(maskDarkening / channels < 0.5, "grazing ground: the mask must not shadow an uncovered ground");
+        require(double(different) / channels < 0.005, "grazing ground: the mask must match the surfaces' own filter");
     }
     renderer.SetDirectionalShadowMask(true);
     renderer.Resize(width, height);

@@ -367,10 +367,20 @@ namespace PlutoGE::ui
             render::BasicRenderer::BeforeTemporalResolve compose;
             if (const auto *source = m_renderTextures.TakeSkinningSource())
                 m_sceneRenderer->ReuseSkinningForFrame(*source);
-            // Debug views show raw buffers; the outline belongs to the shaded view.
-            m_sceneRenderer->SetSelectionOutline(debugView == render::PostProcessDebugView::None
-                ? std::span<const std::uint32_t>(m_selectedEntities) : std::span<const std::uint32_t>{}, m_selectionOutline);
-            m_selectedEntities.clear();
+            // Debug views show raw buffers; outlines belong to the shaded view. The scene's OutlineComponents draw as
+            // they do in a built game, and the editor selection goes over them as one more layer.
+            if (debugView == render::PostProcessDebugView::None)
+            {
+                const bool selection = !m_selectionOutline.entities.empty();
+                render::BuildSceneOutline(scene, static_cast<float>(height), m_sceneOutline,
+                                          render::MaxOutlineLayers - (selection ? 1 : 0));
+                if (selection)
+                    m_sceneOutline.layers.push_back(m_selectionOutline);
+            }
+            else
+                m_sceneOutline.layers.clear();
+            m_sceneRenderer->SetOutlines(m_sceneOutline.layers);
+            m_selectionOutline.entities.clear();
             if (!overlays.empty())
                 compose = [&](render::BasicRenderer &base, glm::vec2 jitter)
                 {

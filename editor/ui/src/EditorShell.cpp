@@ -3713,6 +3713,7 @@ namespace PlutoGE::ui
         auto viewportPanel2 = new ViewportPanel(viewportConfig2, m_gameSceneRenderService.get());
         viewportPanel2->Initialize();
         m_panelManager.AddPanel(viewportPanel2);
+        m_gameViewportPanel = viewportPanel2;
 
         auto inspectorPanel = new InspectorPanel(PanelConfig{"Inspector"});
         inspectorPanel->Initialize();
@@ -4660,6 +4661,9 @@ namespace PlutoGE::ui
                 {
                     panelToggle("Editor Viewport", viewportPanel);
                     panelToggle("Game Viewport", viewportPanel2);
+                    if (ImGui::MenuItem("Fullscreen Game Viewport", m_commands.GetShortcutText("view.gameViewportFullscreen").c_str(),
+                                        viewportPanel2->IsFullscreen()))
+                        viewportPanel2->ToggleFullscreen();
                     panelToggle("Scene Hierarchy", sceneHierarchyPanel);
                     panelToggle("Inspector", inspectorPanel);
                     panelToggle("Content Browser", contentBrowserPanel);

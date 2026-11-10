@@ -6,6 +6,7 @@
 #include "PlutoGE/render/RhiCameraStack.h"
 #include "PlutoGE/render/RhiRenderTextureRenderer.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/render/SceneOutline.h"
 
 #include <memory>
 #include "PlutoGE/core/FrameWorker.h"
@@ -130,6 +131,8 @@ namespace PlutoGE::render
         bool m_gpuInstanceCulling = true;
         rhi::DeferredCommandList m_runtimeUiCommands;
         NativeUIRenderer m_nativeUi;
+        // The scene's OutlineComponents, gathered each frame (storage reused).
+        SceneOutline m_sceneOutline;
         RhiSceneTimingStats m_completedTimingStats;
         TemporalUpscalerStatus m_completedUpscalerStatus;
         // Records a prepared frame, its runtime UI and presentation on the render thread.

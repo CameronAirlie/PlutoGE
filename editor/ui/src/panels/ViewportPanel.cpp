@@ -4139,8 +4139,8 @@ namespace PlutoGE::ui
                     collect(collect, *entity);
             if (!m_selectionOutlineIds.empty())
             {
-                render::BasicSelectionOutline style;
-                style.radius = 2.0f * std::max(1.0f, ImGui::GetIO().DisplayFramebufferScale.x);
+                render::OutlineStyle style;
+                style.width = 2.0f * std::max(1.0f, ImGui::GetIO().DisplayFramebufferScale.x);
                 m_rhiRenderService->SetSelectionOutline(m_selectionOutlineIds, style);
             }
         }

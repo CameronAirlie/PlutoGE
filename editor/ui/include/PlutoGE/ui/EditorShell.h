@@ -614,6 +614,7 @@ namespace PlutoGE::ui
         ContentBrowserPanel *m_contentBrowser = nullptr;
         SceneHierarchyPanel *m_sceneHierarchyPanel = nullptr;
         ViewportPanel *m_editorViewportPanel = nullptr;
+        ViewportPanel *m_gameViewportPanel = nullptr;
         TimelinePreview m_timelinePreview;
         SceneSnapshot m_runtimeSceneSnapshot;
         std::string m_runtimeSceneSnapshotPath;

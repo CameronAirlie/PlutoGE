@@ -194,15 +194,10 @@ namespace PlutoGE::render
         { m_sceneEffectsEnabled = enabled; m_particleEffectsEnabled = enabled; }
         void SetParticleEffectsEnabled(bool enabled) noexcept { m_particleEffectsEnabled = enabled; }
         void SetTransparentBackground(bool enabled) noexcept { m_transparentBackground = enabled; }
-        // Editor selection: visible commands owned by these entities are
-        // outlined. An empty list disables the outline.
-        void SetSelectionOutline(std::span<const std::uint32_t> entities, const BasicSelectionOutline &style = {})
-        {
-            m_selectedEntities.assign(entities.begin(), entities.end());
-            std::erase(m_selectedEntities, 0u);
-            std::ranges::sort(m_selectedEntities);
-            m_selectionOutline = style;
-        }
+        // Screen-space outlines for the following frames: visible commands owned by each layer's entities are
+        // outlined in that layer's style, later layers on top. Layers without entities and past MaxOutlineLayers are
+        // dropped; an empty span turns outlines off. The layers are copied.
+        void SetOutlines(std::span<const OutlineLayer> layers);
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept
         {
             if (m_upscalerOptions == options)
@@ -255,8 +250,10 @@ namespace PlutoGE::render
         {
             glm::mat4 viewProjection{1.0f};
             BasicLighting lighting;
-            std::span<const BasicDraw> draws, shadowDraws, giDraws, selectionDraws;
-            BasicSelectionOutline selectionOutline;
+            std::span<const BasicDraw> draws, shadowDraws, giDraws;
+            // The first outlineCount entries: each outline layer's style and prepared draws.
+            std::array<BasicOutlineLayer, MaxOutlineLayers> outlines{};
+            std::size_t outlineCount = 0;
             std::span<const BasicParticleDraw> particles;
             std::vector<BasicPostProcessEffect> effects;
             std::vector<BasicDecalDraw> decals;
@@ -311,9 +308,9 @@ namespace PlutoGE::render
       bool m_sceneEffectsEnabled = true;
       bool m_particleEffectsEnabled = true;
       bool m_transparentBackground = false;
-      std::vector<std::uint32_t> m_selectedEntities;
-      BasicSelectionOutline m_selectionOutline;
-      std::vector<const RenderCommand *> m_selectionCommands;
+      // SetOutlines' layers, each with its entities sorted and unique.
+      std::vector<OutlineLayer> m_outlineLayers;
+      std::vector<const RenderCommand *> m_outlineCommands;
       std::string m_submissionLabel = "Scene";
       bool m_gpuInstanceCulling = true;
       rhi::IRenderDevice *m_device = nullptr;

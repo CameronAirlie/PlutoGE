@@ -16,6 +16,7 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/components/WindComponent.h"
+#include "PlutoGE/scene/components/OutlineComponent.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
 #include <unordered_map>
 
@@ -33,12 +34,12 @@ namespace PlutoGE::scene
 {
     namespace
     {
-        // Components the scene caches for per-frame environment lookups (Scene::RefreshEnvironmentComponents).
+        // Components the scene caches for per-frame render lookups (Scene::RefreshEnvironmentComponents).
         bool IsEnvironmentComponentType(ComponentTypeID typeID)
         {
             return typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
                    typeID == GetComponentTypeID<VolumetricCloudComponent>() ||
-                   typeID == GetComponentTypeID<WindComponent>();
+                   typeID == GetComponentTypeID<WindComponent>() || typeID == GetComponentTypeID<OutlineComponent>();
         }
 
         const std::string &ComponentTraceName(const Component &component)

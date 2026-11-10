@@ -27,6 +27,7 @@
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RagdollTuningComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
+#include "PlutoGE/scene/components/OutlineComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
@@ -160,6 +161,7 @@ namespace PlutoGE::scene
             cameraRig.canAdd = HasSibling<CameraComponent>;
             registry.Register<SequencerComponent>("SequencerComponent", "Sequencer");
             registry.Register<LightComponent>("LightComponent", "Light Component");
+            registry.Register<OutlineComponent>("OutlineComponent", "Outline Component");
 
             registry.AddMenuItem<MeshComponent>("Rendering/Mesh");
             registry.AddMenuItem<DecalComponent>("Rendering/Decal");
@@ -173,6 +175,7 @@ namespace PlutoGE::scene
             registry.AddMenuItem<CameraRigComponent>("Rendering/Camera Rig");
             registry.AddMenuItem<SequencerComponent>("Rendering/Sequencer");
             registry.AddMenuItem<LightComponent>("Rendering/Light");
+            registry.AddMenuItem<OutlineComponent>("Rendering/Outline");
         }
 
         void RegisterAnimation(ComponentRegistry &registry)

@@ -51,6 +51,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Wind and swaying vegetation | [Foliage wind](FOLIAGE_WIND.md) |
 | Light through leaves and canopies, on voxel and hardware GI | [Foliage transmission](FOLIAGE_TRANSMISSION.md) |
 | Surface marks | [Decals](decals.md) |
+| Highlighting what the player can interact with | [Outlines](OUTLINES.md) |
 | Directional shadows | [Virtual shadow maps](virtual-shadow-maps.md), [defaults and compatibility](VSM_DEFAULT.md), [cascade caching and caster culling](cascaded-shadow-caching.md) |
 | Clouds and weather | [Cloud shadows, overcast light and cloud rendering](CLOUD_SHADOWS.md) |
 | Local lights and shadows | [Physical lights](physical-local-lights.md), [point shadow filtering](point-shadow-filtering.md) |

@@ -11,6 +11,7 @@
 #include "PlutoGE/render/ImpostorLayout.h"
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/LodDistanceScale.h"
+#include "PlutoGE/render/Outline.h"
 #include "PlutoGE/render/ShaderGraph.h"
 #include "PlutoGE/render/TerrainLayerLimits.h"
 #include "PlutoGE/render/OceanParameters.h"
@@ -58,6 +59,7 @@ namespace PlutoGE::render
     class ScreenSpaceGlobalIllumination;
     class ScreenSpaceContactShadows;
     class DirectionalShadowMask;
+    class OutlinePass;
     class DdgiVolume;
     class VoxelDdgiRaySource;
     class RayQueryDdgiRaySource;
@@ -321,14 +323,6 @@ namespace PlutoGE::render
         rhi::ComputePipelineDescriptor::ShaderCode rayQueryTrace, rayQueryVisibility;
     };
 
-    struct BasicSelectionOutline
-    {
-        glm::vec4 color{1.0f, 0.4f, 0.0f, 1.0f};
-        // Outline width in output pixels.
-        float radius = 2.0f;
-        // Opacity multiplier for outline segments whose geometry is hidden.
-        float hiddenOpacity = 0.3f;
-    };
 
     struct BasicRendererShaderPackage
     {
@@ -377,8 +371,8 @@ namespace PlutoGE::render
         // Clustered local-light culling (LightClusterCulling.slang). Without it every light is evaluated.
         rhi::ComputePipelineDescriptor::ShaderCode lightClusterCulling;
         BasicPostProcessShaderPackage displayOutput;
-        // Optional editor selection outline composited over the display output.
-        BasicPostProcessShaderPackage selectionOutline;
+        // Optional screen-space outlines composited over the display output (SelectionOutline.slang, OutlinePass).
+        BasicPostProcessShaderPackage outline;
         std::array<BasicPostProcessShaderPackage,
                    static_cast<std::size_t>(BasicPostProcessEffectType::Count)>
             postProcess;
@@ -769,6 +763,13 @@ namespace PlutoGE::render
         // Wind response (RenderCommand::foliageWind). Every pass deforms enabled draws the same way, with the
         // scene's wind from BasicLighting::wind (FoliageWindDraws.h).
         FoliageWindResponse foliageWind{};
+    };
+
+    // One outline style and the draws whose silhouette it outlines (BasicRenderer::SetOutlines).
+    struct BasicOutlineLayer
+    {
+        OutlineStyle style;
+        std::span<const BasicDraw> draws;
     };
 
     struct BasicParticleVertex
@@ -1277,10 +1278,9 @@ namespace PlutoGE::render
         // Diagnostic reference: same scheduling and lighting, full-volume publication.
         void SetIncrementalVctPublicationEnabled(bool enabled) noexcept { m_incrementalVctPublication = enabled; }
         void SetTransparentBackground(bool enabled) noexcept { m_transparentBackground = enabled; }
-        // Editor selection: these draws are outlined on the display output of
-        // the next Render. The span is borrowed and must stay valid until then.
-        void SetSelectionOutline(std::span<const BasicDraw> draws, const BasicSelectionOutline &style) noexcept
-        { m_selectionDraws = draws; m_selectionOutline = style; }
+        // Outlines drawn on the display output of the next Render, in order (later layers on top); layers past
+        // MaxOutlineLayers are dropped. The layers and their draws are borrowed and must stay valid until then.
+        void SetOutlines(std::span<const BasicOutlineLayer> layers) noexcept { m_outlineLayers = layers; }
         void SetVirtualShadowMembershipCachingEnabled(bool enabled) noexcept
         { if (m_virtualShadows) m_virtualShadows->SetMembershipCachingEnabled(enabled); }
         [[nodiscard]] const BasicRendererTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
@@ -1488,13 +1488,8 @@ namespace PlutoGE::render
         std::vector<rhi::BufferHandle> m_shadowMaterials;
         std::vector<rhi::Buffer> m_shadowMaterialBuffers;
         rhi::GraphicsPipeline m_displayPipeline;
-        rhi::GraphicsPipeline m_selectionOutlinePipeline;
-        rhi::Buffer m_selectionOutlineBuffer;
-        // Frame constants without temporal jitter, so the outline does not shimmer.
-        rhi::Buffer m_selectionCameraBuffer;
-        rhi::Texture m_selectionDepthTarget;
-        std::span<const BasicDraw> m_selectionDraws;
-        BasicSelectionOutline m_selectionOutline;
+        std::unique_ptr<OutlinePass> m_outlines;
+        std::span<const BasicOutlineLayer> m_outlineLayers;
         std::array<rhi::GraphicsPipeline, static_cast<std::size_t>(BasicPostProcessEffectType::Count)> m_postProcessPipelines;
         std::array<rhi::GraphicsPipeline, 2> m_volumetricTracePipelines;
         rhi::GraphicsPipeline m_volumetricCompositePipeline;

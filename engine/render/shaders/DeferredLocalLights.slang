@@ -35,27 +35,8 @@ float4 deferredLocalLightsFragment(ScreenTriangleVertex input) : SV_Target0
     const float4 encodedNormal = deferredNormal.Load(int3(pixel, 0));
     if (!surfaceDefersLocalLights(encodedNormal.a))
         return 0.0;
-    // A quad within one surface gives a step no longer than ReceiverSliverSteps footprints of the view-facing plane;
-    // otherwise (silhouettes, slivers, the sky) the neighbour search of DepthReceiver.slang finds the surface's step.
-    const float3 facingX = receiverWorldPosition(pixel + int2(1, 0), depth) - world;
-    const float3 facingY = receiverWorldPosition(pixel + int2(0, 1), depth) - world;
-    const float limit = ReceiverSliverSteps * ReceiverSliverSteps;
-    const bool continuous = acrossX > 0.0 && acrossY > 0.0 && dot(quadDx, quadDx) <= limit * dot(facingX, facingX) &&
-                            dot(quadDy, quadDy) <= limit * dot(facingY, facingY);
-    DepthReceiver depthSurface;
-    if (continuous)
-    {
-        depthSurface.world = world;
-        depthSurface.worldDx = quadDx;
-        depthSurface.worldDy = quadDy;
-        float3 plane = cross(quadDx, quadDy);
-        const float planeLength = dot(plane, plane);
-        const float3 toCamera = cameraPositionAmbient.xyz - world;
-        plane = planeLength > 1.e-12 ? plane * rsqrt(planeLength) : normalize(toCamera);
-        depthSurface.planeNormal = dot(plane, toCamera) < 0.0 ? -plane : plane;
-    }
-    else
-        depthSurface = depthReceiver(pixel, depth, cameraPositionAmbient.xyz, true);
+    const DepthReceiver depthSurface = quadDepthReceiver(pixel, depth, world, quadDx, quadDy, acrossX, acrossY,
+                                                         cameraPositionAmbient.xyz);
     const float3 albedo = deferredAlbedo.Load(int3(pixel, 0)).rgb;
     const float4 material = deferredMaterial.Load(int3(pixel, 0));
     const float metallic = material.r, roughness = material.g;

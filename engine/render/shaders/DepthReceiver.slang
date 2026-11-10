@@ -104,6 +104,33 @@ DepthReceiver depthReceiver(int2 pixel, float depth, float3 cameraPosition, bool
     return receiver;
 }
 
+// The receiver from the full-screen pass's own fragment quad: `quadDx` and `quadDy` are ddx and ddy of `world`, and
+// `acrossX` and `acrossY` the depths across the quad (QuadReadAcrossX and Y), all taken by the entry point before any
+// branch while every lane is active. Within one surface they are the derivatives the geometry pass's fragments had,
+// for a single depth load. A quad straddling a silhouette, a sliver or the sky gives a step longer than
+// ReceiverSliverSteps view-facing footprints, or reaches depth 0, and falls back to the neighbour search
+// (depthReceiver, with quad-origin derivatives).
+DepthReceiver quadDepthReceiver(int2 pixel, float depth, float3 world, float3 quadDx, float3 quadDy, float acrossX,
+                                float acrossY, float3 cameraPosition)
+{
+    const float3 facingX = receiverWorldPosition(pixel + int2(1, 0), depth) - world;
+    const float3 facingY = receiverWorldPosition(pixel + int2(0, 1), depth) - world;
+    const float limit = ReceiverSliverSteps * ReceiverSliverSteps;
+    if (!(acrossX > 0.0 && acrossY > 0.0 && dot(quadDx, quadDx) <= limit * dot(facingX, facingX) &&
+          dot(quadDy, quadDy) <= limit * dot(facingY, facingY)))
+        return depthReceiver(pixel, depth, cameraPosition, true);
+    DepthReceiver receiver;
+    receiver.world = world;
+    receiver.worldDx = quadDx;
+    receiver.worldDy = quadDy;
+    float3 plane = cross(quadDx, quadDy);
+    const float planeLength = dot(plane, plane);
+    const float3 toCamera = cameraPosition - world;
+    plane = planeLength > 1.e-12 ? plane * rsqrt(planeLength) : normalize(toCamera);
+    receiver.planeNormal = dot(plane, toCamera) < 0.0 ? -plane : plane;
+    return receiver;
+}
+
 struct ScreenTriangleVertex
 {
     float4 position : SV_Position;

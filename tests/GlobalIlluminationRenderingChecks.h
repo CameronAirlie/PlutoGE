@@ -360,6 +360,18 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
     const double roofRatio = roofMeans[1] / roofMeans[0];
     if (roofRatio >= 0.9) std::cerr << "DDGI roofed floor ratio: " << roofRatio << '\n';
     Require(roofRatio < 0.9, "DDGI did not occlude ambient light under a roof");
+    // The half-resolution gather (the default) interpolates what the full-resolution apply looks up per pixel.
+    {
+        auto everyPixel = settings;
+        everyPixel.applyResolutionDivisor = 1;
+        const auto fullPacket = EncodeDdgiPacket(everyPixel, &everyPixel);
+        const double full = LitMeans(scene.Render(roofScene, {}, 2),
+                                     scene.Render(roofScene, std::span(&fullPacket, 1), ConvergenceFrames))[1];
+        const double gathered = roofMeans[1];
+        if (std::abs(gathered / full - 1.0) >= 0.03)
+            std::cerr << "DDGI roofed floor, gathered " << gathered << ", every pixel " << full << std::endl;
+        Require(std::abs(gathered / full - 1.0) < 0.03, "DDGI's half-resolution gather differs from the per-pixel apply");
+    }
 
     // Coarser cascades extend the volume: a roof beyond the finest cascade (11 units across here) still shades the
     // floor beneath it, which a single cascade leaves to flat ambient light.
@@ -375,6 +387,8 @@ inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE
         {
             auto cascaded = settings;
             cascaded.grid.cascades = cascades;
+            // Coverage, not interpolation, is under test: look the probes up for every pixel.
+            cascaded.applyResolutionDivisor = 1;
             const auto packet = EncodeDdgiPacket(cascaded, &cascaded);
             return LitMeans(farBase, scene.Render(farScene, std::span(&packet, 1), ConvergenceFrames))[1];
         };

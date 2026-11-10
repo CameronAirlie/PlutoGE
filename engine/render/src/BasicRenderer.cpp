@@ -1567,7 +1567,8 @@ namespace PlutoGE::render
             if (ddgiRays->Initialize(device, shaders.ddgi.trace, shaders.ddgi.visibility) &&
                 ddgi->Initialize(device, {shaders.ddgi.reset, shaders.ddgi.state, shaders.ddgi.blendIrradiance,
                                           shaders.ddgi.blendDistance, fullscreen(shaders.ddgi.apply),
-                                          fullscreen(shaders.ddgi.probes)}))
+                                          fullscreen(shaders.ddgi.probes), fullscreen(shaders.ddgi.gather),
+                                          fullscreen(shaders.ddgi.upsampledApply)}))
             {
                 m_ddgi = std::move(ddgi);
                 m_ddgiRays = std::move(ddgiRays);

@@ -14,7 +14,7 @@ Each step lands as its own commit, keeps the previous path behind a switch, and 
 | 3 | Deferred local lights for standard opaque surfaces | Done (neutral on Settlement; see doc) | [deferred-local-lights.md](deferred-local-lights.md) |
 | 4 | VSM signature planning: per-page plane setup, parallel order-independent signatures | Done (signatures 16.4 -> 4.9 ms on Verdant) | [vsm-signature-planning.md](vsm-signature-planning.md) |
 | 5 | Geometry coverage: early depth for prepassed alpha-tested surfaces (rescoped: occlusion measured negligible) | Done (-6.4% scene GPU on Verdant and Wind Fields) | [prepassed-coverage.md](prepassed-coverage.md) |
-| 6 | Bandwidth: smaller target formats, discard load/store ops, fewer full-screen passes | Planned | |
+| 6 | Bandwidth: DDGI apply gathered at half resolution (the largest measured full-screen pass) | Done (apply 5.9 -> 2.8 ms, -4.4% scene GPU on Verdant) | [DDGI.md](../DDGI.md#half-resolution-gather) |
 | 7 | Directional shadow mask at reduced cost | Planned | |
 | 8 | Shadow LOD independent of the camera, with hysteresis | Planned | |
 | 9 | Froxel volumetric fog with temporal reuse | Planned | |
@@ -27,3 +27,12 @@ Each step lands as its own commit, keeps the previous path behind a switch, and 
   fallback path stays the previous behaviour.
 - Pure decision logic (policies, controllers, planners) has no device dependency, so CPU tests cover it.
 - Image-equivalence or tolerance checks on Vulkan and OpenGL accompany every rendering change.
+
+## Step 6 scope
+
+Smaller target formats (motion RG32F to RG16F, R11G11B10 post targets) and discard load operations were measured
+against the frame's largest full-screen passes first. On Verdant the post-process segment was 27.7 ms, of which the
+DDGI apply alone was 5.9 ms, every pixel gathering up to three cascades of eight probes along two directions. Halving
+that pass's resolution was worth more than the format changes, which save a few megabytes of writes per frame on a
+desktop GPU without tile memory; they remain open (`RenderingInfo` has no discard load operation, and the RHI no
+two-channel half-float format).

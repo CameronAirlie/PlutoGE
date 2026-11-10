@@ -255,6 +255,22 @@ Scene**.
 
 See [the measurements](#measurements) below.
 
+### Half-resolution gather
+
+`DdgiSettings::applyResolutionDivisor` (default 2) splits Apply in two. **RHI DDGI / Gather** looks the probes up for
+the top-left pixel of each 2x2 block, at half resolution: irradiance and coverage, the reflection lookup and its sky
+visibility, and a translucent surface's far-side irradiance (three RGBA16F targets, 2 bytes per full-resolution pixel
+each). **RHI DDGI / Apply** then interpolates the four nearest gathers for each pixel, weighted by distance, by how
+close the gather's surface lies to the pixel's plane (2% of the view distance) and by normal similarity, and falls
+back to the most similar gather where none resembles the pixel. Gathers are premultiplied by coverage, so a cascade's
+fading edge interpolates by how much each gather the probes supply; uncovered gathers store zero. The replacement itself is unchanged
+(`composeApply`). Probe light is low frequency in space and direction, so this changes little: on Verdant the capture
+differs from the full-resolution apply by 76 dB with no pixel off by more than 48 levels, while Apply went from
+5.9 ms to 1.4 + 1.4 ms (Vega 8, 1280x720; scene GPU 74.4 to 71.1 ms). 1 gathers every pixel, as before;
+`PLUTO_DDGI_FULL_RESOLUTION_APPLY=1` forces it for comparisons, and the Probes debug view always does. The setting travels in the
+render packet as the sign of lane 5.x (every lane is taken). The cascade-extent check pins the per-pixel apply, and a
+separate check holds the gather within 3% of it on the roofed floor.
+
 ## Limitations
 
 - Reflections only lose sky the probes cannot see; their sharp detail still comes from SSR and reflection captures.

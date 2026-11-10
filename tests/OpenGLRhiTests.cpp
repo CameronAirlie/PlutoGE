@@ -268,7 +268,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                         .state = {.glsl = ReadText("DDGIProbeState.compute.glsl")},
                         .blendIrradiance = {.glsl = ReadText("DDGIBlendIrradiance.compute.glsl")},
                         .blendDistance = {.glsl = ReadText("DDGIBlendDistance.compute.glsl")},
-                        .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes")};
+                        .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes"),
+                        .gather = fullscreen("DDGIGather"), .upsampledApply = fullscreen("DDGIUpsampledApply")};
         loadPostProcess(render::BasicPostProcessEffectType::SSR, "SSR");
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricFog, "VolumetricFog");
         shaders.volumetricTrace[0].vertex.glsl = ReadText("VolumetricFogTrace.vertex.glsl");

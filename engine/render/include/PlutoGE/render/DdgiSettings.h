@@ -62,6 +62,9 @@ namespace PlutoGE::render
         // How much of the sky reflection the probes may remove where they see no sky, replacing it with their light
         // (0 leaves environment reflections as the geometry pass wrote them, 1 follows probe visibility fully).
         float reflectionOcclusion = 1.0f;
+        // 2 gathers the probes for one pixel in four and interpolates them (depth- and normal-aware) at full
+        // resolution; 1 gathers every pixel. Probe light is low frequency, and the gather was most of the apply's cost.
+        int applyResolutionDivisor = 2;
         // PLUTO_DDGI_VIEW_* (DdgiConfig.h).
         int debugView = 0;
         float probeRadius = 0.15f;

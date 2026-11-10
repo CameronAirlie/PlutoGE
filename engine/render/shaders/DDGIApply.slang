@@ -51,23 +51,46 @@ struct ApplyOutput
     float4 environmentSpecular : SV_Target2;
 };
 
-[shader("fragment")]
-ApplyOutput applyMain(FullscreenVertexOutput input)
+// What the probes say about one surface: the inputs of the replacement composeApply makes. Gathered per pixel at full
+// resolution (applyMain), or at half resolution and interpolated (gatherMain, upsampledApplyMain).
+struct DdgiSurfaceLight
 {
-    const int2 pixel = int2(input.position.xy);
+    DdgiSample probes;
+    float coverage;
+    // Irradiance reaching the far side of a thin translucent surface, times its coverage (zero for other surfaces).
+    float3 farIrradiance;
+};
+
+// The probe lookups for the surface at `pixel` (its G-buffer and depth).
+DdgiSurfaceLight gatherSurfaceLight(int2 pixel, float depth, uint view)
+{
+    const float3 position = worldAt(pixel, depth);
+    const float3 normal = decodeNormal(normalTexture.Load(int3(pixel, 0)).xyz);
+    const float3 viewDirection = normalize(pass.cameraPosition.xyz - position);
+    const float4 albedoTexel = albedoTexture.Load(int3(pixel, 0));
+    const float4 material = saturate(materialTexture.Load(int3(pixel, 0)));
+    DdgiSurfaceLight light;
+    if (ddgiReflectionOcclusionEnabled() || view == PLUTO_DDGI_VIEW_SKY_VISIBILITY)
+        light.probes = ddgiSample(position, normal, viewDirection,
+                                  ddgiReflectionLookup(reflect(-viewDirection, normal), normal, material.y), light.coverage);
+    else
+        light.probes = ddgiIrradianceOnly(ddgiIrradiance(position, normal, viewDirection, light.coverage));
+    light.farIrradiance = 0.0;
+    if (any(foliageFarResponse(albedoTexel, material.a) > 0.0))
+    {
+        float farCoverage;
+        light.farIrradiance = ddgiIrradiance(position, -normal, -viewDirection, farCoverage) * farCoverage;
+    }
+    return light;
+}
+
+// Replaces the pixel's diffuse ambient light (and occludes its sky reflection) with `light`'s.
+ApplyOutput composeApply(int2 pixel, float depth, uint view, DdgiSurfaceLight light)
+{
     ApplyOutput output;
     output.color = sceneTexture.Load(int3(pixel, 0));
     output.indirect = indirectTexture.Load(int3(pixel, 0));
     output.environmentSpecular = environmentSpecularTexture.Load(int3(pixel, 0));
-    const uint view = uint(ddgiApply.y);
-    // Every view except the probes' replaces the image.
-    const bool diagnostic = view != PLUTO_DDGI_VIEW_NONE && view != PLUTO_DDGI_VIEW_PROBES;
-    const float depth = depthTexture.Load(int3(pixel, 0)).r;
-    if (depth <= 0.000001 || output.indirect.a < 0.5)
-    {
-        if (diagnostic) output.color = float4(0.0, 0.0, 0.0, 1.0);
-        return output;
-    }
     const float3 position = worldAt(pixel, depth);
     const float3 normal = decodeNormal(normalTexture.Load(int3(pixel, 0)).xyz);
     const float3 viewDirection = normalize(pass.cameraPosition.xyz - position);
@@ -75,26 +98,14 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
     const float3 albedo = albedoTexel.rgb;
     const float4 material = saturate(materialTexture.Load(int3(pixel, 0)));
     const float2 metallicRoughness = material.xy;
-    float coverage;
-    DdgiSample probes;
-    if (ddgiReflectionOcclusionEnabled() || view == PLUTO_DDGI_VIEW_SKY_VISIBILITY)
-        probes = ddgiSample(position, normal, viewDirection,
-                            ddgiReflectionLookup(reflect(-viewDirection, normal), normal, metallicRoughness.y),
-                            coverage);
-    else
-        probes = ddgiIrradianceOnly(ddgiIrradiance(position, normal, viewDirection, coverage));
+    const DdgiSample probes = light.probes;
+    const float coverage = light.coverage;
 
     const float3 response = ambientDiffuseResponse(albedo, metallicRoughness.x, metallicRoughness.y, normal,
                                                    viewDirection, material.a);
     float3 probeLight = probes.irradiance * response;
     // A thin translucent surface also passes on the light its far side receives (docs/FOLIAGE_TRANSMISSION.md).
-    const float3 farResponse = foliageFarResponse(albedoTexel, material.a);
-    if (any(farResponse > 0.0))
-    {
-        float farCoverage;
-        const float3 farIrradiance = ddgiIrradiance(position, -normal, -viewDirection, farCoverage);
-        probeLight += farIrradiance * farCoverage * farResponse;
-    }
+    probeLight += light.farIrradiance * foliageFarResponse(albedoTexel, material.a);
     const float3 replaced = lerp(output.indirect.rgb, probeLight * ddgiApply.x, coverage);
     float3 specular = output.environmentSpecular.rgb;
     float occlusion = 0.0;
@@ -117,10 +128,151 @@ ApplyOutput applyMain(FullscreenVertexOutput input)
     else
         output.color.rgb = max(output.color.rgb + replaced - output.indirect.rgb + specular -
                                output.environmentSpecular.rgb, 0.0);
-    output.indirect.rgb = replaced;
+    // The colour holds the indirect term; where the clamp above removed rounding below zero, the term must not exceed
+    // it either, or a later pass subtracting it (SSAO, SSGI) goes negative.
+    output.indirect.rgb = view == PLUTO_DDGI_VIEW_NONE || view == PLUTO_DDGI_VIEW_PROBES ? min(replaced, output.color.rgb)
+                                                                                         : replaced;
     // The sky share left (as a share of the original reflection), so a later pass occludes only what remains.
     output.environmentSpecular = float4(specular, saturate(output.environmentSpecular.a - occlusion));
+    // Light is never negative; interpolated inputs can round a hair below zero in every view.
+    output.color.rgb = max(output.color.rgb, 0.0);
+    output.indirect.rgb = max(output.indirect.rgb, 0.0);
+    output.environmentSpecular.rgb = max(output.environmentSpecular.rgb, 0.0);
     return output;
+}
+
+// The pixels the replacement leaves alone: sky, unlit and glass (indirect alpha zero).
+bool ddgiReceives(int2 pixel, float depth)
+{
+    return depth > 0.000001 && indirectTexture.Load(int3(pixel, 0)).a >= 0.5;
+}
+
+ApplyOutput unchangedApply(int2 pixel, uint view)
+{
+    ApplyOutput output;
+    output.color = sceneTexture.Load(int3(pixel, 0));
+    output.indirect = indirectTexture.Load(int3(pixel, 0));
+    output.environmentSpecular = environmentSpecularTexture.Load(int3(pixel, 0));
+    // Every view except the probes' replaces the image.
+    if (view != PLUTO_DDGI_VIEW_NONE && view != PLUTO_DDGI_VIEW_PROBES)
+        output.color = float4(0.0, 0.0, 0.0, 1.0);
+    return output;
+}
+
+[shader("fragment")]
+ApplyOutput applyMain(FullscreenVertexOutput input)
+{
+    const int2 pixel = int2(input.position.xy);
+    const uint view = uint(ddgiApply.y);
+    const float depth = depthTexture.Load(int3(pixel, 0)).r;
+    if (!ddgiReceives(pixel, depth))
+        return unchangedApply(pixel, view);
+    return composeApply(pixel, depth, view, gatherSurfaceLight(pixel, depth, view));
+}
+
+// Half-resolution probe lookups (DdgiSettings::applyResolutionDivisor 2). Each texel gathers for the top-left pixel of
+// its 2x2 block: irradiance and coverage, the reflection lookup and its sky visibility, and the far side's irradiance
+// with 1 in alpha where the pixel receives at all. The full-resolution pass interpolates them (upsampledApplyMain).
+struct GatherOutput
+{
+    float4 irradianceCoverage : SV_Target0;
+    float4 radianceSky : SV_Target1;
+    float4 farValid : SV_Target2;
+};
+
+[shader("fragment")]
+GatherOutput gatherMain(FullscreenVertexOutput input)
+{
+    const int2 fullResolution = int2(round(1.0 / pass.inverseResolution));
+    const int2 pixel = min(int2(input.position.xy) * 2, fullResolution - 1);
+    const uint view = uint(ddgiApply.y);
+    const float depth = depthTexture.Load(int3(pixel, 0)).r;
+    GatherOutput output = (GatherOutput)0;
+    if (!ddgiReceives(pixel, depth))
+        return output;
+    const DdgiSurfaceLight light = gatherSurfaceLight(pixel, depth, view);
+    // Premultiplied by coverage, so interpolating across a cascade's fading edge (or the volume's) weighs each gather by
+    // how much of it the probes supply.
+    // An uncovered lookup's other values are undefined (they may not be finite) and must not reach the interpolation.
+    if (light.coverage > 0.0)
+    {
+        output.irradianceCoverage = float4(light.probes.irradiance * light.coverage, light.coverage);
+        output.radianceSky = float4(light.probes.radiance, light.probes.skyVisibility) * light.coverage;
+    }
+    output.farValid = float4(light.farIrradiance, 1.0);
+    return output;
+}
+
+// The half-resolution gathers. Probe light is low frequency in space and direction, so four neighbouring gathers
+// weighted by distance, depth and normal similarity stand in for each pixel's own; a pixel no gather resembles (a thin
+// silhouette) takes the most similar one.
+[[vk::binding(13, 0)]] Sampler2D gatheredIrradiance : register(t13, space0);
+[[vk::binding(14, 0)]] Sampler2D gatheredRadiance : register(t14, space0);
+[[vk::binding(15, 0)]] Sampler2D gatheredFar : register(t15, space0);
+
+[shader("fragment")]
+ApplyOutput upsampledApplyMain(FullscreenVertexOutput input)
+{
+    const int2 pixel = int2(input.position.xy);
+    const uint view = uint(ddgiApply.y);
+    const float depth = depthTexture.Load(int3(pixel, 0)).r;
+    if (!ddgiReceives(pixel, depth))
+        return unchangedApply(pixel, view);
+    const int2 fullResolution = int2(round(1.0 / pass.inverseResolution));
+    const int2 gatherResolution = (fullResolution + 1) / 2;
+    const float3 position = worldAt(pixel, depth);
+    const float3 normal = decodeNormal(normalTexture.Load(int3(pixel, 0)).xyz);
+    const float viewDistance = max(length(pass.cameraPosition.xyz - position), 0.001);
+    // Gather texel centres sit on even pixels: this pixel lies between the four around (pixel / 2).
+    const float2 at = float2(pixel) * 0.5;
+    const int2 base = int2(floor(at));
+    const float2 fraction = at - float2(base);
+    float4 irradianceCoverage = 0.0, radianceSky = 0.0;
+    float3 far = 0.0;
+    float weightSum = 0.0, bestSimilarity = -1.0;
+    int2 best = clamp(base, int2(0), gatherResolution - 1);
+    [ForceUnroll] for (int tap = 0; tap < 4; ++tap)
+    {
+        const int2 offset = int2(tap & 1, tap >> 1);
+        const int2 gather = clamp(base + offset, int2(0), gatherResolution - 1);
+        const int2 source = min(gather * 2, fullResolution - 1);
+        const float4 valid = gatheredFar.Load(int3(gather, 0));
+        if (valid.a < 0.5) continue;
+        const float sourceDepth = depthTexture.Load(int3(source, 0)).r;
+        const float3 sourceNormal = decodeNormal(normalTexture.Load(int3(source, 0)).xyz);
+        const float similarity = dot(normal, sourceNormal);
+        // Same surface: within 2% of the view distance along the normal, and facing within about 40 degrees.
+        const float planeDistance = abs(dot(normal, worldAt(source, sourceDepth) - position)) / viewDistance;
+        const float bilinear = (offset.x != 0 ? fraction.x : 1.0 - fraction.x) * (offset.y != 0 ? fraction.y : 1.0 - fraction.y);
+        const float weight = (bilinear + 1.e-3) * saturate(1.0 - planeDistance * 50.0) * pow(saturate(similarity), 8.0);
+        if (similarity > bestSimilarity) { bestSimilarity = similarity; best = gather; }
+        if (weight <= 0.0) continue;
+        irradianceCoverage += gatheredIrradiance.Load(int3(gather, 0)) * weight;
+        radianceSky += gatheredRadiance.Load(int3(gather, 0)) * weight;
+        far += valid.rgb * weight;
+        weightSum += weight;
+    }
+    DdgiSurfaceLight light;
+    if (weightSum > 1.e-4)
+    {
+        irradianceCoverage /= weightSum;
+        radianceSky /= weightSum;
+        far /= weightSum;
+    }
+    else
+    {
+        irradianceCoverage = gatheredIrradiance.Load(int3(best, 0));
+        radianceSky = gatheredRadiance.Load(int3(best, 0));
+        far = gatheredFar.Load(int3(best, 0)).rgb;
+    }
+    // Undo the gathers' coverage premultiplication.
+    const float covered = max(irradianceCoverage.a, 1.e-6);
+    light.probes.irradiance = irradianceCoverage.rgb / covered;
+    light.probes.radiance = radianceSky.rgb / covered;
+    light.probes.skyVisibility = irradianceCoverage.a > 0.0 ? radianceSky.a / covered : 1.0;
+    light.coverage = irradianceCoverage.a;
+    light.farIrradiance = far;
+    return composeApply(pixel, depth, view, light);
 }
 
 struct ProbeVertexOutput

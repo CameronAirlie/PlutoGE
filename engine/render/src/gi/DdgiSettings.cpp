@@ -43,6 +43,7 @@ namespace PlutoGE::render
         result.minFrontfaceDistance = std::clamp(Finite(minFrontfaceDistance, 0.2f), 0.0f, 0.45f);
         result.brightnessClamp = std::clamp(Finite(brightnessClamp, 32.0f), 0.1f, 10000.0f);
         result.reflectionOcclusion = std::clamp(Finite(reflectionOcclusion, 1.0f), 0.0f, 1.0f);
+        result.applyResolutionDivisor = applyResolutionDivisor >= 2 ? 2 : 1;
         result.debugView = std::clamp(debugView, PLUTO_DDGI_VIEW_NONE, PLUTO_DDGI_VIEW_REFLECTIONS);
         result.probeRadius = std::clamp(Finite(probeRadius, 0.15f), 0.02f, 0.45f);
         result.voxels.resolution = voxels.resolution > 64 ? 128 : 64;
@@ -83,7 +84,8 @@ namespace PlutoGE::render
     // local lights, local light bounce, secondary bounce, voxelization command budget; 5.xy = debug probe radius,
     // brightness clamp (5.zw carry the camera's clip planes); 6.x = minimum frontface distance, 6.y = multiple
     // bounces, 6.z = probe cascades, 6.w = reflection occlusion, 7.x = relocate from thin surfaces, 7.y = stable
-    // hysteresis, 7.z = leak reduction, 7.w = ray source. Quality is the number of blended rays per probe.
+    // hysteresis, 7.z = leak reduction, 7.w = ray source. Quality is the number of blended rays per probe. Every lane
+    // is taken, so 5.x's sign carries the apply resolution: negative for a per-pixel apply (applyResolutionDivisor 1).
     BasicPostProcessEffect EncodeDdgiPacket(const DdgiSettings &input, const void *historyOwner)
     {
         const auto settings = input.Sanitized();
@@ -98,7 +100,7 @@ namespace PlutoGE::render
                                 settings.voxels.volumeSize, settings.voxels.updateSpeed};
         packet.parameters[4] = {settings.voxels.injectLocalLights ? 1.0f : 0.0f, settings.voxels.localLightBounce,
                                 settings.voxels.secondaryBounce, static_cast<float>(settings.voxels.commandBudget)};
-        packet.parameters[5].x = settings.probeRadius;
+        packet.parameters[5].x = settings.applyResolutionDivisor >= 2 ? settings.probeRadius : -settings.probeRadius;
         packet.parameters[5].y = settings.brightnessClamp;
         packet.parameters[6].x = settings.minFrontfaceDistance;
         packet.parameters[6].y = settings.multipleBounces ? 1.0f : 0.0f;
@@ -134,7 +136,8 @@ namespace PlutoGE::render
         settings.voxels.localLightBounce = lanes[4].y;
         settings.voxels.secondaryBounce = lanes[4].z;
         settings.voxels.commandBudget = static_cast<int>(std::lround(lanes[4].w));
-        settings.probeRadius = lanes[5].x;
+        settings.probeRadius = std::abs(lanes[5].x);
+        settings.applyResolutionDivisor = lanes[5].x < 0.0f ? 1 : 2;
         settings.brightnessClamp = lanes[5].y;
         settings.minFrontfaceDistance = lanes[6].x;
         settings.multipleBounces = lanes[6].y > 0.5f;

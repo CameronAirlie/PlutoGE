@@ -186,6 +186,7 @@ int main(int argc, char **argv)
                         .blendIrradiance = {.spirv = ReadSpirv("DDGIBlendIrradiance.compute.spv")},
                         .blendDistance = {.spirv = ReadSpirv("DDGIBlendDistance.compute.spv")},
                         .apply = fullscreen("DDGIApply"), .probes = fullscreen("DDGIProbes"),
+                        .gather = fullscreen("DDGIGather"), .upsampledApply = fullscreen("DDGIUpsampledApply"),
                         .rayQueryTrace = {.spirv = ReadSpirv("DDGIRayQueryTrace.compute.spv")},
                         .rayQueryVisibility = {.spirv = ReadSpirv("DDGIRayQueryVisibility.compute.spv")}};
         loadPostProcess(BasicPostProcessEffectType::SSR, "SSR");

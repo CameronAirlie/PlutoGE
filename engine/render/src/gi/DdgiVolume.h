@@ -74,6 +74,8 @@ namespace PlutoGE::render
             ScreenSpaceFullscreenShader apply;
             // The "Probes" debug view's sphere impostors; optional.
             ScreenSpaceFullscreenShader probes;
+            // Half-resolution gather and its interpolating apply (DdgiSettings::applyResolutionDivisor); optional.
+            ScreenSpaceFullscreenShader gather, upsampledApply;
         };
         struct Stats
         {
@@ -108,12 +110,15 @@ namespace PlutoGE::render
 
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_reset, m_state, m_blendIrradiance, m_blendDistance, m_apply, m_probes;
+        rhi::GraphicsPipeline m_gather, m_upsampledApply;
         rhi::Sampler m_pointSampler, m_linearSampler;
         ScreenSpaceUniforms m_volumeUniforms, m_screenUniforms;
         rhi::Texture m_irradiance, m_distance, m_states, m_rays;
         // Probe occlusion volume (DDGICommon.slang ddgiOcclusionIndex), traced by the ray source.
         rhi::Buffer m_probeList, m_occlusion;
         ScreenSpaceTarget m_color, m_indirect, m_environmentSpecular;
+        // Half-resolution gathers (DDGIApply.slang gatherMain).
+        ScreenSpaceTarget m_gatheredIrradiance, m_gatheredRadiance, m_gatheredFar;
         DdgiGridSettings m_grid;
         std::vector<DdgiProbeGrid> m_cascades;
         std::vector<DdgiProbeScheduler> m_schedulers;

@@ -1,4 +1,7 @@
 #include "DdgiVolume.h"
+
+#include <cstdlib>
+#include <string_view>
 #include "PlutoGE/render/DdgiConfig.h"
 
 #include <algorithm>
@@ -16,7 +19,8 @@ namespace PlutoGE::render
         // DDGIApply.slang bindings.
         constexpr std::uint32_t ScreenSlot = 1, DepthSlot = 2, NormalSlot = 3, AlbedoSlot = 4, MaterialSlot = 5,
                                 SceneSlot = 6, IndirectSlot = 7, StateTextureSlot = 8, IrradianceTextureSlot = 9,
-                                DistanceTextureSlot = 10, EnvironmentSpecularSlot = 11, OcclusionSlot = 12;
+                                DistanceTextureSlot = 10, EnvironmentSpecularSlot = 11, OcclusionSlot = 12,
+                                GatheredIrradianceSlot = 13, GatheredRadianceSlot = 14, GatheredFarSlot = 15;
         // Sharpness of the visibility moments' cosine lobe (RTXGI's default).
         constexpr float DistanceExponent = 50.0f;
         // Sharpness of the sky visibility lobe (half power at about 17 degrees): wide enough to hold a few rays per
@@ -56,7 +60,8 @@ namespace PlutoGE::render
         }
 
         rhi::GraphicsPipeline CreateScreenPipeline(rhi::IRenderDevice &device, const ScreenSpaceFullscreenShader &shader,
-                                                   std::vector<rhi::Format> formats, const char *name)
+                                                   std::vector<rhi::Format> formats, const char *name,
+                                                   bool readsGathers = false)
         {
             rhi::GraphicsPipelineDescriptor descriptor;
             descriptor.vertexShader = shader.vertex;
@@ -80,6 +85,10 @@ namespace PlutoGE::render
                     {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::AllGraphics});
             descriptor.resourceBindings.push_back(
                 {OcclusionSlot, 0, OcclusionSlot, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment});
+            if (readsGathers)
+                for (const auto slot : {GatheredIrradianceSlot, GatheredRadianceSlot, GatheredFarSlot})
+                    descriptor.resourceBindings.push_back(
+                        {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
             return rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
         }
     }
@@ -97,6 +106,12 @@ namespace PlutoGE::render
         m_apply = CreateScreenPipeline(device, shaders.apply, {DataFormat, DataFormat, DataFormat}, "DDGI apply");
         if (HasShader(shaders.probes))
             m_probes = CreateScreenPipeline(device, shaders.probes, {DataFormat}, "DDGI probe spheres");
+        if (HasShader(shaders.gather) && HasShader(shaders.upsampledApply))
+        {
+            m_gather = CreateScreenPipeline(device, shaders.gather, {DataFormat, DataFormat, DataFormat}, "DDGI gather");
+            m_upsampledApply = CreateScreenPipeline(device, shaders.upsampledApply, {DataFormat, DataFormat, DataFormat},
+                                                    "DDGI interpolated apply", true);
+        }
         m_pointSampler = rhi::Sampler(device, device.CreateSampler({false, false, "DDGI point sampler"}));
         m_linearSampler = rhi::Sampler(device, device.CreateSampler({true, false, "DDGI atlas sampler"}));
         m_volumeUniforms.Initialize(device, "DDGI volume parameters");
@@ -361,6 +376,38 @@ namespace PlutoGE::render
             commands.BindStorageBuffer(OcclusionSlot, m_occlusion.Get());
         };
 
+        // Probe lookups for one pixel in four, interpolated at full resolution; or for every pixel.
+        // PLUTO_DDGI_FULL_RESOLUTION_APPLY=1 gathers every pixel, for comparisons.
+        static const bool fullResolution = [] {
+            const char *value = std::getenv("PLUTO_DDGI_FULL_RESOLUTION_APPLY");
+            return value && std::string_view(value) == "1";
+        }();
+        const bool interpolated = m_settings.applyResolutionDivisor >= 2 && !fullResolution && m_gather &&
+            m_upsampledApply && m_settings.debugView != PLUTO_DDGI_VIEW_PROBES;
+        if (interpolated)
+        {
+            const rhi::TextureDescriptor gather{.width = (view.width + 1) / 2, .height = (view.height + 1) / 2,
+                .format = DataFormat, .usage = rhi::TextureUsage::ColorAttachment, .debugName = "DDGI gathered irradiance",
+                .sampled = true};
+            m_gatheredIrradiance.Ensure(*m_device, gather);
+            auto radiance = gather;
+            radiance.debugName = "DDGI gathered reflection";
+            m_gatheredRadiance.Ensure(*m_device, radiance);
+            auto far = gather;
+            far.debugName = "DDGI gathered far side";
+            m_gatheredFar.Ensure(*m_device, far);
+            commands.BeginGpuScope("RHI DDGI / Gather");
+            rhi::RenderingInfo gatherInfo;
+            gatherInfo.colorAttachments = {m_gatheredIrradiance.Get(), m_gatheredRadiance.Get(), m_gatheredFar.Get()};
+            gatherInfo.width = gather.width;
+            gatherInfo.height = gather.height;
+            gatherInfo.clearColor = gatherInfo.clearDepth = false;
+            commands.BeginRendering(gatherInfo);
+            bindApply(m_gather);
+            commands.Draw(3);
+            commands.EndRendering();
+            commands.EndGpuScope();
+        }
         commands.BeginGpuScope("RHI DDGI / Apply");
         rhi::RenderingInfo info;
         info.colorAttachments = {m_color.Get(), m_indirect.Get(), m_environmentSpecular.Get()};
@@ -368,7 +415,13 @@ namespace PlutoGE::render
         info.height = view.height;
         info.clearColor = info.clearDepth = false;
         commands.BeginRendering(info);
-        bindApply(m_apply);
+        bindApply(interpolated ? m_upsampledApply : m_apply);
+        if (interpolated)
+        {
+            commands.BindTexture(GatheredIrradianceSlot, m_gatheredIrradiance.Get(), m_pointSampler.Get());
+            commands.BindTexture(GatheredRadianceSlot, m_gatheredRadiance.Get(), m_pointSampler.Get());
+            commands.BindTexture(GatheredFarSlot, m_gatheredFar.Get(), m_pointSampler.Get());
+        }
         commands.Draw(3);
         commands.EndRendering();
         commands.EndGpuScope();
@@ -391,6 +444,9 @@ namespace PlutoGE::render
         m_color.Reset();
         m_indirect.Reset();
         m_environmentSpecular.Reset();
+        m_gatheredIrradiance.Reset();
+        m_gatheredRadiance.Reset();
+        m_gatheredFar.Reset();
     }
 
     void DdgiVolume::ReleaseResources() noexcept

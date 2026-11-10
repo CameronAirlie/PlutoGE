@@ -322,6 +322,8 @@ namespace PlutoGE::render
     {
         rhi::ComputePipelineDescriptor::ShaderCode trace, visibility, reset, state, blendIrradiance, blendDistance;
         BasicPostProcessShaderPackage apply, probes;
+        // Half-resolution gather and interpolating apply (DdgiSettings::applyResolutionDivisor); optional.
+        BasicPostProcessShaderPackage gather, upsampledApply;
         // The hardware ray tracing source (DDGIRayQueryTrace.slang): SPIR-V only.
         rhi::ComputePipelineDescriptor::ShaderCode rayQueryTrace, rayQueryVisibility;
     };

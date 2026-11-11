@@ -43,17 +43,31 @@ namespace PlutoGE::render
         float LightAirMass(float height) { return 1.0f / std::max(height + 0.075f, 0.04f); }
         float ViewAirMass(float height) { return 1.0f / std::max(std::max(height, 0.001f) + 0.075f, 0.075f); }
 
-        // Single scattering of a directional source toward `view`, per unit source radiance.
+        // Single scattering of a directional source toward `view`, per unit source radiance,
+        // integrated in closed form through an exponential atmosphere. Ozone only filters the source.
         glm::vec3 SingleScattering(const PhysicalSkySettings &sky, const ScatteringCoefficients &beta,
-                                   const glm::vec3 &view, const glm::vec3 &light, const glm::vec3 &viewTransmittance)
+                                   const glm::vec3 &view, const glm::vec3 &light)
         {
             const float cosine = glm::dot(view, light);
             const float g = std::clamp(sky.mieAnisotropy, -0.95f, 0.95f);
             const float rayleighPhase = 3.0f * (1.0f + cosine * cosine) / (16.0f * kPi);
             const float miePhase = (1.0f - g * g) /
                                    (4.0f * kPi * std::pow(std::max(1.0f + g * g - 2.0f * g * cosine, 0.0001f), 1.5f));
-            return (beta.rayleigh * rayleighPhase + beta.mie * miePhase) * (1.0f - viewTransmittance) /
-                   glm::max(beta.extinction, glm::vec3(0.0001f)) * glm::exp(-beta.extinction * LightAirMass(light.y));
+            const glm::vec3 scattering = beta.rayleigh + beta.mie;
+            const float viewAirMass = ViewAirMass(view.y);
+            const float lightAirMass = LightAirMass(light.y);
+            const glm::vec3 viewDepth = scattering * viewAirMass;
+            const glm::vec3 lightDepth = scattering * lightAirMass;
+            glm::vec3 path;
+            for (int c = 0; c < 3; ++c)
+            {
+                const float difference = viewDepth[c] - lightDepth[c];
+                path[c] = std::abs(difference) > 0.0001f
+                              ? (std::exp(-lightDepth[c]) - std::exp(-viewDepth[c])) / difference
+                              : std::exp(-lightDepth[c]);
+            }
+            const glm::vec3 ozone = glm::exp(-(beta.extinction - scattering) * lightAirMass);
+            return (beta.rayleigh * rayleighPhase + beta.mie * miePhase) * viewAirMass * path * ozone;
         }
 
         // Moonlight scattered by the atmosphere, relative to the daytime sky's source.
@@ -191,18 +205,18 @@ namespace PlutoGE::render
         const glm::vec3 &moon = celestial.moonDirection;
         const float day = SkyDaylight(sun.y);
         const float night = SkyNight(sun.y);
-        const float twilight = Smooth(-0.31, -0.02, sun.y) * (1.0f - Smooth(0.02, 0.22, sun.y));
+        const float twilight = Smooth(-0.31, -0.02, sun.y) * (1.0f - Smooth(-0.02, 0.06, sun.y));
         const float sunIntensity = std::max(sky.sunIntensity, 0.0f);
         const float nightIntensity = std::max(sky.nightIntensity, 0.0f);
         const float up = std::clamp(direction.y, 0.0f, 1.0f);
 
         const auto beta = Coefficients(sky);
-        const glm::vec3 viewTransmittance = glm::exp(-beta.extinction * ViewAirMass(direction.y));
-        glm::vec3 color = SingleScattering(sky, beta, direction, sun, viewTransmittance) *
+        glm::vec3 color = SingleScattering(sky, beta, direction, sun) *
                           glm::max(sky.sunColor, glm::vec3(0.0f)) * sunIntensity * day;
-        color += glm::vec3(1.0f, 0.12f, 0.018f) * twilight * twilight * std::pow(1.0f - up, 5.0f) *
-                 (0.02f + std::pow(std::max(glm::dot(direction, sun), 0.0f), 12.0f) * 0.16f) * sunIntensity;
-        color += SingleScattering(sky, beta, direction, moon, viewTransmittance) *
+        const float sunsetAlignment = std::pow(std::max(glm::dot(direction, sun), 0.0f), 12.0f);
+        color += (glm::vec3(0.9f, 0.55f, 0.5f) * 0.02f + glm::vec3(1.0f, 0.3f, 0.08f) * (sunsetAlignment * 0.16f)) *
+                 twilight * twilight * std::pow(1.0f - up, 5.0f) * sunIntensity;
+        color += SingleScattering(sky, beta, direction, moon) *
                  glm::max(sky.moonColor, glm::vec3(0.0f)) * MoonSkyRadiance(sky, celestial) * night *
                  Smooth(PLUTO_SKY_MOONLIGHT_BEGIN, PLUTO_SKY_MOONLIGHT_END, moon.y);
         color += glm::mix(glm::vec3(0.002f, 0.003f, 0.009f), glm::vec3(0.012f, 0.022f, 0.06f), std::pow(up, 0.35f)) *

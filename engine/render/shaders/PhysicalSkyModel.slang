@@ -64,7 +64,7 @@ PhysicalSky decodePhysicalSky(float4 lanes[PLUTO_SKY_LANE_COUNT], float exposure
     const float sunHeight = sky.sunDirection.y;
     sky.day = smoothstep(PLUTO_SKY_DAY_BEGIN, PLUTO_SKY_DAY_END, sunHeight);
     sky.night = 1.0 - smoothstep(PLUTO_SKY_NIGHT_BEGIN, PLUTO_SKY_NIGHT_END, sunHeight);
-    sky.twilight = smoothstep(-0.31, -0.02, sunHeight) * (1.0 - smoothstep(0.02, 0.22, sunHeight));
+    sky.twilight = smoothstep(-0.31, -0.02, sunHeight) * (1.0 - smoothstep(-0.02, 0.06, sunHeight));
     sky.exposure = max(exposure, 0.0);
     return sky;
 }
@@ -81,16 +81,28 @@ float3 physicalSkyLightTransmittance(PhysicalSky sky, float3 lightDirection)
 }
 
 // Single scattering of a directional source toward `direction`, per unit source radiance.
-float3 physicalSkySingleScattering(PhysicalSky sky, float3 direction, float3 lightDirection, float3 viewTransmittance)
+// Integrated in closed form along the view ray through an exponential
+// atmosphere: higher scattering points see the source through thinner air,
+// so the zenith stays blue while the sun sits on the horizon. Ozone lies
+// above the scattering air and only filters the source.
+float3 physicalSkySingleScattering(PhysicalSky sky, float3 direction, float3 lightDirection)
 {
     const float cosine = dot(direction, lightDirection);
     const float g = sky.mieAnisotropy;
     const float rayleighPhase = 3.0 * (1.0 + cosine * cosine) / (16.0 * kPhysicalSkyPi);
     const float miePhase = (1.0 - g * g) /
                            (4.0 * kPhysicalSkyPi * pow(max(1.0 + g * g - 2.0 * g * cosine, 0.0001), 1.5));
-    return (sky.betaRayleigh * rayleighPhase + sky.betaMie * miePhase) *
-           (1.0 - viewTransmittance) / max(sky.betaExtinction, 0.0001) *
-           physicalSkyLightTransmittance(sky, lightDirection);
+    const float3 scattering = sky.betaRayleigh + sky.betaMie;
+    const float viewAirMass = 1.0 / max(max(direction.y, 0.001) + 0.075, 0.075);
+    const float lightAirMass = 1.0 / max(lightDirection.y + 0.075, 0.04);
+    const float3 viewDepth = scattering * viewAirMass;
+    const float3 lightDepth = scattering * lightAirMass;
+    const float3 difference = viewDepth - lightDepth;
+    const float3 path = select(abs(difference) > 0.0001,
+                               (exp(-lightDepth) - exp(-viewDepth)) / select(abs(difference) > 0.0001, difference, 1.0),
+                               exp(-lightDepth));
+    const float3 ozone = exp(-(sky.betaExtinction - scattering) * lightAirMass);
+    return (sky.betaRayleigh * rayleighPhase + sky.betaMie * miePhase) * viewAirMass * path * ozone;
 }
 
 float physicalSkyMoonVisibility(PhysicalSky sky)
@@ -102,15 +114,16 @@ float physicalSkyMoonVisibility(PhysicalSky sky)
 // light pollution. Excludes the discs and stars.
 float3 physicalSkyAtmosphere(PhysicalSky sky, float3 direction)
 {
-    const float3 viewTransmittance = physicalSkyViewTransmittance(sky, direction);
-    float3 radiance = physicalSkySingleScattering(sky, direction, sky.sunDirection, viewTransmittance) *
+    float3 radiance = physicalSkySingleScattering(sky, direction, sky.sunDirection) *
                       sky.sunColor * sky.sunIntensity * sky.day;
     const float up = saturate(direction.y);
     const float horizon = pow(1.0 - up, 5.0);
     const float sunsetAlignment = pow(max(dot(direction, sky.sunDirection), 0.0), 12.0);
-    radiance += float3(1.0, 0.12, 0.018) * sky.twilight * sky.twilight * horizon *
-                (0.02 + sunsetAlignment * 0.16) * sky.sunIntensity;
-    radiance += physicalSkySingleScattering(sky, direction, sky.moonDirection, viewTransmittance) *
+    // Afterglow once the sun is down: orange toward the sun, a faint rose
+    // band elsewhere. Single scattering already reddens the low sun.
+    radiance += (float3(0.9, 0.55, 0.5) * 0.02 + float3(1.0, 0.3, 0.08) * (sunsetAlignment * 0.16)) *
+                sky.twilight * sky.twilight * horizon * sky.sunIntensity;
+    radiance += physicalSkySingleScattering(sky, direction, sky.moonDirection) *
                 sky.moonColor * sky.moonSkyRadiance * physicalSkyMoonVisibility(sky);
     // Dim airglow remains after astronomical twilight; avoid a daylight-sized floor.
     radiance += lerp(float3(0.002, 0.003, 0.009), float3(0.012, 0.022, 0.06), pow(up, 0.35)) *

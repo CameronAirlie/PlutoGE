@@ -187,6 +187,10 @@ namespace PlutoGE::ui
                 return "Flatten";
             case scene::TerrainPaintMode::Layer:
                 return "Layer";
+            case scene::TerrainPaintMode::Hole:
+                return "Hole";
+            case scene::TerrainPaintMode::Fill:
+                return "Fill Hole";
             case scene::TerrainPaintMode::Raise:
             default:
                 return "Raise";
@@ -209,6 +213,8 @@ namespace PlutoGE::ui
                     scene::TerrainPaintMode::Smooth,
                     scene::TerrainPaintMode::Flatten,
                     scene::TerrainPaintMode::Layer,
+                    scene::TerrainPaintMode::Hole,
+                    scene::TerrainPaintMode::Fill,
                 };
                 for (auto mode : modes)
                 {
@@ -236,6 +242,14 @@ namespace PlutoGE::ui
             if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Layer)
             {
                 RenderTerrainLayerPaintControls(terrainComponent);
+                return;
+            }
+            if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Hole ||
+                terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Fill)
+            {
+                // Holes are whole cells: the brush cuts (or restores) every cell whose centre it covers.
+                ImGui::SameLine();
+                ImGui::TextDisabled("%zu cells cut", terrainComponent.GetHoles().GetHoleCount());
                 return;
             }
 

@@ -20,6 +20,7 @@ add_library(PlutoGEScene
     src/AssetReconciliation.cpp
     src/Scene.cpp
     src/AnimationPoseBatch.cpp
+    src/TerrainHoleMask.cpp
     src/TerrainLayerStack.cpp
     src/TerrainWeightMap.cpp
     src/RagdollJoints.cpp

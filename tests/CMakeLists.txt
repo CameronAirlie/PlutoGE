@@ -958,6 +958,10 @@ add_executable(PlutoGETerrainLayerTests TerrainLayerTests.cpp)
 pluto_link_engine(PlutoGETerrainLayerTests)
 add_test(NAME PlutoGETerrainLayerTests COMMAND PlutoGETerrainLayerTests)
 
+add_executable(PlutoGETerrainHoleTests TerrainHoleTests.cpp)
+pluto_link_engine(PlutoGETerrainHoleTests)
+add_test(NAME PlutoGETerrainHoleTests COMMAND PlutoGETerrainHoleTests)
+
 add_executable(PlutoGESurfacePlacementTests
     SurfacePlacementTests.cpp
     ../editor/ui/src/SurfacePlacement.cpp

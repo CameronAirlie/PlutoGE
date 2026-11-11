@@ -317,6 +317,8 @@ namespace PlutoGE::scene
         const std::vector<OutlineComponent *> &GetOutlineComponents() const;
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
+        // A collider's shape changed in place (a terrain's holes): physics queries rebuild it now rather than next frame.
+        void MarkColliderShapesDirty() const { InvalidatePhysicsQueryCache(); }
         void SubmitRenderCommands();
         const std::string &GetFilePath() const { return m_filePath; }
         void SetFilePath(const std::string &filePath) { m_filePath = filePath; }

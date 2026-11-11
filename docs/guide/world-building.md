@@ -120,6 +120,11 @@ size, and paint them with **Paint > Mode: Layer**. Layers tile in world units, s
 the ground keeps its detail however large the terrain. See
 [Terrain Material Layers](../TERRAIN_LAYERS.md).
 
+**Caves and holes.** A heightfield cannot overhang. For a cave mouth or a shaft,
+build the space from meshes and cut the terrain cells in the way with **Paint >
+Mode: Hole**. Hole cells are not drawn and do not collide, and surface queries
+find no ground there. See [Terrain Holes](../TERRAIN_HOLES.md).
+
 ## Foliage
 
 FoliageComponent places many mesh instances without one entity per plant. Add it

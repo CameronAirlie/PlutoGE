@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 
 namespace PlutoGE::scene
@@ -47,6 +48,14 @@ namespace PlutoGE::scene
             if (value == "Layer" || value == "layer" || value == "4")
             {
                 return TerrainPaintMode::Layer;
+            }
+            if (value == "Hole" || value == "hole" || value == "5")
+            {
+                return TerrainPaintMode::Hole;
+            }
+            if (value == "Fill" || value == "fill" || value == "6")
+            {
+                return TerrainPaintMode::Fill;
             }
             return TerrainPaintMode::Raise;
         }
@@ -293,7 +302,12 @@ namespace PlutoGE::scene
             samples.sharedValue = m_heightsText.Get(m_heightsRevision, [this] { return SerializeHeightSamples(m_heights); });
             const auto materialAsset = std::find_if(properties.begin(), properties.end(),
                                                     [](const Property &property) { return property.name == "MaterialAsset"; });
-            properties.insert(materialAsset, std::move(samples));
+            // Always written (empty without holes): a missing HoleMask keeps the current holes, so undoing back to
+            // a state without holes must say so.
+            Property holes{"HoleMask", PropertyType::String};
+            holes.sharedValue = m_holesText.Get(m_holesRevision, [this] { return m_holes.Encode(); });
+            const auto position = properties.insert(materialAsset, std::move(samples));
+            properties.insert(position + 1, std::move(holes));
         }
         properties.push_back({"PaintLayer", PropertyType::Int, std::to_string(m_paintLayer)});
         properties.push_back({"LayerOpacity", PropertyType::Float, std::to_string(m_layerOpacity)});
@@ -329,6 +343,7 @@ namespace PlutoGE::scene
         std::string materialAssetReference = m_materialAssetReference;
         std::string paintedAlbedoPath = m_paintedAlbedoPath;
         std::string serializedHeightSamples;
+        std::optional<std::string> serializedHoles;
         std::vector<TerrainLayer> layers;
         std::size_t layerCount = 0;
         bool hasLayerCount = false;
@@ -371,6 +386,8 @@ namespace PlutoGE::scene
                 heightMapPath = property.value;
             else if (property.name == "HeightSamples")
                 serializedHeightSamples = property.Text();
+            else if (property.name == "HoleMask")
+                serializedHoles = property.Text();
             else if (property.name == "MaterialAsset")
                 materialAssetReference = property.value;
             else if (property.name == "PaintedAlbedo")
@@ -460,6 +477,18 @@ namespace PlutoGE::scene
             MarkMeshDirty();
         }
 
+        if (serializedHoles)
+        {
+            if (auto holes = TerrainHoleMask::Decode(*serializedHoles, m_width - 1, m_depth - 1))
+            {
+                if (*holes != m_holes)
+                {
+                    m_holes = std::move(*holes);
+                    HolesChanged();
+                }
+            }
+        }
+
         m_materialAssetReference = materialAssetReference;
         RebuildMaterialFromReference();
         if (!paintedAlbedoPath.empty())
@@ -523,6 +552,10 @@ namespace PlutoGE::scene
 
         const glm::mat4 inverseWorld = glm::inverse(entity->GetWorldTransform());
         const glm::vec3 local = glm::vec3(inverseWorld * glm::vec4(worldPosition, 1.0f));
+        if (m_paintMode == TerrainPaintMode::Hole || m_paintMode == TerrainPaintMode::Fill)
+        {
+            return PaintHolesAtLocalPosition(local, m_paintMode == TerrainPaintMode::Hole);
+        }
         const float centerX = local.x / m_cellSize;
         const float centerZ = local.z / m_cellSize;
         const float radiusInSamples = m_brushRadius / m_cellSize;
@@ -651,7 +684,9 @@ namespace PlutoGE::scene
         float previousDistance = entryDistance;
         float previousDelta = heightDelta(previousDistance);
         float selectedDistance = std::numeric_limits<float>::max();
-        if (std::abs(previousDelta) <= kRayEpsilon)
+        if (std::abs(previousDelta) <= kRayEpsilon &&
+            !m_holes.IsHoleAt((localOrigin.x + localDirection.x * previousDistance) / m_cellSize,
+                              (localOrigin.z + localDirection.z * previousDistance) / m_cellSize))
             selectedDistance = previousDistance;
 
         for (float distance = std::min(entryDistance + stepDistance, exitDistance);
@@ -673,8 +708,14 @@ namespace PlutoGE::scene
                     else
                         high = middle;
                 }
-                selectedDistance = (low + high) * 0.5f;
-                break;
+                const float crossing = (low + high) * 0.5f;
+                const glm::vec3 point = localOrigin + localDirection * crossing;
+                // A crossing inside a hole is not a surface: the ray passes through and may meet the terrain beyond.
+                if (!m_holes.IsHoleAt(point.x / m_cellSize, point.z / m_cellSize))
+                {
+                    selectedDistance = crossing;
+                    break;
+                }
             }
             if (distance >= exitDistance)
                 break;
@@ -707,6 +748,11 @@ namespace PlutoGE::scene
         }
         m_heights.swap(resized);
         ++m_heightsRevision;
+        if (m_holes.GetCellsX() != m_width - 1 || m_holes.GetCellsZ() != m_depth - 1)
+        {
+            m_holes.Resize(m_width - 1, m_depth - 1);
+            ++m_holesRevision;
+        }
         MarkMeshDirty();
     }
 
@@ -721,6 +767,8 @@ namespace PlutoGE::scene
         const float maxZ = (m_depth - 1) * m_cellSize;
         if (!std::isfinite(x) || !std::isfinite(z) || !std::isfinite(m_cellSize) || m_cellSize <= 0 ||
             x < 0 || z < 0 || x > maxX || z > maxZ)
+            return false;
+        if (m_holes.IsHoleAt(x / m_cellSize, z / m_cellSize))
             return false;
 
         height = GetHeightAtLocalPosition(x, z);
@@ -923,6 +971,12 @@ namespace PlutoGE::scene
 
     void TerrainComponent::EnsureHeightStorage()
     {
+        if (m_holes.GetCellsX() != m_width - 1 || m_holes.GetCellsZ() != m_depth - 1)
+        {
+            m_holes.Resize(m_width - 1, m_depth - 1);
+            ++m_holesRevision;
+        }
+
         const std::size_t targetSize = static_cast<std::size_t>(m_width * m_depth);
         if (m_heights.size() == targetSize)
         {
@@ -931,6 +985,54 @@ namespace PlutoGE::scene
 
         m_heights.assign(targetSize, 0.0f);
         ++m_heightsRevision;
+    }
+
+    void TerrainComponent::SetHoles(TerrainHoleMask holes)
+    {
+        holes.Resize(m_width - 1, m_depth - 1);
+        if (holes == m_holes)
+            return;
+        m_holes = std::move(holes);
+        HolesChanged();
+    }
+
+    bool TerrainComponent::SetHole(int cellX, int cellZ, bool hole)
+    {
+        if (!m_holes.Set(cellX, cellZ, hole))
+            return false;
+        HolesChanged();
+        return true;
+    }
+
+    bool TerrainComponent::IsHoleAtLocalPosition(float x, float z) const
+    {
+        return m_holes.IsHoleAt(x / m_cellSize, z / m_cellSize);
+    }
+
+    bool TerrainComponent::IsHoleAtWorldPosition(const glm::vec3 &worldPosition) const
+    {
+        const auto *entity = GetOwner();
+        if (!entity || m_holes.Empty())
+            return false;
+        const glm::vec3 local = glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
+        return IsHoleAtLocalPosition(local.x, local.z);
+    }
+
+    bool TerrainComponent::PaintHolesAtLocalPosition(const glm::vec3 &local, bool hole)
+    {
+        if (!m_holes.PaintCircle(local.x / m_cellSize, local.z / m_cellSize, m_brushRadius / m_cellSize, hole))
+            return false;
+        HolesChanged();
+        return true;
+    }
+
+    void TerrainComponent::HolesChanged()
+    {
+        ++m_holesRevision;
+        MarkMeshDirty();
+        if (auto *owner = GetOwner())
+            if (auto *scene = owner->GetScene())
+                scene->MarkColliderShapesDirty();
     }
 
     void TerrainComponent::MarkMeshDirty()
@@ -1022,12 +1124,23 @@ namespace PlutoGE::scene
             }
         }
 
-        const auto appendQuad = [&](int x, int z, int step)
+        const auto appendQuad = [&](int x, int z, int step, const auto &self) -> void
         {
             const int x1 = std::min(x + step, m_width - 1);
             const int z1 = std::min(z + step, m_depth - 1);
             if (x1 == x || z1 == z)
             {
+                return;
+            }
+            // Holes stay exact at every LOD: a coarse quad over a hole is replaced by the full-detail quads of its solid
+            // cells. Their vertices geomorph onto the coarse surface like the rest of the LOD, so no cracks open.
+            if (m_holes.AnyInRect(x, z, x1, z1))
+            {
+                if (step == 1)
+                    return;
+                for (int fineZ = z; fineZ < z1; ++fineZ)
+                    for (int fineX = x; fineX < x1; ++fineX)
+                        self(fineX, fineZ, 1, self);
                 return;
             }
 
@@ -1062,7 +1175,7 @@ namespace PlutoGE::scene
                     {
                         for (int x = chunkX; x < maxX; x += step)
                         {
-                            appendQuad(x, z, step);
+                            appendQuad(x, z, step, appendQuad);
                         }
                     }
 

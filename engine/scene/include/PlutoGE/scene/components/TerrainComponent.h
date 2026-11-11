@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
+#include "PlutoGE/scene/TerrainHoleMask.h"
 #include "PlutoGE/scene/TerrainLayerStack.h"
 #include "PlutoGE/scene/HeavyPropertyCache.h"
 #include "PlutoGE/scene/components/Component.h"
@@ -25,6 +26,8 @@ namespace PlutoGE::scene
         Smooth,
         Flatten,
         Layer, // paints the selected material layer (see TerrainLayerStack)
+        Hole,  // cuts cells away (see TerrainHoleMask)
+        Fill,  // restores cut cells
     };
 
     struct TerrainComponentConfig
@@ -50,9 +53,10 @@ namespace PlutoGE::scene
         std::vector<Property> Serialize() const override;
         std::vector<Property> SerializeForInspector() const override;
         std::vector<Property> SerializeShared() const override;
-        // Missing "HeightSamples" already keep the current heights (unless Width or Depth changes their count).
+        // Missing "HeightSamples" and "HoleMask" keep the current heights and holes (unless Width or Depth changes
+        // their count).
         void DeserializeKeepingHeavyData(const std::vector<Property> &properties) override { Deserialize(properties); }
-        std::uint64_t GetHeavyDataRevision() const override { return m_heightsRevision; }
+        std::uint64_t GetHeavyDataRevision() const override { return m_heightsRevision + m_holesRevision; }
         void Deserialize(const std::vector<Property> &properties) override;
 
         bool LoadHeightMap(const std::string &filePath);
@@ -79,6 +83,19 @@ namespace PlutoGE::scene
         void SetStatic(bool isStatic) { m_isStatic = isStatic; }
         bool IsStatic() const { return m_isStatic; }
         render::Mesh *GetMeshForBaking();
+
+        // Holes: cells cut out of the terrain (a cave mouth in a hillside). A hole cell is not drawn and does not
+        // collide, TrySampleSurface and Raycast report no surface there, and the Hole and Fill paint modes edit them.
+        // Cell (x, z) spans samples x..x+1 and z..z+1; the mask always has (width - 1) x (depth - 1) cells.
+        const TerrainHoleMask &GetHoles() const { return m_holes; }
+        // Replaces the mask (resized to the terrain's cells).
+        void SetHoles(TerrainHoleMask holes);
+        // Returns whether the cell changed.
+        bool SetHole(int cellX, int cellZ, bool hole);
+        bool IsHoleAtLocalPosition(float x, float z) const;
+        bool IsHoleAtWorldPosition(const glm::vec3 &worldPosition) const;
+        // Bumped by every change to the holes (physics and other caches rebuild on it).
+        std::uint64_t GetHolesRevision() const { return m_holesRevision; }
 
         void SetMaterial(render::Material *material);
         render::Material *GetMaterial() const { return m_material; }
@@ -127,6 +144,8 @@ namespace PlutoGE::scene
         float SampleHeight(float x, float z) const;
         glm::vec3 ComputeNormal(int x, int z) const;
         void EnsureHeightStorage();
+        void HolesChanged();
+        bool PaintHolesAtLocalPosition(const glm::vec3 &local, bool hole);
         void MarkMeshDirty();
         void RebuildMesh();
         void RebuildMaterialFromReference();
@@ -143,6 +162,9 @@ namespace PlutoGE::scene
         std::vector<float> m_heights;
         std::uint64_t m_heightsRevision = 0;
         HeavyPropertyCache m_heightsText;
+        TerrainHoleMask m_holes;
+        std::uint64_t m_holesRevision = 0;
+        HeavyPropertyCache m_holesText;
 
         std::unique_ptr<render::Mesh> m_mesh;
         render::Material *m_material = nullptr;

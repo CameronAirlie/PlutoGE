@@ -600,6 +600,55 @@ namespace PlutoGE::scene
             return shapeData;
         }
 
+        // A terrain with holes: Bullet's heightfield cannot leave cells out (and its accelerated ray test cannot be
+        // overridden), so the solid cells become a triangle mesh, split along the same (x+1,z)-(x,z+1) diagonal as the
+        // heightfield and the rendered mesh. Vertices are shared, so this costs about what the render mesh does.
+        BulletShapeData CreateHoledTerrainBulletShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
+        {
+            const int width = terrain.GetWidth();
+            const int depth = terrain.GetDepth();
+            const auto &heights = terrain.GetHeightSamples();
+            const auto &holes = terrain.GetHoles();
+            const float scaleX = std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f);
+            const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
+            const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
+
+            auto triangleMesh = std::make_unique<btTriangleMesh>(true, false);
+            triangleMesh->preallocateVertices(width * depth);
+            triangleMesh->preallocateIndices((width - 1) * (depth - 1) * 6);
+            std::vector<int> vertexOf(static_cast<std::size_t>(width) * static_cast<std::size_t>(depth), -1);
+            const auto vertex = [&](int x, int z) {
+                auto &index = vertexOf[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+                if (index < 0)
+                {
+                    const float height = heights[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+                    index = triangleMesh->findOrAddVertex(btVector3(static_cast<btScalar>(x * scaleX),
+                                                                    static_cast<btScalar>(height * scaleY),
+                                                                    static_cast<btScalar>(z * scaleZ)),
+                                                          false);
+                }
+                return index;
+            };
+            for (int z = 0; z + 1 < depth; ++z)
+                for (int x = 0; x + 1 < width; ++x)
+                {
+                    if (holes.IsHole(x, z))
+                        continue;
+                    const int i0 = vertex(x, z), i1 = vertex(x + 1, z), i2 = vertex(x, z + 1), i3 = vertex(x + 1, z + 1);
+                    triangleMesh->addTriangleIndices(i0, i2, i1);
+                    triangleMesh->addTriangleIndices(i1, i2, i3);
+                }
+            if (triangleMesh->getNumTriangles() == 0)
+            {
+                return {};
+            }
+
+            BulletShapeData shapeData;
+            shapeData.shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
+            shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
+            return shapeData;
+        }
+
         BulletShapeData CreateTerrainBulletShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
         {
             BulletShapeData shapeData;
@@ -610,6 +659,10 @@ namespace PlutoGE::scene
             if (width < 2 || depth < 2 || heightSamples.size() != expectedHeightCount)
             {
                 return shapeData;
+            }
+            if (!terrain.GetHoles().Empty())
+            {
+                return CreateHoledTerrainBulletShape(terrain, worldScale);
             }
 
             shapeData.ownedHeightfieldData = heightSamples;
@@ -1563,6 +1616,7 @@ namespace PlutoGE::scene
                 HashCombine(signature, terrain->GetWidth());
                 HashCombine(signature, terrain->GetDepth());
                 HashCombine(signature, terrain->GetCellSize());
+                HashCombine(signature, terrain->GetHolesRevision());
             }
             if (const auto *meshComponent = entity.GetComponent<MeshComponent>())
             {

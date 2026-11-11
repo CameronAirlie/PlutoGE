@@ -469,7 +469,8 @@ int main()
         cloud.parameters[1].w = 0.42f;
         cloud.parameters[2] = {0, 1, 0, 0.012f};
         cloud.parameters[4] = {0.9f, 0.65f, 0.22f, 0.006f};
-        cloud.parameters[5] = {0.035f, 0.32f, 0, 0};
+        cloud.parameters[5] = {0.035f, 0.32f, 0.22f, 0};
+        cloud.parameters[6].w = 0.22f; // RGB ambient: lanes 4.z, 5.z, 6.w
         std::vector<BasicPostProcessEffect> effects(PLUTO_CLOUD_OCCLUSION_VOLUMES + 1, cloud);
         for (std::size_t index = 0; index < effects.size(); ++index)
             effects[index].worldToLocal = glm::translate(glm::mat4(1.0f), glm::vec3(float(index), 0, 0));

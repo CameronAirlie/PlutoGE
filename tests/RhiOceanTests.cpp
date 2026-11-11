@@ -225,7 +225,8 @@ int main(int argc,char **argv) try
     cloud.parameters[2]={0,1,0,5};
     cloud.parameters[3]={1,1,1,0};
     cloud.parameters[4]={1,0,1,.08f};
-    cloud.parameters[5]={.18f,0,0,0};
+    cloud.parameters[5]={.18f,0,1,0};
+    cloud.parameters[6].w=1; // RGB ambient: lanes 4.z, 5.z, 6.w
     for(unsigned divisor:{1u,2u,4u})
     {
         cloud.volumetricResolutionDivisor=divisor;

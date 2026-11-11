@@ -103,6 +103,16 @@ namespace PlutoGE::render
     // The handoff happens while both are dark, so it never pops.
     [[nodiscard]] CelestialLight ResolveCelestialLight(const PhysicalSkySettings &sky, const CelestialState &celestial,
                                                        const glm::vec3 &sunLightColor, float sunLightIntensity);
+    // Sunlight at `altitude` metres above the ground plane. A raised point sees
+    // past the ground horizon and through thinner air, so high clouds stay lit
+    // in orange light after sunset at ground level. Never the moon.
+    [[nodiscard]] CelestialLight ResolveSunlightAtAltitude(const PhysicalSkySettings &sky,
+                                                           const CelestialState &celestial,
+                                                           const glm::vec3 &sunLightColor, float sunLightIntensity,
+                                                           float altitude);
+    // Mean sky radiance over the whole sphere (ground below the horizon), as
+    // seen by a medium that scatters isotropically, such as a cloud's interior.
+    [[nodiscard]] glm::vec3 MeanPhysicalSkyRadiance(const PhysicalSkySettings &sky, const CelestialState &celestial);
 
     [[nodiscard]] PhysicalSkyParameters PackPhysicalSkyParameters(const PhysicalSkySettings &sky,
                                                                   const CelestialState &celestial);

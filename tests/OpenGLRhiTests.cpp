@@ -1126,7 +1126,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         cloud.parameters[2] = {0.25f, 0.8f, 0.4f, 0.035f};
         cloud.parameters[3] = {1.0f, 0.95f, 0.85f, 5.0f};
         cloud.parameters[4] = {0.95f, 0.35f, 0.3f, 0.08f};
-        cloud.parameters[5] = {0.18f, 0.25f, 0.0f, 0.0f};
+        cloud.parameters[5] = {0.18f, 0.25f, 0.3f, 0.0f};
+        cloud.parameters[6].w = 0.3f; // RGB ambient: lanes 4.z, 5.z, 6.w
         const glm::mat4 cloudTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 4.0f, 0.0f)) *
                                          glm::scale(glm::mat4(1.0f), glm::vec3(20.0f, 5.0f, 20.0f));
         cloud.worldToLocal = glm::inverse(cloudTransform);
@@ -1153,7 +1154,6 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         moonlitCloud.parameters[5].y = 0.0f;
         moonlitCloud.parameters[2] = {0.25f, 0.8f, 0.4f, cloud.parameters[2].w};
         moonlitCloud.parameters[3] = {0.55f, 0.65f, 1.0f, 0.8f};
-        moonlitCloud.parameters[5].z = 1.0f;
         std::array moonlitEffects{nightSky, moonlitCloud};
         basicRenderer.Render(atmosphereProjection * nightLighting.view,
                              nightLighting, {}, moonlitEffects);

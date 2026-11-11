@@ -422,6 +422,7 @@ void CheckRenderOptimizations(PlutoGE::render::BasicRenderer &renderer,
     cloud.parameters[2] = {.25f,.8f,.4f,.1f};
     cloud.parameters[3] = {1,.95f,.85f,2};
     cloud.parameters[4] = {.95f,.35f,.3f,.008f};
+    cloud.parameters[5].z = cloud.parameters[6].w = .3f; // RGB ambient: lanes 4.z, 5.z, 6.w
     cloud.worldToLocal = glm::inverse(glm::scale(glm::mat4(1), glm::vec3(20)));
     for (const auto &volume : {fog, cloud})
     {

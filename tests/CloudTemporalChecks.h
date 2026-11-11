@@ -33,7 +33,8 @@ void CheckCloudTemporal(PlutoGE::render::rhi::IRenderDevice &device,
         deck.parameters[2] = {0, 1, 0, .02f};
         deck.parameters[3] = {1, 1, 1, 2};
         deck.parameters[4] = {.9f, .6f, .2f, .006f};
-        deck.parameters[5] = {.035f, .3f, 0, 0};
+        deck.parameters[5] = {.035f, .3f, .2f, 0};
+        deck.parameters[6].w = .2f; // RGB ambient: lanes 4.z, 5.z, 6.w
         deck.worldToLocal = glm::inverse(glm::translate(glm::mat4(1), glm::vec3(0, 600, 0)) *
                                          glm::scale(glm::mat4(1), glm::vec3(4000, 200, 4000)));
         const auto clouds = BuildCloudOcclusion(std::span(&deck, 1));
@@ -65,7 +66,8 @@ void CheckCloudTemporal(PlutoGE::render::rhi::IRenderDevice &device,
     cloud.parameters[2] = {glm::normalize(glm::vec3(.4f, .8f, -.3f)), .02f};
     cloud.parameters[3] = {1, .95f, .85f, 3};
     cloud.parameters[4] = {.9f, .6f, .25f, .004f};
-    cloud.parameters[5] = {.025f, .3f, 0, 0};
+    cloud.parameters[5] = {.025f, .3f, .25f, 0};
+    cloud.parameters[6].w = .25f; // RGB ambient: lanes 4.z, 5.z, 6.w
     // A deck long enough that the cheap trace's steps span hundreds of metres.
     cloud.worldToLocal = glm::inverse(glm::translate(glm::mat4(1), glm::vec3(0, 400, -1500)) *
                                       glm::scale(glm::mat4(1), glm::vec3(4000, 300, 4000)));

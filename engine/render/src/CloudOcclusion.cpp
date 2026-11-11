@@ -98,11 +98,6 @@ namespace PlutoGE::render
             return std::max(farDistance - nearDistance, 0.0f);
         }
 
-        float SmoothStep(float edge0, float edge1, float x)
-        {
-            const float t = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-            return Smooth(t);
-        }
     }
 
     float EstimateMeanCloudNoiseDensity(float coverage, float detailErosion, float detailScaleRatio)
@@ -176,8 +171,9 @@ namespace PlutoGE::render
             // because multiple scattering diffuses it.
             const glm::vec3 lightDirection = glm::dot(glm::vec3(lanes[2]), glm::vec3(lanes[2])) > 0.000001f
                                                  ? glm::normalize(glm::vec3(lanes[2])) : glm::vec3(0.0f, 1.0f, 0.0f);
-            const float daylight = SmoothStep(-0.12f, 0.035f, lightDirection.y);
-            const float ambientFill = kBaseAmbientHeight * lanes[4].z * (lanes[5].z > 0.5f ? 1.0f : daylight * daylight);
+            // RGB ambient in lanes 4.z, 5.z and 6.w, already faded through twilight.
+            const glm::vec3 ambientFill =
+                kBaseAmbientHeight * glm::max(glm::vec3(lanes[4].z, lanes[5].z, lanes[6].w), glm::vec3(0.0f));
             const float sunDepth = meanExtinction * 0.5f * VolumeHeight(effect->worldToLocal) /
                                    std::max(lightDirection.y, 0.1f);
             float octaves = 0.0f, attenuation = 1.0f, contribution = 1.0f;
@@ -186,7 +182,7 @@ namespace PlutoGE::render
             const glm::vec3 sunlight = glm::max(glm::vec3(lanes[3]), glm::vec3(0.0f)) * std::max(lanes[3].w, 0.0f) *
                                        kInverseFourPi * octaves;
             const glm::vec3 baseRadiance = glm::max(glm::vec3(lanes[0]), glm::vec3(0.0f)) *
-                                           std::max(lanes[4].x, 0.0f) * (glm::vec3(ambientFill) + sunlight);
+                                           std::max(lanes[4].x, 0.0f) * (ambientFill + sunlight);
 
             result.volumeWorldToLocal[count] = effect->worldToLocal;
             result.volumes[count] = glm::vec4(baseRadiance, meanExtinction);

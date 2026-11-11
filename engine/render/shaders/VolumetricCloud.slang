@@ -225,12 +225,10 @@ float4 integrateCloud(FullscreenVertexOutput input)
     const float cosine = dot(rayDirection, lightDirection);
     const float pixelJitter = cloudPixelJitter(pixel);
     const float lightOffset = cloudTemporalJitter() ? frac(pixelJitter + 0.38196601125) : 0.5;
-    // Fade the uniform daylight fill early in twilight. At night, the
-    // directional moon term supplies illumination without an emissive floor.
-    // Lane 5.z marks a non-solar light; the CPU then pre-scales the fill by
-    // the sun's daylight, which this light direction cannot provide.
-    const float daylight = pass.parameters[5].z > 0.5 ? 1.0 : smoothstep(-0.12, 0.035, lightDirection.y);
-    const float ambientLight = pass.parameters[4].z * daylight * daylight;
+    // RGB ambient fill (SceneEnvironment.cpp): the flat daylight fill, already
+    // faded through twilight by the sun, plus the physical sky's mean radiance.
+    // Lane 5.w is the renderer's water-volume flag, so green travels in 5.z.
+    const float3 ambientLight = float3(pass.parameters[4].z, pass.parameters[5].z, pass.parameters[6].w);
     for (uint index = 0; index < 128u; ++index)
     {
         if (index >= primarySteps || transmittance < 0.01)

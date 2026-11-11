@@ -180,6 +180,39 @@ namespace PlutoGE::render
                    : sunLight;
     }
 
+    CelestialLight ResolveSunlightAtAltitude(const PhysicalSkySettings &sky, const CelestialState &celestial,
+                                             const glm::vec3 &sunLightColor, float sunLightIntensity, float altitude)
+    {
+        constexpr float kEarthRadius = 6.371e6f, kRayleighScaleHeight = 8000.0f, kMieScaleHeight = 1200.0f;
+        altitude = std::max(altitude, 0.0f);
+        // The horizon drops by about sqrt(2h/R) radians; treat the sun as
+        // that much higher, and keep only the air column above the point.
+        const float horizonDip = std::sqrt(2.0f * altitude / kEarthRadius);
+        const glm::vec3 &sun = celestial.sunDirection;
+        const float height = sun.y + horizonDip;
+        const auto beta = Coefficients(sky);
+        const glm::vec3 ozone = beta.extinction - beta.rayleigh - beta.mie;
+        const glm::vec3 extinction = beta.rayleigh * std::exp(-altitude / kRayleighScaleHeight) +
+                                     beta.mie * std::exp(-altitude / kMieScaleHeight) + ozone;
+        return {-sun,
+                sunLightColor * glm::exp(-extinction * LightAirMass(height)) * glm::max(sky.sunColor, glm::vec3(0.0f)),
+                std::max(sunLightIntensity, 0.0f) * Smooth(PLUTO_SKY_SUNLIGHT_BEGIN, PLUTO_SKY_SUNLIGHT_END, height),
+                false};
+    }
+
+    glm::vec3 MeanPhysicalSkyRadiance(const PhysicalSkySettings &sky, const CelestialState &celestial)
+    {
+        // The 14-point sphere rule FogEnvironment.slang uses: axes 1/15, corners 3/40.
+        constexpr float c = 0.57735026919f;
+        static const glm::vec3 directions[14] = {
+            {1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1},
+            {c, c, c}, {c, c, -c}, {c, -c, c}, {c, -c, -c}, {-c, c, c}, {-c, c, -c}, {-c, -c, c}, {-c, -c, -c}};
+        glm::vec3 radiance(0.0f);
+        for (int i = 0; i < 14; ++i)
+            radiance += EvaluatePhysicalSkyEnvironment(sky, celestial, directions[i]) * (i < 6 ? 1.0f / 15.0f : 3.0f / 40.0f);
+        return radiance;
+    }
+
     PhysicalSkyParameters PackPhysicalSkyParameters(const PhysicalSkySettings &sky, const CelestialState &celestial)
     {
         PhysicalSkyParameters lanes{};

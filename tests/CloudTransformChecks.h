@@ -36,7 +36,8 @@ void CheckCloudTransforms(PlutoGE::render::rhi::IRenderDevice &device,
     cloud.parameters[1] = {.2f, .3f, .1f, .6f};
     cloud.parameters[3] = {1, .95f, .85f, 5};
     cloud.parameters[4] = {.95f, .35f, .3f, .08f};
-    cloud.parameters[5] = {.18f, .25f, 0, 0};
+    cloud.parameters[5] = {.18f, .25f, .3f, 0};
+    cloud.parameters[6].w = .3f; // RGB ambient: lanes 4.z, 5.z, 6.w
     double maximumError = 0;
     bool scatteringObserved = false;
     for (unsigned divisor : {1u, 2u})

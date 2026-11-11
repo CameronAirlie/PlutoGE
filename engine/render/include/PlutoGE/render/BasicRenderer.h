@@ -936,6 +936,10 @@ namespace PlutoGE::render
         // Atmosphere passes still need the sun: zero means the directional
         // light is the sun, so sunDirection is -directionalDirection.
         glm::vec3 sunDirection{0.0f};
+        // The scene's directional light before the physical sky attenuates it,
+        // so raised media (clouds) can resolve their own sunlight. Zero intensity: unknown.
+        glm::vec3 sunLightColor{1.0f};
+        float sunLightIntensity = 0.0f;
         bool directionalIsMoon = false;
         glm::vec3 directionalDirection{0.4f, -0.8f, 0.3f};
         float directionalIntensity = 1.0f;

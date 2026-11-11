@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
+#include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 
 #include <glm/gtc/quaternion.hpp>
 
@@ -190,6 +191,54 @@ namespace
         Require(!day.directionalIsMoon && day.directionalIntensity > 3.0f, "Scene lighting should be sunlit by day");
     }
 
+    // Clouds resolve their own sunlight from altitude and take sky light, so a
+    // cloud deck at sunset is lit, not black.
+    void TestCloudSunsetLighting()
+    {
+        render::PhysicalSkySettings sky;
+        const auto luminance = [](const glm::vec3 &c) { return glm::dot(c, glm::vec3(0.2126f, 0.7152f, 0.0722f)); };
+
+        // Sun just under the ground horizon: dark below, still shining on a deck 3 km up.
+        const auto set = render::ResolveCelestialState(sky, Elevated(-1.5f));
+        const auto ground = render::ResolveSunlightAtAltitude(sky, set, glm::vec3(1.0f), 8.0f, 0.0f);
+        const auto deck = render::ResolveSunlightAtAltitude(sky, set, glm::vec3(1.0f), 8.0f, 3000.0f);
+        Require(ground.intensity == 0.0f, "The ground should be past sunset");
+        Require(deck.intensity > 1.0f && !deck.isMoon, "A high cloud deck should still see the sun");
+        Require(deck.color.r > deck.color.g && deck.color.g > deck.color.b, "Its sunlight should be reddened");
+
+        // The ground-level resolution matches the scene's directional light.
+        const auto noon = render::ResolveCelestialState(sky, Elevated(60.0f));
+        const auto light = render::ResolveCelestialLight(sky, noon, glm::vec3(1.0f), 8.0f);
+        const auto atGround = render::ResolveSunlightAtAltitude(sky, noon, glm::vec3(1.0f), 8.0f, 0.0f);
+        Require(Near(light.color, atGround.color) && Near(light.intensity, atGround.intensity),
+                "Ground-level sunlight should match the directional light");
+
+        // Twilight sky light is dimmer than day but present, and bluer than the low sun.
+        const glm::vec3 daySky = render::MeanPhysicalSkyRadiance(sky, noon);
+        const glm::vec3 duskSky = render::MeanPhysicalSkyRadiance(sky, set);
+        Require(luminance(duskSky) > 0.0f && luminance(duskSky) < luminance(daySky), "Dusk sky light should be dim but present");
+
+        scene::Scene world;
+        world.AddEntity(std::make_unique<scene::Entity>())->CreateComponent<scene::PhysicalSkyComponent>();
+        auto *sun = world.AddEntity(std::make_unique<scene::Entity>())->CreateComponent<scene::LightComponent>();
+        sun->SetLightType(scene::LightType::Directional);
+        sun->SetIntensity(8.0f);
+        sun->SetDirection(-Elevated(-1.5f));
+        auto *cloudEntity = world.AddEntity(std::make_unique<scene::Entity>());
+        cloudEntity->SetPosition({0.0f, 3000.0f, 0.0f});
+        auto *cloud = cloudEntity->CreateComponent<scene::VolumetricCloudComponent>();
+        cloud->SetAmbientLight(0.0f);
+        const auto lighting = render::BuildSceneLighting(render::CameraData{}, &world);
+        const auto atmosphere = render::BuildSceneAtmosphere(&world, lighting);
+        const auto packet = std::find_if(atmosphere.begin(), atmosphere.end(), [](const auto &effect)
+                                         { return effect.type == render::BasicPostProcessEffectType::VolumetricCloud; });
+        Require(packet != atmosphere.end(), "The scene should produce a cloud packet");
+        Require(packet->parameters[3].w > 1.0f && glm::vec3(packet->parameters[2]).y < 0.0f,
+                "The cloud deck should be sunlit after ground sunset");
+        const glm::vec3 ambient(packet->parameters[4].z, packet->parameters[5].z, packet->parameters[6].w);
+        Require(luminance(ambient) > 0.0f, "Clouds without a flat fill should still take sky light");
+    }
+
     void TestComponentRoundTrip()
     {
         scene::PhysicalSkyComponent source;
@@ -224,6 +273,7 @@ int main() try
     TestCelestialLight();
     TestEnvironment();
     TestSceneIntegration();
+    TestCloudSunsetLighting();
     TestComponentRoundTrip();
     std::cout << "Physical sky model tests passed\n";
     return 0;

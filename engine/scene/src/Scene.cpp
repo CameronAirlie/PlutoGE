@@ -41,6 +41,7 @@
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/components/WindComponent.h"
+#include "PlutoGE/scene/components/WeatherComponent.h"
 #include "PlutoGE/scene/components/OutlineComponent.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 
@@ -2881,6 +2882,7 @@ namespace PlutoGE::scene
         m_physicalSkies.clear();
         m_volumetricClouds.clear();
         m_winds.clear();
+        m_weathers.clear();
         m_outlines.clear();
         const auto collect = [&](auto &&self, Entity *entity) -> void
         {
@@ -2894,6 +2896,8 @@ namespace PlutoGE::scene
                 m_volumetricClouds.push_back(cloud);
             for (auto *wind : entity->GetComponents<WindComponent>())
                 m_winds.push_back(wind);
+            for (auto *weather : entity->GetComponents<WeatherComponent>())
+                m_weathers.push_back(weather);
             for (auto *outline : entity->GetComponents<OutlineComponent>())
                 m_outlines.push_back(outline);
             for (auto *child : entity->GetChildren())
@@ -2920,6 +2924,12 @@ namespace PlutoGE::scene
     {
         RefreshEnvironmentComponents();
         return m_winds;
+    }
+
+    const std::vector<WeatherComponent *> &Scene::GetWeatherComponents() const
+    {
+        RefreshEnvironmentComponents();
+        return m_weathers;
     }
 
     const std::vector<OutlineComponent *> &Scene::GetOutlineComponents() const

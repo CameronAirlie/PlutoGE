@@ -82,6 +82,7 @@ add_library(PlutoGEScene
     src/ui/UILayoutAdapter.cpp
     src/components/VolumetricCloudComponent.cpp
     src/components/WindComponent.cpp
+    src/components/WeatherComponent.cpp
     src/components/OutlineComponent.cpp
 )
 

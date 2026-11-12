@@ -3,6 +3,9 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
+#include "PlutoGE/render/SceneWind.h"
+#include "PlutoGE/render/ShaderGraph.h"
+#include "PlutoGE/scene/components/WindComponent.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 
@@ -650,6 +653,18 @@ namespace PlutoGE::scene
         std::vector<PendingSubEmitter> pendingSubEmitters;
         const glm::vec3 baseAcceleration = glm::vec3(0.0f, m_buoyancy - 9.81f * m_gravityModifier, 0.0f) + m_windVelocity;
         const float velocityDamping = std::exp(-m_drag * deltaTime);
+        // The scene's wind, sampled per particle so gusts pass through the cloud as they pass through foliage.
+        render::SceneWindSettings sceneWind{};
+        if (m_sceneWindDrag > 0.0f && scene)
+            for (const auto *wind : scene->GetWindComponents())
+                if (wind->IsEnabled() && wind->GetOwner() && wind->GetOwner()->IsActiveInHierarchy())
+                {
+                    sceneWind = wind->GetSettings();
+                    break;
+                }
+        const bool followSceneWind = !sceneWind.Calm();
+        const float sceneWindTime = followSceneWind ? render::ShaderGraphTimeSeconds() : 0.0f;
+        const float sceneWindBlend = followSceneWind ? 1.0f - std::exp(-m_sceneWindDrag * deltaTime) : 0.0f;
         if (m_collisionEnabled && scene && m_collisionMaxChecksPerFrame > 0)
         {
             collisionCandidates.reserve(static_cast<std::size_t>(std::min(m_collisionMaxChecksPerFrame, m_maxParticles)));
@@ -680,6 +695,13 @@ namespace PlutoGE::scene
                 : glm::vec3(0.0f));
             particle.velocity += acceleration * deltaTime;
             particle.velocity *= velocityDamping;
+            if (followSceneWind)
+            {
+                // Relax the horizontal velocity toward the air's: wind carries particles, it does not lift them.
+                const glm::vec3 air = render::SceneWindVelocity(sceneWind, particle.position, sceneWindTime);
+                particle.velocity.x += (air.x - particle.velocity.x) * sceneWindBlend;
+                particle.velocity.z += (air.z - particle.velocity.z) * sceneWindBlend;
+            }
             glm::vec3 nextPosition = particle.position + particle.velocity * deltaTime;
             particle.age += deltaTime;
             nextPositions[index] = nextPosition;
@@ -945,6 +967,7 @@ namespace PlutoGE::scene
         m_drag = std::max(asset.drag, 0.0f);
         m_buoyancy = asset.buoyancy;
         m_windVelocity = asset.windVelocity;
+        m_sceneWindDrag = std::max(asset.sceneWindDrag, 0.0f);
         m_turbulenceStrength = std::max(asset.turbulenceStrength, 0.0f);
         m_turbulenceFrequency = std::max(asset.turbulenceFrequency, 0.0001f);
         m_rotationSpeed = asset.rotationSpeed;

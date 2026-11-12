@@ -107,6 +107,7 @@ namespace PlutoGE::scene
         float GetDrag() const { return m_drag; }
         float GetBuoyancy() const { return m_buoyancy; }
         const glm::vec3 &GetWindVelocity() const { return m_windVelocity; }
+        float GetSceneWindDrag() const { return m_sceneWindDrag; }
         float GetTurbulenceStrength() const { return m_turbulenceStrength; }
         float GetTurbulenceFrequency() const { return m_turbulenceFrequency; }
         float GetRotationSpeed() const { return m_rotationSpeed; }
@@ -209,6 +210,7 @@ namespace PlutoGE::scene
         float m_drag = 0.0f;
         float m_buoyancy = 0.0f;
         glm::vec3 m_windVelocity{0.0f};
+        float m_sceneWindDrag = 0.0f;
         float m_turbulenceStrength = 0.0f;
         float m_turbulenceFrequency = 0.5f;
         float m_rotationSpeed = 0.0f;

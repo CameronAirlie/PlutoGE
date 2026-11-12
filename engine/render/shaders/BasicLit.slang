@@ -1007,6 +1007,7 @@ float evaluateShadowCascadeTap(int cascade, float3 worldPosition, float depthBia
 }
 
 #include "SurfaceBrdf.slang"
+#include "SurfaceWetness.slang"
 #include "SurfaceLayers.slang"
 #include "LtcAreaLights.slang"
 
@@ -1545,6 +1546,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                         input.uv*uvScale, sampledColor, normal, materialMetallic, materialRoughness, surfaceEmission,
                         graphState);
 #endif
+    // Rain soaks opaque lit surfaces (WeatherComponent); a uniform branch, free when dry.
+    if (!transparentPass && shaderGraph.header.y == 0 && surfaceWeather.x > 0.0)
+        applySurfaceWetness(surfaceWeather.x, geometricNormal, sampledColor.rgb, materialRoughness, materialMetallic);
     // Rough enough that the geometric normal's variation over the pixel stays inside the specular lobe.
     materialRoughness = clamp(surfaceAntialiasedRoughness(derivatives.normalDx, derivatives.normalDy,
                                                           materialRoughness), 0.04, 1.0);

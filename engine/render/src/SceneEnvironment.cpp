@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/components/WindComponent.h"
+#include "PlutoGE/scene/components/WeatherComponent.h"
 
 #include <algorithm>
 #include <cmath>
@@ -186,6 +187,7 @@ namespace PlutoGE::render
         }
 
         lighting.wind = BuildSceneWind(scene);
+        lighting.weather = BuildSceneWeather(scene);
         return lighting;
     }
 
@@ -195,6 +197,15 @@ namespace PlutoGE::render
             for (const auto *wind : scene->GetWindComponents())
                 if (wind->IsEnabled() && wind->GetOwner() && wind->GetOwner()->IsActiveInHierarchy())
                     return wind->GetSettings();
+        return {};
+    }
+
+    SceneWeatherSettings BuildSceneWeather(const scene::Scene *scene)
+    {
+        if (scene)
+            for (const auto *weather : scene->GetWeatherComponents())
+                if (weather->IsEnabled() && weather->GetOwner() && weather->GetOwner()->IsActiveInHierarchy())
+                    return weather->GetSettings();
         return {};
     }
 

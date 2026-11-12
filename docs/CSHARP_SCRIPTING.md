@@ -554,6 +554,13 @@ public sealed class Weather : ScriptBehaviour
 }
 ```
 
+### WeatherComponent
+
+The scene's weather state ([weather](WEATHER.md)), reached through the generic property bridge. `Wetness` (0 to 1)
+darkens porous surfaces and makes surfaces glossier where they face the sky; `Precipitation` (0 to 1) is the rain's
+strength for particles, audio and gameplay to read (the renderer does not draw it). Drive both with the clouds and
+wind above.
+
 ### MeshComponent
 
 Properties: `Static`, `Color`, `Emission`.

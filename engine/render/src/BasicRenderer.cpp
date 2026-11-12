@@ -278,8 +278,10 @@ namespace PlutoGE::render
             glm::vec4 contactShadowParameters{0.0f}; // each channel's light id, mask present
             // Live sky for ambient volumes (SkyIrradiance.h): rgb SH coefficients, [0].w 1 when present.
             std::array<glm::vec4, 9> skyIrradiance{};
+            // Weather on surfaces (SurfaceWetness.slang): x wetness 0..1; yzw reserved.
+            glm::vec4 surfaceWeather{0.0f};
         };
-        static_assert(sizeof(BasicFrameParameters) == 6768 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) == 6784 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         // The SurfaceFeature bits whose BasicLit paths this frame's parameters can reach (SurfaceFeatures.slang states
@@ -2623,6 +2625,7 @@ namespace PlutoGE::render
                 frameParameters.skyIrradiance[i] = glm::vec4(lighting.skyIrradiance->coefficients[i], 0.0f);
             frameParameters.skyIrradiance[0].w = 1.0f;
         }
+        frameParameters.surfaceWeather = glm::vec4(std::clamp(lighting.weather.wetness, 0.0f, 1.0f), 0.0f, 0.0f, 0.0f);
         // Clouds shade the directional light through a map traced into the sky atlas before any receiver reads it.
         const CloudShadowMap cloudShadow = m_cloudShadowPipeline && m_cloudNoise && geometryMode != GeometryDiagnosticMode::ReferenceSky
             ? BuildCloudShadowMap(postProcessEffects, lighting.cameraPosition, -lighting.directionalDirection)

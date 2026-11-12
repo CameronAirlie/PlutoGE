@@ -60,6 +60,9 @@ namespace PlutoGE::assets
         float drag = 0.0f;
         float buoyancy = 0.0f;
         glm::vec3 windVelocity{0.0f};
+        // How fast particles take up the scene's wind (WindComponent), per second: each step their velocity relaxes
+        // toward the air's at this rate, gusts included. 0 ignores the scene's wind; rain ~0.5, leaves and snow ~2.
+        float sceneWindDrag = 0.0f;
         float turbulenceStrength = 0.0f;
         float turbulenceFrequency = 0.5f;
         float rotationSpeed = 0.0f;

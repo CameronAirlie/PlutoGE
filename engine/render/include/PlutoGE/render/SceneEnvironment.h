@@ -24,6 +24,9 @@ namespace PlutoGE::render
     // The scene's wind: the first enabled WindComponent on an active entity, or calm. BuildSceneLighting carries it
     // in BasicLighting::wind; other consumers (particles, cloth, audio) can read it directly.
     SceneWindSettings BuildSceneWind(const scene::Scene *scene);
+    // The scene's weather: the first enabled WeatherComponent on an active entity, or dry. BuildSceneLighting carries
+    // it in BasicLighting::weather.
+    SceneWeatherSettings BuildSceneWeather(const scene::Scene *scene);
     std::vector<BasicPostProcessEffect> BuildSceneAtmosphere(const scene::Scene *scene,
                                                            const BasicLighting &lighting,
                                                            const scene::CameraTagFilter *filter = nullptr);

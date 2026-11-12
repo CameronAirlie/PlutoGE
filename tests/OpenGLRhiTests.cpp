@@ -3,6 +3,7 @@
 #include "ContactShadowRenderingChecks.h"
 #include "AreaLightRenderingChecks.h"
 #include "MaterialOcclusionRenderingChecks.h"
+#include "SurfaceWetnessChecks.h"
 #include "TwoSidedShadingChecks.h"
 #include "FoliageTransmissionChecks.h"
 #include "SurfaceLayerRenderingChecks.h"
@@ -941,6 +942,14 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         CheckMaterialOcclusion(basicRenderer, device, readOpenGLPixels);
         CheckTwoSidedShading(basicRenderer, readOpenGLPixels);
         if (argc > 1 && std::string_view(argv[1]) == "--material-occlusion")
+            return 0;
+        CheckSurfaceWetness(basicRenderer, [&](render::rhi::TextureHandle texture) {
+            std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+            glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            return pixels;
+        });
+        if (argc > 1 && std::string_view(argv[1]) == "--surface-wetness")
             return 0;
         CheckSurfaceLayers(basicRenderer, [&](render::rhi::TextureHandle texture) {
             std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);

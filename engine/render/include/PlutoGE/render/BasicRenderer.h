@@ -8,6 +8,7 @@
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
 #include "PlutoGE/render/FoliageWind.h"
+#include "PlutoGE/render/SceneWeather.h"
 #include "PlutoGE/render/ImpostorLayout.h"
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/LodDistanceScale.h"
@@ -902,6 +903,8 @@ namespace PlutoGE::render
         // The scene's wind (WindComponent, SceneEnvironment.cpp). Calm by default: draws with a foliage wind response
         // then render exactly as rigid geometry.
         SceneWindSettings wind{};
+        // The scene's weather (WeatherComponent, SceneEnvironment.cpp). Dry by default: wetness 0 shades as before.
+        SceneWeatherSettings weather{};
         std::vector<BasicPointLight> pointLights;
         // Spot sources for voxel GI; direct surface lighting has its own light path.
         struct SpotLight { BasicPointLight light; glm::vec3 direction{0,-1,0}; SpotCone cone; };

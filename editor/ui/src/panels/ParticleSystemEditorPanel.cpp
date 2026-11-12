@@ -199,6 +199,9 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("Drag", &m_asset.drag, 0.01f, 0.0f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat("Buoyancy", &m_asset.buoyancy, 0.01f, -1000.0f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat3("Wind Velocity", &m_asset.windVelocity.x, 0.01f, -1000.0f, 1000.0f, "%.3f")) m_dirty = true;
+        if (ImGui::DragFloat("Scene Wind Drag", &m_asset.sceneWindDrag, 0.01f, 0.0f, 20.0f, "%.2f")) m_dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How fast particles take up the scene's Wind component, per second. 0 ignores it.");
         if (ImGui::DragFloat("Turbulence Strength", &m_asset.turbulenceStrength, 0.01f, 0.0f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat("Turbulence Frequency", &m_asset.turbulenceFrequency, 0.01f, 0.0001f, 1000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragFloat("Rotation Speed", &m_asset.rotationSpeed, 1.0f, -10000.0f, 10000.0f, "%.1f deg/s")) m_dirty = true;

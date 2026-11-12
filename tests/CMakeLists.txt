@@ -232,6 +232,8 @@ add_test(NAME PlutoGEVulkanCloudTemporalTests COMMAND PlutoGEVulkanRhiTests --cl
 add_test(NAME PlutoGEOpenGLCloudTemporalTests COMMAND PlutoGEOpenGLRhiTests --cloud-temporal)
 add_test(NAME PlutoGEVulkanInstanceLodTests COMMAND PlutoGEVulkanRhiTests --instance-lods)
 add_test(NAME PlutoGEOpenGLInstanceLodTests COMMAND PlutoGEOpenGLRhiTests --instance-lods)
+add_test(NAME PlutoGEVulkanSurfaceWetnessTests COMMAND PlutoGEVulkanRhiTests --surface-wetness)
+add_test(NAME PlutoGEOpenGLSurfaceWetnessTests COMMAND PlutoGEOpenGLRhiTests --surface-wetness)
 add_test(NAME PlutoGEVulkanFoliageWindTests COMMAND PlutoGEVulkanRhiTests --foliage-wind)
 add_test(NAME PlutoGEOpenGLFoliageWindTests COMMAND PlutoGEOpenGLRhiTests --foliage-wind)
 add_test(NAME PlutoGEVulkanImpostorTests COMMAND PlutoGEVulkanRhiTests --impostors)
@@ -410,6 +412,10 @@ add_executable(PlutoGEFoliageEditingTests
 target_include_directories(PlutoGEFoliageEditingTests PRIVATE ../editor/ui/include)
 pluto_link_engine(PlutoGEFoliageEditingTests)
 add_test(NAME PlutoGEFoliageEditingTests COMMAND PlutoGEFoliageEditingTests)
+
+add_executable(PlutoGEWeatherComponentTests WeatherComponentTests.cpp)
+pluto_link_engine(PlutoGEWeatherComponentTests)
+add_test(NAME PlutoGEWeatherComponentTests COMMAND PlutoGEWeatherComponentTests)
 
 add_executable(PlutoGEFoliageWindTests FoliageWindTests.cpp)
 pluto_link_engine(PlutoGEFoliageWindTests)

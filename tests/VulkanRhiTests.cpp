@@ -2,6 +2,7 @@
 #include "ContactShadowRenderingChecks.h"
 #include "AreaLightRenderingChecks.h"
 #include "MaterialOcclusionRenderingChecks.h"
+#include "SurfaceWetnessChecks.h"
 #include "TwoSidedShadingChecks.h"
 #include "FoliageTransmissionChecks.h"
 #include "SurfaceLayerRenderingChecks.h"
@@ -731,6 +732,9 @@ int main(int argc, char **argv)
         CheckMaterialOcclusion(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         CheckTwoSidedShading(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--material-occlusion")
+            return 0;
+        CheckSurfaceWetness(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--surface-wetness")
             return 0;
         CheckSurfaceLayers(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--surface-layers")

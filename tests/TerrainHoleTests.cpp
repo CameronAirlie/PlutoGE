@@ -240,6 +240,95 @@ namespace
         terrain->SetHole(4, 4, false);
         Require(scene.Raycast({9.0f, 20.0f, 9.0f}, {0.0f, -1.0f, 0.0f}, 50.0f, hit), "Filling a hole did not restore collision");
     }
+
+    // Half cuts: a cell keeps one triangle, so a rim can run diagonally.
+    void HalfCuts()
+    {
+        Require(IsCutAt(TerrainHoleCut::CornerLowXLowZ, 0.2f, 0.2f) && !IsCutAt(TerrainHoleCut::CornerLowXLowZ, 0.8f, 0.8f) &&
+                    IsCutAt(TerrainHoleCut::CornerHighXLowZ, 0.8f, 0.2f) && !IsCutAt(TerrainHoleCut::CornerHighXLowZ, 0.2f, 0.8f) &&
+                    IsCutAt(TerrainHoleCut::CornerLowXHighZ, 0.2f, 0.8f) && !IsCutAt(TerrainHoleCut::CornerLowXHighZ, 0.8f, 0.2f) &&
+                    IsCutAt(TerrainHoleCut::CornerHighXHighZ, 0.8f, 0.8f) && !IsCutAt(TerrainHoleCut::CornerHighXHighZ, 0.2f, 0.2f),
+                "A half cut removes the triangle at its corner");
+
+        TerrainHoleMask mask(6, 6);
+        Require(mask.SetCut(1, 1, TerrainHoleCut::CornerHighXLowZ) && mask.GetHoleCount() == 1 && !mask.IsHole(1, 1) &&
+                    mask.AnyInRect(1, 1, 2, 2),
+                "A half cut counts as cut, but not as a whole hole");
+        Require(mask.IsHoleAt(1.9f, 1.1f) && !mask.IsHoleAt(1.1f, 1.9f), "Point queries follow the diagonal");
+        Require(mask.SetCut(1, 1, TerrainHoleCut::Full) && mask.GetHoleCount() == 1 && mask.IsHole(1, 1), "A half cut becomes whole");
+        mask.SetCut(1, 1, TerrainHoleCut::CornerLowXHighZ);
+        mask.Set(4, 2, true);
+        const auto text = mask.Encode();
+        Require(text.find(';') != std::string::npos, "A mask with half cuts uses the extended encoding: " + text);
+        const auto decoded = TerrainHoleMask::Decode(text, 6, 6);
+        Require(decoded && *decoded == mask, "Half cuts do not round-trip: " + text);
+        Require(!TerrainHoleMask::Decode("6x6;0*30,9*6", 6, 6), "An unknown cut value is rejected");
+        mask.SetCut(1, 1, TerrainHoleCut::None);
+        Require(mask.Encode().find(':') != std::string::npos, "Whole cells alone keep the original encoding");
+
+        // A square hole's corners: the solid cells diagonal to it stay, its edge-adjacent corners round off.
+        TerrainHoleMask square(8, 8);
+        for (int z = 2; z < 6; ++z)
+            for (int x = 2; x < 6; ++x)
+                square.Set(x, z, true);
+        // Each corner of the square: both outer neighbours are solid, both inner ones cut, so it keeps a triangle.
+        Require(square.SmoothEdges(), "Smoothing changed nothing");
+        Require(square.GetCut(2, 2) == TerrainHoleCut::CornerHighXHighZ && square.GetCut(5, 5) == TerrainHoleCut::CornerLowXLowZ &&
+                    square.GetCut(5, 2) == TerrainHoleCut::CornerLowXHighZ && square.GetCut(2, 5) == TerrainHoleCut::CornerHighXLowZ,
+                "A hole's corner cells keep the triangle facing the ground");
+        Require(square.IsHole(3, 2) && square.IsHole(3, 3) && square.GetCut(1, 2) == TerrainHoleCut::None,
+                "Straight edges and cells outside are unchanged");
+        // An L-shaped notch: the solid cell in its inner corner loses the triangle facing the hole.
+        TerrainHoleMask notch(6, 6);
+        notch.Set(1, 2, true);
+        notch.Set(2, 1, true);
+        notch.SmoothEdges();
+        Require(notch.GetCut(2, 2) == TerrainHoleCut::CornerLowXLowZ, "A solid cell between two cut sides loses that corner");
+
+        // Rendering and collision keep exactly the solid triangle.
+        Scene scene;
+        auto *entity = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Terrain"}));
+        auto *terrain = entity->CreateComponent<TerrainComponent>(TerrainComponentConfig{.width = 9, .depth = 9, .cellSize = 2.0f});
+        terrain->Deserialize({{"HeightSamples", PropertyType::String, FlatSamples(9, 9, 3.0f)}});
+        terrain->SetStatic(true);
+        entity->CreateComponent<ColliderComponent>()->SetShape(ColliderShape::Terrain);
+        TerrainHoleMask cuts(8, 8);
+        cuts.SetCut(4, 4, TerrainHoleCut::CornerHighXLowZ); // local x 8..10, z 8..10: the low-z, high-x half is gone
+        cuts.SetCut(2, 4, TerrainHoleCut::CornerLowXLowZ);
+        terrain->SetHoles(cuts);
+        PhysicsRaycastHit hit;
+        Require(!scene.Raycast({9.8f, 20.0f, 8.2f}, {0.0f, -1.0f, 0.0f}, 50.0f, hit), "A ray hit the cut half of a cell");
+        Require(scene.Raycast({8.2f, 20.0f, 9.8f}, {0.0f, -1.0f, 0.0f}, 50.0f, hit) && std::abs(hit.point.y - 3.0f) < 0.01f,
+                "The kept half of a cell stopped colliding");
+        Require(!scene.Raycast({4.3f, 20.0f, 8.3f}, {0.0f, -1.0f, 0.0f}, 50.0f, hit) &&
+                    scene.Raycast({5.7f, 20.0f, 9.7f}, {0.0f, -1.0f, 0.0f}, 50.0f, hit),
+                "The other diagonal's half cut collides wrongly");
+        float height = 0.0f;
+        glm::vec3 normal{};
+        Require(!terrain->TrySampleSurface(9.8f, 8.2f, height, normal) && terrain->TrySampleSurface(8.2f, 9.8f, height, normal),
+                "Surface queries ignore the diagonal");
+
+        const auto *mesh = terrain->GetMeshForBaking();
+        const auto &data = mesh->GetMeshData();
+        const auto &range = mesh->GetSubmesh(0).lods.front();
+        float area = 0.0f;
+        for (std::uint32_t i = range.indexOffset; i < range.indexOffset + range.indexCount; i += 3)
+        {
+            glm::vec3 corners[3];
+            for (int c = 0; c < 3; ++c)
+            {
+                const auto &position = data.vertices[data.indices[i + c]].position;
+                corners[c] = {position[0], position[1], position[2]};
+            }
+            const glm::vec3 centroid = (corners[0] + corners[1] + corners[2]) / 3.0f;
+            Require(!terrain->GetHoles().IsHoleAt(centroid.x / 2.0f, centroid.z / 2.0f), "A triangle is drawn in a cut half");
+            Require(glm::cross(corners[1] - corners[0], corners[2] - corners[0]).y > 0.0f,
+                    "A kept triangle is wound the wrong way");
+            area += 0.5f * glm::length(glm::cross(corners[1] - corners[0], corners[2] - corners[0]));
+        }
+        const float cells = 8.0f * 8.0f * 4.0f; // one chunk of 8 x 8 cells, each 2 m square
+        Require(std::abs(area - (cells - 2.0f * 2.0f)) < 0.01f, "Two half cuts remove one cell's area: " + std::to_string(area));
+    }
 }
 
 int main()
@@ -252,6 +341,7 @@ int main()
         SurfaceQueries();
         RenderMesh();
         Collision();
+        HalfCuts();
     }
     catch (const std::exception &error)
     {

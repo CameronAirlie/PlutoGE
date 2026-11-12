@@ -633,11 +633,12 @@ namespace PlutoGE::scene
             for (int z = 0; z + 1 < depth; ++z)
                 for (int x = 0; x + 1 < width; ++x)
                 {
-                    if (holes.IsHole(x, z))
+                    const auto triangles = TerrainCellTriangles(holes.GetCut(x, z));
+                    if (triangles.empty())
                         continue;
-                    const int i0 = vertex(x, z), i1 = vertex(x + 1, z), i2 = vertex(x, z + 1), i3 = vertex(x + 1, z + 1);
-                    triangleMesh->addTriangleIndices(i0, i2, i1);
-                    triangleMesh->addTriangleIndices(i1, i2, i3);
+                    const int corners[4] = {vertex(x, z), vertex(x + 1, z), vertex(x, z + 1), vertex(x + 1, z + 1)};
+                    for (const auto &triangle : triangles)
+                        triangleMesh->addTriangleIndices(corners[triangle[0]], corners[triangle[1]], corners[triangle[2]]);
                 }
             if (triangleMesh->getNumTriangles() == 0)
             {

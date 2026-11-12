@@ -92,6 +92,8 @@ namespace PlutoGE::scene
         void SetHoles(TerrainHoleMask holes);
         // Returns whether the cell changed.
         bool SetHole(int cellX, int cellZ, bool hole);
+        // Turns the holes' stepped rims into diagonal ones (TerrainHoleMask::SmoothEdges). Returns whether it changed.
+        bool SmoothHoleEdges();
         bool IsHoleAtLocalPosition(float x, float z) const;
         bool IsHoleAtWorldPosition(const glm::vec3 &worldPosition) const;
         // Bumped by every change to the holes (physics and other caches rebuild on it).

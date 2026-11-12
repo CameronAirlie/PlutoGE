@@ -1004,6 +1004,14 @@ namespace PlutoGE::scene
         return true;
     }
 
+    bool TerrainComponent::SmoothHoleEdges()
+    {
+        if (!m_holes.SmoothEdges())
+            return false;
+        HolesChanged();
+        return true;
+    }
+
     bool TerrainComponent::IsHoleAtLocalPosition(float x, float z) const
     {
         return m_holes.IsHoleAt(x / m_cellSize, z / m_cellSize);
@@ -1134,10 +1142,9 @@ namespace PlutoGE::scene
             }
             // Holes stay exact at every LOD: a coarse quad over a hole is replaced by the full-detail quads of its solid
             // cells. Their vertices geomorph onto the coarse surface like the rest of the LOD, so no cracks open.
-            if (m_holes.AnyInRect(x, z, x1, z1))
+            const bool cut = m_holes.AnyInRect(x, z, x1, z1);
+            if (cut && step > 1)
             {
-                if (step == 1)
-                    return;
                 for (int fineZ = z; fineZ < z1; ++fineZ)
                     for (int fineX = x; fineX < x1; ++fineX)
                         self(fineX, fineZ, 1, self);
@@ -1148,12 +1155,13 @@ namespace PlutoGE::scene
             const unsigned int i1 = static_cast<unsigned int>(z * m_width + x1);
             const unsigned int i2 = static_cast<unsigned int>(z1 * m_width + x);
             const unsigned int i3 = static_cast<unsigned int>(z1 * m_width + x1);
-            config.data.indices.push_back(i0);
-            config.data.indices.push_back(i2);
-            config.data.indices.push_back(i1);
-            config.data.indices.push_back(i1);
-            config.data.indices.push_back(i2);
-            config.data.indices.push_back(i3);
+            for (const auto &triangle : TerrainCellTriangles(cut ? m_holes.GetCut(x, z) : TerrainHoleCut::None))
+            {
+                const unsigned int corners[4] = {i0, i1, i2, i3};
+                config.data.indices.push_back(corners[triangle[0]]);
+                config.data.indices.push_back(corners[triangle[1]]);
+                config.data.indices.push_back(corners[triangle[2]]);
+            }
         };
 
         const int chunkQuads = std::max(2, m_chunkSize);

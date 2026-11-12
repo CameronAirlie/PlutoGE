@@ -13,6 +13,7 @@
 #include "CameraStackRenderingChecks.h"
 #include "RenderTextureRenderingChecks.h"
 #include "FogRenderingChecks.h"
+#include "FogAmbientVolumeChecks.h"
 #include "CloudShadowChecks.h"
 #include "CloudTemporalChecks.h"
 #include "InstanceLodChecks.h"
@@ -628,6 +629,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--cloud-shadows")
         {
             CheckCloudShadows(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--fog-ambient-volumes")
+        {
+            CheckFogAmbientVolumes(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--fog-only")

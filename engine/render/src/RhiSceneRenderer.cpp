@@ -1811,6 +1811,8 @@ namespace PlutoGE::render
                 const auto sky = AmbientVolumeSky(volume);
                 parameters.worldToGridRows[0].w = sky.x;
                 parameters.worldToGridRows[1].w = sky.y;
+                // Fog reads the probes' sky visibility only where it was baked (FogAmbientVolumes.slang).
+                parameters.worldToGridRows[2].w = volume.HasSkyVisibility() ? 1.0f : 0.0f;
                 effectiveLighting.diffuseProbeReflections = effectiveLighting.diffuseProbeReflections || sky.y > 0.0f;
                 base += volume.irradiance.size();
             }

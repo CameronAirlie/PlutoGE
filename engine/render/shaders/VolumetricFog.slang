@@ -15,6 +15,7 @@
 [[vk::binding(2, 0)]] Sampler2D depthTexture : register(t2, space0);
 
 #include "FogLightingParameters.slang"
+#include "FogAmbientVolumes.slang"
 
 [[vk::binding(8, 0)]] Sampler2D shadowTexture0 : register(t8, space0);
 [[vk::binding(9, 0)]] Sampler2D shadowTexture1 : register(t9, space0);
@@ -200,6 +201,8 @@ FogCell evaluateFogCell(FogRayLighting ray, float3 position, float detailWeight,
     cell.radiance = 0.0;
     if (lit)
     {
+        // Enclosed by baked ambient volumes (a cave, a closed room), the fog sees only part of the sky.
+        ray.lighting.environment *= fogAmbientSkyVisibility(position);
         const float lightVisibility = ray.hasDirectionalLight
             ? lerp(1.0, directionalVisibility(position), detailWeight)
             : 1.0;
@@ -308,8 +311,10 @@ float4 integrateFog(FullscreenVertexOutput input, bool froxels)
             tailHeight, rayDirection.y, tailDepth, tailLength);
         const float3 tailPosition = pass.cameraPosition.xyz + rayDirection * (marchDistance + tailMidpoint);
         const float tailWeight = transmittance * (1.0 - tailTransmittance);
+        FogLighting tailLighting = lighting;
+        tailLighting.environment *= fogAmbientSkyVisibility(tailPosition);
         accumulatedLight += tailWeight *
-            fogPointRadiance(lighting, medium, fogCloudOcclusion, tailPosition, lightDirection, 1.0);
+            fogPointRadiance(tailLighting, medium, fogCloudOcclusion, tailPosition, lightDirection, 1.0);
         scatterDistance += tailWeight * (marchDistance + tailMidpoint);
         scatterWeight += tailWeight;
     }

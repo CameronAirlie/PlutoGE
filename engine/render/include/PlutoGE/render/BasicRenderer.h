@@ -882,7 +882,7 @@ namespace PlutoGE::render
     {
         glm::vec4 origin{}, size{}, resolutionBase{};
         // xyz world-to-grid rows. w: [0] live sky scale (BakedProbeVolume::skyIrradianceScale),
-        // [1] reflection occlusion strength (0 without sky visibility), [2] unused.
+        // [1] reflection occlusion strength (0 without sky visibility), [2] 1 when baked with sky visibility.
         std::array<glm::vec4, 3> worldToGridRows{};
     };
     static_assert(sizeof(AmbientProbeVolumeParameters) == 96);
@@ -1520,6 +1520,8 @@ namespace PlutoGE::render
         rhi::Buffer m_cloudShadowBuffer;
         // This frame's cloud lighting state (CloudOcclusion.h), shared by every pass that lights with the sky.
         CloudOcclusionParameters m_frameCloudOcclusion{};
+        // The frame's ambient volume atlas, which fog reads after the geometry (FogAmbientVolumes.slang).
+        rhi::TextureHandle m_frameDiffuseProbeAtlas{};
         // lighting with the directional light dimmed by the clouds over the camera, for GI ray sources.
         [[nodiscard]] BasicLighting CloudShadedGiLighting(const BasicLighting &lighting) const;
         std::array<glm::vec4, PLUTO_SKY_LANE_COUNT + 1> m_skyEnvironmentParameters{};

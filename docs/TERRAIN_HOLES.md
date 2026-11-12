@@ -58,8 +58,8 @@ heights. So the engine always writes `HoleMask`, even when it is empty.
 
 - Hole edges are stepped at the cell size. Finer edges need a denser terrain, or geometry that covers the edge.
 - Lighting inside a cut space comes from what encloses it. Use an Ambient Light Volume
-  ([ambient-probe-grids.md](ambient-probe-grids.md)) so the sky does not light a cave. Volumetric fog's ambient term
-  is not occluded by ambient volumes yet, so fog inside an enclosed space stays lit by the sky.
+  ([ambient-probe-grids.md](ambient-probe-grids.md)) so the sky does not light a cave. Bake it with sky visibility:
+  volumetric fog inside the volume then takes only the share of the sky its probes see, so a cave's fog is dark.
 
 Tests: `PlutoGETerrainHoleTests` (mask editing and encoding, persistence, surface queries, CPU raycast, every LOD's
 triangles, Bullet collision).

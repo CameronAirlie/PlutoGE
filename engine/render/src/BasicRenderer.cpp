@@ -1243,11 +1243,16 @@ namespace PlutoGE::render
                              rhi::ResourceBindingType::SampledTexture,
                              rhi::ShaderStageMask::Fragment});
                 }
-                // Fog's sun reads the cloud shadow map in the sky lighting atlas (VolumetricFog.slang).
+                // Fog's sun reads the cloud shadow map in the sky lighting atlas (VolumetricFog.slang), and its sky
+                // light the ambient volumes' sky visibility in the probe atlas (FogAmbientVolumes.slang).
                 if (type == BasicPostProcessEffectType::VolumetricFog)
+                {
                     postDescriptor.resourceBindings.push_back(
                         {CloudShadowAtlasSlot, 0, CloudShadowAtlasSlot, rhi::ResourceBindingType::SampledTexture,
                          rhi::ShaderStageMask::Fragment});
+                    postDescriptor.resourceBindings.push_back(
+                        {31, 0, 31, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                }
                 for (const auto slot : extraTextures)
                     postDescriptor.resourceBindings.push_back(
                         {slot, 0, slot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
@@ -2638,6 +2643,8 @@ namespace PlutoGE::render
         // Passes after the geometry (fog, DDGI, voxel lighting) take the same cloud state.
         m_frameCloudOcclusion = frameParameters.cloudOcclusion;
         frameParameters.probeOrigin = glm::vec4(lighting.diffuseProbeOrigin, lighting.diffuseProbeAtlas ? lighting.diffuseProbeVolumeCount : 0);
+        // Fog reads the volumes' sky visibility after the geometry (FogAmbientVolumes.slang).
+        m_frameDiffuseProbeAtlas = lighting.diffuseProbeAtlas;
         frameParameters.probeSize = glm::vec4(lighting.diffuseProbeSize, 0);
         frameParameters.probeResolution = glm::vec4(glm::vec3(lighting.diffuseProbeResolution), lighting.diffuseProbeAtlasWidth);
         // Opaque probe-grid irradiance moves to a screen-space resolve when the
@@ -5276,6 +5283,8 @@ namespace PlutoGE::render
                                      m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(),
                                      m_screenSampler.Get());
                 commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
+                commands.BindTexture(31, m_frameDiffuseProbeAtlas ? m_frameDiffuseProbeAtlas : m_fallbackTexture.Get(),
+                                     m_vctVolumeSampler.Get());
                 bindSceneLighting();
             };
             if (fogFroxels)

@@ -224,6 +224,8 @@ add_test(NAME PlutoGEOpenGLSceneOutlineRenderingTests COMMAND PlutoGEOpenGLRhiTe
 add_test(NAME PlutoGEVulkanGeometryDiagnosticTests COMMAND PlutoGEVulkanRhiTests --geometry-diagnostics)
 add_test(NAME PlutoGEOpenGLFogTests COMMAND PlutoGEOpenGLRhiTests --fog-only)
 add_test(NAME PlutoGEVulkanFogTests COMMAND PlutoGEVulkanRhiTests --fog-only)
+add_test(NAME PlutoGEVulkanFogAmbientVolumeTests COMMAND PlutoGEVulkanRhiTests --fog-ambient-volumes)
+add_test(NAME PlutoGEOpenGLFogAmbientVolumeTests COMMAND PlutoGEOpenGLRhiTests --fog-ambient-volumes)
 add_test(NAME PlutoGEVulkanSkyQuadratureTests COMMAND PlutoGEVulkanRhiTests --sky-quadrature)
 add_test(NAME PlutoGEOpenGLSkyQuadratureTests COMMAND PlutoGEOpenGLRhiTests --sky-quadrature)
 add_test(NAME PlutoGEVulkanCloudShadowTests COMMAND PlutoGEVulkanRhiTests --cloud-shadows)

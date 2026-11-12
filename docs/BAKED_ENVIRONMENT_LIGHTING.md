@@ -40,6 +40,15 @@ Settings:
 Scripts and code: `AmbientLightVolumeComponent::SetSkyLighting`, `SetReflectionOcclusion`,
 `IblCaptureComponent::SetRelightFromAmbient`, and `SceneBakeSettings::probeLiveSky` for bakes without components.
 
+### Fog inside volumes
+
+Volumetric fog is lit by the whole sky unless it lies inside an ambient volume baked with sky visibility. There, each
+fog point takes the share of the sky the volume's probes see, interpolated between the eight nearest probes (no
+normal and no surface visibility tests: fog is a medium), and composited over overlapping volumes as surfaces are. A
+cave or a closed room therefore holds dark fog, while fog under open sky is unchanged. Only volumes with typed
+descriptors (every volume the scene renderer prepares) take part. Code: `shaders/FogAmbientVolumes.slang`; test:
+`PlutoGEVulkanFogAmbientVolumeTests` / `PlutoGEOpenGLFogAmbientVolumeTests`.
+
 ## How it works
 
 **Live sky.** The baker traces the same rays as before. A ray that leaves the scene is now recorded as sky

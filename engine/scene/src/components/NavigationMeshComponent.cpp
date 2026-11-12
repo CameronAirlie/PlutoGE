@@ -50,23 +50,58 @@ namespace PlutoGE::scene
         m_rebuildPending = false;
         return baked;
     }
+    void NavigationMeshComponent::InvalidateRegion(const glm::vec3 &boundsMin, const glm::vec3 &boundsMax)
+    {
+        Region region{glm::min(boundsMin, boundsMax), glm::max(boundsMin, boundsMax)};
+        // Merge with an overlapping box so a burst of edits in one place is re-sampled once.
+        for (auto &queued : m_dirtyRegions)
+        {
+            if (glm::all(glm::lessThanEqual(queued.min, region.max)) && glm::all(glm::lessThanEqual(region.min, queued.max)))
+            {
+                queued.min = glm::min(queued.min, region.min);
+                queued.max = glm::max(queued.max, region.max);
+                return;
+            }
+        }
+        m_dirtyRegions.push_back(region);
+    }
+
     void NavigationMeshComponent::Update(float)
     {
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        if (!scene)
+            return;
         if (m_rebuildPending)
         {
             m_rebuildPending = false;
             if (m_shouldHaveBake)
             {
-                Bake();
+                if (m_bakeTimeSliceMilliseconds > 0.0f)
+                    m_navigation.BeginBake(BuildWorldSettings());
+                else
+                    Bake();
                 m_shouldHaveBake = true; // An empty streamed world may acquire ground later.
             }
         }
+        if (m_navigation.IsBaking())
+        {
+            // Regions wait for the bake: columns it already sampled may have changed since.
+            if (!m_navigation.ContinueBake(*scene, m_bakeTimeSliceMilliseconds > 0.0f ? m_bakeTimeSliceMilliseconds : 1.0e9))
+                return;
+        }
+        if (!m_dirtyRegions.empty() && m_navigation.IsBaked())
+        {
+            for (const auto &region : m_dirtyRegions)
+                m_navigation.RebakeRegion(*scene, region.min, region.max);
+        }
+        m_dirtyRegions.clear();
     }
     std::vector<Property> NavigationMeshComponent::Serialize() const
     {
         auto v = [](const glm::vec3 &p)
         { return std::to_string(p.x) + "," + std::to_string(p.y) + "," + std::to_string(p.z); };
-        return {{"Bounds Minimum", PropertyType::Vec3, v(m_settings.boundsMin)}, {"Bounds Maximum", PropertyType::Vec3, v(m_settings.boundsMax)}, {"Cell Size", PropertyType::Float, std::to_string(m_settings.cellSize)}, {"Maximum Slope", PropertyType::Float, std::to_string(m_settings.maxSlopeDegrees)}, {"Maximum Step Height", PropertyType::Float, std::to_string(m_settings.maxStepHeight)}, {"Static Objects Only", PropertyType::Bool, m_settings.staticObjectsOnly ? "true" : "false"}, {"Include Tags", PropertyType::String, JoinTags(m_settings.includeTags)}, {"Exclude Tags", PropertyType::String, JoinTags(m_settings.excludeTags)}, {"Baked", PropertyType::Bool, m_shouldHaveBake ? "true" : "false"}};
+        return {{"Bounds Minimum", PropertyType::Vec3, v(m_settings.boundsMin)}, {"Bounds Maximum", PropertyType::Vec3, v(m_settings.boundsMax)}, {"Cell Size", PropertyType::Float, std::to_string(m_settings.cellSize)}, {"Maximum Slope", PropertyType::Float, std::to_string(m_settings.maxSlopeDegrees)}, {"Maximum Step Height", PropertyType::Float, std::to_string(m_settings.maxStepHeight)}, {"Static Objects Only", PropertyType::Bool, m_settings.staticObjectsOnly ? "true" : "false"}, {"Include Tags", PropertyType::String, JoinTags(m_settings.includeTags)}, {"Exclude Tags", PropertyType::String, JoinTags(m_settings.excludeTags)}, {"Bake Time Slice", PropertyType::Float, std::to_string(m_bakeTimeSliceMilliseconds)}, {"Baked", PropertyType::Bool, m_shouldHaveBake ? "true" : "false"}};
     }
     void NavigationMeshComponent::Deserialize(const std::vector<Property> &p)
     {
@@ -89,6 +124,8 @@ namespace PlutoGE::scene
                 m_settings.includeTags = ParseTags(x.value);
             else if (x.name == "Exclude Tags")
                 m_settings.excludeTags = ParseTags(x.value);
+            else if (x.name == "Bake Time Slice")
+                SetBakeTimeSlice(std::stof(x.value));
             else if (x.name == "Baked")
             {
                 foundBaked = true;

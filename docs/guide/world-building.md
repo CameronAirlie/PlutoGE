@@ -216,7 +216,10 @@ without colliders: characters and the bake then see one even slope.
 If the guard does not move, check mesh coverage, bake availability, a reachable
 destination, agent clearance, and active components. Do not simultaneously drive
 the same entity with a custom movement script. Navigation does not promise that
-all changing obstacles or foliage will be baked automatically.
+all changing obstacles or foliage will be baked automatically. When a script changes the
+world (a wall built, a door opened), it calls `Navigation.InvalidateRegion` for
+that box, which re-samples just those columns; a moved mesh is rebaked with
+`Navigation.RequestBake`, spread over frames by its Bake Time Slice.
 
 For scripted queries, use `Navigation.ProjectPoint` and `Navigation.FindPath`
 with the specific navigation-mesh GameObject. A returned path is data: your

@@ -4,6 +4,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <queue>
@@ -23,107 +24,211 @@ namespace PlutoGE::scene
         constexpr float LayerRayRestart = 0.01f;
     }
 
+    struct NavigationSystem::BakeJob
+    {
+        NavigationBakeSettings settings;
+        int width = 0;
+        int depth = 0;
+        int nextColumn = 0;
+        std::vector<Cell> cells;
+        std::vector<int> columnStart;
+    };
+
+    NavigationSystem::NavigationSystem() = default;
+    NavigationSystem::~NavigationSystem() = default;
+
     void NavigationSystem::Clear()
     {
+        m_job.reset();
         m_cells.clear();
         m_columnStart.clear();
         m_debugPoints.clear();
         m_agentWalkabilityCache.clear();
         m_width = m_depth = 0;
+        ++m_revision;
     }
 
     bool NavigationSystem::Bake(const Scene &scene, const NavigationBakeSettings &settings)
     {
-        Clear();
+        BeginBake(settings);
+        if (!m_job)
+        {
+            Clear();
+            return false;
+        }
+        ContinueBake(scene, std::numeric_limits<double>::infinity());
+        return IsBaked();
+    }
+
+    void NavigationSystem::BeginBake(const NavigationBakeSettings &settings)
+    {
+        m_job.reset();
+        auto job = std::make_unique<BakeJob>();
+        job->settings = settings;
+        job->settings.cellSize = std::max(0.1f, settings.cellSize);
+        job->width = std::max(1, static_cast<int>(std::ceil((settings.boundsMax.x - settings.boundsMin.x) / job->settings.cellSize)));
+        job->depth = std::max(1, static_cast<int>(std::ceil((settings.boundsMax.z - settings.boundsMin.z) / job->settings.cellSize)));
+        if (static_cast<uint64_t>(job->width) * job->depth > 4000000)
+            return;
+        job->columnStart.assign(static_cast<size_t>(job->width) * job->depth + 1, 0);
+        m_job = std::move(job);
+    }
+
+    bool NavigationSystem::ContinueBake(const Scene &scene, double budgetMilliseconds)
+    {
+        if (!m_job)
+            return true;
+        core::CpuScope bakeScope("Navigation bake", core::CpuCategory::Scripts);
+        auto &job = *m_job;
+        const int columns = job.width * job.depth;
+        const auto started = std::chrono::steady_clock::now();
+        while (job.nextColumn < columns)
+        {
+            // Check the clock once a row: a column costs a handful of rays.
+            const int rowEnd = std::min(columns, (job.nextColumn / job.width + 1) * job.width);
+            for (; job.nextColumn < rowEnd; ++job.nextColumn)
+            {
+                job.columnStart[job.nextColumn] = static_cast<int>(job.cells.size());
+                SampleColumn(scene, job.settings, job.nextColumn % job.width, job.nextColumn / job.width, job.nextColumn, job.cells);
+            }
+            platform::LoadingWork::Checkpoint();
+            const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+            if (job.nextColumn < columns && elapsed >= budgetMilliseconds)
+                return false;
+        }
+        job.columnStart.back() = static_cast<int>(job.cells.size());
+        auto finished = std::move(m_job);
+        Adopt(finished->settings, finished->width, finished->depth, std::move(finished->cells), std::move(finished->columnStart));
+        return true;
+    }
+
+    void NavigationSystem::Adopt(const NavigationBakeSettings &settings, int width, int depth,
+                                 std::vector<Cell> &&cells, std::vector<int> &&columnStart)
+    {
         m_settings = settings;
-        m_settings.cellSize = std::max(0.1f, settings.cellSize);
-        m_width = std::max(1, static_cast<int>(std::ceil((settings.boundsMax.x - settings.boundsMin.x) / m_settings.cellSize)));
-        m_depth = std::max(1, static_cast<int>(std::ceil((settings.boundsMax.z - settings.boundsMin.z) / m_settings.cellSize)));
-        if (static_cast<uint64_t>(m_width) * m_depth > 4000000)
+        m_width = width;
+        m_depth = depth;
+        m_cells = std::move(cells);
+        m_columnStart = std::move(columnStart);
+        RebuildDerived();
+    }
+
+    void NavigationSystem::RebuildDerived()
+    {
+        m_debugPoints.clear();
+        m_agentWalkabilityCache.clear();
+        for (int index = 0; index < static_cast<int>(m_cells.size()); ++index)
+            if (m_cells[index].walkable)
+                m_debugPoints.push_back(CellPosition(index));
+        ++m_revision;
+    }
+
+    bool NavigationSystem::RebakeRegion(const Scene &scene, const glm::vec3 &boundsMin, const glm::vec3 &boundsMax)
+    {
+        if (!IsBaked() || m_columnStart.size() != static_cast<size_t>(m_width) * m_depth + 1)
+            return false;
+        const float cell = m_settings.cellSize;
+        // One cell of margin: a column's wall probes reach half a cell into its neighbours.
+        const int x0 = std::max(0, static_cast<int>(std::floor((boundsMin.x - m_settings.boundsMin.x) / cell)) - 1);
+        const int z0 = std::max(0, static_cast<int>(std::floor((boundsMin.z - m_settings.boundsMin.z) / cell)) - 1);
+        const int x1 = std::min(m_width - 1, static_cast<int>(std::floor((boundsMax.x - m_settings.boundsMin.x) / cell)) + 1);
+        const int z1 = std::min(m_depth - 1, static_cast<int>(std::floor((boundsMax.z - m_settings.boundsMin.z) / cell)) + 1);
+        if (x0 > x1 || z0 > z1)
             return false;
 
+        core::CpuScope rebakeScope("Navigation region rebake", core::CpuCategory::Scripts);
+        std::vector<Cell> cells;
+        cells.reserve(m_cells.size() + 64);
+        std::vector<int> columnStart(m_columnStart.size(), 0);
+        for (int column = 0; column < m_width * m_depth; ++column)
+        {
+            columnStart[column] = static_cast<int>(cells.size());
+            const int x = column % m_width;
+            const int z = column / m_width;
+            if (x >= x0 && x <= x1 && z >= z0 && z <= z1)
+            {
+                SampleColumn(scene, m_settings, x, z, column, cells);
+                continue;
+            }
+            cells.insert(cells.end(), m_cells.begin() + m_columnStart[column], m_cells.begin() + m_columnStart[column + 1]);
+        }
+        columnStart.back() = static_cast<int>(cells.size());
+        m_cells = std::move(cells);
+        m_columnStart = std::move(columnStart);
+        RebuildDerived();
+        return true;
+    }
+
+    void NavigationSystem::SampleColumn(const Scene &scene, const NavigationBakeSettings &settings, int x, int z, int column,
+                                        std::vector<Cell> &cells)
+    {
         const auto raycast = [&](const glm::vec3 &origin, const glm::vec3 &direction, float length, PhysicsRaycastHit &hit) {
             return scene.Raycast(origin, direction, length, hit, 0, settings.staticObjectsOnly, settings.includeTags, settings.excludeTags);
         };
         const float minimumNormalY = std::cos(glm::radians(std::clamp(settings.maxSlopeDegrees, 0.0f, 89.0f)));
-        const float halfCell = m_settings.cellSize * 0.5f;
+        const float halfCell = settings.cellSize * 0.5f;
         const glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}};
-        m_columnStart.assign(static_cast<size_t>(m_width) * m_depth + 1, 0);
-        for (int z = 0; z < m_depth; ++z)
+        const size_t firstCell = cells.size();
+        const float columnX = settings.boundsMin.x + (x + 0.5f) * settings.cellSize;
+        const float columnZ = settings.boundsMin.z + (z + 0.5f) * settings.cellSize;
+        // Walk down the column: every surface hit is a candidate layer; the next ray starts just under it.
+        float rayTop = settings.boundsMax.y;
+        float surfaceAbove = std::numeric_limits<float>::infinity();
+        for (int hits = 0; hits < MaxLayersPerColumn * 2 && rayTop > settings.boundsMin.y; ++hits)
         {
-            platform::LoadingWork::Checkpoint();
-            for (int x = 0; x < m_width; ++x)
+            PhysicsRaycastHit floorHit;
+            if (!raycast({columnX, rayTop, columnZ}, {0.0f, -1.0f, 0.0f}, rayTop - settings.boundsMin.y, floorHit))
+                break;
+            rayTop = floorHit.point.y - LayerRayRestart;
+            const bool firstSurface = !std::isfinite(surfaceAbove);
+            const float above = surfaceAbove;
+            surfaceAbove = floorHit.point.y;
+            if (floorHit.normal.y < minimumNormalY)
+                continue;
+
+            Cell cell;
+            cell.column = column;
+            cell.walkable = true;
+            cell.height = floorHit.point.y;
+            const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
+            PhysicsRaycastHit ceilingHit;
+            if (firstSurface)
             {
-                const int column = z * m_width + x;
-                m_columnStart[column] = static_cast<int>(m_cells.size());
-                const float columnX = settings.boundsMin.x + (x + 0.5f) * m_settings.cellSize;
-                const float columnZ = settings.boundsMin.z + (z + 0.5f) * m_settings.cellSize;
-                // Walk down the column: every surface hit is a candidate layer; the next ray starts just under it.
-                float rayTop = settings.boundsMax.y;
-                float surfaceAbove = std::numeric_limits<float>::infinity();
-                for (int hits = 0; hits < MaxLayersPerColumn * 2 && rayTop > settings.boundsMin.y; ++hits)
+                cell.clearance = std::max(0.0f, settings.boundsMax.y - cell.height);
+                if (raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit))
+                    cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
+            }
+            else
+            {
+                // A lower surface is open only if something stops a ray going up before the surface above:
+                // the underside of the floor above, or anything in between. Under a solid (the ground
+                // beneath a thick wall) the upward ray starts inside it and finds nothing.
+                const float gap = above - clearanceOrigin.y;
+                if (gap <= 0.0f || !raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, gap + LayerRayRestart, ceilingHit))
+                    continue;
+                cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
+            }
+
+            // Vertical samples miss thin partitions between cell centres and
+            // colliders containing the top of the bake. Probe the cell's
+            // footprint above step height, in both directions so a probe
+            // starting inside a solid still has an outside-in counterpart.
+            const glm::vec3 probeCenter = floorHit.point +
+                glm::vec3(0.0f, std::max(0.0f, settings.maxStepHeight) + 0.05f, 0.0f);
+            for (const auto &direction : directions)
+            {
+                PhysicsRaycastHit obstacleHit;
+                if (raycast(probeCenter - direction * halfCell, direction, settings.cellSize, obstacleHit) &&
+                    std::abs(obstacleHit.normal.y) < minimumNormalY)
                 {
-                    PhysicsRaycastHit floorHit;
-                    if (!raycast({columnX, rayTop, columnZ}, {0.0f, -1.0f, 0.0f}, rayTop - settings.boundsMin.y, floorHit))
-                        break;
-                    rayTop = floorHit.point.y - LayerRayRestart;
-                    const bool firstSurface = !std::isfinite(surfaceAbove);
-                    const float above = surfaceAbove;
-                    surfaceAbove = floorHit.point.y;
-                    if (floorHit.normal.y < minimumNormalY)
-                        continue;
-
-                    Cell cell;
-                    cell.column = column;
-                    cell.walkable = true;
-                    cell.height = floorHit.point.y;
-                    const glm::vec3 clearanceOrigin = floorHit.point + glm::vec3(0.0f, 0.05f, 0.0f);
-                    PhysicsRaycastHit ceilingHit;
-                    if (firstSurface)
-                    {
-                        cell.clearance = std::max(0.0f, settings.boundsMax.y - cell.height);
-                        if (raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, cell.clearance, ceilingHit))
-                            cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
-                    }
-                    else
-                    {
-                        // A lower surface is open only if something stops a ray going up before the surface above:
-                        // the underside of the floor above, or anything in between. Under a solid (the ground
-                        // beneath a thick wall) the upward ray starts inside it and finds nothing.
-                        const float gap = above - clearanceOrigin.y;
-                        if (gap <= 0.0f || !raycast(clearanceOrigin, {0.0f, 1.0f, 0.0f}, gap + LayerRayRestart, ceilingHit))
-                            continue;
-                        cell.clearance = std::max(0.0f, ceilingHit.distance + 0.05f);
-                    }
-
-                    // Vertical samples miss thin partitions between cell centres and
-                    // colliders containing the top of the bake. Probe the cell's
-                    // footprint above step height, in both directions so a probe
-                    // starting inside a solid still has an outside-in counterpart.
-                    const glm::vec3 probeCenter = floorHit.point +
-                        glm::vec3(0.0f, std::max(0.0f, settings.maxStepHeight) + 0.05f, 0.0f);
-                    for (const auto &direction : directions)
-                    {
-                        PhysicsRaycastHit obstacleHit;
-                        if (raycast(probeCenter - direction * halfCell, direction, m_settings.cellSize, obstacleHit) &&
-                            std::abs(obstacleHit.normal.y) < minimumNormalY)
-                        {
-                            cell.walkable = false;
-                            break;
-                        }
-                    }
-                    m_cells.push_back(cell);
-                    if (static_cast<int>(m_cells.size()) - m_columnStart[column] >= MaxLayersPerColumn)
-                        break;
+                    cell.walkable = false;
+                    break;
                 }
             }
+            cells.push_back(cell);
+            if (cells.size() - firstCell >= static_cast<size_t>(MaxLayersPerColumn))
+                break;
         }
-        m_columnStart.back() = static_cast<int>(m_cells.size());
-
-        for (int index = 0; index < static_cast<int>(m_cells.size()); ++index)
-            if (m_cells[index].walkable)
-                m_debugPoints.push_back(CellPosition(index));
-        return !m_debugPoints.empty();
     }
 
     glm::vec3 NavigationSystem::CellPosition(int index) const

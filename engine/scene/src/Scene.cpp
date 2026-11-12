@@ -2621,8 +2621,8 @@ namespace PlutoGE::scene
                 navigationMesh && navigationMesh->IsEnabled() && navigationMesh->ShouldHaveBake())
             {
                 platform::LoadingWork::Checkpoint();
-                navigationMesh->InvalidateBake();
-                navigationMesh->Update(0);
+                // At once, whatever the time slice: agents may ask for paths on the first frame.
+                navigationMesh->Bake();
             }
             for (auto *child : entity->GetChildren())
                 self(child, self);

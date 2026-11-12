@@ -775,6 +775,7 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<NativeVector3, NativeVector3, nint, NativeVector3, float, float, uint> _spawnDecal;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, float, float, NativeVector3*, int> _navigationProjectPoint;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> _navigationFindPath;
+    private static delegate* unmanaged[Cdecl]<uint, int, NativeVector3, NativeVector3, float, long> _navigationControl;
     private static delegate* unmanaged[Cdecl]<int, nint, void> _logMessage;
     private static delegate* unmanaged[Cdecl]<int, byte*, uint, byte*, int, void> _logMessageWithContext;
 
@@ -1901,15 +1902,17 @@ internal static unsafe partial class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterNavigationApi")]
     public static int RegisterNavigationApi(
         delegate* unmanaged[Cdecl]<uint, NativeVector3, float, float, NativeVector3*, int> projectPoint,
-        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> findPath)
+        delegate* unmanaged[Cdecl]<uint, NativeVector3, NativeVector3, float, float, NativeVector3*, int, int*, int> findPath,
+        delegate* unmanaged[Cdecl]<uint, int, NativeVector3, NativeVector3, float, long> control)
     {
-        if (projectPoint == null || findPath == null)
+        if (projectPoint == null || findPath == null || control == null)
         {
             SetError("Managed navigation API registration received a null function pointer.");
             return 0;
         }
         _navigationProjectPoint = projectPoint;
         _navigationFindPath = findPath;
+        _navigationControl = control;
         _lastError = string.Empty;
         return 1;
     }
@@ -3484,6 +3487,26 @@ internal static unsafe partial class ScriptBridge
             result[index] = nativePoints[index].ToManaged();
         complete = nativeComplete != 0;
         return result;
+    }
+
+    internal enum NavigationControlOp
+    {
+        RequestBake = 0,
+        InvalidateRegion = 1,
+        IsBaked = 2,
+        IsBaking = 3,
+        Revision = 4,
+        SetBounds = 5,
+        SetBakeTimeSlice = 6,
+    }
+
+    internal static long NavigationControl(uint navigationMeshEntityId, NavigationControlOp operation,
+        Vector3 a = default, Vector3 b = default, float value = 0.0f)
+    {
+        if (_navigationControl == null)
+            return 0;
+        return _navigationControl(navigationMeshEntityId, (int)operation, NativeVector3.FromManaged(a),
+            NativeVector3.FromManaged(b), value);
     }
 
     internal static bool PhysicsRaycastTagged(Vector3 origin, Vector3 direction, float maxDistance, uint ignoredEntityId, string tag, out NativeRaycastHit hit)

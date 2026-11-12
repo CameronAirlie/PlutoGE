@@ -154,7 +154,7 @@ namespace PlutoGE::scripting
         using register_animation_blend_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_animation_pose_rate_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_capsule_query_api_fn = int(PLUTO_HOST_CALL *)(void *);
-        using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_navigation_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *);
         using register_debug_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_surface_response_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_terrain_api_fn = int(PLUTO_HOST_CALL *)(void *);
@@ -282,6 +282,7 @@ namespace PlutoGE::scripting
         using spawn_decal_fn = uint32_t(PLUTO_HOST_CALL *)(NativeVector3, NativeVector3, const char *, NativeVector3, float, float);
         using navigation_project_point_fn = int(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, float, float, NativeVector3 *);
         using navigation_find_path_fn = int32_t(PLUTO_HOST_CALL *)(uint32_t, NativeVector3, NativeVector3, float, float, NativeVector3 *, int32_t, int32_t *);
+        using navigation_control_fn = int64_t(PLUTO_HOST_CALL *)(uint32_t, int32_t, NativeVector3, NativeVector3, float);
         using script_log_fn = void(PLUTO_HOST_CALL *)(int32_t, const char *);
         constexpr std::basic_string_view<char_t> kScriptBridgeType = HOST_TEXT("PlutoGE.ScriptCore.Native.ScriptBridge, PlutoGE.ScriptCore");
         constexpr std::string_view kScriptCoreAssembly = "PlutoGE.ScriptCore.dll";
@@ -3397,7 +3398,8 @@ namespace PlutoGE::scripting
             auto *mesh = entity ? entity->GetComponent<scene::NavigationMeshComponent>() : nullptr;
             if (!mesh)
                 return nullptr;
-            if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake())
+            // A bake spread over frames is not forced: queries wait for it (or use the previous bake meanwhile).
+            if (!mesh->GetNavigation().IsBaked() && mesh->ShouldHaveBake() && !mesh->IsBaking())
                 mesh->Bake();
             return mesh->GetNavigation().IsBaked() ? &mesh->GetNavigation() : nullptr;
         }
@@ -3434,6 +3436,51 @@ namespace PlutoGE::scripting
                     points[index] = {path.points[index].x, path.points[index].y, path.points[index].z};
             }
             return count;
+        }
+
+        // Managed Navigation operations on a NavigationMeshComponent (NavigationControlOp in ScriptBridge.cs).
+        int64_t NavigationControl(uint32_t entityId, int32_t operation, NativeVector3 a, NativeVector3 b, float value)
+        {
+            auto *activeScene = core::Engine::GetInstance().GetScene();
+            auto *entity = activeScene ? activeScene->FindEntityByID(entityId) : nullptr;
+            auto *mesh = entity ? entity->GetComponent<scene::NavigationMeshComponent>() : nullptr;
+            if (!mesh)
+                return 0;
+            switch (operation)
+            {
+            case 0: // RequestBake
+                mesh->RequestBake();
+                return 1;
+            case 1: // InvalidateRegion(a, b)
+                if (!IsFiniteVector3(a) || !IsFiniteVector3(b))
+                    return 0;
+                mesh->InvalidateRegion({a.x, a.y, a.z}, {b.x, b.y, b.z});
+                return 1;
+            case 2: // IsBaked
+                return mesh->GetNavigation().IsBaked() ? 1 : 0;
+            case 3: // IsBaking
+                return mesh->IsBaking() ? 1 : 0;
+            case 4: // Revision
+                return static_cast<int64_t>(mesh->GetNavigation().GetRevision());
+            case 5: // SetBounds(a, b), and the cell size when value > 0; applies at the next bake
+            {
+                if (!IsFiniteVector3(a) || !IsFiniteVector3(b) || !std::isfinite(value))
+                    return 0;
+                auto &settings = mesh->GetSettings();
+                settings.boundsMin = (glm::min)(glm::vec3{a.x, a.y, a.z}, glm::vec3{b.x, b.y, b.z});
+                settings.boundsMax = (glm::max)(glm::vec3{a.x, a.y, a.z}, glm::vec3{b.x, b.y, b.z});
+                if (value > 0.0f)
+                    settings.cellSize = value;
+                return 1;
+            }
+            case 6: // SetBakeTimeSlice(value)
+                if (!std::isfinite(value))
+                    return 0;
+                mesh->SetBakeTimeSlice(value);
+                return 1;
+            default:
+                return 0;
+            }
         }
 
         int32_t PhysicsRaycastTagged(NativeVector3 origin,
@@ -5456,7 +5503,8 @@ namespace PlutoGE::scripting
         if (!m_impl->registerNavigationApi ||
             m_impl->registerNavigationApi(
                 reinterpret_cast<void *>(static_cast<navigation_project_point_fn>(&NavigationProjectPoint)),
-                reinterpret_cast<void *>(static_cast<navigation_find_path_fn>(&NavigationFindPath))) == 0)
+                reinterpret_cast<void *>(static_cast<navigation_find_path_fn>(&NavigationFindPath)),
+                reinterpret_cast<void *>(static_cast<navigation_control_fn>(&NavigationControl))) == 0)
         {
             setManagedBridgeFailure("RegisterNavigationApi");
             return false;

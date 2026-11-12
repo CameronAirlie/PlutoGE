@@ -814,6 +814,11 @@ target_link_libraries(PlutoGEMeshDrawnMaterialsTests PRIVATE PlutoGE::Scene)
 pluto_link_engine(PlutoGEMeshDrawnMaterialsTests)
 add_test(NAME PlutoGEMeshDrawnMaterialsTests COMMAND PlutoGEMeshDrawnMaterialsTests)
 
+add_executable(PlutoGENavigationRegionTests NavigationRegionTests.cpp)
+target_link_libraries(PlutoGENavigationRegionTests PRIVATE PlutoGE::Scene)
+pluto_link_engine(PlutoGENavigationRegionTests)
+add_test(NAME PlutoGENavigationRegionTests COMMAND PlutoGENavigationRegionTests)
+
 add_executable(PlutoGESceneCpuCacheTests SceneCpuCacheTests.cpp)
 target_link_libraries(PlutoGESceneCpuCacheTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGESceneCpuCacheTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)

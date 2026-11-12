@@ -857,6 +857,22 @@ NavigationPath Navigation.FindPath(
 
 `FindPath` returns a `NavigationPath` with read-only `Points` and `Complete` properties. `Points` contains world-space waypoints, including the requested start and end positions when a route is found. `Complete` is `false` and `Points` is empty when no route can be found or the navigation mesh is unavailable. Negative agent radius and height values are clamped to zero.
 
+### Changing navigation at runtime
+
+A mesh can be moved, rebaked and patched while the game runs:
+
+| Call | Effect |
+| --- | --- |
+| `Navigation.SetBounds(mesh, min, max, cellSize = 0)` | Sets the world box (and cell size when above zero) for the next bake. |
+| `Navigation.SetBakeTimeSlice(mesh, ms)` | Spreads requested bakes over frames, `ms` of work per frame; 0 bakes in one go. |
+| `Navigation.RequestBake(mesh)` | Bakes on the mesh's next update. The previous bake keeps answering queries until the new one is complete. |
+| `Navigation.InvalidateRegion(mesh, min, max)` | Re-samples only the columns in a world box (plus a cell's margin) on the next update. Use it when something is built, removed, opened or closed. Boxes queued during a bake are applied after it. |
+| `Navigation.IsBaked` / `IsBaking` | Whether queries can be answered, and whether a bake is still under way. |
+| `Navigation.Revision(mesh)` | Changes whenever the walkable data does. Re-plan a path planned on an older revision. |
+
+A scene's baked meshes are baked in one go when the scene starts, whatever their time slice.
+
+
 ```csharp
 [SerializedField] private GameObject? navigationMesh;
 [SerializedField] private GameObject? target;

@@ -4,6 +4,8 @@ add_library(PlutoGECore
     src/LoadingScreenSession.cpp
     src/TaskPool.cpp
     src/FrameWorker.cpp
+    src/FramePacer.cpp
+    src/PreciseWait.cpp
 )
 
 add_library(PlutoGE::Core ALIAS PlutoGECore)
@@ -21,3 +23,8 @@ target_link_libraries(PlutoGECore PUBLIC
     PlutoGE::Import
     PlutoGE::Scripting
 )
+
+if (WIN32)
+    # PreciseWait raises the system timer resolution where high-resolution waitable timers are unavailable.
+    target_link_libraries(PlutoGECore PRIVATE winmm)
+endif()

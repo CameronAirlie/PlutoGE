@@ -44,6 +44,13 @@ namespace PlutoGE::ui
         float editorChromeMs = 0.0f;
         float presentMs = 0.0f;
         float eventPollingMs = 0.0f;
+        // Raw mouse reports folded into the frame's locked-cursor motion (platform::Window::GetLastPollMouseReports).
+        std::uint32_t mouseReports = 0;
+        // Frame pacing (core::FramePacer) for hosts that use it; zero otherwise. The wait precedes the captured frame.
+        float framePacingWaitMs = 0.0f;
+        float frameDeltaMs = 0.0f;
+        float measuredFrameIntervalMs = 0.0f;
+        float maxFrameRate = 0.0f;
         bool vSyncEnabled = false;
         int renderedViewportCount = 0;
         int editorViewportWidth = 0;

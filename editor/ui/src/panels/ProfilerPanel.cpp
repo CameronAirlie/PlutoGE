@@ -358,7 +358,15 @@ namespace PlutoGE::ui
                         presentation.presentRecordMs, presentation.presentSubmitMs,
                         presentation.presentQueueMs);
         }
-        ImGui::Text("Event polling: %.2f ms", frameTimingStats.eventPollingMs);
+        ImGui::Text("Event polling: %.2f ms (%u mouse reports)", frameTimingStats.eventPollingMs, frameTimingStats.mouseReports);
+        if (frameTimingStats.measuredFrameIntervalMs > 0.0f)
+        {
+            if (frameTimingStats.maxFrameRate > 0.0f)
+                ImGui::Text("Frame pacing: limit %.0f fps, waited %.2f ms", frameTimingStats.maxFrameRate, frameTimingStats.framePacingWaitMs);
+            else
+                ImGui::TextUnformatted("Frame pacing: no limit");
+            ImGui::Text("  Interval %.2f ms, simulated delta %.2f ms", frameTimingStats.measuredFrameIntervalMs, frameTimingStats.frameDeltaMs);
+        }
         ImGui::Text("Frame remainder: %.2f ms", std::max(0.0f, (selected ? selected->durationMs : m_profiler->GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs));
         ImGui::Separator();
         ImGui::Text("ImGui render: %.2f ms", timingStats.imguiRenderMs);

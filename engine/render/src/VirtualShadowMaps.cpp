@@ -1,6 +1,7 @@
 #include "PlutoGE/render/VirtualShadowMaps.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "ChangedBufferRecords.h"
+#include "PlutoGE/core/FrameRetainedCache.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -223,9 +224,15 @@ namespace PlutoGE::render
         result.camera = glm::vec4(lighting.cameraPosition, lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual ? 1.0f : 0.0f);
         return result;
     }
+    struct VirtualShadowMaps::CasterPacketCache : core::FrameRetainedCache<std::uint64_t, CasterPacket>
+    {
+        CasterPacketCache() : FrameRetainedCache({.retainFrames = 240, .sweepFrames = 64}) {}
+    };
+
     VirtualShadowMaps::VirtualShadowMaps()
         : m_batchedDraws(std::make_unique<GpuRecordTable>("VSM batched draw table")),
-          m_batchedModels(std::make_unique<GpuRecordHeap>("VSM batched model heap", sizeof(glm::mat4)))
+          m_batchedModels(std::make_unique<GpuRecordHeap>("VSM batched model heap", sizeof(glm::mat4))),
+          m_casterPackets(std::make_unique<CasterPacketCache>())
     {
     }
 
@@ -431,10 +438,10 @@ namespace PlutoGE::render
         {
             const auto packetFrame = ++m_packetFrame;
             m_batchedModels->BeginFrame(packetFrame);
+            m_casterPackets->BeginFrame();
             // Draws without a preparation revision may change behind the same packet; they rebuild every frame under a
             // key no revision uses.
             constexpr std::uint64_t TransientPacket = 1ull << 63;
-            constexpr std::uint64_t PacketRetainFrames = 240, PacketSweepInterval = 64;
             // Each level's texel size, which LOD variants are chosen for. Spot levels are perspective (no one size) and
             // keep their casters' own LODs, as do levels the directional clipmaps do not use.
             std::array<float, PLUTO_VSM_LEVELS> levelTexels{};
@@ -450,7 +457,7 @@ namespace PlutoGE::render
                 if (!IsReceiver(draw) || !draw.castsShadow) continue;
                 const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
                 const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
-                auto &packet = m_casterPackets[draw.preparationRevision ? draw.preparationRevision : TransientPacket | index];
+                auto &packet = m_casterPackets->Use(draw.preparationRevision ? draw.preparationRevision : TransientPacket | index).value;
                 const auto *instances = draw.instanceModels.get();
                 const auto instanceCount = instances ? instances->size() : 0;
                 if (!draw.preparationRevision || packet.mesh != draw.mesh || packet.meshRevision != draw.mesh->GetRevision() ||
@@ -470,7 +477,6 @@ namespace PlutoGE::render
                     packet.instances = instances;
                     packet.instanceCount = instanceCount;
                 }
-                packet.lastFrame = packetFrame;
                 m_casterPacketSlots[index] = &packet;
                 const auto models = draw.instanceModels && !draw.instanceModels->empty() ? draw.instanceModels->size() : 1;
                 const auto modelGroups = (models + PLUTO_VSM_MASKED_INSTANCES - 1) / PLUTO_VSM_MASKED_INSTANCES;
@@ -522,7 +528,7 @@ namespace PlutoGE::render
             // Chunk bounds are padded for this wind only (WindPad); other settings may sway geometry further.
             if (!(wind.wind == m_chunkWind))
             {
-                for (auto &entry : m_casterPackets) entry.second.chunksValid = false;
+                m_casterPackets->ForEach([](std::uint64_t, CasterPacket &packet) { packet.chunksValid = false; });
                 m_chunkWind = wind.wind;
             }
             // Uploads a chunk's own parameters, for page draws that are not batched and for receivers.
@@ -720,14 +726,13 @@ namespace PlutoGE::render
                     }
                 if (!dynamic) staticCasterCount = casterCursor;
             }
-            if (packetFrame % PacketSweepInterval == 0)
-                std::erase_if(m_casterPackets, [&](auto &item)
-                {
-                    const bool stale = (item.first & TransientPacket) ? item.second.lastFrame != packetFrame
-                                                                      : item.second.lastFrame + PacketRetainFrames < packetFrame;
-                    if (stale) ReleaseCasterModels(item.second);
-                    return stale;
-                });
+            // Transient packets belong to a list position and expire as soon as a frame leaves it unused; revised
+            // packets keep the retention, so casters leaving and re-entering reach keep their chunks.
+            const auto retainFrames = m_casterPackets->Policy().retainFrames;
+            m_casterPackets->Sweep(
+                [&](std::uint64_t key, const CasterPacket &, std::uint64_t unusedFrames)
+                { return (key & TransientPacket) ? unusedFrames > 0 : unusedFrames > retainFrames; },
+                [&](CasterPacket &packet) { ReleaseCasterModels(packet); });
             changed |= receiverCursor != m_receiverCount || casterCursor != m_casterCount;
             m_receiverCount = receiverCursor; m_casterCount = casterCursor;
             m_staticCasterCount = staticCasterCount;

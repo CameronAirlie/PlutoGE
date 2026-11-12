@@ -8,8 +8,12 @@ target_compile_features(PlutoGEContent PUBLIC cxx_std_20)
 
 add_library(PlutoGEPlatform
     src/CustomWindowFrame.cpp
+    src/RelativeMouseInput.cpp
     src/Window.cpp
 )
+if (WIN32)
+    target_sources(PlutoGEPlatform PRIVATE src/win32/Win32RawMouseInput.cpp)
+endif()
 
 add_library(PlutoGE::Platform ALIAS PlutoGEPlatform)
 

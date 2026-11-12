@@ -40,6 +40,9 @@ namespace PlutoGE::render
         bool impostorOwner = false;
         bool isStatic = false;
         bool castsShadow = true;
+        // Drawn only into shadow maps (and GI's scene list), never by a camera: RhiSceneRenderer drops it from the camera
+        // list (CameraCommandSelection). A mesh hiding joints from cameras casts its full shadow this way.
+        bool shadowOnly = false;
         bool terrainGeomorph = false;
         // How the geometry bends in the scene's wind (foliage types); disabled for everything else.
         FoliageWindResponse foliageWind{};

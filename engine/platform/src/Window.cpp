@@ -343,6 +343,17 @@ namespace PlutoGE::platform
         m_inputState.BeginFrame();
         m_droppedPaths.clear();
         glfwPollEvents();
+        // With a relative mouse source, locked-cursor motion is its unaccelerated reports; GLFW's virtual cursor
+        // motion from the same poll (accelerated legacy messages) is discarded.
+        UpdateRelativeMouseCapture();
+        m_lastPollMouseReports = 0;
+        if (m_relativeMouse && m_relativeMouse->IsCapturing())
+        {
+            const auto motion = m_relativeMouse->Take();
+            m_inputState.mouseState.deltaX = motion.x;
+            m_inputState.mouseState.deltaY = motion.y;
+            m_lastPollMouseReports = motion.reports;
+        }
         // The framebuffer is authoritative even when a native resize notification
         // was missed or another integration replaced GLFW's callback. Keep the
         // presentation extent consistent with the size ImGui queries each frame.
@@ -431,6 +442,7 @@ namespace PlutoGE::platform
         StopGamepadVibration();
         std::erase_if(DropForwarding(), [this](const auto &entry) { return entry.second == this; });
         m_customFrame.reset();
+        m_relativeMouse.reset();
         if (m_invisibleCursor)
         {
             glfwDestroyCursor(m_invisibleCursor);
@@ -601,6 +613,40 @@ namespace PlutoGE::platform
         return {m_clientWidth, m_clientHeight};
     }
 
+    double Window::GetDisplayRefreshRate() const
+    {
+        if (!m_window)
+            return 0.0;
+        GLFWmonitor *monitor = glfwGetWindowMonitor(m_window);
+        if (!monitor)
+        {
+            // Windowed: the monitor the window overlaps most.
+            int x = 0, y = 0, width = 0, height = 0;
+            glfwGetWindowPos(m_window, &x, &y);
+            glfwGetWindowSize(m_window, &width, &height);
+            int count = 0;
+            GLFWmonitor **monitors = glfwGetMonitors(&count);
+            long long bestArea = -1;
+            for (int index = 0; index < count; ++index)
+            {
+                const GLFWvidmode *mode = glfwGetVideoMode(monitors[index]);
+                if (!mode)
+                    continue;
+                int monitorX = 0, monitorY = 0;
+                glfwGetMonitorPos(monitors[index], &monitorX, &monitorY);
+                const long long overlapX = (std::max)(0, (std::min)(x + width, monitorX + mode->width) - (std::max)(x, monitorX));
+                const long long overlapY = (std::max)(0, (std::min)(y + height, monitorY + mode->height) - (std::max)(y, monitorY));
+                if (overlapX * overlapY > bestArea)
+                {
+                    bestArea = overlapX * overlapY;
+                    monitor = monitors[index];
+                }
+            }
+        }
+        const GLFWvidmode *mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+        return mode && mode->refreshRate > 0 ? static_cast<double>(mode->refreshRate) : 0.0;
+    }
+
     void *Window::GetWindow() const
     {
         return m_window;
@@ -719,11 +765,17 @@ namespace PlutoGE::platform
 
             // Bypass OS cursor acceleration while locked so mouse deltas represent
             // unmodified device motion, as expected by first-person camera controls.
-            if (glfwRawMouseMotionSupported())
+            // A relative mouse source reads those reports off this window's queue;
+            // GLFW's raw motion would register the window as the process's raw
+            // mouse target in its place, so it is used only without a source.
+            const bool raw = m_isCursorLocked && !confineInsteadOfDisable;
+            if (raw && !m_relativeMouse && !m_relativeMouseUnavailable)
             {
-                const bool raw = m_isCursorLocked && !confineInsteadOfDisable;
-                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, raw ? GLFW_TRUE : GLFW_FALSE);
+                m_relativeMouse = RelativeMouseInput::Create();
+                m_relativeMouseUnavailable = !m_relativeMouse;
             }
+            if (glfwRawMouseMotionSupported())
+                glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, raw && !m_relativeMouse ? GLFW_TRUE : GLFW_FALSE);
             if (modeChanged)
             {
                 // GLFW resets its virtual position when entering disabled mode
@@ -735,6 +787,17 @@ namespace PlutoGE::platform
                 m_inputState.mouseState.deltaY = 0.0;
             }
         }
+        UpdateRelativeMouseCapture();
+    }
+
+    void Window::UpdateRelativeMouseCapture()
+    {
+        if (!m_relativeMouse)
+            return;
+        // The source receives reports while the game is in the background; only a focused, disabled-mode lock
+        // turns them into motion.
+        const bool focused = m_window && glfwGetWindowAttrib(static_cast<GLFWwindow *>(m_window), GLFW_FOCUSED);
+        m_relativeMouse->SetCapturing(m_isCursorLocked && !m_isCursorConfined && focused);
     }
 
     bool Window::EnsureOpenGLContextCurrent(bool reloadFunctions)

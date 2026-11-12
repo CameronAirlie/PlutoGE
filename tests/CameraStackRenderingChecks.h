@@ -365,6 +365,52 @@ void CheckCameraStackComposite(Device &device, const PlutoGE::render::BasicRende
     std::cout << "Overlay receives shadows from hidden world casters" << std::endl;
 }
 
+// A shadow-only command (RenderCommand::shadowOnly) casts shadows but no camera draws it: a green quad in front of a red
+// one is invisible while it is shadow-only, and drawn once it is not. The renderer also keeps it when the caller gives no
+// separate shadow list (the camera's list then doubles as the shadow list).
+template <typename Device>
+void CheckShadowOnlyCommands(Device &device, const PlutoGE::render::BasicRendererShaderPackage &shaders,
+    const std::function<std::vector<std::byte>(PlutoGE::render::rhi::TextureHandle)> &pixelReader)
+{
+    using namespace PlutoGE::render;
+    const auto require = [](bool ok, const std::string &message) {
+        if (!ok)
+            throw std::runtime_error(message);
+    };
+    const auto quad = [](float extent, float depth) {
+        MeshConfig config;
+        for (const auto &corner : std::array<std::array<float, 2>, 6>{{{-1, -1}, {1, -1}, {1, 1}, {-1, -1}, {1, 1}, {-1, 1}}})
+            config.data.vertices.push_back({{corner[0] * extent, corner[1] * extent, depth}, {0, 0, 1}, {0, 0}, {1, 0, 0, 1}});
+        for (std::uint32_t index = 0; index < 6; ++index)
+            config.data.indices.push_back(index);
+        return std::make_unique<Mesh>(config);
+    };
+    // Reversed depth: the green quad (0.8) is nearer than the red one (0.5).
+    auto back = quad(1.0f, 0.5f);
+    auto front = quad(0.5f, 0.8f);
+    Material red({.emission = {1, 0, 0}});
+    Material green({.emission = {0, 1, 0}});
+    std::array commands{RenderCommand{.material = &red, .mesh = back.get()},
+                        RenderCommand{.material = &green, .mesh = front.get()}};
+    const CameraData camera{.view = glm::mat4(1), .projection = glm::mat4(1)};
+    BasicLighting lighting;
+    lighting.ambientIntensity = lighting.directionalIntensity = 0;
+    constexpr std::uint32_t size = 32;
+    RhiSceneRenderer renderer;
+    require(renderer.Initialize(device, shaders), "Shadow-only renderer initialization failed");
+    const auto centreIsGreen = [&](RenderCommandView shadows) {
+        require(renderer.Render(size, size, camera, lighting, commands, shadows), "Shadow-only render failed");
+        const auto pixels = pixelReader(renderer.GetColorTexture());
+        const auto centre = (size / 2 * size + size / 2) * 4;
+        return std::to_integer<int>(pixels[centre + 1]) > 128 && std::to_integer<int>(pixels[centre]) < 64;
+    };
+    require(centreIsGreen(commands), "The front quad must be drawn while it is an ordinary command");
+    commands[1].shadowOnly = true;
+    require(!centreIsGreen(commands), "A shadow-only command was drawn by the camera");
+    require(!centreIsGreen({}), "A shadow-only command was drawn by the camera without a separate shadow list");
+    std::cout << "Shadow-only commands: hidden from the camera" << std::endl;
+}
+
 // A view given its own light list must ignore every other scene light: the
 // surface is lit by the scene's point light only when that light is supplied.
 template <class Device>

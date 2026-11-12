@@ -2,6 +2,8 @@
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/CameraTagFilter.h"
+#include "PlutoGE/scene/JointHiding.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
 
@@ -1053,6 +1055,9 @@ namespace PlutoGE::scene
             {"PivotOffset", PropertyType::Vec3, SerializeVec3(m_pivotOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
         };
+        // Written only when set, so ordinary meshes serialize as before.
+        if (!m_cameraHiddenJoints.empty())
+            properties.push_back({"Camera Hidden Joints", PropertyType::String, CameraTagFilter::FormatTagList(m_cameraHiddenJoints)});
 
         const auto *assetMaterialReferences = m_sourceMeshPath.empty()
                                                   ? nullptr
@@ -1158,6 +1163,10 @@ namespace PlutoGE::scene
             else if (property.name == "Visible")
             {
                 m_visible = (property.value == "true");
+            }
+            else if (property.name == "Camera Hidden Joints")
+            {
+                SetCameraHiddenJoints(CameraTagFilter::ParseTagList(property.value));
             }
             else if (property.name == "SubmeshIndex")
             {
@@ -1638,6 +1647,44 @@ namespace PlutoGE::scene
             FindAnimationComponent(GetOwner()) != nullptr;
     }
 
+    void MeshComponent::SetCameraHiddenJoints(std::vector<std::string> joints)
+    {
+        std::erase_if(joints, [](const std::string &joint) { return joint.empty(); });
+        if (joints == m_cameraHiddenJoints)
+            return;
+        m_cameraHiddenJoints = std::move(joints);
+        m_cameraHiddenJointsResolved = false;
+        if (m_cameraHiddenJoints.empty())
+        {
+            m_cameraHiddenJointTargets.clear();
+            m_cameraPalette.clear();
+        }
+        MarkRenderCommandsDirty();
+    }
+
+    const std::vector<glm::mat4> *MeshComponent::CameraPalette(const std::vector<glm::mat4> &jointMatrices, bool poseChanged)
+    {
+        if (m_cameraHiddenJoints.empty() || !m_mesh || !m_mesh->HasSkeleton())
+            return nullptr;
+        const auto &skeleton = m_mesh->GetSkeleton();
+        const bool resolve = !m_cameraHiddenJointsResolved || m_cameraHiddenJointsSkeleton != &skeleton ||
+                             m_cameraHiddenJointTargets.size() != skeleton.joints.size();
+        if (resolve)
+        {
+            m_cameraHiddenJointTargets = ResolveHiddenJoints(skeleton, m_cameraHiddenJoints);
+            m_cameraHiddenJointsSkeleton = &skeleton;
+            m_cameraHiddenJointsResolved = true;
+        }
+        if (!HidesAnyJoint(m_cameraHiddenJointTargets))
+            return nullptr;
+        if (resolve || poseChanged || m_cameraPalette.size() != jointMatrices.size())
+        {
+            m_cameraPalette = jointMatrices;
+            CollapseHiddenJoints(skeleton, m_cameraHiddenJointTargets, m_cameraPalette);
+        }
+        return &m_cameraPalette;
+    }
+
     void MeshComponent::SubmitRenderCommands()
     {
         if (m_mesh && m_visible)
@@ -1712,6 +1759,9 @@ namespace PlutoGE::scene
                 return;
             }
 
+            // Skinned meshes are never cached, so their camera draw (joints hidden) can sit beside the shadow draw.
+            const std::vector<glm::mat4> *cameraPalette =
+                jointMatrices && !canCacheRenderCommands ? CameraPalette(*jointMatrices, skinningPoseChanged) : nullptr;
             std::vector<render::RenderCommand> rebuiltCommands;
             const auto sourceRevision = ++m_renderSourceRevision;
             if (canCacheRenderCommands)
@@ -1767,6 +1817,15 @@ namespace PlutoGE::scene
                 command.minShadowLodIndex = static_cast<uint32_t>(m_minShadowLod);
                 command.isStatic = m_isStatic;
 
+                if (cameraPalette)
+                {
+                    // The full pose only casts the shadow; cameras draw the pose with the hidden joints collapsed.
+                    command.shadowOnly = true;
+                    renderScene.SubmitRenderCommand(command);
+                    command.shadowOnly = false;
+                    command.castsShadow = false;
+                    command.jointMatrices = cameraPalette;
+                }
                 if (!canCacheRenderCommands) renderScene.SubmitRenderCommand(command);
                 if (canCacheRenderCommands)
                 {

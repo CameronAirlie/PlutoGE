@@ -574,6 +574,12 @@ namespace PlutoGE::ui
         report << "Presentation submit: " << presentation.presentSubmitMs << " ms\n";
         report << "Presentation queue present: " << presentation.presentQueueMs << " ms\n";
         report << "Event polling: " << frameTimingStats.eventPollingMs << " ms\n";
+        report << "Mouse reports polled: " << frameTimingStats.mouseReports << "\n";
+        report << "Frame pacing: limit ";
+        if (frameTimingStats.maxFrameRate > 0.0f) report << frameTimingStats.maxFrameRate << " fps";
+        else report << "off";
+        report << ", waited " << frameTimingStats.framePacingWaitMs << " ms, interval "
+               << frameTimingStats.measuredFrameIntervalMs << " ms, simulated delta " << frameTimingStats.frameDeltaMs << " ms\n";
         report << "Frame remainder: " << std::max(0.0f, (capturedDurationMs >= 0.0f ? capturedDurationMs : GetCurrentFrameTimeMs()) - frameTimingStats.profilingBeginMs - frameTimingStats.editorSetupMs - frameTimingStats.sceneUpdateMs - frameTimingStats.viewportRenderMs - frameTimingStats.editorUiMs - frameTimingStats.presentMs - frameTimingStats.eventPollingMs) << " ms\n";
         report << "ImGui render: " << timingStats.imguiRenderMs << " ms\n";
         report << "ImGui submission total: " << timingStats.endPanelUpdateTotalMs << " ms\n";

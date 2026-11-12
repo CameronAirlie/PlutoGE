@@ -3,6 +3,7 @@
 #include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/RenderingSettings.h"
 #include "PlutoGE/render/RenderCommandView.h"
+#include "PlutoGE/render/CameraCommandSelection.h"
 
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/Camera.h"
@@ -409,6 +410,8 @@ namespace PlutoGE::render
       std::vector<SkinnedMesh *> m_skinningGrowth;
       std::vector<RhiSkinningJob> m_skinningJobs;
       std::vector<const RenderCommand *> m_directionalShadowCommands;
+      // The camera's commands without shadow-only ones (RenderCommand::shadowOnly), for one Prepare.
+      CameraCommandSelection m_cameraCommands;
       std::unique_ptr<DirectionalShadowCascadeRetention> m_cascadeRetention;
       // A shared model can have multiple independently animated owners.
       struct SkinningCache

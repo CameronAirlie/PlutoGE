@@ -5,7 +5,6 @@
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
-#include "PlutoGE/core/CpuTrace.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cmath>
@@ -172,30 +171,36 @@ int main() try
         auto *victim = simulation.AddEntity(std::make_unique<scene::Entity>());
         victim->CreateComponent<scene::ColliderComponent>();
         simulation.StartRuntime();
-        auto rebuilt = [&]() {
-            core::CpuTrace trace(true);
-            simulation.Update(1.f / 60.f);
-            const auto samples = trace.TakeSamples();
-            return std::any_of(samples.begin(), samples.end(), [](const auto &sample) {
-                return sample.name == "Physics simulation world rebuild";
-            });
+        // What one update did to the simulation world: bodies created, and whether the world was replaced.
+        struct StepWork
+        {
+            std::uint64_t bodiesCreated = 0;
+            bool worldRebuilt = false;
         };
-        Require(rebuilt(), "Initial simulation did not build its bodies");
+        auto step = [&]() {
+            const auto before = simulation.GetPhysicsSynchronizationStats();
+            simulation.Update(1.f / 60.f);
+            const auto after = simulation.GetPhysicsSynchronizationStats();
+            return StepWork{after.simulationBodiesCreated - before.simulationBodiesCreated,
+                            after.simulationWorldRebuilds != before.simulationWorldRebuilds};
+        };
+        auto onlyCreated = [](StepWork work, std::uint64_t bodies) { return !work.worldRebuilt && work.bodiesCreated == bodies; };
+        Require(step().worldRebuilt, "Initial simulation did not build its bodies");
         const float previousHeight = moving->GetWorldPosition().y;
         victim->SetActive(false);
-        Require(!rebuilt(), "Deactivation rebuilt surviving physics bodies");
+        Require(onlyCreated(step(), 0), "Deactivation rebuilt surviving physics bodies");
         Require(moving->GetWorldPosition().y < previousHeight, "Surviving dynamic body stopped simulating");
         victim->SetActive(true);
-        Require(rebuilt(), "Reactivation did not restore a removed body");
+        Require(onlyCreated(step(), 1), "Reactivation did not restore exactly the removed body");
         victim->GetComponent<scene::ColliderComponent>()->SetEnabled(false);
-        Require(!rebuilt(), "Disabling collider rebuilt surviving bodies");
+        Require(onlyCreated(step(), 0), "Disabling collider rebuilt surviving bodies");
         victim->GetComponent<scene::ColliderComponent>()->SetEnabled(true);
-        Require(rebuilt(), "Reenabled collider missing from simulation");
+        Require(onlyCreated(step(), 1), "Reenabled collider missing from simulation");
         simulation.DestroyEntity(victim->GetID());
-        (void)rebuilt(); // Destruction also invalidates pointers owned by the scene.
-        Require(!rebuilt(), "Destroyed collider caused repeated physics rebuilds");
+        Require(onlyCreated(step(), 0), "Destruction rebuilt surviving physics bodies");
+        Require(onlyCreated(step(), 0), "Destroyed collider caused repeated physics rebuilds");
         moving->GetComponent<scene::ColliderComponent>()->SetCenter({0, .2f, 0});
-        Require(rebuilt(), "Changed surviving shape was not rebuilt");
+        Require(onlyCreated(step(), 1), "Changed surviving shape was not rebuilt on its own");
         simulation.StopRuntime();
     }
     // Adding another physics actor must not restart a corpse already in flight.

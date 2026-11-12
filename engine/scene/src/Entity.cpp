@@ -466,7 +466,7 @@ namespace PlutoGE::scene
         {
             if (dynamic_cast<ColliderComponent *>(component))
             {
-                m_scene->InvalidatePhysicsQueryCache();
+                m_scene->InvalidatePhysicsQueryMembership();
             }
 
             if (auto *lightComponent = dynamic_cast<LightComponent *>(component))
@@ -543,7 +543,7 @@ namespace PlutoGE::scene
         {
             if (dynamic_cast<ColliderComponent *>(component))
             {
-                m_scene->InvalidatePhysicsQueryCache();
+                m_scene->InvalidatePhysicsQueryMembership();
             }
 
             if (auto *lightComponent = dynamic_cast<LightComponent *>(component))

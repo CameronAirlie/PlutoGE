@@ -1573,13 +1573,15 @@ namespace PlutoGE::render
         std::vector<std::uint64_t> m_shadowStillSignatures;
         // Shadow draw signatures by the immutable packet they describe (BasicDraw::preparationRevision), not by list
         // position: the caster list gains and loses draws as the camera moves, and a positional cache then misses for
-        // every draw after the change, rehashing each one's instance matrices. Entries unused for a while are dropped.
+        // every draw after the change, rehashing each one's instance matrices. Every changed packet takes a new
+        // revision and abandons its old entry, so entries unused for a while expire, a share of them each frame.
         struct ShadowSignatureEntry
         {
-            std::uint64_t meshRevision = 0, signature = 0, lastUsed = 0;
+            std::uint64_t meshRevision = 0, signature = 0;
         };
-        std::unordered_map<std::uint64_t, ShadowSignatureEntry> m_shadowSignatureCache;
-        std::uint64_t m_shadowSignatureFrame = 0;
+        // A core::FrameRetainedCache of entries by revision, defined with the renderer so this header stays free of it.
+        struct ShadowSignatureCache;
+        std::unique_ptr<ShadowSignatureCache> m_shadowSignatureCache;
         // Each recorded draw owns stable parameters until backend submission.
         // Reusing one buffer causes every Vulkan draw to observe the last upload.
         std::vector<rhi::Buffer> m_postProcessBuffers;

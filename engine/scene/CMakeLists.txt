@@ -19,6 +19,7 @@ add_library(PlutoGEScene
     src/ModelInstanceUnpacking.cpp
     src/AssetReconciliation.cpp
     src/Scene.cpp
+    src/BulletCollisionShapes.cpp
     src/AnimationPoseBatch.cpp
     src/TerrainHoleMask.cpp
     src/TerrainLayerStack.cpp

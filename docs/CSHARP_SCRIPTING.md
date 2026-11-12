@@ -585,7 +585,13 @@ shin.WorldRotation = TwoBoneIK.Between(-Vector3.UnitY, leg.Tip - leg.Middle);
 
 ### MeshComponent
 
-Properties: `Static`, `Color`, `Emission`.
+Properties: `Static`, `Color`, `Emission`, `CameraHiddenJoints`.
+
+`CameraHiddenJoints` keeps a skinned mesh's listed joints, and every joint below them, out of every camera, while
+the mesh still casts its whole shadow and bone reads still see the full pose. A first-person body hides its own head
+with `mesh.CameraHiddenJoints = new[] { "Head" };`. Names resolve like bone queries (exact names, then humanoid
+aliases). An empty array draws the mesh normally. Hosts built before the API read it as empty and ignore writes;
+`MeshComponent.SupportsCameraHiddenJoints` reports which. See [Skeletal IK](SKELETAL_IK.md#hiding-joints-from-cameras).
 
 `Color` and `Emission` tint every material the mesh draws with, including submesh override materials and
 material assets. The first write gives the instance its own copies of shared or asset-backed materials, so other

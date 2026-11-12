@@ -91,6 +91,31 @@ by these APIs. Static weapons work as children; static soldiers must be rigged
 and skinned. The inspected CoD `Solider.glb` and `m16_assault_rifle.glb` have no
 skins or animation clips.
 
+## Hiding joints from cameras
+
+A skinned `MeshComponent` can keep chosen joints out of every camera while the
+mesh still casts its whole shadow. A first-person body uses this to hide its own
+head. Set the joints with `MeshComponent::SetCameraHiddenJoints` (C#
+`MeshComponent.CameraHiddenJoints`; serialized as `Camera Hidden Joints`, a
+comma-separated list written only when set). Names resolve like bone queries:
+exact names first, then humanoid aliases such as `Head`. Unknown names are ignored.
+
+Each listed joint and every joint below it is shrunk onto the listed joint's posed
+position in a copy of the skinning palette (`scene/JointHiding.h`). Vertices only
+partly weighted to a hidden joint, such as a neck blending into the head, close
+part of the way. The pose itself is untouched, so bone reads, attachments and IK
+still see the head. While joints are hidden, the mesh submits two draws per
+submesh:
+
+- The full pose, marked `RenderCommand::shadowOnly`. It goes into shadow maps and
+  GI's scene list.
+- The camera's draw with the joints collapsed, which casts no shadow.
+
+`RhiSceneRenderer` drops shadow-only commands from the camera's list
+(`CameraCommandSelection`) before any camera pass, for base, overlay and
+render-texture cameras alike. Hiding joints costs one more skinned draw for that
+mesh. An empty list draws the mesh as before.
+
 ## Validation
 
 Authored constraints optionally expose `WeightParameter`: an animator float
@@ -104,4 +129,8 @@ poles, bone lengths, descendant propagation, invalid targets and bind-pose IK.
 `PlutoGEIKComponentTests` additionally checks target movement/cache invalidation,
 disable/removal, editor preview, malformed settings, scene round trips, prefab
 reference remapping and bone-relative attachment offsets. Final grip quality
-requires a rigged asset and visual runtime testing.
+requires a rigged asset and visual runtime testing. `PlutoGEJointHidingTests`
+covers joint hiding: name resolution, descendants, partly weighted vertices,
+the two draws a mesh submits, and serialization. The `--camera-stack` modes of
+`PlutoGE{Vulkan,OpenGL}RhiTests` check that cameras never draw shadow-only
+commands.

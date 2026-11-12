@@ -19,6 +19,7 @@
 #include "PlutoGE/scene/components/RagdollTuningComponent.h"
 #include "PlutoGE/scene/RagdollProfile.h"
 #include "RagdollJoints.h"
+#include "BulletCollisionShapes.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
@@ -522,264 +523,11 @@ namespace PlutoGE::scene
             entity.SetPosition(localPosition);
         }
 
-        struct BulletShapeData
-        {
-            std::vector<std::unique_ptr<btTriangleMesh>> ownedTriangleMeshes;
-            std::unique_ptr<btCollisionShape> shape;
-            std::vector<std::unique_ptr<btCollisionShape>> ownedChildShapes;
-            std::vector<float> ownedHeightfieldData;
-        };
+        using detail::BulletShapeCache;
+        using detail::BulletShapeData;
+        using detail::SharedBulletShape;
 
         BulletShapeData CreateSplineSegmentBulletShape(const SplineComponent &spline, const glm::vec3 &worldScale);
-
-        std::unique_ptr<btCollisionShape> CreateBaseBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
-        {
-            switch (collider.GetShape())
-            {
-            case ColliderShape::Sphere:
-            {
-                const float radius = collider.GetScaledRadius(worldScale);
-                return std::make_unique<btSphereShape>(std::max(radius, 0.0001f));
-            }
-            case ColliderShape::Capsule:
-            {
-                const float radius = collider.GetScaledRadius(worldScale);
-                const float cylinderHeight = std::max(collider.GetScaledHeight(worldScale) - radius * 2.0f, 0.0f);
-                return std::make_unique<btCapsuleShape>(std::max(radius, 0.0001f), cylinderHeight);
-            }
-            case ColliderShape::Box:
-            default:
-            {
-                const glm::vec3 halfExtents = glm::max(collider.GetScaledSize(worldScale) * 0.5f, glm::vec3(0.0001f));
-                return std::make_unique<btBoxShape>(ToBullet(halfExtents));
-            }
-            }
-        }
-
-        BulletShapeData CreateMeshBulletShape(const render::Mesh &mesh, const glm::vec3 &worldScale)
-        {
-            BulletShapeData shapeData;
-            const auto &meshData = mesh.GetMeshData();
-            if (meshData.vertices.empty() || meshData.indices.size() < 3)
-            {
-                return shapeData;
-            }
-
-            auto triangleMesh = std::make_unique<btTriangleMesh>(true, false);
-            for (std::size_t index = 0; index + 2 < meshData.indices.size(); index += 3)
-            {
-                const auto i0 = meshData.indices[index + 0];
-                const auto i1 = meshData.indices[index + 1];
-                const auto i2 = meshData.indices[index + 2];
-                if (i0 >= meshData.vertices.size() || i1 >= meshData.vertices.size() || i2 >= meshData.vertices.size())
-                {
-                    continue;
-                }
-
-                const auto toScaledBullet = [&](const render::MeshVertexData &vertex)
-                {
-                    return btVector3(
-                        vertex.position[0] * worldScale.x,
-                        vertex.position[1] * worldScale.y,
-                        vertex.position[2] * worldScale.z);
-                };
-
-                triangleMesh->addTriangle(
-                    toScaledBullet(meshData.vertices[i0]),
-                    toScaledBullet(meshData.vertices[i1]),
-                    toScaledBullet(meshData.vertices[i2]),
-                    true);
-            }
-
-            if (triangleMesh->getNumTriangles() == 0)
-            {
-                return {};
-            }
-
-            shapeData.shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
-            shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
-            return shapeData;
-        }
-
-        // A terrain with holes: Bullet's heightfield cannot leave cells out (and its accelerated ray test cannot be
-        // overridden), so the solid cells become a triangle mesh, split along the same (x+1,z)-(x,z+1) diagonal as the
-        // heightfield and the rendered mesh. Vertices are shared, so this costs about what the render mesh does.
-        BulletShapeData CreateHoledTerrainBulletShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
-        {
-            const int width = terrain.GetWidth();
-            const int depth = terrain.GetDepth();
-            const auto &heights = terrain.GetHeightSamples();
-            const auto &holes = terrain.GetHoles();
-            const float scaleX = std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f);
-            const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
-            const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
-
-            auto triangleMesh = std::make_unique<btTriangleMesh>(true, false);
-            triangleMesh->preallocateVertices(width * depth);
-            triangleMesh->preallocateIndices((width - 1) * (depth - 1) * 6);
-            std::vector<int> vertexOf(static_cast<std::size_t>(width) * static_cast<std::size_t>(depth), -1);
-            const auto vertex = [&](int x, int z) {
-                auto &index = vertexOf[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
-                if (index < 0)
-                {
-                    const float height = heights[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
-                    index = triangleMesh->findOrAddVertex(btVector3(static_cast<btScalar>(x * scaleX),
-                                                                    static_cast<btScalar>(height * scaleY),
-                                                                    static_cast<btScalar>(z * scaleZ)),
-                                                          false);
-                }
-                return index;
-            };
-            for (int z = 0; z + 1 < depth; ++z)
-                for (int x = 0; x + 1 < width; ++x)
-                {
-                    const auto triangles = TerrainCellTriangles(holes.GetCut(x, z));
-                    if (triangles.empty())
-                        continue;
-                    const int corners[4] = {vertex(x, z), vertex(x + 1, z), vertex(x, z + 1), vertex(x + 1, z + 1)};
-                    for (const auto &triangle : triangles)
-                        triangleMesh->addTriangleIndices(corners[triangle[0]], corners[triangle[1]], corners[triangle[2]]);
-                }
-            if (triangleMesh->getNumTriangles() == 0)
-            {
-                return {};
-            }
-
-            BulletShapeData shapeData;
-            shapeData.shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
-            shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
-            return shapeData;
-        }
-
-        BulletShapeData CreateTerrainBulletShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
-        {
-            BulletShapeData shapeData;
-            const int width = terrain.GetWidth();
-            const int depth = terrain.GetDepth();
-            const auto &heightSamples = terrain.GetHeightSamples();
-            const std::size_t expectedHeightCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(depth);
-            if (width < 2 || depth < 2 || heightSamples.size() != expectedHeightCount)
-            {
-                return shapeData;
-            }
-            if (!terrain.GetHoles().Empty())
-            {
-                return CreateHoledTerrainBulletShape(terrain, worldScale);
-            }
-
-            shapeData.ownedHeightfieldData = heightSamples;
-            float minHeight = std::numeric_limits<float>::max();
-            float maxHeight = std::numeric_limits<float>::lowest();
-            for (const float height : shapeData.ownedHeightfieldData)
-            {
-                minHeight = std::min(minHeight, height);
-                maxHeight = std::max(maxHeight, height);
-            }
-            if (!std::isfinite(minHeight) || !std::isfinite(maxHeight))
-            {
-                return {};
-            }
-            if (std::abs(maxHeight - minHeight) <= 0.0001f)
-            {
-                maxHeight = minHeight + 0.0001f;
-            }
-
-            auto shape = std::make_unique<btHeightfieldTerrainShape>(
-                width,
-                depth,
-                shapeData.ownedHeightfieldData.data(),
-                1.0f,
-                minHeight,
-                maxHeight,
-                1,
-                PHY_FLOAT,
-                false);
-
-            const float scaleX = std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f);
-            const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
-            const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
-            shape->setLocalScaling(btVector3(scaleX, scaleY, scaleZ));
-            // Keep Bullet's default quad split, the (x+1,z)-(x,z+1) diagonal TerrainComponent renders. With diamond
-            // subdivision this Bullet version ray-casts each cell with the opposite diagonal to the one convex sweeps
-            // and contacts collide with (performRaycast tests odd x+z parity, processAllTriangles even), so rays and
-            // capsules disagreed by 0.1-0.3 m (up to 1 m) in most cells of rough terrain: ground probes, foot IK and character collision
-            // each saw a different surface, and neither matched the rendered one.
-            shape->setUseDiamondSubdivision(false);
-
-            auto compoundShape = std::make_unique<btCompoundShape>();
-            btTransform childTransform;
-            childTransform.setIdentity();
-            childTransform.setOrigin(btVector3(
-                static_cast<btScalar>((width - 1) * scaleX * 0.5f),
-                static_cast<btScalar>((minHeight + maxHeight) * scaleY * 0.5f),
-                static_cast<btScalar>((depth - 1) * scaleZ * 0.5f)));
-            compoundShape->addChildShape(childTransform, shape.get());
-
-            shapeData.ownedChildShapes.push_back(std::move(shape));
-            shapeData.shape = std::move(compoundShape);
-            return shapeData;
-        }
-
-        BulletShapeData CreateBulletShape(const ColliderComponent &collider, const glm::vec3 &worldScale)
-        {
-            BulletShapeData shapeData;
-            auto baseShape = CreateBaseBulletShape(collider, worldScale);
-            if (!baseShape)
-            {
-                return shapeData;
-            }
-
-            const glm::vec3 scaledCenter = collider.GetScaledCenter(worldScale);
-            if (glm::dot(scaledCenter, scaledCenter) <= 0.0000001f)
-            {
-                shapeData.shape = std::move(baseShape);
-                return shapeData;
-            }
-
-            auto compoundShape = std::make_unique<btCompoundShape>();
-            btTransform childTransform;
-            childTransform.setIdentity();
-            childTransform.setOrigin(ToBullet(scaledCenter));
-            compoundShape->addChildShape(childTransform, baseShape.get());
-
-            shapeData.ownedChildShapes.push_back(std::move(baseShape));
-            shapeData.shape = std::move(compoundShape);
-            return shapeData;
-        }
-
-        BulletShapeData CreateBulletShapeForEntity(const Entity &entity, const ColliderComponent &collider)
-        {
-            const glm::vec3 worldScale = entity.GetWorldScale();
-            if (collider.GetShape() == ColliderShape::Terrain)
-            {
-                if (const auto *terrain = entity.GetComponent<TerrainComponent>())
-                {
-                    return CreateTerrainBulletShape(*terrain, worldScale);
-                }
-                return {};
-            }
-            if (collider.GetShape() == ColliderShape::Mesh)
-            {
-                if (const auto *spline = entity.GetComponent<SplineComponent>())
-                {
-                    if (const auto *collisionMesh = spline->GetGeneratedCollisionMesh())
-                    {
-                        return CreateMeshBulletShape(*collisionMesh, worldScale);
-                    }
-                    return {};
-                }
-                if (const auto *meshComponent = entity.GetComponent<MeshComponent>())
-                {
-                    if (const auto *mesh = meshComponent->GetMesh())
-                    {
-                        return CreateMeshBulletShape(*mesh, worldScale);
-                    }
-                }
-                return {};
-            }
-
-            return CreateBulletShape(collider, worldScale);
-        }
 
         BulletShapeData CreateFoliageCellBulletShape(const FoliageCollisionCell &cell)
         {
@@ -1024,10 +772,10 @@ namespace PlutoGE::scene
             EntityID entityId = 0;
             ColliderComponent *collider = nullptr;
             RigidbodyComponent *rigidbody = nullptr;
-            std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
-            std::unique_ptr<btCollisionShape> shape;
-            std::vector<std::unique_ptr<btCollisionShape>> childShapes;
-            std::vector<float> heightfieldData;
+            // The collider's geometry, possibly shared with other bodies and the query world.
+            SharedBulletShape colliderShape;
+            // A rigidbody with an offset centre of mass wraps the collider shape in a compound of its own.
+            std::unique_ptr<btCompoundShape> centerOfMassShape;
             std::unique_ptr<btDefaultMotionState> motionState;
             std::unique_ptr<btRigidBody> body;
             uint64_t configurationSignature = 0;
@@ -1252,10 +1000,8 @@ namespace PlutoGE::scene
         {
             Entity *entity = nullptr;
             glm::mat4 synchronizedWorldTransform{1.0f};
-            std::vector<std::unique_ptr<btTriangleMesh>> triangleMeshes;
-            std::unique_ptr<btCollisionShape> shape;
-            std::vector<std::unique_ptr<btCollisionShape>> childShapes;
-            std::vector<float> heightfieldData;
+            // The collider's geometry, possibly shared with other bodies and the simulation world.
+            SharedBulletShape shape;
             std::unique_ptr<btCollisionObject> object;
             uint64_t configurationSignature = 0;
         };
@@ -1271,14 +1017,34 @@ namespace PlutoGE::scene
 
             ~BulletQueryWorld()
             {
-                for (auto &body : bodies)
-                {
-                    if (body.object)
-                    {
-                        collisionWorld.removeCollisionObject(body.object.get());
-                    }
-                }
+                RemoveAllEntityBodies();
                 foliage.RemoveAll(collisionWorld);
+            }
+
+            void RetireBody(BulletQueryBody &body)
+            {
+                if (body.object)
+                    collisionWorld.removeCollisionObject(body.object.get());
+                body.object.reset();
+            }
+
+            void RemoveAllEntityBodies()
+            {
+                for (auto &body : bodies)
+                    RetireBody(body);
+                bodies.clear();
+            }
+
+            // Drops the bodies of entities that are about to be freed, so no body ever points at a freed entity.
+            void RemoveEntityBodies(const std::unordered_set<Entity *> &entities)
+            {
+                std::erase_if(bodies, [&](BulletQueryBody &body)
+                {
+                    if (!entities.contains(body.entity))
+                        return false;
+                    RetireBody(body);
+                    return true;
+                });
             }
         };
 
@@ -1286,75 +1052,201 @@ namespace PlutoGE::scene
                                                     const ColliderComponent &collider,
                                                     const RigidbodyComponent *rigidbody);
 
+        // Brings a world's entity bodies in step with `entities`, keeping their order. A record whose entity is still
+        // listed with the same configuration signature stays as it is, with its broadphase proxy and simulation state;
+        // every other entity gets a record from `create(entity, signature)`, and leftover records go to `retire` before
+        // they are destroyed. Records are matched by entity address and signature, and a retired record's entity is
+        // never dereferenced: it may already be freed. Because signatures hash the entity's ID, a new entity at a freed
+        // entity's address is not mistaken for it. Returns how many records were created.
+        //
+        // Body is any record with `entity` and `configurationSignature` members, so each world keeps its own body type
+        // and creation rules while sharing how membership changes are applied.
+        template <typename Body, typename SignatureOf, typename Create, typename Retire>
+        std::size_t ReconcileEntityBodies(std::vector<Body> &bodies, const std::vector<Entity *> &entities,
+                                          const char *scopeName, SignatureOf &&signatureOf, Create &&create,
+                                          Retire &&retire)
+        {
+            std::vector<uint64_t> signatures;
+            signatures.reserve(entities.size());
+            for (auto *entity : entities)
+                signatures.push_back(signatureOf(*entity));
+
+            bool unchanged = bodies.size() == entities.size();
+            for (std::size_t index = 0; unchanged && index < entities.size(); ++index)
+                unchanged = bodies[index].entity == entities[index] &&
+                            bodies[index].configurationSignature == signatures[index];
+            if (unchanged)
+                return 0;
+
+            core::CpuScope scope(scopeName, core::CpuCategory::Physics);
+            std::unordered_map<const Entity *, std::size_t> existing;
+            existing.reserve(bodies.size());
+            for (std::size_t index = 0; index < bodies.size(); ++index)
+                existing.emplace(bodies[index].entity, index);
+
+            std::vector<bool> kept(bodies.size(), false);
+            std::vector<Body> next;
+            next.reserve(entities.size());
+            std::size_t created = 0;
+            for (std::size_t index = 0; index < entities.size(); ++index)
+            {
+                const auto found = existing.find(entities[index]);
+                if (found != existing.end() && !kept[found->second] &&
+                    bodies[found->second].configurationSignature == signatures[index])
+                {
+                    kept[found->second] = true;
+                    next.push_back(std::move(bodies[found->second]));
+                    continue;
+                }
+                next.push_back(create(*entities[index], signatures[index]));
+                ++created;
+            }
+            for (std::size_t index = 0; index < bodies.size(); ++index)
+                if (!kept[index])
+                    retire(bodies[index]);
+            bodies = std::move(next);
+            return created;
+        }
+
+        uint64_t QueryBodySignature(const Entity &entity)
+        {
+            return ComputeRuntimePhysicsBodySignature(entity, *entity.GetComponent<ColliderComponent>(),
+                                                      entity.GetComponent<RigidbodyComponent>());
+        }
+
         // Empty shapes retain a membership record so unsupported/temporarily
         // unavailable geometry cannot trigger endless query-world rebuilds.
-        BulletQueryBody CreateBulletQueryBody(Entity *entity)
+        BulletQueryBody CreateBulletQueryBody(Entity &entity, uint64_t signature, BulletShapeCache &shapes)
         {
-            auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
-            if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
-            {
-                return {};
-            }
+            BulletQueryBody body{
+                .entity = &entity,
+                .synchronizedWorldTransform = entity.GetWorldTransform(),
+                .configurationSignature = signature,
+            };
+            auto *collider = entity.GetComponent<ColliderComponent>();
+            if (!collider || !collider->IsEnabled() || collider->IsTrigger())
+                return body;
 
-            auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
+            body.shape = shapes.Acquire(entity, *collider);
+            if (!body.shape)
+                return body;
 
             btTransform transform;
             transform.setIdentity();
-            transform.setOrigin(ToBullet(entity->GetWorldPosition()));
-            transform.setRotation(ToBulletRotation(entity->GetWorldTransform()));
-
-            std::unique_ptr<btCollisionObject> object;
-            if (shapeData.shape)
-            {
-                object = std::make_unique<btCollisionObject>();
-                object->setCollisionShape(shapeData.shape.get());
-                object->setWorldTransform(transform);
-                object->setUserPointer(entity);
-            }
-
-            return BulletQueryBody{
-                .entity = entity,
-                .synchronizedWorldTransform = entity->GetWorldTransform(),
-                .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
-                .shape = std::move(shapeData.shape),
-                .childShapes = std::move(shapeData.ownedChildShapes),
-                .heightfieldData = std::move(shapeData.ownedHeightfieldData),
-                .object = std::move(object),
-                .configurationSignature = ComputeRuntimePhysicsBodySignature(
-                    *entity, *collider, entity->GetComponent<RigidbodyComponent>()),
-            };
+            transform.setOrigin(ToBullet(entity.GetWorldPosition()));
+            transform.setRotation(ToBulletRotation(entity.GetWorldTransform()));
+            body.object = std::make_unique<btCollisionObject>();
+            body.object->setCollisionShape(body.shape->Get());
+            body.object->setWorldTransform(transform);
+            body.object->setUserPointer(&entity);
+            return body;
         }
 
-        void SynchronizeBulletQueryBodies(BulletQueryWorld &world, const std::vector<Entity *> &entities)
+        uint64_t RuntimeStepBodySignature(const Entity &entity)
         {
-            std::unordered_map<Entity *, size_t> existing;
-            existing.reserve(world.bodies.size());
-            for (size_t index = 0; index < world.bodies.size(); ++index)
-                existing.emplace(world.bodies[index].entity, index);
-            std::vector<BulletQueryBody> next;
-            next.reserve(entities.size());
-            for (auto *entity : entities)
+            const auto *rigidbody = entity.GetComponent<RigidbodyComponent>();
+            return ComputeRuntimePhysicsBodySignature(entity, *entity.GetComponent<ColliderComponent>(),
+                                                      rigidbody && rigidbody->IsEnabled() ? rigidbody : nullptr);
+        }
+
+        // Creates the simulation body for an entity's collider and adds it to `world`. A collider that cannot produce
+        // a shape yet still gets a record, without a rigid body, so the world's records stay aligned with the scene's
+        // colliders and are not recreated on every step.
+        BulletStepBody CreateRuntimeStepBody(Entity &entity, uint64_t signature, btDiscreteDynamicsWorld &world,
+                                             BulletShapeCache &shapes)
+        {
+            auto *collider = entity.GetComponent<ColliderComponent>();
+            auto *rigidbody = entity.GetComponent<RigidbodyComponent>();
+            const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
+            BulletStepBody stepBody{
+                .entity = &entity,
+                .entityId = entity.GetID(),
+                .collider = collider,
+                .rigidbody = rigidbodyEnabled ? rigidbody : nullptr,
+                .colliderShape = shapes.Acquire(entity, *collider),
+                .configurationSignature = signature,
+            };
+            if (!stepBody.colliderShape)
+                return stepBody;
+
+            const glm::vec3 worldScale = entity.GetWorldScale();
+            const bool dynamic = rigidbodyEnabled && !rigidbody->IsKinematic();
+            const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
+            const glm::vec3 scaledCenterOfMass = rigidbodyEnabled
+                                                     ? rigidbody->GetCenterOfMass() * worldScale
+                                                     : glm::vec3(0.0f);
+            const btVector3 centerOfMassOffset = ToBullet(scaledCenterOfMass);
+            btCollisionShape *bodyShape = stepBody.colliderShape->Get();
+            if (rigidbodyEnabled && glm::length2(scaledCenterOfMass) > 0.00000001f)
             {
-                const auto signature = ComputeRuntimePhysicsBodySignature(
-                    *entity, *entity->GetComponent<ColliderComponent>(), entity->GetComponent<RigidbodyComponent>());
-                const auto found = existing.find(entity);
-                if (found != existing.end() && world.bodies[found->second].configurationSignature == signature)
-                {
-                    next.push_back(std::move(world.bodies[found->second]));
-                    existing.erase(found);
-                    continue;
-                }
-                auto body = CreateBulletQueryBody(entity);
-                if (body.object)
-                    world.collisionWorld.addCollisionObject(body.object.get());
-                next.push_back(std::move(body));
+                stepBody.centerOfMassShape = std::make_unique<btCompoundShape>();
+                btTransform childTransform;
+                childTransform.setIdentity();
+                childTransform.setOrigin(-centerOfMassOffset);
+                stepBody.centerOfMassShape->addChildShape(childTransform, bodyShape);
+                bodyShape = stepBody.centerOfMassShape.get();
             }
-            // Moved records have no object. Retire only deleted/changed bodies;
-            // all unchanged broadphase proxies and collision shapes survive.
-            for (auto &body : world.bodies)
-                if (body.object)
-                    world.collisionWorld.removeCollisionObject(body.object.get());
-            world.bodies = std::move(next);
+            btVector3 localInertia(0.0f, 0.0f, 0.0f);
+            if (mass > 0.0f)
+            {
+                bodyShape->calculateLocalInertia(mass, localInertia);
+            }
+
+            const btTransform startTransform = EntityToBodyTransform(entity, centerOfMassOffset);
+
+            auto motionState = std::make_unique<btDefaultMotionState>(startTransform);
+            btRigidBody::btRigidBodyConstructionInfo constructionInfo(mass, motionState.get(), bodyShape, localInertia);
+            constructionInfo.m_linearDamping = rigidbodyEnabled ? rigidbody->GetLinearDrag() : 0.0f;
+            constructionInfo.m_angularDamping = rigidbodyEnabled ? rigidbody->GetAngularDrag() : 0.0f;
+            auto body = std::make_unique<btRigidBody>(constructionInfo);
+            body->setUserPointer(&entity);
+            const bool hasSurface = !collider->GetSurfaceAssetReference().empty();
+            const float surfaceFriction = hasSurface ? core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider->GetSurfaceAssetReference()).friction : 0.5f;
+            body->setFriction(surfaceFriction);
+            if (rigidbodyEnabled)
+            {
+                body->setFriction(hasSurface ? surfaceFriction : rigidbody->GetFriction());
+                body->setRestitution(rigidbody->GetRestitution());
+                body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
+                body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
+                body->setGravity(rigidbody->UsesGravity() ? world.getGravity() : btVector3(0.0f, 0.0f, 0.0f));
+                if (rigidbody->HasFreezeRotation())
+                {
+                    body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
+                }
+            }
+            else
+            {
+                // Bullet multiplies the restitution of both contact bodies.
+                // Treat an unconfigured static collider as a neutral surface,
+                // allowing a dynamic body's restitution to define its bounce.
+                body->setRestitution(1.0f);
+            }
+
+            if (!dynamic && rigidbodyEnabled && rigidbody->IsKinematic())
+            {
+                body->setCollisionFlags(body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
+                body->setActivationState(DISABLE_DEACTIVATION);
+            }
+            if (dynamic)
+            {
+                body->setCcdMotionThreshold(0.0001f);
+                body->setCcdSweptSphereRadius(collider->GetCcdSweptSphereRadius(worldScale, rigidbody->GetCenterOfMass()));
+                body->setSleepingThresholds(0.1f, 0.1f);
+                // Dynamic bodies must be allowed to sleep. Disabling
+                // deactivation globally keeps resting spring-driven bodies awake
+                // forever and exposes persistent solver noise.
+                body->setActivationState(ACTIVE_TAG);
+            }
+
+            world.addRigidBody(body.get());
+            stepBody.motionState = std::move(motionState);
+            stepBody.body = std::move(body);
+            stepBody.synchronizedTransformRevision = entity.GetTransformRevision();
+            stepBody.synchronizedVelocityRevision = rigidbodyEnabled ? rigidbody->GetVelocityRevision() : 0;
+            stepBody.centerOfMassOffset = centerOfMassOffset;
+            stepBody.dynamic = dynamic;
+            return stepBody;
         }
 
         class IgnoringRayResultCallback : public btCollisionWorld::ClosestRayResultCallback
@@ -1669,9 +1561,9 @@ namespace PlutoGE::scene
 
         std::unique_ptr<BulletQueryWorld> world = std::make_unique<BulletQueryWorld>();
         uint64_t refreshSequence = kStaleSequence;
-        // Entity bodies may point at freed entities or carry outdated geometry: recreate them all on the next refresh.
-        // Foliage cells are unaffected; they synchronize on their own.
-        bool entityBodiesStale = false;
+        // Collider geometry changed in place (MarkColliderShapesDirty): the next refresh recreates every entity body,
+        // and the shape cache rebuilds only geometry whose source changed. Foliage cells synchronize on their own.
+        bool colliderShapesStale = false;
     };
 
     struct Scene::RuntimePhysicsState
@@ -1681,7 +1573,9 @@ namespace PlutoGE::scene
     };
 
     Scene::Scene()
-        : m_runtimeComponents(std::make_unique<RuntimeComponentIndex>()), m_uiSystem(std::make_unique<UISystem>())
+        : m_runtimeComponents(std::make_unique<RuntimeComponentIndex>()),
+          m_collisionShapes(std::make_unique<BulletShapeCache>()),
+          m_uiSystem(std::make_unique<UISystem>())
     {
         m_animationPoses = std::make_unique<AnimationPoseBatch>();
     }
@@ -1793,7 +1687,7 @@ namespace PlutoGE::scene
         source.m_entityStorage.clear();
         source.m_rootEntities.clear();
         source.m_entitiesById.clear();
-        InvalidatePhysicsQueryCache();
+        InvalidatePhysicsQueryMembership();
         InvalidateSectionNavigation();
     }
     void Scene::InvalidateSectionNavigation()
@@ -1855,44 +1749,37 @@ namespace PlutoGE::scene
     void Scene::RefreshPhysicsQueryMembership() const
     {
         m_runtimeComponents->Refresh(m_rootEntities);
-        std::vector<ColliderComponent *> queryColliders;
         std::vector<Entity *> queryEntities;
-        queryColliders.reserve(m_runtimeComponents->colliders.size());
         queryEntities.reserve(m_runtimeComponents->colliders.size());
         for (auto *collider : m_runtimeComponents->colliders)
             if (RuntimeComponentIndex::Active(collider) && !collider->IsTrigger())
-            {
-                queryColliders.push_back(collider);
                 queryEntities.push_back(collider->GetOwner());
-            }
 
         if (!m_physicsQueryCache)
             m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
         auto &world = *m_physicsQueryCache->world;
-        if (m_physicsQueryCache->entityBodiesStale)
+        // After an in-place geometry edit every body is recreated. The old ones are retired only afterwards, so the
+        // shapes they share with unchanged colliders are still alive for the new bodies to reuse.
+        std::vector<BulletQueryBody> replaced;
+        if (m_physicsQueryCache->colliderShapesStale)
         {
-            core::CpuScope rebuildScope("Physics query entity rebuild", core::CpuCategory::Physics);
-            for (auto &body : world.bodies)
-                if (body.object)
-                    world.collisionWorld.removeCollisionObject(body.object.get());
+            replaced = std::move(world.bodies);
             world.bodies.clear();
-            m_physicsQueryCache->entityBodiesStale = false;
+            m_physicsQueryCache->colliderShapesStale = false;
         }
 
-        bool changed = world.bodies.size() != queryEntities.size();
-        for (size_t index = 0; !changed && index < queryEntities.size(); ++index)
-        {
-            auto *entity = queryEntities[index];
-            changed = world.bodies[index].entity != entity ||
-                      world.bodies[index].configurationSignature !=
-                          ComputeRuntimePhysicsBodySignature(*entity, *queryColliders[index],
-                                                             entity->GetComponent<RigidbodyComponent>());
-        }
-        if (changed)
-        {
-            core::CpuScope membershipScope("Physics query membership update", core::CpuCategory::Physics);
-            SynchronizeBulletQueryBodies(world, queryEntities);
-        }
+        m_physicsSyncStats.queryBodiesCreated += ReconcileEntityBodies(
+            world.bodies, queryEntities, "Physics query membership update", QueryBodySignature,
+            [&](Entity &entity, uint64_t signature)
+            {
+                auto body = CreateBulletQueryBody(entity, signature, *m_collisionShapes);
+                if (body.object)
+                    world.collisionWorld.addCollisionObject(body.object.get());
+                return body;
+            },
+            [&](BulletQueryBody &body) { world.RetireBody(body); });
+        for (auto &body : replaced)
+            world.RetireBody(body);
         SynchronizeFoliageBodies(world.foliage, world.collisionWorld, m_foliageComponents);
     }
 
@@ -1918,12 +1805,25 @@ namespace PlutoGE::scene
         }
     }
 
-    void Scene::InvalidatePhysicsQueryCache() const
+    void Scene::InvalidatePhysicsQueryMembership() const
+    {
+        if (m_physicsQueryCache)
+            m_physicsQueryCache->refreshSequence = PhysicsQueryCache::kStaleSequence;
+    }
+
+    void Scene::MarkColliderShapesDirty() const
     {
         if (!m_physicsQueryCache)
             return;
-        m_physicsQueryCache->entityBodiesStale = true;
-        m_physicsQueryCache->refreshSequence = PhysicsQueryCache::kStaleSequence;
+        m_physicsQueryCache->colliderShapesStale = true;
+        InvalidatePhysicsQueryMembership();
+    }
+
+    PhysicsSynchronizationStats Scene::GetPhysicsSynchronizationStats() const
+    {
+        auto stats = m_physicsSyncStats;
+        stats.collisionShapesBuilt = m_collisionShapes->GetBuiltShapeCount();
+        return stats;
     }
 
     void Scene::ResetRuntimePhysicsState()
@@ -2040,122 +1940,12 @@ namespace PlutoGE::scene
         {
             auto *collider = entity ? entity->GetComponent<ColliderComponent>() : nullptr;
             if (!entity || !collider || !collider->IsEnabled() || collider->IsTrigger())
-            {
                 continue;
-            }
-
-            auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
-            const glm::vec3 worldScale = entity->GetWorldScale();
-            auto shapeData = CreateBulletShapeForEntity(*entity, *collider);
-            if (!shapeData.shape)
-            {
-                // Keep discovery and runtime-state indexing identical even
-                // when an enabled collider cannot currently produce a Bullet
-                // shape. Omitting it makes the body counts differ forever and
-                // causes the entire world (including ragdolls) to rebuild on
-                // every physics step.
-                const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
-                runtimeWorld->bodies.push_back(BulletStepBody{
-                    .entity = entity,
-                    .entityId = entity->GetID(),
-                    .collider = collider,
-                    .rigidbody = rigidbodyEnabled ? rigidbody : nullptr,
-                    .configurationSignature = ComputeRuntimePhysicsBodySignature(
-                        *entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
-                    .dynamic = false,
-                });
-                continue;
-            }
-
-            const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
-            const bool dynamic = rigidbodyEnabled && !rigidbody->IsKinematic();
-            const float mass = dynamic ? rigidbody->GetMass() : 0.0f;
-            const glm::vec3 scaledCenterOfMass = rigidbodyEnabled
-                                                     ? rigidbody->GetCenterOfMass() * worldScale
-                                                     : glm::vec3(0.0f);
-            const btVector3 centerOfMassOffset = ToBullet(scaledCenterOfMass);
-            if (rigidbodyEnabled && glm::length2(scaledCenterOfMass) > 0.00000001f)
-            {
-                auto compoundShape = std::make_unique<btCompoundShape>();
-                btTransform childTransform;
-                childTransform.setIdentity();
-                childTransform.setOrigin(-centerOfMassOffset);
-                compoundShape->addChildShape(childTransform, shapeData.shape.get());
-                shapeData.ownedChildShapes.push_back(std::move(shapeData.shape));
-                shapeData.shape = std::move(compoundShape);
-            }
-            btVector3 localInertia(0.0f, 0.0f, 0.0f);
-            if (mass > 0.0f)
-            {
-                shapeData.shape->calculateLocalInertia(mass, localInertia);
-            }
-
-            const btTransform startTransform = EntityToBodyTransform(*entity, centerOfMassOffset);
-
-            auto motionState = std::make_unique<btDefaultMotionState>(startTransform);
-            btRigidBody::btRigidBodyConstructionInfo constructionInfo(mass, motionState.get(), shapeData.shape.get(), localInertia);
-            constructionInfo.m_linearDamping = rigidbodyEnabled ? rigidbody->GetLinearDrag() : 0.0f;
-            constructionInfo.m_angularDamping = rigidbodyEnabled ? rigidbody->GetAngularDrag() : 0.0f;
-            auto body = std::make_unique<btRigidBody>(constructionInfo);
-            body->setUserPointer(entity);
-            const bool hasSurface = !collider->GetSurfaceAssetReference().empty();
-            const float surfaceFriction = hasSurface ? core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider->GetSurfaceAssetReference()).friction : 0.5f;
-            body->setFriction(surfaceFriction);
-            if (rigidbodyEnabled)
-            {
-                body->setFriction(hasSurface ? surfaceFriction : rigidbody->GetFriction());
-                body->setRestitution(rigidbody->GetRestitution());
-                body->setLinearVelocity(ToBullet(rigidbody->GetVelocity()));
-                body->setAngularVelocity(rigidbody->HasFreezeRotation() ? btVector3(0.0f, 0.0f, 0.0f) : ToBullet(rigidbody->GetAngularVelocity()));
-                body->setGravity(rigidbody->UsesGravity() ? runtimeWorld->dynamicsWorld.getGravity() : btVector3(0.0f, 0.0f, 0.0f));
-                if (rigidbody->HasFreezeRotation())
-                {
-                    body->setAngularFactor(btVector3(0.0f, 0.0f, 0.0f));
-                }
-            }
-            else
-            {
-                // Bullet multiplies the restitution of both contact bodies.
-                // Treat an unconfigured static collider as a neutral surface,
-                // allowing a dynamic body's restitution to define its bounce.
-                body->setRestitution(1.0f);
-            }
-
-            if (!dynamic && rigidbodyEnabled && rigidbody->IsKinematic())
-            {
-                body->setCollisionFlags(body->getCollisionFlags() | btCollisionObject::CF_KINEMATIC_OBJECT);
-                body->setActivationState(DISABLE_DEACTIVATION);
-            }
-            if (dynamic)
-            {
-                body->setCcdMotionThreshold(0.0001f);
-                body->setCcdSweptSphereRadius(collider->GetCcdSweptSphereRadius(worldScale, rigidbody->GetCenterOfMass()));
-                body->setSleepingThresholds(0.1f, 0.1f);
-                // Dynamic bodies must be allowed to sleep. Disabling
-                // deactivation globally keeps resting spring-driven bodies awake
-                // forever and exposes persistent solver noise.
-                body->setActivationState(ACTIVE_TAG);
-            }
-
-            runtimeWorld->dynamicsWorld.addRigidBody(body.get());
-            runtimeWorld->bodies.push_back(BulletStepBody{
-                .entity = entity,
-                .entityId = entity->GetID(),
-                .collider = collider,
-                .rigidbody = rigidbodyEnabled ? rigidbody : nullptr,
-                .triangleMeshes = std::move(shapeData.ownedTriangleMeshes),
-                .shape = std::move(shapeData.shape),
-                .childShapes = std::move(shapeData.ownedChildShapes),
-                .heightfieldData = std::move(shapeData.ownedHeightfieldData),
-                .motionState = std::move(motionState),
-                .body = std::move(body),
-                .configurationSignature = ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr),
-                .synchronizedTransformRevision = entity->GetTransformRevision(),
-                .synchronizedVelocityRevision = rigidbodyEnabled ? rigidbody->GetVelocityRevision() : 0,
-                .centerOfMassOffset = centerOfMassOffset,
-                .dynamic = dynamic,
-            });
+            runtimeWorld->bodies.push_back(CreateRuntimeStepBody(*entity, RuntimeStepBodySignature(*entity),
+                                                                 runtimeWorld->dynamicsWorld, *m_collisionShapes));
         }
+        m_physicsSyncStats.simulationBodiesCreated += runtimeWorld->bodies.size();
+        ++m_physicsSyncStats.simulationWorldRebuilds;
 
         // Foliage cells carry over from the world being replaced, so an entity change never rebuilds them.
         if (m_runtimePhysicsState->world)
@@ -3032,12 +2822,8 @@ namespace PlutoGE::scene
         }
         NoteStructureChanged();
 
-        const bool affectsPhysics = EntitySubtreeContainsPhysicsCollider(entity);
-        if (affectsPhysics)
-        {
-            // Bullet query objects store pointers to collider entities.
-            InvalidatePhysicsQueryCache();
-        }
+        if (EntitySubtreeContainsPhysicsCollider(entity))
+            InvalidatePhysicsQueryMembership();
 
         // Check if the entity is a root entity
         auto it = std::find(m_rootEntities.begin(), m_rootEntities.end(), entity);
@@ -3091,7 +2877,12 @@ namespace PlutoGE::scene
             world.foliage.RemoveOwnedBy(world.dynamicsWorld, entitySet);
         }
         if (m_physicsQueryCache)
-            m_physicsQueryCache->world->foliage.RemoveOwnedBy(m_physicsQueryCache->world->collisionWorld, entitySet);
+        {
+            // Bullet query objects store pointers to collider entities: drop them before the entities are freed.
+            auto &queryWorld = *m_physicsQueryCache->world;
+            queryWorld.RemoveEntityBodies(entitySet);
+            queryWorld.foliage.RemoveOwnedBy(queryWorld.collisionWorld, entitySet);
+        }
         std::vector<EntityID> removedInstanceRoots;
         for (const auto *removed : subtree)
             if (m_staticModelInstances.contains(removed->GetID()))
@@ -3164,13 +2955,10 @@ namespace PlutoGE::scene
 
         const bool affectsPhysics = EntitySubtreeContainsPhysicsCollider(entity);
         entity->SetActive(false);
+        // Deactivated colliders leave the query world on the next query. Their storage stays valid until the deferred
+        // RemoveEntity, which drops their bodies before freeing them.
         if (affectsPhysics)
-        {
-            // Force query membership synchronization now. Storage remains valid
-            // until RemoveEntity invalidates the cache before deferred deletion.
-            if (m_physicsQueryCache)
-                m_physicsQueryCache->refreshSequence = std::numeric_limits<uint64_t>::max();
-        }
+            InvalidatePhysicsQueryMembership();
         m_pendingDestroyEntityIds.insert(entityId);
         m_pendingDestroyEntities.push_back(entityId);
         return true;
@@ -4521,7 +4309,7 @@ namespace PlutoGE::scene
         {
             if (body.entity == &entity)
             {
-                resolveSweepShape(body.shape.get());
+                resolveSweepShape(body.shape ? body.shape->Get() : nullptr);
                 break;
             }
         }
@@ -4529,7 +4317,7 @@ namespace PlutoGE::scene
         BulletShapeData fallbackShapeData;
         if (!convexShape)
         {
-            fallbackShapeData = CreateBulletShapeForEntity(entity, *collider);
+            fallbackShapeData = detail::BuildColliderShape(entity, *collider);
             resolveSweepShape(fallbackShapeData.shape.get());
         }
         if (!convexShape)
@@ -4782,53 +4570,20 @@ namespace PlutoGE::scene
         if (!rebuildRuntimePhysics)
         {
             auto &world = *m_runtimePhysicsState->world;
-            auto &existingBodies = world.bodies;
-            // Death/deactivation usually only removes a collider. Preserve all
-            // surviving Bullet bodies (and their mesh shapes and simulation
-            // state) instead of rebuilding the entire world for that removal.
-            if (existingBodies.size() > physicsEntities.size())
-            {
-                const std::unordered_set<Entity *> active(physicsEntities.begin(), physicsEntities.end());
-                std::erase_if(existingBodies, [&](BulletStepBody &body)
-                              {
-                    if (active.contains(body.entity)) return false;
-                    if (body.body) world.dynamicsWorld.removeRigidBody(body.body.get());
-                    return true; });
-            }
-            const size_t entityBodyCount = existingBodies.size();
-            if (entityBodyCount != physicsEntities.size())
-            {
-                std::ostringstream message;
-                message << "[Ragdoll] rebuilding: physics body count stored=" << entityBodyCount
-                        << " discovered=" << physicsEntities.size();
-                LogRagdollDiagnostic(message.str());
-                rebuildRuntimePhysics = true;
-            }
-            else
-            {
-                for (size_t index = 0; index < physicsEntities.size(); ++index)
+            // Spawns, removals and reconfigured colliders replace only their own bodies: every other body keeps its
+            // shape, contacts and simulation state.
+            m_physicsSyncStats.simulationBodiesCreated += ReconcileEntityBodies(
+                world.bodies, physicsEntities, "Physics simulation membership update", RuntimeStepBodySignature,
+                [&](Entity &entity, uint64_t signature)
+                { return CreateRuntimeStepBody(entity, signature, world.dynamicsWorld, *m_collisionShapes); },
+                [&](BulletStepBody &body)
                 {
-                    auto *entity = physicsEntities[index];
-                    auto *collider = entity->GetComponent<ColliderComponent>();
-                    auto *rigidbody = entity->GetComponent<RigidbodyComponent>();
-                    const bool rigidbodyEnabled = rigidbody && rigidbody->IsEnabled();
-                    if (existingBodies[index].entity != entity ||
-                        existingBodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(*entity, *collider, rigidbodyEnabled ? rigidbody : nullptr))
-                    {
-                        std::ostringstream message;
-                        message << "[Ragdoll] rebuilding: physics body changed index=" << index
-                                << " entity=" << entity->GetID()
-                                << " identityChanged=" << (existingBodies[index].entity != entity)
-                                << " signatureChanged="
-                                << (existingBodies[index].configurationSignature != ComputeRuntimePhysicsBodySignature(
-                                                                                        *entity, *collider, rigidbodyEnabled ? rigidbody : nullptr));
-                        LogRagdollDiagnostic(message.str());
-                        rebuildRuntimePhysics = true;
-                        break;
-                    }
-                }
-            }
-            if (!rebuildRuntimePhysics)
+                    if (body.body)
+                        world.dynamicsWorld.removeRigidBody(body.body.get());
+                });
+
+            // Ragdolls are built against the whole world, so a ragdoll change still replaces it; the shape cache
+            // keeps that cheap.
             {
                 const auto &existingRagdolls = m_runtimePhysicsState->world->ragdolls;
                 if (existingRagdolls.size() != activeRagdolls.size())
@@ -5319,7 +5074,7 @@ namespace PlutoGE::scene
     {
         struct Shape
         {
-            BulletShapeData data;
+            SharedBulletShape shape;
             uint64_t signature = 0;
         };
         std::unordered_map<EntityID, Shape> shapes;
@@ -5348,16 +5103,16 @@ namespace PlutoGE::scene
             liveTriggers.insert(trigger->GetID());
             auto &shape = state.shapes[trigger->GetID()];
             const auto signature = ComputeRuntimePhysicsBodySignature(*trigger, *collider, trigger->GetComponent<RigidbodyComponent>());
-            if (!shape.data.shape || shape.signature != signature)
+            if (!shape.shape || shape.signature != signature)
             {
-                shape.data = CreateBulletShapeForEntity(*trigger, *collider);
+                shape.shape = m_collisionShapes->Acquire(*trigger, *collider);
                 shape.signature = signature;
             }
-            if (!shape.data.shape)
+            if (!shape.shape)
                 continue;
 
             btCollisionObject probe;
-            probe.setCollisionShape(shape.data.shape.get());
+            probe.setCollisionShape(shape.shape->Get());
             btTransform transform;
             transform.setIdentity();
             transform.setOrigin(ToBullet(trigger->GetWorldPosition()));

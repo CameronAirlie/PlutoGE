@@ -32,6 +32,23 @@ public sealed class MeshComponent : ComponentReference
         set => ScriptBridge.SetMeshEmission(EntityId, value);
     }
 
+    /// <summary>
+    /// Joints of a skinned mesh hidden from cameras, each with every joint below it: cameras draw the mesh without the
+    /// geometry they carry, while its shadow stays whole and bone queries still read the full pose. Names resolve like
+    /// bone queries (exact names, then humanoid aliases such as "Head"). A first-person body hides its head this way.
+    /// Empty draws the mesh normally. Reads empty, and ignores writes, on hosts without it
+    /// (<see cref="SupportsCameraHiddenJoints"/>).
+    /// </summary>
+    public string[] CameraHiddenJoints
+    {
+        get => ScriptBridge.GetMeshCameraHiddenJoints(EntityId)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        set => ScriptBridge.SetMeshCameraHiddenJoints(EntityId, string.Join(",", value ?? Array.Empty<string>()));
+    }
+
+    /// <summary>True when the host can hide a mesh's joints from cameras (<see cref="CameraHiddenJoints"/>).</summary>
+    public static bool SupportsCameraHiddenJoints => ScriptBridge.IsMeshCameraHiddenJointsSupported;
+
     /// <summary>True when the host can take script-built geometry (<see cref="SetGeometry"/>).</summary>
     public static bool SupportsGeometry => ScriptBridge.IsMeshGeometrySupported;
 

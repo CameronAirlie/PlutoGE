@@ -45,6 +45,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Monitors, mirrors and in-world screens | [Render textures](RENDER_TEXTURES.md) |
 | Character animation state machines and blending | [Animation graphs](ANIMATION_GRAPHS.md) |
 | Two-bone IK and props attached to bones | [Skeletal IK and attachments](SKELETAL_IK.md) |
+| First-person bodies (joints hidden from cameras, shadow kept) | [Skeletal IK: hiding joints](SKELETAL_IK.md#hiding-joints-from-cameras) |
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
@@ -69,6 +70,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Dedicated servers without a window | [Headless servers](HEADLESS_SERVERS.md) |
 | Loading screens and scene transitions | [Scene loading](scene-loading.md) |
 | Measuring performance | [Profiler](PROFILER.md) |
+| Frame rate limit, delta time and mouse input pacing | [Frame pacing](FRAME_PACING.md) |
 | Rendering diagnostics | [Geometry profiling](GEOMETRY_PROFILING.md), [occlusion culling](OCCLUSION_CULLING.md) |
 | Player window modes | [Fullscreen and window settings](window-fullscreen.md) |
 | Quality levels players can choose | [Graphics presets](GraphicsPresets.md) |

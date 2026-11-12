@@ -432,6 +432,15 @@ int RunRuntime(int argc, char **argv)
             .fullscreen = false,
         }};
     config.vSync = projectBenchmark ? false : project->GetManifest().vSyncEnabled;
+    // The project's frame limit; PLUTO_MAX_FPS=<fps> overrides it (0 for unlimited). Benchmarks are never limited.
+    config.framePacing.maxFrameRate = project->GetManifest().maxFrameRate;
+    if (const char *maxFps = std::getenv("PLUTO_MAX_FPS"))
+    {
+        try { config.framePacing.maxFrameRate = std::stod(maxFps); }
+        catch (const std::exception &) { std::cerr << "Ignoring invalid PLUTO_MAX_FPS: " << maxFps << std::endl; }
+    }
+    if (projectBenchmark)
+        config.framePacing.maxFrameRate = 0.0;
     config.enableProfiling = profilerEnabled;
     config.graphicsApi = project->GetManifest().graphicsApi;
     config.temporalUpscaler = project->GetManifest().GetTemporalUpscalerOptions();
@@ -542,7 +551,6 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.Log(std::string("Startup camera present: ") + (PlutoGE::FindBaseCamera(scene.get()) ? "yes" : "no"));
 #endif
 
-    auto lastFrameTime = std::chrono::high_resolution_clock::now();
     auto &renderScene = engine.GetRenderScene();
     auto &window = engine.GetWindow();
     const auto &runtimeManifest = project->GetManifest();
@@ -600,11 +608,14 @@ int RunRuntime(int argc, char **argv)
     {
         PlutoGE::core::CpuTrace cpuTrace(runtimeProfiler && runtimeProfiler->profiler.IsRecording());
         PlutoGE::ui::EditorFrameTimingStats frameTiming;
+        // Waits out the frame limit before input is read, and measures the delta from frame start to frame start
+        // (so input polling and other work inside the frame never shift it). Captured frame times exclude the wait.
+        const auto pacing = engine.BeginFrame();
         const auto frameStart = std::chrono::high_resolution_clock::now();
         window.PollEvents();
         const auto currentFrameTime = std::chrono::high_resolution_clock::now();
-        const float deltaTime = projectBenchmark ? PlutoGE::ProjectBenchmarkOptions::FixedDelta : std::chrono::duration<float>(currentFrameTime - lastFrameTime).count();
-        lastFrameTime = currentFrameTime;
+        const float deltaTime = projectBenchmark ? PlutoGE::ProjectBenchmarkOptions::FixedDelta
+                                                 : static_cast<float>(pacing.deltaSeconds);
 
 #ifdef _WIN32
         PlutoGE::g_runtimeDiagnostics.currentPhase = "scene update";
@@ -645,7 +656,7 @@ int RunRuntime(int argc, char **argv)
                 }))
                 std::cerr << "Scene transition failed: " << engine.GetSceneLoading().Status().error << std::endl;
             // Loading uses wall time; do not feed that time into the next physics step.
-            lastFrameTime = std::chrono::high_resolution_clock::now();
+            engine.GetFramePacer().Rebase();
             renderScene.ClearRenderCommands();
             // Keep the loading frame visible until the new scene has submitted
             // its first frame's commands; never present an empty transition frame.
@@ -740,6 +751,11 @@ int RunRuntime(int argc, char **argv)
             const auto frameEnd = std::chrono::high_resolution_clock::now();
             frameTiming.viewportRenderMs = std::chrono::duration<float, std::milli>(frameEnd - updateEnd).count();
             frameTiming.eventPollingMs = std::chrono::duration<float, std::milli>(currentFrameTime - frameStart).count();
+            frameTiming.mouseReports = window.GetLastPollMouseReports();
+            frameTiming.framePacingWaitMs = static_cast<float>(pacing.waitedSeconds * 1000.0);
+            frameTiming.frameDeltaMs = static_cast<float>(pacing.deltaSeconds * 1000.0);
+            frameTiming.measuredFrameIntervalMs = static_cast<float>(pacing.measuredSeconds * 1000.0);
+            frameTiming.maxFrameRate = static_cast<float>(engine.GetMaxFrameRate());
             frameTiming.gameViewportWidth = windowExtents.width;
             frameTiming.gameViewportHeight = windowExtents.height;
             frameTiming.renderedViewportCount = 1;

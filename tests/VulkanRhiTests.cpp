@@ -458,6 +458,7 @@ int main(int argc, char **argv)
         {
             CheckCameraStackComposite(device, shaders);
             CheckCameraLightFiltering(device, shaders);
+            CheckShadowOnlyCommands(device, shaders, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--disabled-effects")

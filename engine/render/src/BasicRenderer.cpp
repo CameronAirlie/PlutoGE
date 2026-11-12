@@ -1,6 +1,7 @@
 #include "PlutoGE/render/VctRelighting.h"
 #include "PlutoGE/render/SkyEnvironmentConfig.h"
 #include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/core/FrameRetainedCache.h"
 #include "PlutoGE/core/TaskPool.h"
 #include "ParallelRecording.h"
 #include "GeometryArena.h"
@@ -789,7 +790,12 @@ namespace PlutoGE::render
         }
     }
 
-    BasicRenderer::BasicRenderer()
+    struct BasicRenderer::ShadowSignatureCache : core::FrameRetainedCache<std::uint64_t, ShadowSignatureEntry>
+    {
+        ShadowSignatureCache() : FrameRetainedCache({.retainFrames = 240, .sweepFrames = 64}) {}
+    };
+
+    BasicRenderer::BasicRenderer() : m_shadowSignatureCache(std::make_unique<ShadowSignatureCache>())
     {
         // PLUTO_DEFERRED_LOCAL_LIGHTS=0 lights local lights in every surface shader, for comparisons.
         if (const char *value = std::getenv("PLUTO_DEFERRED_LOCAL_LIGHTS"); value && std::string_view(value) == "0")
@@ -1852,7 +1858,7 @@ namespace PlutoGE::render
         m_maskedShadowPipeline.Reset();
         m_maskedShadowInstancedPipeline.Reset();
         m_shadowMaterialBuffers.clear();
-        m_shadowSignatureCache.clear();
+        m_shadowSignatureCache->Clear();
         m_displayPipeline.Reset();
         m_outlines.reset();
         m_outlineLayers = {};
@@ -2403,9 +2409,8 @@ namespace PlutoGE::render
         if (virtualShadowsActive || cascadedShadowsActive || !lighting.pointLights.empty())
         {
             core::CpuScope signatureScope("Shadow signatures", core::CpuCategory::Rendering);
-            // Entries survive this many frames unused, so casters leaving and re-entering reach keep theirs.
-            constexpr std::uint64_t SignatureRetainFrames = 240, SignatureSweepInterval = 64;
-            const auto frame = ++m_shadowSignatureFrame;
+            // Entries survive a while unused (the cache's retention), so casters leaving and re-entering reach keep theirs.
+            m_shadowSignatureCache->BeginFrame();
             m_shadowDrawSignatures.assign(shadowDraws.size(), 0);
             m_shadowStillSignatures.assign(shadowDraws.size(), 0);
             for (std::size_t index = 0; index < shadowDraws.size(); ++index)
@@ -2416,10 +2421,9 @@ namespace PlutoGE::render
                         const auto meshRevision = draw.mesh->GetRevision();
                         if (draw.preparationRevision)
                         {
-                            auto &cached = m_shadowSignatureCache[draw.preparationRevision];
-                            if (!cached.lastUsed || cached.meshRevision != meshRevision)
-                                cached = {meshRevision, ShadowDrawSignature(draw), frame};
-                            cached.lastUsed = frame;
+                            auto [cached, created] = m_shadowSignatureCache->Use(draw.preparationRevision);
+                            if (created || cached.meshRevision != meshRevision)
+                                cached = {meshRevision, ShadowDrawSignature(draw)};
                             m_shadowDrawSignatures[index] = cached.signature;
                         }
                         else
@@ -2443,9 +2447,7 @@ namespace PlutoGE::render
                     }
                     }
             }
-            if (frame % SignatureSweepInterval == 0)
-                std::erase_if(m_shadowSignatureCache, [&](const auto &entry)
-                    { return entry.second.lastUsed + SignatureRetainFrames < frame; });
+            m_shadowSignatureCache->Sweep();
         }
         if (virtualShadowsActive)
         {

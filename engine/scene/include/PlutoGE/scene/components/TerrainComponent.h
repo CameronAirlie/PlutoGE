@@ -63,6 +63,8 @@ namespace PlutoGE::scene
         bool PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime);
         bool Raycast(const glm::vec3 &worldOrigin, const glm::vec3 &worldDirection, glm::vec3 &worldHitPoint) const;
         const std::vector<float> &GetHeightSamples() const { return m_heights; }
+        // Bumped by every change to the height samples (collision shape caches rebuild on it).
+        std::uint64_t GetHeightsRevision() const { return m_heightsRevision; }
 
         void SetSize(int width, int depth);
         int GetWidth() const { return m_width; }

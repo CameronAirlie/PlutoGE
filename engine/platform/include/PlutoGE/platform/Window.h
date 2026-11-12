@@ -8,6 +8,7 @@
 #include <vector>
 #include "PlutoGE/platform/CustomWindowFrame.h"
 #include "PlutoGE/platform/InputState.h"
+#include "PlutoGE/platform/RelativeMouseInput.h"
 
 struct GLFWwindow;
 struct GLFWcursor;
@@ -64,6 +65,8 @@ namespace PlutoGE::platform
         [[nodiscard]] bool IsOpen() const;
         [[nodiscard]] bool ShouldClose() const;
         [[nodiscard]] WindowExtents GetExtents() const;
+        // Refresh rate (Hz) of the monitor showing most of the window, or 0 when unknown.
+        [[nodiscard]] double GetDisplayRefreshRate() const;
         [[nodiscard]] void *GetWindow() const;
         [[nodiscard]] WindowClientApi GetClientApi() const { return m_config.clientApi; }
         // Null unless WindowConfig::customTitleBar was requested and attached.
@@ -73,6 +76,9 @@ namespace PlutoGE::platform
         [[nodiscard]] bool IsCursorLockRequested() const { return m_requestedScriptCursorLocked; }
         [[nodiscard]] bool IsCursorLockOverridden() const { return m_forceCursorVisible; }
         [[nodiscard]] bool IsScriptInputEnabled() const { return m_isScriptInputEnabled; }
+        // Raw mouse reports folded into the last poll's locked-cursor motion (0 when motion came from the window's
+        // own event queue). A diagnostic of the mouse's report rate at the frame rate.
+        [[nodiscard]] std::uint32_t GetLastPollMouseReports() const { return m_lastPollMouseReports; }
         // Files dropped onto the window from the OS during the last PollEvents.
         // Valid until the next poll; consumers check where the cursor is.
         [[nodiscard]] const std::vector<std::filesystem::path> &GetDroppedPaths() const { return m_droppedPaths; }
@@ -122,7 +128,13 @@ namespace PlutoGE::platform
         // Transparent cursor shown while a lock is confined rather than disabled.
         GLFWcursor *m_invisibleCursor = nullptr;
         bool m_isCursorConfined = false;
+        // Locked-cursor motion read away from the event queue (see RelativeMouseInput). Created on the first lock,
+        // since raw input has one target per process; without it GLFW's raw motion is used.
+        std::unique_ptr<RelativeMouseInput> m_relativeMouse;
+        bool m_relativeMouseUnavailable = false;
+        std::uint32_t m_lastPollMouseReports = 0;
 
         void ApplyCursorMode();
+        void UpdateRelativeMouseCapture();
     };
 }

@@ -828,6 +828,14 @@ namespace PlutoGE::assets
                 continue;
             }
 
+            if (tokens[0] == "MAX_FRAME_RATE" && tokens.size() >= 2)
+            {
+                float rate = 0.0f;
+                if (ParseFloat(tokens[1], rate) && std::isfinite(rate))
+                    manifest.maxFrameRate = std::max(rate, 0.0f);
+                continue;
+            }
+
             if (tokens[0] == "GRAPHICS_API" && tokens.size() >= 2)
             {
                 manifest.graphicsApi = tokens[1] == "Vulkan"
@@ -1202,6 +1210,7 @@ namespace PlutoGE::assets
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
         output << "WINDOW_SIZE\t" << m_manifest.windowWidth << '\t' << m_manifest.windowHeight << '\n';
         output << "VSYNC\t" << (m_manifest.vSyncEnabled ? 1 : 0) << '\n';
+        output << "MAX_FRAME_RATE\t" << m_manifest.maxFrameRate << '\n';
         output << "GRAPHICS_API\t"
                << (m_manifest.graphicsApi == render::rhi::GraphicsApi::Vulkan ? "Vulkan" : "OpenGL") << '\n';
         output << "RUNTIME_UPSCALER\t"

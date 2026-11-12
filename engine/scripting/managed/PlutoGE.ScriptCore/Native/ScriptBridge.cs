@@ -544,6 +544,9 @@ internal static unsafe partial class ScriptBridge
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setLightColor;
     private static delegate* unmanaged[Cdecl]<uint, int> _getMeshStatic;
     private static delegate* unmanaged[Cdecl]<uint, int, void> _setMeshStatic;
+    /// <summary>Optional: without it, <see cref="MeshComponent.CameraHiddenJoints"/> reads empty and ignores writes.</summary>
+    private static delegate* unmanaged[Cdecl]<uint, nint> _getMeshCameraHiddenJoints;
+    private static delegate* unmanaged[Cdecl]<uint, byte*, void> _setMeshCameraHiddenJoints;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshColor;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3, void> _setMeshColor;
     private static delegate* unmanaged[Cdecl]<uint, NativeVector3> _getMeshEmission;
@@ -1058,6 +1061,20 @@ internal static unsafe partial class ScriptBridge
     internal static bool SetDisplayVSync(bool value) => _setDisplayVSync != null && _setDisplayVSync(value ? 1 : 0) != 0;
     internal static bool SetSceneShadowResolution(int resolution) => _setSceneShadowResolution != null && _setSceneShadowResolution(resolution) != 0;
 
+    private static delegate* unmanaged[Cdecl]<double> _getFrameRateLimit;
+    private static delegate* unmanaged[Cdecl]<double, int> _setFrameRateLimit;
+    internal static bool FramePacingSupported => _getFrameRateLimit != null && _setFrameRateLimit != null;
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterFramePacingApi")]
+    public static int RegisterFramePacingApi(delegate* unmanaged[Cdecl]<double> getLimit, delegate* unmanaged[Cdecl]<double, int> setLimit)
+    {
+        if (getLimit == null || setLimit == null) return 0;
+        _getFrameRateLimit = getLimit;
+        _setFrameRateLimit = setLimit;
+        return 1;
+    }
+    internal static double GetFrameRateLimit() => _getFrameRateLimit != null ? _getFrameRateLimit() : 0.0;
+    internal static bool SetFrameRateLimit(double framesPerSecond) => _setFrameRateLimit != null && _setFrameRateLimit(framesPerSecond) != 0;
+
     private static delegate* unmanaged[Cdecl]<int> _getWindowFullscreen;
     private static delegate* unmanaged[Cdecl]<int*, int*, int> _getWindowedSize;
     private static delegate* unmanaged[Cdecl]<int*, int*, int> _getWindowedSizeLimit;
@@ -1211,6 +1228,24 @@ internal static unsafe partial class ScriptBridge
         _setMeshColor = setMeshColor;
         _getMeshEmission = getMeshEmission;
         _setMeshEmission = setMeshEmission;
+        _lastError = string.Empty;
+        return 1;
+    }
+
+    /// <summary>Optional: hosts without it cannot hide a mesh's joints from cameras.</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterMeshCameraHiddenJointsApi")]
+    public static int RegisterMeshCameraHiddenJointsApi(
+        delegate* unmanaged[Cdecl]<uint, nint> getMeshCameraHiddenJoints,
+        delegate* unmanaged[Cdecl]<uint, byte*, void> setMeshCameraHiddenJoints)
+    {
+        if (getMeshCameraHiddenJoints == null || setMeshCameraHiddenJoints == null)
+        {
+            SetError("Managed mesh camera hidden joints API registration received a null function pointer.");
+            return 0;
+        }
+
+        _getMeshCameraHiddenJoints = getMeshCameraHiddenJoints;
+        _setMeshCameraHiddenJoints = setMeshCameraHiddenJoints;
         _lastError = string.Empty;
         return 1;
     }
@@ -2798,6 +2833,20 @@ internal static unsafe partial class ScriptBridge
         }
 
         _setLightColor(entityId, NativeVector3.FromManaged(color));
+    }
+
+    internal static bool IsMeshCameraHiddenJointsSupported => _setMeshCameraHiddenJoints != null;
+
+    internal static string GetMeshCameraHiddenJoints(uint entityId) =>
+        _getMeshCameraHiddenJoints == null ? string.Empty
+            : Marshal.PtrToStringUTF8(_getMeshCameraHiddenJoints(entityId)) ?? string.Empty;
+
+    internal static void SetMeshCameraHiddenJoints(uint entityId, string joints)
+    {
+        if (_setMeshCameraHiddenJoints == null)
+            return;
+        var bytes = Encoding.UTF8.GetBytes(joints + '\0');
+        fixed (byte* jointsPtr = bytes) _setMeshCameraHiddenJoints(entityId, jointsPtr);
     }
 
     internal static bool GetMeshStatic(uint entityId)

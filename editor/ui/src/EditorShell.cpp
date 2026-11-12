@@ -3846,6 +3846,7 @@ namespace PlutoGE::ui
         int projectWindowWidth = 1280;
         int projectWindowHeight = 720;
         bool projectVSyncEnabled = true;
+        int projectMaxFrameRate = 0;
         render::rhi::GraphicsApi projectGraphicsApi = render::rhi::GraphicsApi::OpenGL;
         assets::RuntimeUpscalerMode projectRuntimeUpscaler = assets::RuntimeUpscalerMode::None;
         float projectRuntimeRenderScale = 1.0f;
@@ -3890,6 +3891,7 @@ namespace PlutoGE::ui
             projectWindowWidth = manifest.windowWidth;
             projectWindowHeight = manifest.windowHeight;
             projectVSyncEnabled = manifest.vSyncEnabled;
+            projectMaxFrameRate = static_cast<int>(std::lround(manifest.maxFrameRate));
             projectGraphicsApi = manifest.graphicsApi;
             projectRuntimeUpscaler = manifest.runtimeUpscaler;
             projectRuntimeRenderScale = manifest.runtimeRenderScale;
@@ -3966,6 +3968,7 @@ namespace PlutoGE::ui
             eventsScope.End();
             const auto pollEventsEnd = std::chrono::high_resolution_clock::now();
             frameTimingStats.eventPollingMs = std::chrono::duration<float, std::milli>(pollEventsEnd - pollEventsStart).count();
+            frameTimingStats.mouseReports = window.GetLastPollMouseReports();
 #ifdef _WIN32
             const auto threadCpuStart = threadCpuTicks();
             ULONG64 threadCyclesStart = 0;
@@ -5137,6 +5140,12 @@ namespace PlutoGE::ui
                             ImGui::InputInt("##WindowHeight", &projectWindowHeight, 0);
                             widgets::SettingsRow("VSync", "Synchronise presentation with the display refresh rate. Also applies to the editor.");
                             widgets::ToggleSwitch("##VSync", &projectVSyncEnabled);
+                            widgets::SettingsRow("Frame rate limit",
+                                                 "Caps the built game's frame rate (0 = unlimited). Frames start evenly paced "
+                                                 "and input is read after the wait; prefer this to driver limiters.");
+                            ImGui::SetNextItemWidth(-FLT_MIN);
+                            if (ImGui::InputInt("##MaxFrameRate", &projectMaxFrameRate, 0))
+                                projectMaxFrameRate = (std::max)(projectMaxFrameRate, 0);
                             widgets::EndSettingsTable();
                         }
                         widgets::EndCard();
@@ -5473,6 +5482,7 @@ namespace PlutoGE::ui
                         manifest.windowWidth = (std::max)(projectWindowWidth, 64);
                         manifest.windowHeight = (std::max)(projectWindowHeight, 64);
                         manifest.vSyncEnabled = projectVSyncEnabled;
+                        manifest.maxFrameRate = static_cast<float>(core::FramePacingSettings::SanitizeFrameRate(projectMaxFrameRate));
                         manifest.graphicsApi = projectGraphicsApi;
                         manifest.runtimeUpscaler = projectRuntimeUpscaler;
                         manifest.runtimeRenderScale = std::clamp(projectRuntimeRenderScale, 0.5f, 1.0f);

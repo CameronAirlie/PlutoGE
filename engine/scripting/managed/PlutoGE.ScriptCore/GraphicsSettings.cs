@@ -35,6 +35,20 @@ public static class GraphicsSettings
     public static bool IsSupported => Native.ScriptBridge.DisplaySettingsSupported;
     public static bool VSyncEnabled => Native.ScriptBridge.GetDisplayVSync();
     public static bool TrySetVSync(bool enabled) => Native.ScriptBridge.SetDisplayVSync(enabled);
+    /// <summary>
+    /// The built game's frame rate limit in frames per second; 0 when unlimited. Starts at the project's
+    /// Frame rate limit setting. The editor paces its own frames, so the limit applies to built games only.
+    /// </summary>
+    public static float MaxFrameRate => (float)Native.ScriptBridge.GetFrameRateLimit();
+    /// <summary>
+    /// Limits the frame rate (0 removes the limit). Limits are clamped to 10-1000 frames per second. Frames are
+    /// started evenly and input is read after the wait, which paces more smoothly than a driver limiter.
+    /// </summary>
+    public static bool TrySetMaxFrameRate(float framesPerSecond)
+    {
+        if (!float.IsFinite(framesPerSecond) || framesPerSecond < 0) throw new ArgumentOutOfRangeException(nameof(framesPerSecond));
+        return Native.ScriptBridge.SetFrameRateLimit(framesPerSecond);
+    }
     /// <summary>Sets the base directional shadow-map resolution for active lights in the current scene.</summary>
     public static bool TrySetDirectionalShadowResolution(int resolution)
     {

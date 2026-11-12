@@ -1,5 +1,6 @@
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/core/CpuTrace.h"
+#include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include <cstring>
@@ -136,6 +137,9 @@ namespace PlutoGE::scripting
         using register_mesh_component_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *, void *, void *);
         using register_mesh_geometry_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
         using register_prefab_spawn_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using register_mesh_camera_hidden_joints_api_fn = int(PLUTO_HOST_CALL *)(void *, void *);
+        using get_mesh_camera_hidden_joints_fn = const char *(PLUTO_HOST_CALL *)(uint32_t);
+        using set_mesh_camera_hidden_joints_fn = void(PLUTO_HOST_CALL *)(uint32_t, const char *);
         using register_time_api_fn = int(PLUTO_HOST_CALL *)(void *);
         using register_physics_query_api_fn = int(PLUTO_HOST_CALL *)(void *, void *, void *, void *);
         using register_entity_lifetime_api_fn = int(PLUTO_HOST_CALL *)(void *);
@@ -1693,6 +1697,13 @@ namespace PlutoGE::scripting
             try { return core::Engine::GetInstance().SetVSyncEnabled(enabled != 0) ? 1 : 0; }
             catch (...) { return 0; }
         }
+        double GetFrameRateLimit() { return core::Engine::GetInstance().GetMaxFrameRate(); }
+        int32_t SetFrameRateLimit(double framesPerSecond)
+        {
+            if (!std::isfinite(framesPerSecond) || framesPerSecond < 0.0) return 0;
+            try { core::Engine::GetInstance().SetMaxFrameRate(framesPerSecond); return 1; }
+            catch (...) { return 0; }
+        }
         int32_t SetSceneShadowResolution(int32_t resolution)
         {
             if (resolution < 256 || resolution > 8192) return 0;
@@ -1921,6 +1932,23 @@ namespace PlutoGE::scripting
             {
                 meshComponent->SetStatic(isStatic != 0);
             }
+        }
+
+        // Joints hidden from cameras (MeshComponent::SetCameraHiddenJoints), as a comma-separated list.
+        const char *GetMeshCameraHiddenJoints(uint32_t entityId)
+        {
+            thread_local std::string jointsStorage;
+            auto *entity = FindEntity(entityId);
+            auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
+            jointsStorage = meshComponent ? scene::CameraTagFilter::FormatTagList(meshComponent->GetCameraHiddenJoints()) : std::string{};
+            return jointsStorage.c_str();
+        }
+
+        void SetMeshCameraHiddenJoints(uint32_t entityId, const char *joints)
+        {
+            auto *entity = FindEntity(entityId);
+            if (auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr)
+                meshComponent->SetCameraHiddenJoints(scene::CameraTagFilter::ParseTagList(joints ? joints : ""));
         }
 
         NativeVector3 GetMeshColor(uint32_t entityId)
@@ -3956,6 +3984,7 @@ namespace PlutoGE::scripting
         int(PLUTO_HOST_CALL *registerWindowSizeApi)(void *, void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerGraphicsQualityApi)(void *, void *) = nullptr;
         int(PLUTO_HOST_CALL *registerDisplayApi)(void *, void *, void *) = nullptr;
+        int(PLUTO_HOST_CALL *registerFramePacingApi)(void *, void *) = nullptr;
         register_scene_api_fn registerSceneApi = nullptr;
         int(PLUTO_HOST_CALL *registerSceneStreamingApi)(void *) = nullptr;
         register_scriptable_object_api_fn registerScriptableObjectApi = nullptr;
@@ -3969,6 +3998,7 @@ namespace PlutoGE::scripting
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_mesh_geometry_api_fn registerMeshGeometryApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
+        register_mesh_camera_hidden_joints_api_fn registerMeshCameraHiddenJointsApi = nullptr; // Optional, likewise.
         register_time_api_fn registerTimeApi = nullptr;                  // Optional: older ScriptCore builds lack it.
         register_physics_query_api_fn registerPhysicsQueryApi = nullptr; // Optional: older ScriptCore builds lack it.
         register_entity_lifetime_api_fn registerEntityLifetimeApi = nullptr; // Optional: older ScriptCore builds lack it.
@@ -4095,6 +4125,7 @@ namespace PlutoGE::scripting
             impl.registerWindowSizeApi = nullptr;
             impl.registerGraphicsQualityApi = nullptr;
             impl.registerDisplayApi = nullptr;
+            impl.registerFramePacingApi = nullptr;
             impl.registerSceneApi = nullptr;
             impl.registerSceneStreamingApi = nullptr;
             impl.registerScriptableObjectApi = nullptr;
@@ -4108,6 +4139,7 @@ namespace PlutoGE::scripting
             impl.registerMeshComponentApi = nullptr;
             impl.registerMeshGeometryApi = nullptr;
             impl.registerPrefabSpawnApi = nullptr;
+            impl.registerMeshCameraHiddenJointsApi = nullptr;
             impl.registerTimeApi = nullptr;
             impl.registerPhysicsQueryApi = nullptr;
             impl.registerEntityLifetimeApi = nullptr;
@@ -4472,6 +4504,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterWindowSizeApi"), impl.registerWindowSizeApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterGraphicsQualityApi"), impl.registerGraphicsQualityApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterDisplayApi"), impl.registerDisplayApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterFramePacingApi"), impl.registerFramePacingApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneApi"), impl.registerSceneApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterScriptableObjectApi"), impl.registerScriptableObjectApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentApi"), impl.registerComponentApi) &&
@@ -4526,6 +4559,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterPrefabSpawnApi"), impl.registerPrefabSpawnApi))
             {
                 impl.registerPrefabSpawnApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterMeshCameraHiddenJointsApi"), impl.registerMeshCameraHiddenJointsApi))
+            {
+                impl.registerMeshCameraHiddenJointsApi = nullptr;
                 impl.lastError.clear();
             }
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterTimeApi"), impl.registerTimeApi))
@@ -5012,6 +5050,14 @@ namespace PlutoGE::scripting
             return false;
         }
 
+        if (!m_impl->registerFramePacingApi || m_impl->registerFramePacingApi(
+                reinterpret_cast<void *>(&GetFrameRateLimit),
+                reinterpret_cast<void *>(&SetFrameRateLimit)) == 0)
+        {
+            setManagedBridgeFailure("RegisterFramePacingApi");
+            return false;
+        }
+
         if (!m_impl->registerSceneApi ||
             m_impl->registerSceneApi(
                 reinterpret_cast<void *>(static_cast<load_scene_fn>(&LoadScene)),
@@ -5155,6 +5201,15 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<start_entity_scripts_fn>(&StartEntityScripts))) == 0)
         {
             setManagedBridgeFailure("RegisterPrefabSpawnApi");
+            return false;
+        }
+
+        if (m_impl->registerMeshCameraHiddenJointsApi &&
+            m_impl->registerMeshCameraHiddenJointsApi(
+                reinterpret_cast<void *>(static_cast<get_mesh_camera_hidden_joints_fn>(&GetMeshCameraHiddenJoints)),
+                reinterpret_cast<void *>(static_cast<set_mesh_camera_hidden_joints_fn>(&SetMeshCameraHiddenJoints))) == 0)
+        {
+            setManagedBridgeFailure("RegisterMeshCameraHiddenJointsApi");
             return false;
         }
 

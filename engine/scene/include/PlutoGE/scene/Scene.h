@@ -32,6 +32,10 @@ namespace PlutoGE::scene
     class AmbientLightVolumeComponent;
     class RuntimeComponentIndex;
     class AnimationPoseBatch;
+    namespace detail
+    {
+        class BulletShapeCache;
+    }
     class SceneStreaming;
     class NavigationSystem;
     class Entity;
@@ -97,6 +101,19 @@ namespace PlutoGE::scene
         glm::vec3 origin{0.0f};
         glm::vec3 direction{0.0f, -1.0f, 0.0f};
         float maxDistance = 0.0f;
+    };
+
+    // Cumulative counts of the collision work physics synchronization has done since the scene was created.
+    // Read two snapshots and compare them to see what one change (a spawn, an edit) cost.
+    struct PhysicsSynchronizationStats
+    {
+        // Bodies created in the query world (raycasts, sweeps, overlaps) and the simulation world.
+        std::uint64_t queryBodiesCreated = 0;
+        std::uint64_t simulationBodiesCreated = 0;
+        // Times the simulation world was replaced as a whole (runtime start, ragdoll changes).
+        std::uint64_t simulationWorldRebuilds = 0;
+        // Collider shapes built; shared geometry (meshes, terrain) that was already built is not counted again.
+        std::uint64_t collisionShapesBuilt = 0;
     };
 
     struct SceneUpdateTimingStats
@@ -320,8 +337,10 @@ namespace PlutoGE::scene
         const std::vector<OutlineComponent *> &GetOutlineComponents() const;
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
-        // A collider's shape changed in place (a terrain's holes): physics queries rebuild it now rather than next frame.
-        void MarkColliderShapesDirty() const { InvalidatePhysicsQueryCache(); }
+        // A collider's geometry changed in place (a terrain's holes): the next physics query recreates every collider
+        // body, rebuilding only the geometry that changed. Adding or removing colliders needs no call.
+        void MarkColliderShapesDirty() const;
+        [[nodiscard]] PhysicsSynchronizationStats GetPhysicsSynchronizationStats() const;
         void SubmitRenderCommands();
         const std::string &GetFilePath() const { return m_filePath; }
         void SetFilePath(const std::string &filePath) { m_filePath = filePath; }
@@ -466,6 +485,10 @@ namespace PlutoGE::scene
         uint64_t m_nextSceneSoundSerial = 1;
         std::vector<EntityID> m_pendingDestroyEntities;
         std::unordered_set<EntityID> m_pendingDestroyEntityIds;
+        // Collider shapes for the query world, the simulation world and triggers. Bodies own their shapes; the cache
+        // only remembers shared ones, so destruction order does not matter.
+        mutable std::unique_ptr<detail::BulletShapeCache> m_collisionShapes;
+        mutable PhysicsSynchronizationStats m_physicsSyncStats;
         mutable std::unique_ptr<PhysicsQueryCache> m_physicsQueryCache;
         uint64_t m_updateSequence = 0;
         RuntimeClock m_runtimeClock;
@@ -489,7 +512,9 @@ namespace PlutoGE::scene
         void RefreshPhysicsQueryCache() const;
         void RefreshPhysicsQueryMembership() const;
         void SynchronizePhysicsQueryBodyTransforms() const;
-        void InvalidatePhysicsQueryCache() const;
+        // Colliders came, went or were reconfigured: the next query reconciles bodies with the scene's colliders,
+        // keeping every unchanged one.
+        void InvalidatePhysicsQueryMembership() const;
         void ResetRuntimePhysicsState();
         void RestoreRuntimePhysicsTransforms();
         void ApplyRuntimePhysicsRenderExtrapolation(float remainderTime);

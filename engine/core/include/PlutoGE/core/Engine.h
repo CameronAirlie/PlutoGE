@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/core/FramePacer.h"
 #include "PlutoGE/core/SceneLoading.h"
 #include "PlutoGE/import/MeshImportOptions.h"
 #include "PlutoGE/platform/Window.h"
@@ -78,6 +79,8 @@ namespace PlutoGE::core
         render::rhi::TemporalUpscalerOptions temporalUpscaler;
         render::DynamicResolutionSettings dynamicResolution;
         bool enableProfiling = false;
+        // Frame limit and delta smoothing for hosts that start frames with Engine::BeginFrame.
+        FramePacingSettings framePacing;
         // Headless hosts retain CPU scene/physics/navigation/script services only.
         bool headless = false;
         std::vector<std::string> headlessScriptClasses;
@@ -105,6 +108,13 @@ namespace PlutoGE::core
         [[nodiscard]] render::rhi::ISwapchain *GetSwapchain() { return m_swapchain.get(); }
         [[nodiscard]] bool IsVSyncEnabled() const noexcept;
         bool SetVSyncEnabled(bool enabled);
+        // Frames per second the host's frames are limited to; 0 is unlimited. See FramePacingSettings.
+        [[nodiscard]] double GetMaxFrameRate() const noexcept { return m_framePacer.MaxFrameRate(); }
+        void SetMaxFrameRate(double framesPerSecond);
+        // Starts a host frame: waits for the frame limit and returns the delta the frame should simulate. Call it
+        // before polling input. Hosts that pace frames another way (the editor, fixed-step benchmarks) skip it.
+        FrameTiming BeginFrame();
+        [[nodiscard]] FramePacer &GetFramePacer() noexcept { return m_framePacer; }
         [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return *m_rhiRenderService; }
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return *m_assetManager; }
         [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return *m_meshImporter; }
@@ -128,6 +138,8 @@ namespace PlutoGE::core
 
     private:
         ImportedRenderMeshAsset BuildImportedRenderMeshAsset(const std::string &normalizedPath, const assetimport::ImportedMeshAsset &importedMeshAsset);
+        // Tells the pacer the display interval presentation waits for (with VSync), from the window's monitor.
+        void UpdateFramePacingCadence();
 
         Engine();
         EngineConfig m_config;
@@ -153,6 +165,8 @@ namespace PlutoGE::core
 
         bool m_isInitialized = false;
         bool m_isRuntimeRunning = false;
+        FramePacer m_framePacer;
+        std::uint32_t m_framesSinceCadenceUpdate = 0;
         SceneLoading m_sceneLoading;
         std::optional<std::string> m_pendingSceneLoadRequest;
         bool m_pendingApplicationQuitRequest = false;

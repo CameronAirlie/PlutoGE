@@ -601,6 +601,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         }
         if (argc > 1 && std::string_view(argv[1]) == "--camera-stack")
         {
+            const auto readGlTexture = [&](render::rhi::TextureHandle texture)
+            {
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                int width = 0, height = 0;
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+                glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+                std::vector<std::byte> pixels(width * height * 4);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            };
+            CheckShadowOnlyCommands(device, shaders, readGlTexture);
             CheckCameraStackComposite(device, shaders, [&](auto texture)
             {
                 glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));

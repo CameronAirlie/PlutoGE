@@ -387,6 +387,11 @@ namespace PlutoGE::render
                                   std::optional<glm::vec2> sharedClipJitter,
                                   BasicRenderer::RecordingMode recordingMode)
     {
+        // Shadow-only commands cast shadows (and stay in GI's scene list) but no camera pass draws them. Without a
+        // separate shadow list the camera's list is the shadow list, so keep it whole for shadows first.
+        if (shadowCommands.empty())
+            shadowCommands = commands;
+        commands = m_cameraCommands.Select(commands);
         BasicLighting effectiveLighting = sourceLighting;
         m_graphicsQuality.Apply(effectiveLighting);
         m_renderingSettings.Apply(effectiveLighting);

@@ -221,7 +221,6 @@ namespace PlutoGE::render
             std::vector<CasterChunk> chunks;
             // First of this packet's records in m_batchedModels, or ~0u.
             std::uint32_t models = ~0u, modelCount = 0;
-            std::uint64_t lastFrame = 0;
         };
         // Splits the packet's draw into page chunks as `chunking` does, one set per LOD variant (packet.variants) with
         // ClusteredLodVariants. `wind` pads swaying chunks' bounds; chunks are rebuilt when its settings change
@@ -232,7 +231,12 @@ namespace PlutoGE::render
         // the draw carries a shadow caster LOD chain (BasicDraw::shadowCasterLods) that draws its range.
         void SelectCasterVariants(CasterPacket &packet, const BasicDraw &draw, std::span<const float> levelTexels) const;
         void ReleaseCasterModels(CasterPacket &packet);
-        std::unordered_map<std::uint64_t, CasterPacket> m_casterPackets;
+        // Keyed by preparation revision (or TransientPacket | list index for unrevised draws). A changed draw takes a
+        // new revision and abandons its packet; abandoned packets expire a share at a time, each frame Prepare
+        // rebuilds its inputs, so their release never lands on a single frame.
+        // A core::FrameRetainedCache of packets, defined with the implementation so this header stays free of it.
+        struct CasterPacketCache;
+        std::unique_ptr<CasterPacketCache> m_casterPackets;
         std::vector<CasterPacket *> m_casterPacketSlots;
         std::vector<glm::mat4> m_modelScratch;
         // The wind settings the cached caster chunks' sway padding was computed for.

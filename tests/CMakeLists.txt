@@ -83,6 +83,19 @@ add_executable(PlutoGEInputAxisHistoryTests InputAxisHistoryTests.cpp)
 target_include_directories(PlutoGEInputAxisHistoryTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/platform/include)
 target_compile_features(PlutoGEInputAxisHistoryTests PRIVATE cxx_std_20)
 add_test(NAME PlutoGEInputAxisHistoryTests COMMAND PlutoGEInputAxisHistoryTests)
+add_executable(PlutoGEFrameRetainedCacheTests FrameRetainedCacheTests.cpp)
+target_include_directories(PlutoGEFrameRetainedCacheTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/core/include)
+target_compile_features(PlutoGEFrameRetainedCacheTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGEFrameRetainedCacheTests COMMAND PlutoGEFrameRetainedCacheTests)
+add_executable(PlutoGEFramePacerTests FramePacerTests.cpp
+    ${CMAKE_SOURCE_DIR}/engine/core/src/FramePacer.cpp
+    ${CMAKE_SOURCE_DIR}/engine/core/src/PreciseWait.cpp)
+target_include_directories(PlutoGEFramePacerTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/core/include)
+target_compile_features(PlutoGEFramePacerTests PRIVATE cxx_std_20)
+if (WIN32)
+    target_link_libraries(PlutoGEFramePacerTests PRIVATE winmm)
+endif()
+add_test(NAME PlutoGEFramePacerTests COMMAND PlutoGEFramePacerTests)
 target_link_libraries(PlutoGEContentPackTests PRIVATE PlutoGE::Content)
 add_test(NAME PlutoGEContentPackTests COMMAND PlutoGEContentPackTests)
 
@@ -940,6 +953,10 @@ if (PLUTOGE_TEST_DOTNET)
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.SkeletalSmokeTests/PlutoGE.SkeletalSmokeTests.csproj --configuration Release)
 endif()
 
+add_executable(PlutoGEJointHidingTests JointHidingTests.cpp)
+pluto_link_engine(PlutoGEJointHidingTests)
+add_test(NAME PlutoGEJointHidingTests COMMAND PlutoGEJointHidingTests)
+
 add_executable(PlutoGEIKComponentTests IKComponentTests.cpp)
 pluto_link_engine(PlutoGEIKComponentTests)
 add_test(NAME PlutoGEIKComponentTests COMMAND PlutoGEIKComponentTests)
@@ -989,6 +1006,10 @@ add_test(NAME PlutoGETerrainLayerTests COMMAND PlutoGETerrainLayerTests)
 add_executable(PlutoGETerrainHoleTests TerrainHoleTests.cpp)
 pluto_link_engine(PlutoGETerrainHoleTests)
 add_test(NAME PlutoGETerrainHoleTests COMMAND PlutoGETerrainHoleTests)
+
+add_executable(PlutoGEPhysicsSynchronizationTests PhysicsSynchronizationTests.cpp)
+pluto_link_engine(PlutoGEPhysicsSynchronizationTests)
+add_test(NAME PlutoGEPhysicsSynchronizationTests COMMAND PlutoGEPhysicsSynchronizationTests)
 
 add_executable(PlutoGESurfacePlacementTests
     SurfacePlacementTests.cpp

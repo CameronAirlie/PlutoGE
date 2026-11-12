@@ -559,8 +559,10 @@ component's instances change, only the cells whose capsules changed are rebuilt:
 each cell carries a signature of its contents (`FoliageCollisionCell::signature`),
 and unchanged cells keep their Bullet bodies. Felling one tree replaces one cell.
 It does not reset the simulation, so other bodies keep their velocities, contacts
-and sleep state. Adding or removing entities, such as a spawned proxy, never
-rebuilds foliage cells. Queries made after an edit in the same frame already see
+and sleep state. Adding or removing entities, such as a spawned proxy, changes
+only those entities' bodies: it never rebuilds foliage cells or other entity
+bodies, and mesh and terrain collision shapes are shared and reused rather than
+rebuilt. Queries made after an edit in the same frame already see
 it. Static foliage bodies are not transformed or updated every physics step.
 
 Capsules are scaled from the complete owner and instance transform. Radius uses

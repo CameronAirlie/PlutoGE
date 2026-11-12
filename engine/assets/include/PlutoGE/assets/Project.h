@@ -103,6 +103,8 @@ namespace PlutoGE::assets
         int windowWidth = 1280;
         int windowHeight = 720;
         bool vSyncEnabled = true;
+        // MAX_FRAME_RATE <fps>: the runtime's frame limit; 0 is unlimited (see core::FramePacingSettings).
+        float maxFrameRate = 0.0f;
         render::rhi::GraphicsApi graphicsApi = render::rhi::GraphicsApi::OpenGL;
         RuntimeUpscalerMode runtimeUpscaler = RuntimeUpscalerMode::None;
         float runtimeRenderScale = 1.0f;

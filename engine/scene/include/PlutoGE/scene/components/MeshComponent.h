@@ -114,6 +114,12 @@ namespace PlutoGE::scene
             MarkRenderCommandsDirty();
         }
         int GetMinShadowLod() const { return m_minShadowLod; }
+        // Joints of a skinned mesh hidden from cameras (each with everything below it), as JointHiding.h shrinks them:
+        // cameras draw the mesh without them while its shadow stays whole (the full pose is submitted shadow-only).
+        // Names resolve like bone queries (exact, then humanoid aliases such as "Head"). A first-person body hides its
+        // head this way. Ignored for meshes without a skeleton; empty (the default) draws the mesh normally.
+        void SetCameraHiddenJoints(std::vector<std::string> joints);
+        const std::vector<std::string> &GetCameraHiddenJoints() const { return m_cameraHiddenJoints; }
         void SetSubmeshIndex(int submeshIndex)
         {
             if (m_submeshIndex == submeshIndex)
@@ -311,6 +317,14 @@ namespace PlutoGE::scene
         std::vector<std::string> m_materialAssetReferences;
         std::vector<std::string> m_submeshMaterialAssetReferences;
         std::unordered_map<size_t, glm::mat4> m_previousSubmeshModels;
+        // Joints hidden from cameras, resolved against the skeleton they were last resolved for, and the camera's copy
+        // of the skinning palette with them collapsed (stable storage: the renderer keys skinned results by it).
+        std::vector<std::string> m_cameraHiddenJoints;
+        std::vector<int> m_cameraHiddenJointTargets;
+        const render::Skeleton *m_cameraHiddenJointsSkeleton = nullptr;
+        bool m_cameraHiddenJointsResolved = false;
+        std::vector<glm::mat4> m_cameraPalette;
+        const std::vector<glm::mat4> *CameraPalette(const std::vector<glm::mat4> &jointMatrices, bool poseChanged);
         bool m_isStatic = false;
         bool m_renderCommandCacheDirty = true;
         render::RenderObjectIdentity m_renderObjectIdentity;

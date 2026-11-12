@@ -222,6 +222,8 @@ namespace PlutoGE::core
     bool Engine::Initialize(const EngineConfig &config)
     {
         m_config = config;
+        m_framePacer.Configure(m_config.framePacing);
+        m_config.framePacing = m_framePacer.Settings();
         if (m_config.headless)
         {
             m_scriptEngine->Initialize();
@@ -314,6 +316,7 @@ namespace PlutoGE::core
         }
 
         m_scriptEngine->Initialize();
+        UpdateFramePacingCadence();
 
         m_isInitialized = true;
         return true;
@@ -329,7 +332,30 @@ namespace PlutoGE::core
         if (m_swapchain && !m_swapchain->SetVSyncEnabled(enabled))
             return false;
         m_config.vSync = enabled;
+        UpdateFramePacingCadence();
         return true;
+    }
+
+    void Engine::SetMaxFrameRate(double framesPerSecond)
+    {
+        m_framePacer.SetMaxFrameRate(framesPerSecond);
+        m_config.framePacing = m_framePacer.Settings();
+    }
+
+    FrameTiming Engine::BeginFrame()
+    {
+        // The window can move to a monitor with another refresh rate; checking now and then is enough.
+        constexpr std::uint32_t CadenceRefreshFrames = 120;
+        if (++m_framesSinceCadenceUpdate >= CadenceRefreshFrames)
+            UpdateFramePacingCadence();
+        return m_framePacer.BeginFrame();
+    }
+
+    void Engine::UpdateFramePacingCadence()
+    {
+        m_framesSinceCadenceUpdate = 0;
+        const double refreshRate = IsVSyncEnabled() && !m_config.headless ? m_window.GetDisplayRefreshRate() : 0.0;
+        m_framePacer.SetDisplayInterval(refreshRate > 0.0 ? 1.0 / refreshRate : 0.0);
     }
 
     ImportedRenderMeshAsset Engine::BuildImportedRenderMeshAsset(const std::string &normalizedPath, const assetimport::ImportedMeshAsset &importedMeshAsset)

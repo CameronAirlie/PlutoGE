@@ -1926,13 +1926,13 @@ namespace PlutoGE::scripting
         {
             auto *entity = FindEntity(entityId);
             auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
-            auto *material = meshComponent ? meshComponent->GetMaterialForMaterialSlot(0) : nullptr;
-            if (!material)
+            const auto drawn = meshComponent ? meshComponent->GetDrawnMaterials(false) : std::vector<render::Material *>{};
+            if (drawn.empty())
             {
                 return NativeVector3{1.0f, 1.0f, 1.0f};
             }
 
-            const auto color = material->GetConfig().color;
+            const auto color = drawn.front()->GetConfig().color;
             return NativeVector3{color.r, color.g, color.b};
         }
 
@@ -1945,18 +1945,8 @@ namespace PlutoGE::scripting
                 return;
             }
 
-            auto *material = meshComponent->GetMaterialForMaterialSlot(0);
-            if (!material)
-            {
-                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
-            }
-            else if (!meshComponent->GetMaterialAssetForMaterialSlot(0).empty())
-            {
-                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
-                meshComponent->SetMaterialAssetForMaterialSlot(0, {});
-            }
-
-            if (material)
+            // Every material the mesh draws with, made this instance's own: a tint reaches submesh overrides too.
+            for (auto *material : meshComponent->GetDrawnMaterials(true))
             {
                 const auto alpha = material->GetConfig().color.a;
                 material->SetColor(glm::vec4(color.x, color.y, color.z, alpha));
@@ -2316,13 +2306,13 @@ namespace PlutoGE::scripting
         {
             auto *entity = FindEntity(entityId);
             auto *meshComponent = entity ? entity->GetComponent<scene::MeshComponent>() : nullptr;
-            auto *material = meshComponent ? meshComponent->GetMaterialForMaterialSlot(0) : nullptr;
-            if (!material)
+            const auto drawn = meshComponent ? meshComponent->GetDrawnMaterials(false) : std::vector<render::Material *>{};
+            if (drawn.empty())
             {
                 return {};
             }
 
-            const auto emission = material->GetConfig().emission;
+            const auto emission = drawn.front()->GetConfig().emission;
             return NativeVector3{emission.r, emission.g, emission.b};
         }
 
@@ -2335,23 +2325,10 @@ namespace PlutoGE::scripting
                 return;
             }
 
-            auto *material = meshComponent->GetMaterialForMaterialSlot(0);
-            if (!material)
+            const glm::vec3 clamped((std::max)(emission.x, 0.0f), (std::max)(emission.y, 0.0f), (std::max)(emission.z, 0.0f));
+            for (auto *material : meshComponent->GetDrawnMaterials(true))
             {
-                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
-            }
-            else if (!meshComponent->GetMaterialAssetForMaterialSlot(0).empty())
-            {
-                material = meshComponent->CreateUniqueMaterialForMaterialSlot(0);
-                meshComponent->SetMaterialAssetForMaterialSlot(0, {});
-            }
-
-            if (material)
-            {
-                material->SetEmission(glm::vec3(
-                    emission.x > 0.0f ? emission.x : 0.0f,
-                    emission.y > 0.0f ? emission.y : 0.0f,
-                    emission.z > 0.0f ? emission.z : 0.0f));
+                material->SetEmission(clamped);
             }
         }
 

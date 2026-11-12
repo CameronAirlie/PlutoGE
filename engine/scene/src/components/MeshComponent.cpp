@@ -736,6 +736,44 @@ namespace PlutoGE::scene
         return uniqueMaterial;
     }
 
+    std::vector<render::Material *> MeshComponent::GetDrawnMaterials(bool makeInstanceOwned)
+    {
+        std::vector<render::Material *> drawn;
+        const auto addUnique = [&drawn](render::Material *material)
+        {
+            if (material && std::find(drawn.begin(), drawn.end(), material) == drawn.end())
+                drawn.push_back(material);
+        };
+
+        const size_t meshSubmeshCount = m_mesh ? std::max<size_t>(m_mesh->GetSubmeshCount(), 1) : 1;
+        const size_t submeshBegin = m_submeshIndex >= 0 ? static_cast<size_t>(m_submeshIndex) : 0;
+        const size_t submeshEnd = m_submeshIndex >= 0
+                                      ? std::min(submeshBegin + static_cast<size_t>(std::max(1, m_submeshCount)), meshSubmeshCount)
+                                      : meshSubmeshCount;
+        // Slots already made instance-owned in this call: two submeshes sharing a slot share its copy.
+        std::vector<size_t> ownedSlots;
+        for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
+        {
+            if (HasMaterialOverrideForSubmesh(submeshIndex))
+            {
+                if (makeInstanceOwned && !GetMaterialAssetForSubmesh(submeshIndex).empty())
+                    CreateUniqueMaterialForSubmesh(submeshIndex);
+                addUnique(GetMaterialForSubmesh(submeshIndex));
+                continue;
+            }
+
+            const size_t slot = m_mesh && submeshIndex < m_mesh->GetSubmeshCount() ? m_mesh->GetSubmesh(submeshIndex).materialIndex : 0;
+            if (makeInstanceOwned && std::find(ownedSlots.begin(), ownedSlots.end(), slot) == ownedSlots.end())
+            {
+                if (!GetMaterialForMaterialSlot(slot) || !GetMaterialAssetForMaterialSlot(slot).empty())
+                    CreateUniqueMaterialForMaterialSlot(slot);
+                ownedSlots.push_back(slot);
+            }
+            addUnique(GetMaterialForMaterialSlot(slot));
+        }
+        return drawn;
+    }
+
     const std::string &MeshComponent::GetMaterialAssetForMaterialSlot(size_t materialSlotIndex) const
     {
         if (m_privateResources && materialSlotIndex < m_materialAssetReferences.size())

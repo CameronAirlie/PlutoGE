@@ -274,6 +274,10 @@ namespace PlutoGE::scene
         }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
+        // Every material this mesh draws with (each drawn submesh's override, else its slot's material), without
+        // duplicates. With makeInstanceOwned, asset-backed or missing materials are first replaced by per-instance
+        // copies, so editing the result (a tint, an emission) changes this mesh only and reaches every submesh.
+        std::vector<render::Material *> GetDrawnMaterials(bool makeInstanceOwned);
         bool RefreshMaterialAsset(const std::string &materialAssetReference, render::Material *material);
         bool RemapMaterialAsset(const std::string &oldMaterialAssetReference,
                                 const std::string &newMaterialAssetReference,

@@ -558,6 +558,10 @@ public sealed class Weather : ScriptBehaviour
 
 Properties: `Static`, `Color`, `Emission`.
 
+`Color` and `Emission` tint every material the mesh draws with, including submesh override materials and
+material assets. The first write gives the instance its own copies of shared or asset-backed materials, so other
+entities using the same material are unaffected. Reading returns the first drawn material's value.
+
 `SetGeometry(positions, indices, normals = default, uvs = default)` replaces the drawn mesh with a script-built
 triangle list in the entity's local space, for geometry rebuilt at runtime (vision cones, trails, area markers).
 The component keeps its materials. The first call creates a mesh owned by the component; later calls replace its

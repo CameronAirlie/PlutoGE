@@ -18,12 +18,14 @@ public sealed class MeshComponent : ComponentReference
         set => ScriptBridge.SetMeshStatic(EntityId, value);
     }
 
+    /// <summary>Tints every material this mesh draws with (submesh overrides too), as this instance's own copies.</summary>
     public Vector3 Color
     {
         get => ScriptBridge.GetMeshColor(EntityId);
         set => ScriptBridge.SetMeshColor(EntityId, value);
     }
 
+    /// <summary>Emission of every material this mesh draws with, as this instance's own copies.</summary>
     public Vector3 Emission
     {
         get => ScriptBridge.GetMeshEmission(EntityId);

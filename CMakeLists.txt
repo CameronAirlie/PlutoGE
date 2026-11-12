@@ -12,6 +12,11 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
 if (MSVC)
     add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/EHsc>")
+    # Release keeps full optimisation but also writes .pdb symbols, so crash and hang dumps of the editor and runtime
+    # can be read. /Zi does not change code generation; /DEBUG would switch the linker to /OPT:NOREF,NOICF, so the
+    # Release defaults are restated after it.
+    add_compile_options("$<$<CONFIG:Release>:/Zi>")
+    add_link_options("$<$<CONFIG:Release>:/DEBUG>" "$<$<CONFIG:Release>:/OPT:REF>" "$<$<CONFIG:Release>:/OPT:ICF>")
 endif()
 set(PLUTO_MSVC_MAX_COMPILES "" CACHE STRING
     "Maximum concurrent compiles across a Visual Studio build (empty: one per core)")

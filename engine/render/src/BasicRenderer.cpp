@@ -1811,6 +1811,7 @@ namespace PlutoGE::render
         m_fallbackNormalTexture.Reset();
         m_fallbackDataTexture.Reset();
         m_geometryParameters.reset();
+        m_shadowParameters.reset();
         m_materialPreparation.reset();
         m_cameraBuffer.Reset();
         m_debugViewBuffer.Reset();
@@ -2370,6 +2371,10 @@ namespace PlutoGE::render
         if (m_instanceStorage)
             m_instanceStorage->BeginFrame();
         if (!m_geometryParameters) m_geometryParameters = std::make_unique<PersistentParameterCache>();
+        // The shadow job acquires its material records from a cache of its own while the geometry job uses
+        // m_geometryParameters on another worker (neither cache is thread-safe).
+        if (!m_shadowParameters) m_shadowParameters = std::make_unique<PersistentParameterCache>();
+        m_shadowParameters->BeginFrame();
         // Instanced shadow pipelines declare both instance paths (DirectionalShadow.slang shadowInstanceModel); the
         // unused one reads placeholders. Shadows record on worker threads and the parameter cache is not
         // thread-safe, so every handle they bind is acquired here, on this thread.
@@ -3087,8 +3092,8 @@ namespace PlutoGE::render
                         handle = m_shadowMaterialBuffers[animatedShadowMaterials++].Get();
                         m_device->UpdateBuffer(handle, 0, Bytes(material));
                     }
-                    else
-                        handle = m_geometryParameters->Acquire(*m_device, Bytes(material), key);
+                    else // Inside the shadow job: only the job's own cache (see m_shadowParameters).
+                        handle = m_shadowParameters->Acquire(*m_device, Bytes(material), key);
                     bucket.emplace_back(identity, handle);
                     ++m_frameStats.shadowMaterialUploads;
                     return handle;

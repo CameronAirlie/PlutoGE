@@ -1583,6 +1583,9 @@ namespace PlutoGE::render
         // Vulkan records the complete frame before execution, so every draw
         // needs stable object data until submission completes.
         std::unique_ptr<PersistentParameterCache> m_geometryParameters;
+        // The shadow recording job's own parameter cache. The cache is not thread-safe and the shadow and geometry
+        // jobs record in parallel (ParallelRecording), so each job acquires only from the cache it owns.
+        std::unique_ptr<PersistentParameterCache> m_shadowParameters;
         std::unique_ptr<GeometryObjectStream> m_objectStream;
         std::unique_ptr<MaterialPreparationCache> m_materialPreparation;
 

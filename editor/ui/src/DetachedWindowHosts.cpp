@@ -241,8 +241,13 @@ namespace PlutoGE::ui
         drawList.AddText(ImVec2(min.x + padding, std::floor(min.y + (metrics.height - ImGui::GetFontSize()) * 0.5f)),
                          colors.text, shown.c_str());
 
-        // Panels dock below the caption.
-        ImGui::SetCursorScreenPos(ImVec2(min.x, max.y));
+        // Panels dock below the caption. The caption takes its space as an item, not just a cursor move: DockSpace()
+        // submits nothing when a panel docked here was drawn earlier in the frame, and a bare SetCursorScreenPos()
+        // past the window's contents is an ImGui error ("extend window/parent boundaries").
+        ImGui::SetCursorScreenPos(min);
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
+        ImGui::Dummy(ImVec2(max.x - min.x, metrics.height));
+        ImGui::PopStyleVar();
         if (frame)
             layout.Commit(*frame);
     }

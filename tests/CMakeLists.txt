@@ -582,6 +582,11 @@ if (PLUTOGE_TEST_DOTNET)
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.CameraRigSmokeTests/PlutoGE.CameraRigSmokeTests.csproj --configuration Release)
 endif()
 
+if (PLUTOGE_TEST_DOTNET)
+    add_test(NAME PlutoGETwoBoneIKManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.TwoBoneIKSmokeTests/PlutoGE.TwoBoneIKSmokeTests.csproj --configuration Release)
+endif()
+
 add_executable(PlutoGESurfaceResponseTests
     SurfaceResponseTests.cpp
 )

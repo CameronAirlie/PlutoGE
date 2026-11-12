@@ -561,6 +561,28 @@ darkens porous surfaces and makes surfaces glossier where they face the sky; `Pr
 strength for particles, audio and gameplay to read (the renderer does not draw it). Drive both with the clouds and
 wind above.
 
+### AudioEnvironmentVolumeComponent
+
+A space with its own acoustics (reverb, echo, muffling) for a listener inside it, reached through the generic property
+bridge. Properties: `Preset` (`AudioEnvironmentPreset`: Custom, Cave, Forest, City, Field, Room, Hall, Underwater),
+`Shape` (Box or Sphere), `Size`, `Radius`, `BlendDistance`, `Priority`, `ReverbWet`, `ReverbDecay`, `ReverbDensity`,
+`ReverbDiffusion`, `EchoWet`, `EchoDelay`, `EchoFeedback`, `LowPass`, `Gain`. A script can move a volume with what it
+describes (a hut the player built, a tent) or toggle its entity, for example to muffle the world while indoors.
+
+### TwoBoneIK
+
+Analytic two-bone IK for chains a script builds from entities (procedural legs, arms, cranes), the same geometry the
+engine's skeletal IK uses. `TwoBoneIK.Solve(root, upperLength, lowerLength, target, pole)` returns a `TwoBoneSolution`
+with the `Middle` joint (knee, elbow), the `Tip` and whether the target was `Reached`; out of reach, the chain points at
+the target as far as it can. `TwoBoneIK.Between(from, to)` is the shortest-arc rotation that aims a bone whose rest
+axis is `from` along `to`. Both are pure functions, safe to call anywhere.
+
+```csharp
+var leg = TwoBoneIK.Solve(hip.WorldPosition, 0.45f, 0.42f, footTarget, hip.WorldPosition + forward);
+thigh.WorldRotation = TwoBoneIK.Between(-Vector3.UnitY, leg.Middle - hip.WorldPosition);
+shin.WorldRotation = TwoBoneIK.Between(-Vector3.UnitY, leg.Tip - leg.Middle);
+```
+
 ### MeshComponent
 
 Properties: `Static`, `Color`, `Emission`.

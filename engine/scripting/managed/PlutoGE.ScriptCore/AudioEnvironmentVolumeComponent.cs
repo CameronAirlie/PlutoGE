@@ -50,7 +50,7 @@ public sealed class AudioEnvironmentVolumeComponent : RegisteredComponent
     public float EchoWet { get => GetFloat("Echo Wet"); set => SetFloat("Echo Wet", value); }
     public float EchoDelay { get => GetFloat("Echo Delay"); set => SetFloat("Echo Delay", value); }
     public float EchoFeedback { get => GetFloat("Echo Feedback"); set => SetFloat("Echo Feedback", value); }
-    /// <summary>How much high frequencies are kept, 1 open air to 0 heavily muffled.</summary>
+    /// <summary>How much the space muffles what the listener hears, 0 not at all to 1 heavily (a low-pass strength).</summary>
     public float LowPass { get => GetFloat("Low Pass"); set => SetFloat("Low Pass", value); }
     public float Gain { get => GetFloat("Gain"); set => SetFloat("Gain", value); }
 }

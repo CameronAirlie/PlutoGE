@@ -9,6 +9,7 @@
 #include "DirectionalShadowReach.h"
 #include "PlutoGE/render/VirtualShadowConfig.h"
 #include "ParticleDrawOrder.h"
+#include "ParticleStreak.h"
 #include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -2212,7 +2213,8 @@ namespace PlutoGE::render
                         continue;
                     const float maximumSize = system->GetSizeOverLifetimeEnabled()
                         ? std::max(std::abs(particle.size), std::abs(system->GetEndSize())) : std::abs(particle.size);
-                    if (visibility.IsVisible(particle.position, maximumSize * 0.707107f))
+                    if (visibility.IsVisible(particle.position, maximumSize * 0.707107f +
+                                                 ParticleStreakLength(particle.velocity, system->GetVelocityStretch())))
                         sorted.emplace_back(&particle, glm::dot(particle.position - effectiveLighting.cameraPosition, forward));
                 }
                 if (sorted.empty() && !system->GetTrailsEnabled())
@@ -2275,7 +2277,14 @@ namespace PlutoGE::render
                 }
                 constexpr glm::vec2 corners[] = {{-0.5f, -0.5f}, {0.5f, -0.5f}, {-0.5f, 0.5f},
                                                  {-0.5f, 0.5f},  {0.5f, -0.5f}, {0.5f, 0.5f}};
-                draw.instances.reserve(sorted.size());
+                // Stretched particles are streak quads (vertices), drawn after the merged billboards in this
+                // emitter's own back-to-front order.
+                const float stretch = system->GetVelocityStretch();
+                const glm::vec3 up = glm::normalize(glm::vec3(inverseView[1]));
+                if (stretch > 0.0f)
+                    draw.vertices.reserve(sorted.size() * 6);
+                else
+                    draw.instances.reserve(sorted.size());
                 for (const auto &entry : sorted)
                 {
                     const auto *particle = entry.first;
@@ -2303,6 +2312,13 @@ namespace PlutoGE::render
                     const float growth = particle->size > 0.0f ? size / particle->size : 1.0f;
                     const float densityScale = system->GetVolumeConserveMass() && growth > 0.0f
                         ? 1.0f / (growth * growth * growth) : 1.0f;
+                    if (stretch > 0.0f)
+                    {
+                        AppendParticleStreak(draw.vertices, particle->position, particle->velocity, stretch, size,
+                                             effectiveLighting.cameraPosition, right, up, color,
+                                             {particle->age, densityScale, hash(particle->seed), size});
+                        continue;
+                    }
                     m_particleInstanceKeys.push_back({entry.second, drawIndex, static_cast<std::uint32_t>(draw.instances.size())});
                     draw.instances.push_back({glm::vec4(particle->position, angle), color,
                         {particle->age, densityScale, hash(particle->seed), size}});

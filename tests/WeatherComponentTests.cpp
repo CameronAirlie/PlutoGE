@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/WeatherComponent.h"
 
+#include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -62,7 +63,7 @@ try
         Check(lighting.weather == weather, "Scene lighting carries the weather to the renderer");
     }
 
-    // Particle assets keep their Scene Wind Drag.
+    // Particle assets keep their Scene Wind Drag and Velocity Stretch.
     {
         const auto folder = std::filesystem::temp_directory_path() / "PlutoGEWeatherComponentTests";
         std::filesystem::create_directories(folder);
@@ -70,11 +71,13 @@ try
         assets::AssetManager manager;
         assets::ParticleSystemAsset rain;
         rain.sceneWindDrag = 0.5f;
+        rain.velocityStretch = 0.05f;
         std::string error;
         Check(manager.SaveParticleSystemAsset(path, rain, &error), error.c_str());
         bool loaded = false;
         const auto reloaded = manager.LoadParticleSystemAsset(path, &loaded);
         Check(loaded && reloaded.sceneWindDrag == 0.5f, "A particle asset keeps its Scene Wind Drag");
+        Check(std::abs(reloaded.velocityStretch - 0.05f) < 1e-6f, "A particle asset keeps its Velocity Stretch");
         std::filesystem::remove_all(folder);
     }
 

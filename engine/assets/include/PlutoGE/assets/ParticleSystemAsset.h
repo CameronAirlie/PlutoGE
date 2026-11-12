@@ -63,6 +63,9 @@ namespace PlutoGE::assets
         // How fast particles take up the scene's wind (WindComponent), per second: each step their velocity relaxes
         // toward the air's at this rate, gusts included. 0 ignores the scene's wind; rain ~0.5, leaves and snow ~2.
         float sceneWindDrag = 0.0f;
+        // Seconds of motion each particle is drawn stretched along: a streak from where it was this long ago to where
+        // it is, as wide as the particle (rain ~0.05, sparks ~0.03). 0 draws ordinary billboards.
+        float velocityStretch = 0.0f;
         float turbulenceStrength = 0.0f;
         float turbulenceFrequency = 0.5f;
         float rotationSpeed = 0.0f;

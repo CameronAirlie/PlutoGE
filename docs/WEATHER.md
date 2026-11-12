@@ -36,6 +36,15 @@ horizontal velocity relaxes toward the air's, gusts included, so rain slants and
 0 (the default) ignores the scene's wind. Rain wants about 0.5, snow and leaves about 2. The wind carries particles
 sideways only; gravity and the asset's own forces still act.
 
-A rain emitter is a world-space box emitter above the camera. Move it with the camera each frame and scale its emission
-rate with `Precipitation`. Collision (Kill) stops drops at roofs, at a raycast per drop, so keep the emitter small and
+A particle system asset's **Velocity Stretch** (seconds) draws each particle as a streak along its motion: a quad from
+where it was that long ago to where it is, turned to face the camera, as wide as the particle and never shorter than it
+is wide. A raindrop is far too small to see as a billboard; at 12 m/s and 0.045 s it is a half-metre streak, which is
+what rain looks like. 0 (the default) draws billboards. Stretched particles are drawn as vertex quads, after the
+billboards of all emitters, back to front within their own emitter.
+
+A rain emitter is a world-space box emitter above and ahead of the camera. Move it with the camera each frame and scale
+its emission rate with `Precipitation`. The drops must live long enough to fall from the box to below the camera, or
+the rain ends above the view and is never seen: a steady fall speed (drag against a strong pull down) makes that easy
+to work out. Without Color over Lifetime a particle fades with its age, so give rain an end colour equal to its start
+colour. Collision (Kill) stops drops at the ground and at roofs, at a raycast per drop, so keep the emitter small and
 dense rather than wide.

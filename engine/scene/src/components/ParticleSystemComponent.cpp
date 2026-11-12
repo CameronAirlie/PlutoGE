@@ -968,6 +968,7 @@ namespace PlutoGE::scene
         m_buoyancy = asset.buoyancy;
         m_windVelocity = asset.windVelocity;
         m_sceneWindDrag = std::max(asset.sceneWindDrag, 0.0f);
+        m_velocityStretch = std::max(asset.velocityStretch, 0.0f);
         m_turbulenceStrength = std::max(asset.turbulenceStrength, 0.0f);
         m_turbulenceFrequency = std::max(asset.turbulenceFrequency, 0.0001f);
         m_rotationSpeed = asset.rotationSpeed;

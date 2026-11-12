@@ -2744,6 +2744,8 @@ namespace PlutoGE::assets
                 asset.windVelocity = ParseVec3Value(value, asset.windVelocity);
             else if (key == "SceneWindDrag")
                 asset.sceneWindDrag = std::max(ParseFloatValue(value, asset.sceneWindDrag), 0.0f);
+            else if (key == "VelocityStretch")
+                asset.velocityStretch = std::max(ParseFloatValue(value, asset.velocityStretch), 0.0f);
             else if (key == "TurbulenceStrength")
                 asset.turbulenceStrength = std::max(ParseFloatValue(value, asset.turbulenceStrength), 0.0f);
             else if (key == "TurbulenceFrequency")
@@ -2924,6 +2926,7 @@ namespace PlutoGE::assets
         output << "Buoyancy=" << asset.buoyancy << "\n";
         output << "WindVelocity=" << asset.windVelocity.x << "," << asset.windVelocity.y << "," << asset.windVelocity.z << "\n";
         output << "SceneWindDrag=" << asset.sceneWindDrag << "\n";
+        output << "VelocityStretch=" << asset.velocityStretch << "\n";
         output << "TurbulenceStrength=" << asset.turbulenceStrength << "\n";
         output << "TurbulenceFrequency=" << asset.turbulenceFrequency << "\n";
         output << "RotationSpeed=" << asset.rotationSpeed << "\n";

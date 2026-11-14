@@ -7,11 +7,7 @@
 #include "PlutoGE/ui/DetailGrassInspector.h"
 #include "PlutoGE/ui/EditorFonts.h"
 #include "PlutoGE/ui/EditorTheme.h"
-
-#include <glad/glad.h>
-#include <GLFW/glfw3.h>
-#include <backends/imgui_impl_glfw.h>
-#include <backends/imgui_impl_opengl3.h>
+#include "ImGuiTestWindow.h"
 
 #include <array>
 #include <fstream>
@@ -29,8 +25,9 @@ namespace
 {
     using namespace PlutoGE;
 
-    constexpr int kWidth = 900;
-    constexpr int kHeight = 900;
+    using ui::testing::kWidth;
+    using ui::testing::kHeight;
+    using ui::testing::Window;
     constexpr float kInspectorWidth = 420.0f;
 
     void Require(bool value, const std::string &message)
@@ -50,71 +47,6 @@ namespace
         }
         void Changed() override { ++changes; }
         const assets::Project *Project() const override { return nullptr; }
-    };
-
-    struct Window
-    {
-        GLFWwindow *handle = nullptr;
-        ui::fonts::EditorFontLibrary fonts;
-
-        bool Create()
-        {
-            if (!glfwInit())
-                return false;
-            glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-            glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-            glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-            glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-            handle = glfwCreateWindow(kWidth, kHeight, "Detail grass inspector test", nullptr, nullptr);
-            if (!handle)
-                return false;
-            glfwMakeContextCurrent(handle);
-            if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
-                return false;
-            ImGui::CreateContext();
-            ImGui::GetIO().IniFilename = nullptr;
-            fonts.Load(ImGui::GetIO());
-            ui::ApplyActiveEditorTheme();
-            ImGui_ImplGlfw_InitForOpenGL(handle, false);
-            ImGui_ImplOpenGL3_Init("#version 330");
-            return true;
-        }
-
-        ~Window()
-        {
-            if (!handle)
-                return;
-            ImGui_ImplOpenGL3_Shutdown();
-            ImGui_ImplGlfw_Shutdown();
-            ImGui::DestroyContext();
-            glfwDestroyWindow(handle);
-            glfwTerminate();
-        }
-
-        void Frame(const std::function<void()> &draw)
-        {
-            ImGui_ImplOpenGL3_NewFrame();
-            ImGui_ImplGlfw_NewFrame();
-            ImGui::GetIO().DisplaySize = ImVec2(kWidth, kHeight);
-            ImGui::NewFrame();
-            draw();
-            ImGui::Render();
-            glViewport(0, 0, kWidth, kHeight);
-            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        }
-
-        void Capture(const std::string &path) const
-        {
-            std::vector<unsigned char> pixels(kWidth * kHeight * 3);
-            glPixelStorei(GL_PACK_ALIGNMENT, 1);
-            glReadPixels(0, 0, kWidth, kHeight, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
-            std::ofstream file(path, std::ios::binary);
-            file << "P6\n" << kWidth << " " << kHeight << "\n255\n";
-            for (int y = kHeight - 1; y >= 0; --y)
-                file.write(reinterpret_cast<const char *>(pixels.data() + y * kWidth * 3), kWidth * 3);
-        }
     };
 
     // A terrain with two painted layers and grass with three layers, one naming a terrain layer that does not exist.

@@ -128,6 +128,7 @@ add_library(PlutoGEEditorUI
     src/hierarchy/UIWidgetPresets.cpp
     src/inspectors/ComponentInspectors.cpp
     src/inspectors/DetailGrassInspector.cpp
+    src/inspectors/OutfitInspectors.cpp
     src/inspectors/FoliageInspector.cpp
     src/inspectors/WindInspectors.cpp
     src/foliage/FoliageDiagnostics.cpp

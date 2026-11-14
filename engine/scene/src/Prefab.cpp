@@ -312,7 +312,8 @@ namespace PlutoGE::scene
 
             for (auto *sourceChild : source.GetChildren())
             {
-                if (sourceChild)
+                // Transient children (generated content) never reach a prefab.
+                if (sourceChild && !sourceChild->IsTransient())
                 {
                     CloneEntityTreeIntoScenePreservingIds(scene, *sourceChild, clonePtr);
                 }
@@ -338,7 +339,8 @@ namespace PlutoGE::scene
 
             for (auto *sourceChild : source.GetChildren())
             {
-                if (sourceChild)
+                // A duplicate regenerates its own transient children; copying them would double them.
+                if (sourceChild && !sourceChild->IsTransient())
                 {
                     DuplicateEntityTreeIntoScene(scene, *sourceChild, clonePtr, preservePrefabLink);
                 }
@@ -876,7 +878,7 @@ namespace PlutoGE::scene
 
         void CollectEntitiesRecursive(Entity *entity, std::vector<Entity *> &entities)
         {
-            if (!entity)
+            if (!entity || entity->IsTransient())
             {
                 return;
             }

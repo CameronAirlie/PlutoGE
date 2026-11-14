@@ -117,6 +117,8 @@ namespace PlutoGE::ui
         void RenderModelObjectGrid(assets::Project &project);
         void RenderStatusBar();
         void RenderItemContextMenu(assets::Project &project, const ContentItem &item);
+        // Writes a wearable prefab for a skinned model next to it, then reveals it.
+        void CreateWearableFrom(const std::string &modelReference);
         void RenderFolderContextMenu(const std::string &folder);
         void RenderBackgroundContextMenu();
         bool RenderInlineRename(float width);

@@ -32,6 +32,20 @@
   them (muted). Results are cached and refresh when the criteria change, after
   hierarchy edits, and every 0.25 s to pick up edits made in other panels.
 
+## Generated entities
+
+Some components generate entities while the scene runs or is edited. An Outfit,
+for example, spawns the items a character wears. These are **transient**
+(`Entity::SetTransient`, `IsTransientInHierarchy`). A transient entity and its
+subtree are never saved with the scene, never written into a prefab (Save as
+Prefab, Apply to Prefab), and never copied when an ancestor is duplicated. The
+component that made it owns it and rebuilds it, including after an undo, which
+restores scenes without it.
+
+In the hierarchy, generated entities are dimmed, their root is marked
+`generated`, and hovering explains them. The Inspector shows "Generated: not
+saved" above their components: change what generates them instead.
+
 ## Code layout
 
 `SceneHierarchyPanel` draws rows and routes input; behaviour lives in

@@ -91,6 +91,14 @@ namespace PlutoGE::scene
         void AddTag(std::string tag);
         bool RemoveTag(const std::string &tag);
 
+        // A transient entity is generated while the scene runs or is edited (an outfit's worn items): it and everything
+        // below it are never saved with the scene, never written into a prefab, and never copied when an ancestor is
+        // duplicated. Whatever generates it owns it and must be able to rebuild it (undo restores scenes without it).
+        bool IsTransient() const { return m_transient; }
+        void SetTransient(bool transient) { m_transient = transient; }
+        // True when this entity or an ancestor is transient.
+        bool IsTransientInHierarchy() const;
+
         bool IsSelfActive() const { return m_isActive; }
         bool IsActive() const;
 
@@ -269,6 +277,7 @@ namespace PlutoGE::scene
         std::string m_prefabSource;
         EntityID m_prefabEntityId = 0;
         bool m_isPrefabInstanceRoot = false;
+        bool m_transient = false;
         uint64_t m_prefabFingerprint = 0;
         std::vector<std::string> m_prefabOverrides;
         Scene *m_scene = nullptr;

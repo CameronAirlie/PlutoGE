@@ -53,6 +53,9 @@ namespace PlutoGE::scene
         explicit Component(ComponentTypeID typeID) : m_typeID(typeID) {}
         virtual ~Component() = default;
         virtual void Initialize() {}
+        // Called when the component is removed from its entity, while it still has its owner (not when the entity is
+        // destroyed with it). Components that changed other entities (spawned children, set state on a sibling) undo it.
+        virtual void OnRemoved() {}
         virtual void Update(float deltaTime) = 0;
         // Passive data components can opt out of frame dispatch and profiling.
         // Derived components that add Update work must opt back in.

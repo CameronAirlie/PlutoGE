@@ -46,6 +46,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Character animation state machines and blending | [Animation graphs](ANIMATION_GRAPHS.md) |
 | Two-bone IK and props attached to bones | [Skeletal IK and attachments](SKELETAL_IK.md) |
 | First-person bodies (joints hidden from cameras, shadow kept) | [Skeletal IK: hiding joints](SKELETAL_IK.md#hiding-joints-from-cameras) |
+| Clothing, armour and outfits (wearables posed by the character's skeleton) | [Skeletal IK: clothing and outfits](SKELETAL_IK.md#clothing-and-outfits) |
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |

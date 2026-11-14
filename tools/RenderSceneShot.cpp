@@ -17,10 +17,13 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/SceneBaker.h"
 #include "PlutoGE/scene/SceneSerializer.h"
+#include "PlutoGE/render/RenderSceneFrontend.h"
+#include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/OutfitComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 
@@ -42,6 +45,9 @@
 // for a photographic map image that lines up with the outline bake and MapLayout projection.
 // --time poses time-driven vertex animation (foliage wind, shader graphs) at that shader-clock time; shots at
 // different times show the motion.
+// --pose plays every animator for that many seconds (from its graph's entry state) and draws skinned meshes posed, as
+// MeshComponent submits them at runtime (outfits dressing their bodies, worn items following them). Without it characters
+// stand in bind pose.
 int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
@@ -91,7 +97,7 @@ int main(int argc, char **argv) try
         return 0;
     }
 
-    float simulateSeconds = 0, shaderTime = 0;
+    float simulateSeconds = 0, shaderTime = 0, poseSeconds = -1;
     int settleFrames = 16; // --frames: raise it for virtual shadow pages and DDGI to converge in large scenes
     unsigned width = 1280, height = 800;
     const bool topDown = std::string_view(argv[4]) == "--top-down";
@@ -111,6 +117,7 @@ int main(int argc, char **argv) try
         if (option == "--simulate" && argument + 1 < argc) simulateSeconds = std::stof(argv[++argument]);
         else if (option == "--frames" && argument + 1 < argc) settleFrames = std::max(1, std::stoi(argv[++argument]));
         else if (option == "--time" && argument + 1 < argc) shaderTime = std::stof(argv[++argument]);
+        else if (option == "--pose" && argument + 1 < argc) poseSeconds = std::max(0.0f, std::stof(argv[++argument]));
         else if (option == "--size" && argument + 1 < argc)
         {
             const std::string size(argv[++argument]);
@@ -120,6 +127,23 @@ int main(int argc, char **argv) try
             if (topDown) height = width; // A map is square.
         }
         else throw std::invalid_argument("Unknown capture option");
+    }
+
+    if (poseSeconds >= 0)
+    {
+        // Outfits dress their bodies first (worn items are spawned children), then animators pose everything.
+        const auto dress = [&](auto &&self, scene::Entity *entity) -> void {
+            for (auto *outfit : entity->GetComponents<scene::OutfitComponent>()) outfit->Refresh();
+            for (auto *child : std::vector<scene::Entity *>(entity->GetChildren())) self(self, child);
+        };
+        for (auto *root : world->GetRootEntities()) dress(dress, root);
+        const auto play = [&](auto &&self, scene::Entity *entity) -> void {
+            for (auto *animation : entity->GetComponents<scene::AnimationComponent>())
+                for (float played = 0; played < poseSeconds + 1e-4f; played += 1.0f / 30.0f)
+                    animation->Update(played == 0 ? 0.0f : 1.0f / 30.0f);
+            for (auto *child : entity->GetChildren()) self(self, child);
+        };
+        for (auto *root : world->GetRootEntities()) play(play, root);
     }
 
     scene::CameraComponent *camera = nullptr;
@@ -138,6 +162,17 @@ int main(int argc, char **argv) try
         if (component && topDown && (!component->IsStatic() || !component->GetMesh()))
         {
             ++skipped;
+            component = nullptr;
+        }
+        if (component && poseSeconds >= 0 && component->IsEnabled() && component->GetMesh() &&
+            component->GetMesh()->HasSkeleton())
+        {
+            // Posed through the component's own submission (its palette outlives this loop with the world).
+            auto &frontend = core::Engine::GetInstance().GetRenderScene();
+            frontend.ClearRenderCommands();
+            component->SubmitRenderCommands();
+            for (const auto &draw : frontend.GetSceneRenderCommands()) draws.push_back(draw);
+            frontend.ClearRenderCommands();
             component = nullptr;
         }
         if (component)

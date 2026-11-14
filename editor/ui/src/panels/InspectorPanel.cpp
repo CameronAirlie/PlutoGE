@@ -2,6 +2,8 @@
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
 #include "PlutoGE/scene/components/IKComponent.h"
+#include "PlutoGE/ui/EditorIcons.h"
+#include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
 #include "PlutoGE/ui/ComponentActions.h"
 #include "PlutoGE/ui/EntityNaming.h"
@@ -2367,6 +2369,14 @@ namespace PlutoGE::ui
             }
         }
 
+        if (entity->IsTransientInHierarchy())
+        {
+            ImGui::Separator();
+            ImGui::TextColored(GetEditorColor(EditorColor::Warning), "%s Generated: not saved", icons::Info);
+            ImGui::SetItemTooltip("A component generated this entity (such as an Outfit putting on a worn item) and\n"
+                                  "rebuilds it. Changes made here are lost: edit what generates it, or the prefab.");
+        }
+
         if (!entity->GetPrefabSource().empty())
         {
             ImGui::Separator();
@@ -3841,6 +3851,16 @@ namespace PlutoGE::ui
         ImGui::SameLine();
         renderFlag("Generated LODs", meshComponent.GetUseGeneratedLods(),
                    [&](bool value) { meshComponent.SetUseGeneratedLods(value); }, "UseGeneratedLods");
+        if (mesh && mesh->HasSkeleton())
+        {
+            renderFlag("Follow Parent Skeleton", meshComponent.GetFollowParentSkeleton(),
+                       [&](bool value) { meshComponent.SetFollowParentSkeleton(value); }, "Follow Parent Skeleton");
+            ImGui::SetItemTooltip("Pose this mesh with the nearest skinned parent's skeleton, matching joints by name.\n"
+                                  "For clothing, armour or hair rigged to the character and exported separately:\n"
+                                  "place it at the parent's origin.");
+            if (meshComponent.GetFollowParentSkeleton() && !meshComponent.FindFollowedSkeletonMesh())
+                ImGui::TextDisabled("No skinned parent: drawn in its bind pose.");
+        }
         int minShadowLod = meshComponent.GetMinShadowLod();
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 6.0f);
         if (ImGui::SliderInt("Min Shadow LOD", &minShadowLod, 0, scene::MeshComponent::MaxMinShadowLod))

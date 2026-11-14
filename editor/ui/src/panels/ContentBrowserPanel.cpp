@@ -72,6 +72,8 @@
 #include <unordered_set>
 #include <sstream>
 
+#include "PlutoGE/scene/WearablePrefab.h"
+
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -3835,6 +3837,32 @@ namespace PlutoGE::ui
         ImGui::EndDragDropTarget();
     }
 
+    void ContentBrowserPanel::CreateWearableFrom(const std::string &modelReference)
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *project = shell.GetProject();
+        if (!project) return;
+        const auto source = project->ResolveAssetReference(modelReference);
+        const auto stem = source.stem().string();
+        auto path = source.parent_path() / (stem + ".plutoprefab");
+        std::error_code error;
+        for (int suffix = 2; std::filesystem::exists(path, error); ++suffix)
+            path = source.parent_path() / (stem + "_" + std::to_string(suffix) + ".plutoprefab");
+        std::string message;
+        if (!scene::SaveWearablePrefab(modelReference, stem, path, &message))
+        {
+            shell.Log(EditorShell::ConsoleSeverity::Error, "Create Wearable: " + message);
+            return;
+        }
+        shell.RefreshProjectAssets();
+        shell.MarkProjectDirty();
+        m_assetCacheDirty = true;
+        const auto created = project->MakeAssetReference(path);
+        RevealAsset(created);
+        shell.Log(EditorShell::ConsoleSeverity::Info, "Created wearable " + created + " (slot " +
+                                                         scene::GuessWearableSlot(stem) + "): add it to a character's Outfit.");
+    }
+
     void ContentBrowserPanel::RenderItemContextMenu(assets::Project &project, const ContentItem &item)
     {
         auto &editorShell = EditorShell::GetInstance();
@@ -3872,6 +3900,15 @@ namespace PlutoGE::ui
                           }
                       });
             }
+            if ((asset.type == assets::ProjectAssetType::Mesh || asset.type == assets::ProjectAssetType::Model) &&
+                ImGui::MenuItem("Create Wearable"))
+            {
+                const auto source = asset.reference;
+                Defer([this, source]() { CreateWearableFrom(source); });
+            }
+            if (ImGui::IsItemHovered() && (asset.type == assets::ProjectAssetType::Mesh || asset.type == assets::ProjectAssetType::Model))
+                ImGui::SetTooltip("A prefab that characters can wear (Outfit component): this skinned model,\n"
+                                  "posed by the wearer's skeleton. Written next to the model.");
             if (asset.type == assets::ProjectAssetType::Prefab && ImGui::MenuItem("Export as Static Mesh"))
             {
                 const auto prefab = asset;

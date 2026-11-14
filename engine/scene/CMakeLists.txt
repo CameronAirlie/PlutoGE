@@ -41,6 +41,9 @@ add_library(PlutoGEScene
     src/components/NavigationMeshComponent.cpp
     src/components/OceanComponent.cpp
     src/components/SkeletonAttachmentComponent.cpp
+    src/components/WearableComponent.cpp
+    src/components/OutfitComponent.cpp
+    src/WearablePrefab.cpp
     src/components/CameraRigComponent.cpp
     src/components/IKComponent.cpp
     src/components/CameraComponent.cpp

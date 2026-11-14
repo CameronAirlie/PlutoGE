@@ -210,11 +210,15 @@ namespace PlutoGE::scene
             while (!pending.empty())
             {
                 const auto [oldEntity, newEntity] = pending.back(); pending.pop_back();
-                if (oldEntity->GetChildren().size() != newEntity->GetChildren().size() ||
+                // Clones leave out transient (generated) children.
+                std::vector<const Entity *> kept;
+                for (const auto *child : oldEntity->GetChildren())
+                    if (child && !child->IsTransient()) kept.push_back(child);
+                if (kept.size() != newEntity->GetChildren().size() ||
                     !remap.emplace(oldEntity->GetID(), newEntity->GetID()).second)
                     throw std::runtime_error("Cloned model subtree does not match its source.");
-                for (std::size_t index = 0; index < oldEntity->GetChildren().size(); ++index)
-                    pending.emplace_back(oldEntity->GetChildren()[index], newEntity->GetChildren()[index]);
+                for (std::size_t index = 0; index < kept.size(); ++index)
+                    pending.emplace_back(kept[index], newEntity->GetChildren()[index]);
             }
             std::vector<StaticModelSceneInstance> instances;
             for (const auto &[root, instance] : origin->GetStaticModelInstances())

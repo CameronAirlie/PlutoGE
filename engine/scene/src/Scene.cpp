@@ -890,7 +890,8 @@ namespace PlutoGE::scene
             if (entity != animation->GetOwner() && entity->GetComponent<AnimationComponent>())
                 return nullptr;
             if (auto *mesh = entity->GetComponent<MeshComponent>();
-                mesh && mesh->IsEnabled() && mesh->GetMesh() && mesh->GetMesh()->HasSkeleton())
+                mesh && mesh->IsEnabled() && mesh->GetMesh() && mesh->GetMesh()->HasSkeleton() &&
+                !mesh->GetFollowParentSkeleton())
                 return mesh;
             for (auto *child : entity->GetChildren())
                 if (auto *mesh = FindRagdollMesh(child, animation))

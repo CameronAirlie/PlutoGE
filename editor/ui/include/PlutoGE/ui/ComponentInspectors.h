@@ -71,4 +71,5 @@ namespace PlutoGE::ui
     void RegisterUIStyleInspectors();
     void RegisterFoliageInspectors();
     void RegisterDetailGrassInspectors();
+    void RegisterOutfitInspectors();
 }

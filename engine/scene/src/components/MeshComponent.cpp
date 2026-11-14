@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/JointHiding.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/SkeletonAttachmentComponent.h"
+#include "PlutoGE/scene/SkinCoverage.h"
 
 #include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/MaterialTextureSlots.h"
@@ -1058,6 +1059,8 @@ namespace PlutoGE::scene
         // Written only when set, so ordinary meshes serialize as before.
         if (!m_cameraHiddenJoints.empty())
             properties.push_back({"Camera Hidden Joints", PropertyType::String, CameraTagFilter::FormatTagList(m_cameraHiddenJoints)});
+        if (m_followParentSkeleton)
+            properties.push_back({"Follow Parent Skeleton", PropertyType::Bool, "true"});
 
         const auto *assetMaterialReferences = m_sourceMeshPath.empty()
                                                   ? nullptr
@@ -1167,6 +1170,10 @@ namespace PlutoGE::scene
             else if (property.name == "Camera Hidden Joints")
             {
                 SetCameraHiddenJoints(CameraTagFilter::ParseTagList(property.value));
+            }
+            else if (property.name == "Follow Parent Skeleton")
+            {
+                SetFollowParentSkeleton(property.value == "true" || property.value == "1");
             }
             else if (property.name == "SubmeshIndex")
             {
@@ -1643,6 +1650,8 @@ namespace PlutoGE::scene
         // Imported node/skeleton metadata alone does not make an object dynamic.
         // Keep animation owners conservative: paused poses, layers, editor
         // scrubbing and ragdolls can change independently of IsPlaying().
+        if (m_mesh && m_followParentSkeleton && m_mesh->HasSkeleton())
+            return FindFollowedSkeletonMesh() != nullptr;
         return m_mesh && (m_mesh->HasSkeleton() || m_hasAnimatedNodeSubmeshes) &&
             FindAnimationComponent(GetOwner()) != nullptr;
     }
@@ -1685,6 +1694,88 @@ namespace PlutoGE::scene
         return &m_cameraPalette;
     }
 
+    void MeshComponent::SetFollowParentSkeleton(bool follow)
+    {
+        if (follow == m_followParentSkeleton)
+            return;
+        m_followParentSkeleton = follow;
+        m_followMap = {};
+        m_followSourceSkeleton = m_followOwnSkeleton = nullptr;
+        m_followPalette.clear();
+        m_hasSubmittedJointPoseRevision = false;
+        MarkRenderCommandsDirty();
+    }
+
+    void MeshComponent::SetCoveredJoints(std::vector<std::string> joints)
+    {
+        std::erase_if(joints, [](const std::string &joint) { return joint.empty(); });
+        std::ranges::sort(joints);
+        joints.erase(std::unique(joints.begin(), joints.end()), joints.end());
+        if (joints == m_coveredJoints)
+            return;
+        m_coveredJoints = std::move(joints);
+        m_coveredDirty = true;
+        MarkRenderCommandsDirty();
+    }
+
+    render::Mesh *MeshComponent::DrawnMesh()
+    {
+        if (m_coveredJoints.empty() || !m_mesh || !m_mesh->HasSkeleton())
+        {
+            if (m_coveredMesh)
+                m_coveredMesh.reset();
+            m_coveredTriangles = 0;
+            return m_mesh;
+        }
+        if (m_coveredDirty || m_coveredSource != m_mesh || m_coveredSourceRevision != m_mesh->GetContentRevision())
+        {
+            const auto covered = ResolveCoveredJoints(m_mesh->GetSkeleton(), m_coveredJoints);
+            m_coveredMesh = BuildCoveredMesh(*m_mesh, covered, CoveredSkinThreshold, &m_coveredTriangles);
+            m_coveredSource = m_mesh;
+            m_coveredSourceRevision = m_mesh->GetContentRevision();
+            m_coveredDirty = false;
+        }
+        return m_coveredMesh ? m_coveredMesh.get() : m_mesh;
+    }
+
+    MeshComponent *MeshComponent::FindFollowedSkeletonMesh() const
+    {
+        if (!m_followParentSkeleton || !m_mesh || !m_mesh->HasSkeleton())
+            return nullptr;
+        const auto *owner = GetOwner();
+        for (auto *current = owner ? owner->GetParent() : nullptr; current; current = current->GetParent())
+            if (auto *mesh = current->GetComponent<MeshComponent>();
+                mesh && !mesh->m_followParentSkeleton && mesh->GetMesh() && mesh->GetMesh()->HasSkeleton())
+                return mesh;
+        return nullptr;
+    }
+
+    const std::vector<glm::mat4> *MeshComponent::FollowedPalette(bool &poseChanged)
+    {
+        auto *source = FindFollowedSkeletonMesh();
+        auto *animation = source ? FindAnimationComponent(source->GetOwner()) : nullptr;
+        if (!animation)
+            return nullptr;
+        const auto &sourceSkeleton = source->GetMesh()->GetSkeleton();
+        const auto &ownSkeleton = m_mesh->GetSkeleton();
+        const auto &sourcePalette = animation->GetJointMatrices(sourceSkeleton, source->GetMesh()->GetAnimationNodes());
+        const bool remap = m_followSourceSkeleton != &sourceSkeleton || m_followOwnSkeleton != &ownSkeleton ||
+                           m_followMap.anchor.size() != ownSkeleton.joints.size();
+        if (remap)
+        {
+            m_followMap = BuildSkinPoseFollowMap(sourceSkeleton, ownSkeleton);
+            m_followSourceSkeleton = &sourceSkeleton;
+            m_followOwnSkeleton = &ownSkeleton;
+        }
+        const std::uint64_t poseRevision = animation->GetJointPoseRevision();
+        poseChanged = remap || !m_hasSubmittedJointPoseRevision || poseRevision != m_lastSubmittedJointPoseRevision;
+        m_lastSubmittedJointPoseRevision = poseRevision;
+        m_hasSubmittedJointPoseRevision = true;
+        if (poseChanged || m_followPalette.size() != ownSkeleton.joints.size())
+            ApplySkinPoseFollow(m_followMap, sourcePalette, m_followPalette);
+        return &m_followPalette;
+    }
+
     void MeshComponent::SubmitRenderCommands()
     {
         if (m_mesh && m_visible)
@@ -1698,7 +1789,12 @@ namespace PlutoGE::scene
             bool skinningPoseChanged = false;
             if (m_mesh->HasSkeleton())
             {
-                if (animationComponent)
+                if (m_followParentSkeleton)
+                {
+                    // Posed by the parent's skeleton; with no skinned parent it draws in its bind pose.
+                    jointMatrices = FollowedPalette(skinningPoseChanged);
+                }
+                else if (animationComponent)
                 {
                     jointMatrices = &animationComponent->GetJointMatrices(m_mesh->GetSkeleton(), m_mesh->GetAnimationNodes());
                     const std::uint64_t poseRevision = animationComponent->GetJointPoseRevision();
@@ -1769,12 +1865,19 @@ namespace PlutoGE::scene
                 rebuiltCommands.reserve(submeshEnd - submeshBegin);
             }
 
+            // Covered skin draws a copy without the covered triangles (same vertices, skeleton and submeshes).
+            render::Mesh *drawnMesh = DrawnMesh();
             for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
             {
                 auto *material = GetMaterialForSubmesh(submeshIndex);
                 if (!material)
                 {
                     continue;
+                }
+                if (drawnMesh != m_mesh && submeshIndex < drawnMesh->GetSubmeshCount() &&
+                    drawnMesh->GetSubmesh(submeshIndex).indexCount == 0)
+                {
+                    continue; // Entirely covered.
                 }
 
                 const auto &submesh = submeshIndex < m_mesh->GetSubmeshCount() ? m_mesh->GetSubmesh(submeshIndex) : render::Submesh{};
@@ -1799,7 +1902,7 @@ namespace PlutoGE::scene
                                             ? previous->second : submeshModelMatrix;
                 m_previousSubmeshModels[submeshIndex] = submeshModelMatrix;
                 command.material = material;
-                command.mesh = m_mesh;
+                command.mesh = drawnMesh;
                 // A skinned primitive's source vertices are stored in bind space,
                 // while the shader can move them well outside that primitive's
                 // original bounds. This is especially visible on assets split

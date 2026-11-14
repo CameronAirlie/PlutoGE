@@ -1526,8 +1526,9 @@ namespace PlutoGE::scene
             {
                 return nullptr;
             }
+            // A mesh following its parent's skeleton (clothing) is posed by the character, not the character's mesh.
             if (auto *mesh = entity->GetComponent<MeshComponent>();
-                mesh && mesh->GetMesh() && mesh->GetMesh()->HasSkeleton())
+                mesh && mesh->GetMesh() && mesh->GetMesh()->HasSkeleton() && !mesh->GetFollowParentSkeleton())
             {
                 return mesh;
             }

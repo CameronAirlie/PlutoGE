@@ -3,6 +3,7 @@
 #include "PlutoGE/render/RenderCommand.h"
 #include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/SkinPoseFollow.h"
 
 #include <glm/glm.hpp>
 #include <algorithm>
@@ -120,6 +121,24 @@ namespace PlutoGE::scene
         // head this way. Ignored for meshes without a skeleton; empty (the default) draws the mesh normally.
         void SetCameraHiddenJoints(std::vector<std::string> joints);
         const std::vector<std::string> &GetCameraHiddenJoints() const { return m_cameraHiddenJoints; }
+        // A skinned mesh posed by its parent's skeleton instead of an animator of its own: clothing, armour or hair
+        // authored on a character's rig and exported separately. The source is the nearest ancestor with a skinned
+        // mesh that does not itself follow; its joints pose this mesh's joints by name (SkinPoseFollow.h), so the
+        // follower needs only the joints it is weighted to. Place the follower at its parent's origin. Animators,
+        // ragdolls and bone attachments never pick a follower as their character's mesh. Off by default.
+        void SetFollowParentSkeleton(bool follow);
+        bool GetFollowParentSkeleton() const { return m_followParentSkeleton; }
+        // The mesh this one takes its pose from now, or null (not following, no skinned ancestor, no skeleton).
+        MeshComponent *FindFollowedSkeletonMesh() const;
+        // Joints of this mesh that matched a joint of the followed skeleton at the last draw (0 before the first).
+        std::size_t GetFollowedJointCount() const { return m_followMap.matchedJoints; }
+        // Skin hidden under clothing (SkinCoverage.h): triangles mostly weighted to these joints are left out of every
+        // draw, each joint hiding only the geometry it carries. Names resolve like bone queries. Set by OutfitComponent
+        // from what is worn, so it is not saved; empty (the default) draws the whole mesh.
+        void SetCoveredJoints(std::vector<std::string> joints);
+        const std::vector<std::string> &GetCoveredJoints() const { return m_coveredJoints; }
+        // Triangles of the full-detail mesh hidden by the covered joints at the last draw.
+        std::size_t GetCoveredTriangleCount() const { return m_coveredTriangles; }
         void SetSubmeshIndex(int submeshIndex)
         {
             if (m_submeshIndex == submeshIndex)
@@ -325,6 +344,22 @@ namespace PlutoGE::scene
         bool m_cameraHiddenJointsResolved = false;
         std::vector<glm::mat4> m_cameraPalette;
         const std::vector<glm::mat4> *CameraPalette(const std::vector<glm::mat4> &jointMatrices, bool poseChanged);
+        // Following a parent's skeleton: the joint map for the skeleton pair it was built for, and this mesh's palette
+        // (stable storage, like the camera palette).
+        bool m_followParentSkeleton = false;
+        SkinPoseFollowMap m_followMap;
+        const render::Skeleton *m_followSourceSkeleton = nullptr;
+        const render::Skeleton *m_followOwnSkeleton = nullptr;
+        std::vector<glm::mat4> m_followPalette;
+        const std::vector<glm::mat4> *FollowedPalette(bool &poseChanged);
+        // Covered skin: the mesh drawn in place of m_mesh while joints are covered, rebuilt when either changes.
+        std::vector<std::string> m_coveredJoints;
+        std::unique_ptr<render::Mesh> m_coveredMesh;
+        const render::Mesh *m_coveredSource = nullptr;
+        std::uint64_t m_coveredSourceRevision = 0;
+        std::size_t m_coveredTriangles = 0;
+        bool m_coveredDirty = false;
+        render::Mesh *DrawnMesh();
         bool m_isStatic = false;
         bool m_renderCommandCacheDirty = true;
         render::RenderObjectIdentity m_renderObjectIdentity;

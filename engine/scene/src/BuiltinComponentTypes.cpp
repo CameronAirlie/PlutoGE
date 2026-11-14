@@ -39,6 +39,8 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 #include "PlutoGE/scene/components/WindComponent.h"
+#include "PlutoGE/scene/components/OutfitComponent.h"
+#include "PlutoGE/scene/components/WearableComponent.h"
 #include "PlutoGE/scene/components/WeatherComponent.h"
 
 namespace PlutoGE::scene
@@ -208,6 +210,16 @@ namespace PlutoGE::scene
             registry.AddMenuItem<SkeletonAttachmentComponent>("Animation/Skeleton Attachment");
         }
 
+        // Clothing: what a character wears (Outfit) and what can be worn (Wearable, on a prefab's root).
+        void RegisterCharacter(ComponentRegistry &registry)
+        {
+            registry.Register<OutfitComponent>("OutfitComponent", "Outfit").isAssetPathProperty = [](std::string_view name)
+            { return name.starts_with("Wearables."); };
+            registry.Register<WearableComponent>("WearableComponent", "Wearable");
+            registry.AddMenuItem<OutfitComponent>("Character/Outfit");
+            registry.AddMenuItem<WearableComponent>("Character/Wearable");
+        }
+
         void RegisterPhysicsAndAI(ComponentRegistry &registry)
         {
             registry.Register<RigidbodyComponent>("RigidbodyComponent", "Rigidbody Component");
@@ -266,6 +278,7 @@ namespace PlutoGE::scene
     {
         RegisterRendering(registry);
         RegisterAnimation(registry);
+        RegisterCharacter(registry);
         RegisterPhysicsAndAI(registry);
         RegisterEnvironment(registry);
         RegisterScriptingAndAudio(registry);

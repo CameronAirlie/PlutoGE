@@ -685,6 +685,10 @@ if (TARGET PlutoGEEditorUI)
     target_link_libraries(PlutoGEDetailGrassInspectorTests PRIVATE PlutoGE::EditorUI)
     pluto_link_engine(PlutoGEDetailGrassInspectorTests)
     add_test(NAME PlutoGEDetailGrassInspectorTests COMMAND PlutoGEDetailGrassInspectorTests)
+    add_executable(PlutoGEOutfitInspectorTests OutfitInspectorTests.cpp)
+    target_link_libraries(PlutoGEOutfitInspectorTests PRIVATE PlutoGE::EditorUI)
+    pluto_link_engine(PlutoGEOutfitInspectorTests)
+    add_test(NAME PlutoGEOutfitInspectorTests COMMAND PlutoGEOutfitInspectorTests)
     add_executable(PlutoGERuntimeProfilerTests RuntimeProfilerTests.cpp ../runtime/src/RuntimeProfiler.cpp)
     target_include_directories(PlutoGERuntimeProfilerTests PRIVATE ../runtime/src)
     target_link_libraries(PlutoGERuntimeProfilerTests PRIVATE PlutoGE::EditorUI)
@@ -966,6 +970,14 @@ endif()
 add_executable(PlutoGEJointHidingTests JointHidingTests.cpp)
 pluto_link_engine(PlutoGEJointHidingTests)
 add_test(NAME PlutoGEJointHidingTests COMMAND PlutoGEJointHidingTests)
+
+add_executable(PlutoGESkinPoseFollowTests SkinPoseFollowTests.cpp)
+pluto_link_engine(PlutoGESkinPoseFollowTests)
+add_test(NAME PlutoGESkinPoseFollowTests COMMAND PlutoGESkinPoseFollowTests)
+
+add_executable(PlutoGEOutfitTests OutfitTests.cpp)
+pluto_link_engine(PlutoGEOutfitTests)
+add_test(NAME PlutoGEOutfitTests COMMAND PlutoGEOutfitTests)
 
 add_executable(PlutoGEIKComponentTests IKComponentTests.cpp)
 pluto_link_engine(PlutoGEIKComponentTests)
@@ -1397,6 +1409,7 @@ foreach(target IN ITEMS
         PlutoGEOpenGLRhiTests
         PlutoGEFoliageEditorTests
         PlutoGEDetailGrassInspectorTests
+        PlutoGEOutfitInspectorTests
         PlutoGEMeshEditorTests
         PlutoGEPostProcessEditorTests
         PlutoGERhiOceanTests
@@ -1427,3 +1440,4 @@ list(REMOVE_ITEM pluto_all_tests PlutoGETrimGlShaderCache)
 set_tests_properties(${pluto_all_tests} PROPERTIES
     ENVIRONMENT_MODIFICATION "__GL_SHADER_DISK_CACHE_PATH=set:${PLUTOGE_TEST_GL_SHADER_CACHE}"
     FIXTURES_REQUIRED PlutoGEGlShaderCache)
+

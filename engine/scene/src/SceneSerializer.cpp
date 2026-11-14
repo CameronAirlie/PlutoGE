@@ -255,7 +255,7 @@ namespace PlutoGE::scene
 
         void CollectEntitiesRecursive(const Entity *entity, std::vector<const Entity *> &entities)
         {
-            if (!entity)
+            if (!entity || entity->IsTransient()) // Generated content is rebuilt by its owner, never saved.
             {
                 return;
             }

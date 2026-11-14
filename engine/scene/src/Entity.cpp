@@ -539,6 +539,7 @@ namespace PlutoGE::scene
         {
             return false;
         }
+        component->OnRemoved();
 
         if (m_scene)
         {
@@ -722,6 +723,14 @@ namespace PlutoGE::scene
                 child->SetSceneRecursive(scene);
             }
         }
+    }
+
+    bool Entity::IsTransientInHierarchy() const
+    {
+        for (const auto *entity = this; entity; entity = entity->GetParent())
+            if (entity->m_transient)
+                return true;
+        return false;
     }
 
     void Entity::Update(float deltaTime)

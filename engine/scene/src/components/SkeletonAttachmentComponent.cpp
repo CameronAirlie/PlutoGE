@@ -181,7 +181,9 @@ namespace PlutoGE::scene
         {
             if (auto *meshComponent = current->GetComponent<MeshComponent>())
             {
-                if (meshComponent->GetMesh() && meshComponent->GetMesh()->HasSkeleton())
+                // Clothing follows the character's skeleton: attach to the character's own mesh.
+                if (meshComponent->GetMesh() && meshComponent->GetMesh()->HasSkeleton() &&
+                    !meshComponent->GetFollowParentSkeleton())
                 {
                     return meshComponent;
                 }

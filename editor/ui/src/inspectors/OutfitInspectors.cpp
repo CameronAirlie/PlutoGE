@@ -278,6 +278,19 @@ namespace PlutoGE::ui
         void DrawCoveredJoints(scene::WearableComponent &wearable, scene::Entity &entity, OutfitInspectorHost &host)
         {
             ImGui::SeparatorText("Hides body skin");
+            bool hides = wearable.GetHidesCoveredSkin();
+            if (ImGui::Checkbox("Hide Covered Skin", &hides))
+                EditComponent(host, entity, wearable, "WearableComponent", hides ? "Hide Covered Skin" : "Show Covered Skin",
+                              [&] { wearable.SetHidesCoveredSkin(hides); });
+            ImGui::SetItemTooltip("Off: the body is drawn whole under the garment. On: body skin carried by the ticked "
+                                  "joints is not drawn while this is worn, so it cannot poke through.");
+            if (!hides)
+            {
+                ImGui::TextDisabled("The body stays whole while this is worn.");
+                if (!wearable.GetCoveredJoints().empty())
+                    ImGui::TextDisabled("%zu joints ticked, used when this is turned on.", wearable.GetCoveredJoints().size());
+                return;
+            }
             Hint("Body skin carried by the ticked joints is not drawn while this is worn, so it cannot poke through. "
                  "Each joint hides only its own skin; joints below it stay.");
             const auto *mesh = FindSkinnedMesh(entity);

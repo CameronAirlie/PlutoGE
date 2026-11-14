@@ -22,7 +22,8 @@ namespace PlutoGE::scene
     //   every mesh in it follows the body's skeleton, so it plays whatever the body plays.
     // - One item shows per slot: the last one listed. Wearing a cloak over a coat (both "Body") hides the coat, which
     //   comes back when the cloak is taken off; the inspector reports it as covered.
-    // - The body's skin under worn items is hidden (WearableComponent's covered joints, SkinCoverage.h).
+    // - The body stays whole unless a worn item opts in (WearableComponent's Hide Covered Skin): then the skin under its
+    //   covered joints is hidden (SkinCoverage.h).
     // - Each item's fit to this body is checked (SkinFitReport): a garment made for another body is still drawn, and
     //   reported in the inspector and the log.
     //
@@ -47,7 +48,7 @@ namespace PlutoGE::scene
             ItemState state = ItemState::NoBody;
             EntityID instance = 0;             // The spawned root while worn.
             std::string slot;                  // From its WearableComponent; empty when it has none.
-            std::vector<std::string> coveredJoints;
+            std::vector<std::string> coveredJoints; // Empty unless the item hides covered skin.
             SkinFitReport fit;                 // Its worst-fitting skinned mesh against the body.
             bool hasSkinnedMesh = false;
             bool hasWearableComponent = false;

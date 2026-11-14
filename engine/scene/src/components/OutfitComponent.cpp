@@ -77,7 +77,8 @@ namespace PlutoGE::scene
             {
                 item.hasWearableComponent = true;
                 item.slot = wearable->GetSlot();
-                item.coveredJoints = wearable->GetCoveredJoints();
+                if (wearable->GetHidesCoveredSkin())
+                    item.coveredJoints = wearable->GetCoveredJoints();
             }
             const auto &bodySkeleton = body.GetMesh()->GetSkeleton();
             bool first = true;

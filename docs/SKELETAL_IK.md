@@ -125,8 +125,8 @@ independent, so each can be used on its own:
 
 | Piece | What it does |
 |---|---|
-| `OutfitComponent` (Add Component > Character > Outfit) | The worn list. Spawns each wearable on the body, keeps it there, hides skin under it, reports fit. |
-| `WearableComponent` (Character > Wearable, on a prefab's root) | The item's slot and the body joints whose skin it covers. Data only. |
+| `OutfitComponent` (Add Component > Character > Outfit) | The worn list. Spawns each wearable on the body, keeps it there, hides skin under items that opt in, reports fit. |
+| `WearableComponent` (Character > Wearable, on a prefab's root) | The item's slot, whether it hides skin (**Hide Covered Skin**, off by default) and the body joints whose skin it covers. Data only. |
 | `MeshComponent` **Follow Parent Skeleton** | Poses a skinned mesh with its nearest skinned ancestor's skeleton (`scene/SkinPoseFollow.h`). |
 | `MeshComponent::SetCoveredJoints` | Leaves body triangles under clothing out of every draw (`scene/SkinCoverage.h`). |
 | `AssessSkinFit` (`scene/SkinPoseFollow.h`) | Whether a garment was rigged to this body's proportions. |
@@ -142,8 +142,9 @@ independent, so each can be used on its own:
    (`scene::SaveWearablePrefab`). A model without a skeleton is refused.
 3. Open the prefab. In the Wearable's inspector:
    - Choose the **Slot**, from the list or as a custom name.
-   - Under **Hides body skin**, tick the body joints the garment covers. The
-     checklist lists the garment's own skeleton, which is the body's armature, and
+   - Under **Hides body skin**, the body is drawn whole by default. Tick **Hide
+     Covered Skin** only when skin pokes through the garment, then tick the body
+     joints the garment covers. The checklist lists the garment's own skeleton, which is the body's armature, and
      can be searched.
    - Under **Fit check**, pick the character's body mesh. The inspector says
      whether the garment was rigged to that body (see Fit below).
@@ -168,8 +169,9 @@ slot and the prefab. The items appear on the body in the editor too.
   coat (both Body) hides the coat, which shows again when the cloak comes off.
   The inspector marks the coat as covered. An item without a Wearable takes no
   slot.
-- **Skin:** the body leaves out the triangles whose three corners are each
-  mostly (half or more) weighted to a joint that a shown item covers. Each joint
+- **Skin:** the body stays whole unless a shown item has **Hide Covered Skin**
+  on. Then the body leaves out the triangles whose three corners are each
+  mostly (half or more) weighted to a joint that item covers. Each joint
   hides only the skin it carries, so a covered forearm keeps its hand. Nothing
   moves, so the edge of the hidden area stays where the body has it. The body
   draws a copy of its mesh without those triangles, keeping every LOD range,

@@ -111,7 +111,7 @@ namespace
     struct Fixture
     {
         std::filesystem::path root;
-        std::string bodyMesh, coatPrefab, cloakPrefab, hoodPrefab, tallPrefab, bootsPrefab;
+        std::string bodyMesh, coatPrefab, cloakPrefab, hoodPrefab, tallPrefab, bootsPrefab, shirtPrefab;
     };
 
     // A temporary project: the body's mesh, and wearables: a coat and a cloak (both slot Body), a hood (Head) and a
@@ -125,12 +125,13 @@ namespace
         std::string error;
         Require(manager.SaveMeshAsset(fixture.bodyMesh, SkinnedConfig(Body()), material, &error), "body mesh: " + error);
         Require(manager.SaveMeshAsset("project://Tall.plutomesh", SkinnedConfig(Body(1.08f)), material, &error), "tall mesh: " + error);
-        const auto wearable = [&](const char *name, const char *slot, std::vector<std::string> covers, const char *mesh)
+        const auto wearable = [&](const char *name, const char *slot, std::vector<std::string> covers, const char *mesh, bool hides = true)
         {
             scene::Scene authoring;
             auto *entity = authoring.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = name}));
             auto *wear = entity->CreateComponent<scene::WearableComponent>();
             wear->SetSlot(slot);
+            wear->SetHidesCoveredSkin(hides);
             wear->SetCoveredJoints(std::move(covers));
             auto *meshComponent = entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{});
             meshComponent->Deserialize({{"MeshAssetReference", scene::PropertyType::String, mesh}});
@@ -143,6 +144,8 @@ namespace
         fixture.cloakPrefab = wearable("Cloak", "Body", {"spine", "arm"}, "project://Body.plutomesh");
         fixture.hoodPrefab = wearable("Hood", "Head", {"head"}, "project://Body.plutomesh");
         fixture.tallPrefab = wearable("TallCoat", "Body", {}, "project://Tall.plutomesh");
+        // Joints ticked but hiding left off (the default): the body stays whole.
+        fixture.shirtPrefab = wearable("Shirt", "Body", {"spine", "arm"}, "project://Body.plutomesh", false);
 
         // The editor's "Create Wearable": a prefab straight from a skinned mesh, its slot guessed from the name.
         Require(scene::GuessWearableSlot("Leather_Boots") == "Feet" && scene::GuessWearableSlot("WoolHood") == "Head" &&
@@ -194,6 +197,14 @@ namespace
         const auto commands = frontend.GetSceneRenderCommands();
         Require(!commands.empty() && commands.front().mesh != body->GetMesh() && body->GetCoveredTriangleCount() == 5,
                 "the body draws without its covered triangles");
+
+        outfit->SetWearables({fixture.shirtPrefab});
+        world.Update(0.0f);
+        Require(item(0).state == scene::OutfitComponent::ItemState::Worn && body->GetCoveredJoints().empty() &&
+                body->GetCoveredTriangleCount() == 0, "a wearable that does not opt in leaves the body whole");
+        outfit->SetWearables({fixture.coatPrefab, fixture.hoodPrefab});
+        world.Update(0.0f);
+        Require(body->GetCoveredJoints() == covered, "opted-in skin hides again");
 
         std::string text, error;
         Require(scene::SceneSerializer::SaveToString(world, text, &error), error);

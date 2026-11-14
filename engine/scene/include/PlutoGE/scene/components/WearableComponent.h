@@ -28,8 +28,13 @@ namespace PlutoGE::scene
         const std::string &GetSlot() const { return m_slot; }
         void SetSlot(std::string slot);
 
-        // Body joints whose skin it hides while worn (SkinCoverage.h): each joint's own geometry, not the joints below
-        // it. Names are the body's joint names (the same armature) or humanoid aliases.
+        // Whether wearing it hides the body's skin under it (the covered joints below). Off by default: the body stays
+        // whole and the garment is simply drawn over it. Turn it on when skin pokes through the garment.
+        bool GetHidesCoveredSkin() const { return m_hidesCoveredSkin; }
+        void SetHidesCoveredSkin(bool hides) { m_hidesCoveredSkin = hides; }
+
+        // Body joints whose skin it hides while worn, when Hides Covered Skin is on (SkinCoverage.h): each joint's own
+        // geometry, not the joints below it. Names are the body's joint names (the same armature) or humanoid aliases.
         const std::vector<std::string> &GetCoveredJoints() const { return m_coveredJoints; }
         void SetCoveredJoints(std::vector<std::string> joints);
 
@@ -38,6 +43,7 @@ namespace PlutoGE::scene
 
     private:
         std::string m_slot = "Body";
+        bool m_hidesCoveredSkin = false;
         std::vector<std::string> m_coveredJoints;
     };
 }

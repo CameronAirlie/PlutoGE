@@ -58,6 +58,7 @@ namespace
         auto *entity = authoring.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = path.stem().string()}));
         auto *wearable = entity->CreateComponent<scene::WearableComponent>();
         wearable->SetSlot(slot);
+        wearable->SetHidesCoveredSkin(true);
         wearable->SetCoveredJoints(std::move(covers));
         entity->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{})
             ->Deserialize({{"MeshAssetReference", scene::PropertyType::String, mesh}});
@@ -99,6 +100,7 @@ namespace
         scene::Scene authoring;
         auto *garment = authoring.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Coat"}));
         auto *wearable = garment->CreateComponent<scene::WearableComponent>();
+        wearable->SetHidesCoveredSkin(true);
         wearable->SetCoveredJoints({"spine", "tail"});
         garment->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{.mesh = manager.LoadMeshAsset("project://Body.plutomesh")});
 

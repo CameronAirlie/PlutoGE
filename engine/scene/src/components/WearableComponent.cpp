@@ -34,6 +34,7 @@ namespace PlutoGE::scene
     {
         return {
             {"Slot", PropertyType::String, m_slot},
+            {"Hide Covered Skin", PropertyType::Bool, m_hidesCoveredSkin ? "true" : "false"},
             {"Covered Joints", PropertyType::String, CameraTagFilter::FormatTagList(m_coveredJoints)},
         };
     }
@@ -44,6 +45,8 @@ namespace PlutoGE::scene
         {
             if (property.name == "Slot")
                 SetSlot(property.value);
+            else if (property.name == "Hide Covered Skin")
+                m_hidesCoveredSkin = property.value == "true" || property.value == "1";
             else if (property.name == "Covered Joints")
                 SetCoveredJoints(CameraTagFilter::ParseTagList(property.value));
         }

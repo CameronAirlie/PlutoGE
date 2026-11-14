@@ -57,3 +57,11 @@ Gradual lighting changes, such as a moving sun or drifting clouds, converge thro
 - **Lateral resolution:** a shadow edge across the view softens over about half a tile, roughly 0.5° at 1080p. Shafts narrower than a tile lose contrast. `CheckFogFroxels` matches the per-step reference at the angular density 16-pixel tiles have at 1080p. Smaller tiles sharpen shafts at about the square of the cost.
 - **One volume per frame:** a second fog effect, or a second camera, in the same frame marches per step, so it does not disturb the first's history.
 - **Dynamic resolution:** the grid follows the view size, so a resolution change starts the volume afresh for one frame.
+
+## Terrain sun occlusion
+
+Shadow maps reach only nearby casters, and past the Shadow Detail Distance the fog's analytic tail is unshadowed, so on its own a low sun behind a distant ridge would still light the fog in front of it. `FogTerrainShadow` (`include/PlutoGE/render/FogTerrainShadow.h`) covers that: a square world-space grid (at most 256² texels) over the scene's enabled terrains stores, per texel, the world height below which terrain hides the sun. `fogTerrainSunVisibility` (VolumetricFog.slang, texture slot 17, grid placement in lanes 4.w/5.w/7.w) multiplies the sun in every march cell, froxel and the analytic tail.
+
+- `FogTerrainShadowBuilder` (`src/RhiFogTerrainShadow.*`) resamples the terrains when one changes (heights, holes, transform, enabled) and sweeps the shadow heights again when the sun turns by more than about 0.1°. The sweep is O(texels) (`ComputeFogTerrainShadowHeights`, CPU-tested in `PlutoGEFogFroxelTests`).
+- Turning it on or off discards the froxel history (`FogFroxelLighting::terrainShadow`); its gradual changes with the sun converge through it.
+- Only terrain occludes this way; meshes past the shadow maps' reach still do not.

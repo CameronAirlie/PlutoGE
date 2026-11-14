@@ -112,6 +112,27 @@ namespace
         // Snapshots without heavy data (the inspector's) leave the holes alone; an explicit empty mask clears them.
         loaded.DeserializeKeepingHeavyData({{"CellSize", PropertyType::Float, "1"}});
         Require(loaded.GetHoles().IsHole(4, 4), "A snapshot without HoleMask dropped the holes");
+
+        // The inspector's terrain section and script property sets send lists without layer properties; changing
+        // the terrain's shape that way must keep its material layers. An explicit LayerCount still applies.
+        {
+            TerrainComponent layered(TerrainComponentConfig{.width = 9, .depth = 9});
+            Require(layered.GetLayers().AddLayer(TerrainLayer{.name = "Grass", .tileSize = 6.0f}) &&
+                        layered.GetLayers().AddLayer(TerrainLayer{.name = "Rock"}),
+                    "Layers can be added");
+            layered.DeserializeKeepingHeavyData({{"HeightScale", PropertyType::Float, "25"},
+                                                 {"SurfaceSmoothing", PropertyType::Float, "0.5"}});
+            Require(layered.GetHeightScale() == 25.0f, "The partial list did not change the shape");
+            Require(layered.GetLayers().GetLayers().size() == 2 && layered.GetLayers().GetLayers()[0].name == "Grass" &&
+                        layered.GetLayers().GetLayers()[0].tileSize == 6.0f,
+                    "Changing the terrain's shape dropped its material layers");
+            layered.Deserialize({{"Layer.1.Tint", PropertyType::Vec3, "0.5,0.5,0.5"}});
+            Require(layered.GetLayers().GetLayers().size() == 2 && layered.GetLayers().GetLayers()[1].name == "Rock" &&
+                        layered.GetLayers().GetLayers()[1].tint == glm::vec3(0.5f),
+                    "Setting one layer field reset the layer's other fields");
+            layered.Deserialize({{"LayerCount", PropertyType::Int, "0"}});
+            Require(layered.GetLayers().Empty(), "An explicit LayerCount of 0 did not clear the layers");
+        }
         loaded.Deserialize({{"HoleMask", PropertyType::String, ""}});
         Require(loaded.GetHoles().Empty(), "An empty HoleMask did not clear the holes");
         loaded.Deserialize({{"HoleMask", PropertyType::String, "garbage"}});

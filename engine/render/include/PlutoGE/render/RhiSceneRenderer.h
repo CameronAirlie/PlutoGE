@@ -38,6 +38,7 @@ namespace PlutoGE::render
     class RhiDrawPreparationCache;
     class RhiTextureCompression;
     class DirectionalShadowCascadeRetention;
+    class FogTerrainShadowBuilder;
     struct ParticleInstanceKey;
     struct RhiSceneTimingStats
     {
@@ -290,6 +291,8 @@ namespace PlutoGE::render
             std::vector<BasicDecalDraw> decals;
             // The scene's detail grass (BasicRenderer::SetDetailGrass); Record hands it over for its frame.
             std::vector<BasicDetailGrassField> detailGrass;
+            // Terrain sun occlusion for volumetric fog (BasicRenderer::SetFogTerrainShadow); null without fog or terrain.
+            std::shared_ptr<const FogTerrainShadow> fogTerrainShadow;
             PostProcessDebugView debugView = PostProcessDebugView::None;
             bool useTemporalUpscaler = false;
             std::optional<rhi::TemporalUpscalerFrame> upscalerFrame;
@@ -476,6 +479,8 @@ namespace PlutoGE::render
           RhiTerrainLayerCache terrainLayers;
       };
       std::shared_ptr<TextureCache> m_textureCache;
+      // The scene's terrain sun occlusion for volumetric fog, kept between frames (RhiFogTerrainShadow.h).
+      std::shared_ptr<FogTerrainShadowBuilder> m_fogTerrainShadow;
       TextureCompressionSettings m_textureCompressionSettings = TextureCompressionSettings::FromEnvironment();
       // This renderer's TextureCache::preparedResidency entry.
       std::shared_ptr<std::uint64_t> m_preparedResidency = std::make_shared<std::uint64_t>(0);

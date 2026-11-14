@@ -19,6 +19,7 @@
 #include "PlutoGE/render/TextureCompression.h"
 #include "PlutoGE/render/DeferredLocalLightPolicy.h"
 #include "PlutoGE/render/FogFroxels.h"
+#include "PlutoGE/render/FogTerrainShadow.h"
 #include "PlutoGE/render/OceanParameters.h"
 #include "PlutoGE/render/PhysicalSkyLayout.h"
 #include "PlutoGE/render/SkyIrradiance.h"
@@ -1069,7 +1070,8 @@ namespace PlutoGE::render
         // Lane 5.x is local gain minus one; 5.y is secondary bounce (0 disables).
         // VolumetricFog uses lanes 0-3 for its medium and haze, 4.y/4.z for
         // noise strength/frequency and 6.xyz for wind velocity; the renderer
-        // writes 4.x (ocean depth) and 5.xyz (wind offset) per frame.
+        // writes 4.x (ocean depth), 5.xyz (wind offset) and the terrain sun
+        // shadow's grid (4.w, 5.w origin, 7.w extent) per frame.
         // TAA: 0 = history weights + RCAS sharpness, 1 = rejection thresholds +
         // jitter strength, 2 = current/previous jitter (UV), 3.x jitter debug;
         // the renderer writes 3.y (current-sample weight), 4.w and 5.w.
@@ -1228,6 +1230,8 @@ namespace PlutoGE::render
         static constexpr std::uint32_t DetailGrassInstanceSlot = 3;
         // The sky lighting atlas in volumetric fog, for the cloud shadow map (VolumetricFog.slang cloudShadowAtlas).
         static constexpr std::uint32_t CloudShadowAtlasSlot = 16;
+        // Volumetric fog's terrain sun occlusion (VolumetricFog.slang fogTerrainShadow, FogTerrainShadow.h).
+        static constexpr std::uint32_t FogTerrainShadowSlot = 17;
         // The fog's froxel volume (FogFroxels.slang): this frame's, read by the march, and last frame's, read by the
         // injection. Fog has no normal or material input, so these slots are free.
         static constexpr std::uint32_t FogFroxelSlot = 3, FogFroxelHistorySlot = 4;
@@ -1388,6 +1392,10 @@ namespace PlutoGE::render
         // the camera and drawn with the opaque geometry. Render consumes the span, which (with the fields' shared data)
         // must stay valid until it returns; a Render without a preceding call draws no grass.
         void SetDetailGrass(std::span<const BasicDetailGrassField> fields) noexcept { m_detailGrassFields = fields; }
+        // Terrain sun occlusion for volumetric fog in later Renders (FogTerrainShadow.h): fog below a terrain's
+        // shadow height gets no sun, beyond the reach of the shadow maps. Null turns it off. Uploaded when its
+        // revision changes.
+        void SetFogTerrainShadow(std::shared_ptr<const FogTerrainShadow> shadow) noexcept { m_fogTerrainShadow = std::move(shadow); }
         // Whether the device and shaders allow detail grass (Initialize).
         [[nodiscard]] bool DetailGrassAvailable() const noexcept { return static_cast<bool>(m_detailGrass); }
         void SetVirtualShadowMembershipCachingEnabled(bool enabled) noexcept
@@ -1455,6 +1463,12 @@ namespace PlutoGE::render
         std::unique_ptr<GpuInstanceCulling> m_gpuInstanceCulling;
         std::unique_ptr<DetailGrassRenderer> m_detailGrass;
         std::span<const BasicDetailGrassField> m_detailGrassFields;
+        // Creates the fog's terrain shadow texture when the shadow changed (Render, before any recording).
+        void UploadFogTerrainShadow();
+        std::shared_ptr<const FogTerrainShadow> m_fogTerrainShadow;
+        rhi::Texture m_fogTerrainShadowTexture;
+        const FogTerrainShadow *m_fogTerrainShadowUploaded = nullptr;
+        std::uint64_t m_fogTerrainShadowRevision = 0;
         BasicDetailGrassShaderPackage m_detailGrassShaders;
         bool m_gpuInstanceCullingEnabled = false;
         // Renders so far, and the one whose occlusion hierarchy the next may cull against (GpuInstanceCulling), with

@@ -242,6 +242,28 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     }
     lighting.shadowsEnabled = false;
     {
+        // Terrain between the fog and the sun (FogTerrainShadow.h): fog below the shadow height loses its sunlight,
+        // near and in the distant tail alike, beyond any shadow map; fog above it keeps it.
+        const auto terrainShadow = [](float height)
+        {
+            auto shadow = std::make_shared<FogTerrainShadow>();
+            shadow->origin = {-5000.f, -5000.f};
+            shadow->extent = 10000.f;
+            shadow->resolution = 4;
+            shadow->shadowHeights.assign(16, height);
+            shadow->revision = static_cast<std::uint64_t>(height + 1e5f);
+            return shadow;
+        };
+        // Turning the terrain shadow on or off discards the froxel history; changes while it is on converge.
+        renderer.SetFogTerrainShadow(terrainShadow(1000.f));
+        expect(sample(false), 0, "Fog in a terrain's shadow must not scatter sunlight");
+        renderer.SetFogTerrainShadow(nullptr);
+        expect(sample(false), sunThroughFog, "Fog without a terrain shadow must keep its sunlight");
+        renderer.SetFogTerrainShadow(terrainShadow(-1000.f));
+        expect(sample(false), sunThroughFog, "Fog above a terrain's shadow must keep its sunlight");
+        renderer.SetFogTerrainShadow(nullptr);
+    }
+    {
         // A cloud slab overhead dims the sun by its mean extinction. The
         // horizontal view ray never enters the slab, so only fog lighting changes.
         BasicPostProcessEffect cloud{BasicPostProcessEffectType::VolumetricCloud};

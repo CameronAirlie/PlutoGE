@@ -1259,6 +1259,9 @@ namespace PlutoGE::render
                          rhi::ShaderStageMask::Fragment});
                     postDescriptor.resourceBindings.push_back(
                         {31, 0, 31, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment});
+                    postDescriptor.resourceBindings.push_back(
+                        {FogTerrainShadowSlot, 0, FogTerrainShadowSlot, rhi::ResourceBindingType::SampledTexture,
+                         rhi::ShaderStageMask::Fragment});
                 }
                 for (const auto slot : extraTextures)
                     postDescriptor.resourceBindings.push_back(
@@ -2247,6 +2250,28 @@ namespace PlutoGE::render
         if (m_shadowLayers) m_shadowLayers->Invalidate();
     }
 
+    void BasicRenderer::UploadFogTerrainShadow()
+    {
+        const auto *shadow = m_fogTerrainShadow && m_fogTerrainShadow->Valid() ? m_fogTerrainShadow.get() : nullptr;
+        if (!shadow)
+        {
+            m_fogTerrainShadowTexture = {};
+            m_fogTerrainShadowUploaded = nullptr;
+            return;
+        }
+        if (m_fogTerrainShadowTexture && m_fogTerrainShadowUploaded == shadow && m_fogTerrainShadowRevision == shadow->revision)
+            return;
+        rhi::TextureDescriptor descriptor;
+        descriptor.width = descriptor.height = static_cast<std::uint32_t>(shadow->resolution);
+        descriptor.format = rhi::Format::R32Float;
+        descriptor.usage = rhi::TextureUsage::Sampled;
+        descriptor.debugName = "Fog terrain sun shadow";
+        descriptor.mipLevels = 1;
+        m_fogTerrainShadowTexture = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, Bytes(std::span(shadow->shadowHeights))));
+        m_fogTerrainShadowUploaded = m_fogTerrainShadowTexture ? shadow : nullptr;
+        m_fogTerrainShadowRevision = shadow->revision;
+    }
+
     void BasicRenderer::Render(const glm::mat4 &viewProjection, std::span<const BasicDraw> draws)
     {
         Render(viewProjection, BasicLighting{}, draws);
@@ -2283,6 +2308,7 @@ namespace PlutoGE::render
             throw std::logic_error("BasicRenderer must be initialized and resized before rendering");
         // Before any material is bound; recreated only when the bias changes.
         ApplyMaterialMipLodBias(TemporalMipLodBias(postProcessEffects));
+        UploadFogTerrainShadow();
 
         m_inverseViewProjection = glm::inverse(viewProjection);
         m_postProcessView = lighting.view;
@@ -5233,7 +5259,8 @@ namespace PlutoGE::render
                     .ambient = lighting.ambientIntensity,
                     .shadows = lighting.shadowsEnabled,
                     .cloudShadows = m_frameCloudOcclusion.shadowLight.w > 0.0f,
-                    .physicalSky = lighting.physicalSkyEnabled};
+                    .physicalSky = lighting.physicalSkyEnabled,
+                    .terrainShadow = static_cast<bool>(m_fogTerrainShadowTexture)};
                 for (int volume = 0; volume < 4 && volume < PLUTO_CLOUD_OCCLUSION_VOLUMES; ++volume)
                     froxelLighting.cloudExtinction[volume] = m_frameCloudOcclusion.volumes[volume].w;
                 fogFroxels = m_fogFroxels->Begin(*m_device, m_postProcessWidth, m_postProcessHeight, m_postProcessView,
@@ -5263,6 +5290,12 @@ namespace PlutoGE::render
                     effectParameters[6] = fogFroxels->lanes[0];
                     effectParameters[7] = fogFroxels->lanes[1];
                 }
+                // Terrain sun occlusion (VolumetricFog.slang fogTerrainSunVisibility): the grid's world XZ origin in
+                // 4.w and 5.w, its extent in 7.w (0 turns it off).
+                const auto *terrainShadow = m_fogTerrainShadowTexture ? m_fogTerrainShadowUploaded : nullptr;
+                effectParameters[4].w = terrainShadow ? terrainShadow->origin.x : 0.0f;
+                effectParameters[5].w = terrainShadow ? terrainShadow->origin.y : 0.0f;
+                effectParameters[7].w = terrainShadow ? terrainShadow->extent : 0.0f;
             }
             if (effect.type == BasicPostProcessEffectType::VolumetricCloud)
             {
@@ -5350,6 +5383,9 @@ namespace PlutoGE::render
                 commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
                 commands.BindTexture(31, m_frameDiffuseProbeAtlas ? m_frameDiffuseProbeAtlas : m_fallbackTexture.Get(),
                                      m_vctVolumeSampler.Get());
+                commands.BindTexture(FogTerrainShadowSlot,
+                                     m_fogTerrainShadowTexture ? m_fogTerrainShadowTexture.Get() : m_fallbackDataTexture.Get(),
+                                     m_shadowSampler.Get());
                 bindSceneLighting();
             };
             if (fogFroxels)

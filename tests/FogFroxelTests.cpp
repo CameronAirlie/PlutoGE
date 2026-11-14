@@ -1,10 +1,12 @@
 // FogFroxels.h: the froxel grid, its slice spacing, the per-frame jitter and when history may be reused.
 #include "PlutoGE/render/FogFroxels.h"
+#include "PlutoGE/render/FogTerrainShadow.h"
 
 #include <cmath>
 #include <iostream>
 #include <set>
 #include <tuple>
+#include <vector>
 #include <stdexcept>
 
 using namespace PlutoGE::render;
@@ -14,6 +16,48 @@ namespace
     void Require(bool condition, const char *message)
     {
         if (!condition) throw std::runtime_error(message);
+    }
+
+    // FogTerrainShadow.h: a ridge in front of a low sun shadows the fog behind it, not in front of or above it.
+    void CheckTerrainShadow()
+    {
+        constexpr int size = 64;
+        constexpr int ridge = 40;
+        std::vector<float> heights(size * size, 0.0f);
+        for (int z = 0; z < size; ++z)
+            heights[z * size + ridge] = 30.0f; // a one-texel wall along Z
+        const auto at = [&](const std::vector<float> &grid, int x, int z) { return grid[z * size + x]; };
+        const auto approx = [](float a, float b) { return std::abs(a - b) < 0.05f; };
+
+        // Sun toward +X at 45 degrees: the shadow falls toward -X, dropping a metre per one-metre texel.
+        const auto shadow = ComputeFogTerrainShadowHeights(heights, size, 1.0f, glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f)));
+        Require(shadow.size() == heights.size(), "The shadow grid matches the height grid");
+        Require(approx(at(shadow, ridge - 1, 10), 29.0f) && approx(at(shadow, ridge - 2, 10), 28.0f) &&
+                    approx(at(shadow, ridge - 15, 30), 15.0f),
+                "A ridge's shadow height falls with the sun's slope behind it (thin ridges included)");
+        Require(approx(at(shadow, ridge - 35, 10), 0.0f), "The shadow ends where it reaches the ground");
+        Require(approx(at(shadow, ridge + 5, 10), 0.0f), "The sunward side is lit");
+        Require(approx(at(shadow, ridge, 10), 30.0f), "The ridge itself keeps its height");
+
+        // A diagonal sun stays finite and still shadows behind the ridge.
+        const auto diagonal = ComputeFogTerrainShadowHeights(heights, size, 1.0f, glm::normalize(glm::vec3(1.0f, 0.5f, 0.7f)));
+        bool finite = true;
+        for (const float value : diagonal)
+            finite &= std::isfinite(value) && value >= kFogTerrainNoHeight;
+        Require(finite && at(diagonal, ridge - 3, 32) > 20.0f, "A diagonal sun shadows behind the ridge");
+
+        // A sun below the horizon, or a grid without terrain, shadows nothing.
+        const auto night = ComputeFogTerrainShadowHeights(heights, size, 1.0f, glm::vec3(1.0f, -0.2f, 0.0f));
+        Require(night == heights, "A sun below the horizon casts no terrain shadow");
+        const std::vector<float> empty(size * size, kFogTerrainNoHeight);
+        Require(ComputeFogTerrainShadowHeights(empty, size, 1.0f, glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f))) == empty,
+                "No terrain casts no shadow");
+
+        // Terrain beside empty texels: the shadow carries onto them instead of fading into "no terrain".
+        std::vector<float> island(size * size, kFogTerrainNoHeight);
+        island[10 * size + ridge] = 30.0f;
+        const auto islandShadow = ComputeFogTerrainShadowHeights(island, size, 1.0f, glm::normalize(glm::vec3(1.0f, 1.0f, 0.0f)));
+        Require(approx(at(islandShadow, ridge - 10, 10), 20.0f), "Terrain shadows the empty texels behind it");
     }
 
     void CheckGrid()
@@ -88,6 +132,7 @@ int main()
         CheckSlices();
         CheckJitter();
         CheckHistory();
+        CheckTerrainShadow();
         std::cout << "Fog froxel tests passed\n";
         return 0;
     }

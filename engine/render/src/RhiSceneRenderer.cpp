@@ -26,6 +26,7 @@
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "RhiDetailGrass.h"
+#include "RhiFogTerrainShadow.h"
 #include "RhiDrawPreparationCache.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "PlutoGE/render/DdgiConfig.h"
@@ -2414,6 +2415,16 @@ namespace PlutoGE::render
             { return std::make_shared<const BasicDraw>(prepareMaterial(material).draw); };
             detailGrass = CollectRhiDetailGrass(*scene, cameraData.tagFilter, resolvers);
         }
+        // Volumetric fog's sun occlusion by terrain beyond the shadow maps' reach (FogTerrainShadow.h).
+        std::shared_ptr<const FogTerrainShadow> fogTerrainShadow;
+        if (scene && effectiveLighting.directionalIntensity > 0.0f &&
+            std::ranges::any_of(basicEffects, [](const BasicPostProcessEffect &effect)
+                                { return effect.type == BasicPostProcessEffectType::VolumetricFog; }))
+        {
+            if (!m_fogTerrainShadow)
+                m_fogTerrainShadow = std::make_shared<FogTerrainShadowBuilder>();
+            fogTerrainShadow = m_fogTerrainShadow->Update(*scene, -effectiveLighting.directionalDirection);
+        }
         // Every material this frame draws was prepared at the current residency (TextureCache::retired).
         *m_preparedResidency = m_textureCache->residencyRevision;
         PreparedFrame frame;
@@ -2429,6 +2440,7 @@ namespace PlutoGE::render
         frame.effects = std::move(basicEffects);
         frame.decals = std::move(decals);
         frame.detailGrass = std::move(detailGrass);
+        frame.fogTerrainShadow = std::move(fogTerrainShadow);
         frame.debugView = debugView;
         frame.useTemporalUpscaler = useTemporalUpscaler;
         if (useTemporalUpscaler) frame.upscalerFrame = upscalerFrame;
@@ -2459,6 +2471,7 @@ namespace PlutoGE::render
         const auto recordStart = std::chrono::steady_clock::now();
         m_renderer->SetOutlines(std::span(frame.outlines).first(frame.outlineCount));
         m_renderer->SetDetailGrass(frame.detailGrass);
+        m_renderer->SetFogTerrainShadow(frame.fogTerrainShadow);
         m_renderer->Render(frame.viewProjection, frame.lighting, frame.draws, frame.effects, frame.shadowDraws, frame.debugView,
                            frame.upscalerFrame ? &*frame.upscalerFrame : nullptr,
                            frame.useTemporalUpscaler ? &frame.unjitteredViewProjection : nullptr, frame.submit, frame.giDraws,

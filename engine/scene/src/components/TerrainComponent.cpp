@@ -344,7 +344,9 @@ namespace PlutoGE::scene
         std::string paintedAlbedoPath = m_paintedAlbedoPath;
         std::string serializedHeightSamples;
         std::optional<std::string> serializedHoles;
-        std::vector<TerrainLayer> layers;
+        // Missing layer properties keep the current layers: partial lists (the inspector's terrain section, script
+        // property sets) carry none of them and must not clear the layers.
+        std::vector<TerrainLayer> layers = m_layers.GetLayers();
         std::size_t layerCount = 0;
         bool hasLayerCount = false;
         int weightResolution = m_layers.GetWeights().GetResolution();
@@ -442,7 +444,8 @@ namespace PlutoGE::scene
         }
         if (hasLayerCount)
             layers.resize(layerCount);
-        m_layers.SetLayers(std::move(layers));
+        if (layers != m_layers.GetLayers())
+            m_layers.SetLayers(std::move(layers));
         m_layers.SetHeightBlend(heightBlend);
         m_layers.SetDetailDistance(detailDistance);
         // Reload the weights only when they come from different files: undoing an unrelated edit must not throw

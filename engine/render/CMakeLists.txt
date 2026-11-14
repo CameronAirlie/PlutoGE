@@ -52,6 +52,8 @@ add_library(PlutoGERender
     src/DetailGrass.cpp
     src/DetailGrassRenderer.cpp
     src/RhiDetailGrass.cpp
+    src/FogTerrainShadow.cpp
+    src/RhiFogTerrainShadow.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiTerrainLayerCache.cpp

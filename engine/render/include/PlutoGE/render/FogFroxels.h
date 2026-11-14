@@ -72,8 +72,8 @@ namespace PlutoGE::render
     }
 
     // The light reaching the medium, which the volume holds already applied. Gradual changes (a moving sun, drifting
-    // clouds) converge through the history like any other; a step larger than kTolerance (a light switched, shadows or
-    // cloud shadows toggled) discards it, so the fog does not fade between the two over several frames.
+    // clouds) converge through the history like any other; a step larger than kTolerance (a light switched, shadows,
+    // cloud or terrain shadows toggled) discards it, so the fog does not fade between the two over several frames.
     struct FogFroxelLighting
     {
         glm::vec3 sunDirection{0.0f};
@@ -82,6 +82,8 @@ namespace PlutoGE::render
         // Mean extinction of each cloud occlusion volume (CloudOcclusionParameters::volumes w).
         glm::vec4 cloudExtinction{0.0f};
         bool shadows = false, cloudShadows = false, physicalSky = false;
+        // Terrain sun occlusion on (FogTerrainShadow.h). Its gradual changes with the sun converge like the rest.
+        bool terrainShadow = false;
 
         static constexpr float kTolerance = 0.05f;
         // Two degrees.
@@ -100,7 +102,7 @@ namespace PlutoGE::render
             const bool sameDirection = glm::dot(sunDirection, sunDirection) == 0.0f
                 ? glm::dot(other.sunDirection, other.sunDirection) == 0.0f
                 : glm::dot(glm::normalize(sunDirection), glm::normalize(other.sunDirection)) >= kDirectionCosine;
-            return shadows == other.shadows && cloudShadows == other.cloudShadows &&
+            return shadows == other.shadows && cloudShadows == other.cloudShadows && terrainShadow == other.terrainShadow &&
                    physicalSky == other.physicalSky && sameDirection && closeVector(sunRadiance, other.sunRadiance) &&
                    close(ambient, other.ambient) && closeVector(cloudExtinction, other.cloudExtinction);
         }

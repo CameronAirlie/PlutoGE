@@ -338,6 +338,8 @@ namespace PlutoGE::scene
         const std::vector<OutlineComponent *> &GetOutlineComponents() const;
         // Every DetailGrassComponent in hierarchy order (the renderer draws those enabled on active entities).
         const std::vector<DetailGrassComponent *> &GetDetailGrassComponents() const;
+        // Every registered TerrainComponent (the renderer uses those enabled on active entities).
+        const std::vector<TerrainComponent *> &GetTerrainComponents() const { return m_terrainComponents; }
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
         // A collider's geometry changed in place (a terrain's holes): the next physics query recreates every collider

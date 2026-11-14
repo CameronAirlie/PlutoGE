@@ -28,6 +28,8 @@
 // temporal reuse. Bound only by the froxel pipelines.
 [[vk::binding(3, 0)]] Sampler2D fogFroxels : register(t3, space0);
 [[vk::binding(4, 0)]] Sampler2D fogFroxelHistory : register(t4, space0);
+// Terrain sun occlusion (FogTerrainShadow.h): per texel, the world height below which terrain hides the sun.
+[[vk::binding(17, 0)]] Sampler2D fogTerrainShadow : register(t17, space0);
 
 static const float PI = 3.14159265359;
 #include "PhysicalSkyEnvironment.slang"
@@ -51,6 +53,33 @@ float fogDensityScale(float3 position, float fade)
     const float3 p = (position + pass.parameters[5].xyz) * pass.parameters[4].z * float3(1.0, 2.0, 1.0);
     const float noise = cloudNoise(p) * 0.65 + cloudNoise(p * 2.03 + float3(17.1, 9.2, 13.7)) * 0.35;
     return 1.0 + strength * clamp((noise - 0.5) * 4.0, -1.0, 1.0);
+}
+
+// Sunlight left by the terrain at `position` (1 lit, 0 in a terrain's shadow), beyond the shadow maps' reach: a
+// low sun behind a distant ridge. Lanes 4.w and 5.w hold the grid's world XZ origin, 7.w its extent (0 = off).
+// Fetched texels filtered by hand: the heights are 32-bit floats and the fetch needs no derivatives.
+float fogTerrainSunVisibility(float3 position)
+{
+    const float extent = pass.parameters[7].w;
+    if (extent <= 0.0)
+        return 1.0;
+    uint width, height;
+    fogTerrainShadow.GetDimensions(width, height);
+    const float size = (float)max(width, 1u);
+    const float2 texel = (position.xz - float2(pass.parameters[4].w, pass.parameters[5].w)) / extent * size - 0.5;
+    if (any(texel < -0.5) || any(texel > size - 0.5))
+        return 1.0;
+    const int2 base = int2(floor(texel));
+    const float2 f = texel - float2(base);
+    const int last = (int)width - 1;
+    const float h00 = fogTerrainShadow.Load(int3(clamp(base, 0, last), 0)).r;
+    const float h10 = fogTerrainShadow.Load(int3(clamp(base + int2(1, 0), 0, last), 0)).r;
+    const float h01 = fogTerrainShadow.Load(int3(clamp(base + int2(0, 1), 0, last), 0)).r;
+    const float h11 = fogTerrainShadow.Load(int3(clamp(base + int2(1, 1), 0, last), 0)).r;
+    const float shadowHeight = lerp(lerp(h00, h10, f.x), lerp(h01, h11, f.x), f.y);
+    // A soft edge about a texel deep hides the grid.
+    const float softness = max(extent / size, 1.0);
+    return saturate((position.y - shadowHeight) / softness + 0.5);
 }
 
 float interleavedGradientNoise(float2 pixel, float frame)
@@ -188,7 +217,7 @@ FogRayLighting fogRayLighting(float3 rayDirection)
 }
 
 // One cell of the march: the light it scatters toward the camera and its density variation, both faded by
-// `detailWeight` toward the distant model (unshadowed, mean density).
+// `detailWeight` toward the distant model (mean density, shadowed only by terrain).
 struct FogCell
 {
     float3 radiance;
@@ -204,7 +233,7 @@ FogCell evaluateFogCell(FogRayLighting ray, float3 position, float detailWeight,
         // Enclosed by baked ambient volumes (a cave, a closed room), the fog sees only part of the sky.
         ray.lighting.environment *= fogAmbientSkyVisibility(position);
         const float lightVisibility = ray.hasDirectionalLight
-            ? lerp(1.0, directionalVisibility(position), detailWeight)
+            ? lerp(1.0, directionalVisibility(position), detailWeight) * fogTerrainSunVisibility(position)
             : 1.0;
         cell.radiance = fogPointRadiance(ray.lighting, ray.medium, fogCloudOcclusion, position, ray.lightDirection,
                                          lightVisibility);
@@ -314,7 +343,8 @@ float4 integrateFog(FullscreenVertexOutput input, bool froxels)
         FogLighting tailLighting = lighting;
         tailLighting.environment *= fogAmbientSkyVisibility(tailPosition);
         accumulatedLight += tailWeight *
-            fogPointRadiance(tailLighting, medium, fogCloudOcclusion, tailPosition, lightDirection, 1.0);
+            fogPointRadiance(tailLighting, medium, fogCloudOcclusion, tailPosition, lightDirection,
+                             ray.hasDirectionalLight ? fogTerrainSunVisibility(tailPosition) : 1.0);
         scatterDistance += tailWeight * (marchDistance + tailMidpoint);
         scatterWeight += tailWeight;
     }

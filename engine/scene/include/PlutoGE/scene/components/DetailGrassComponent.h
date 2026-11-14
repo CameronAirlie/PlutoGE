@@ -32,8 +32,8 @@ namespace PlutoGE::scene
             bool operator==(const Layer &) const = default;
         };
 
-        // A new component grows one default layer everywhere on its terrain.
-        DetailGrassComponent() { m_layers.push_back(Sanitized({})); }
+        // A new component grows one meadow layer everywhere on its terrain.
+        DetailGrassComponent() { m_layers.push_back(Sanitized({render::DetailGrassPresetLayer(render::DetailGrassPreset::Meadow)})); }
 
         // Generation is a pure function of the camera; there is nothing to step.
         void Update(float) override {}

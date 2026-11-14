@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -217,6 +218,53 @@ namespace
         Require(render::DetailGrassClumpShape{.blades = 0, .radius = -1.0f}.Sanitized().blades == 1, "Shapes sanitize");
     }
 
+    void PresetsAndEstimate()
+    {
+        for (std::size_t index = 0; index < std::size_t(render::DetailGrassPreset::Count); ++index)
+        {
+            const auto preset = static_cast<render::DetailGrassPreset>(index);
+            const auto layer = render::DetailGrassPresetLayer(preset);
+            Require(layer == layer.Sanitized(), std::string("Preset is already sanitized: ") + render::DetailGrassPresetName(preset));
+            Require(layer.name == render::DetailGrassPresetName(preset) && layer.wind.enabled, "Presets are named and sway");
+        }
+
+        // Applying a preset replaces the look and keeps where the layer grows.
+        auto placed = TestLayer();
+        placed.name = "Mine";
+        placed.enabled = false;
+        placed.weightThreshold = 0.6f;
+        placed.maxSlopeDegrees = 20.0f;
+        placed.shape.seed = 42;
+        const auto lawn = render::DetailGrassApplyPreset(placed, render::DetailGrassPreset::Lawn);
+        const auto reference = render::DetailGrassPresetLayer(render::DetailGrassPreset::Lawn);
+        Require(lawn.name == "Mine" && !lawn.enabled && lawn.weightThreshold == 0.6f && lawn.maxSlopeDegrees == 20.0f &&
+                    lawn.seed == placed.seed && lawn.shape.seed == 42,
+                "A preset keeps the layer's name, state, placement and seeds");
+        Require(lawn.density == reference.density && lawn.maxHeight == reference.maxHeight && lawn.color == reference.color &&
+                    lawn.shape.blades == reference.shape.blades,
+                "A preset sets the look");
+
+        // With falloff 2: density * pi * R0^2 * (1 + 2 ln(D / R0)) clumps around the camera.
+        const auto layer = TestLayer();
+        const auto estimate = render::EstimateDetailGrass(layer);
+        const float r0 = layer.fullDensityDistance, d = layer.drawDistance;
+        const float expected = estimate.clumpsPerSquareMetre * glm::pi<float>() * r0 * r0 * (1.0f + 2.0f * std::log(d / r0));
+        Require(std::abs(estimate.Clumps() / expected - 1.0f) < 0.02f,
+                "The estimate integrates the kept share: " + std::to_string(estimate.Clumps()) + " vs " + std::to_string(expected));
+        Require(std::abs(estimate.clumpsPerSquareMetre - layer.density) < 0.05f * layer.density, "An uncapped layer keeps its density");
+        const auto mesh = render::BuildDetailGrassClump(layer.shape);
+        for (std::uint32_t lod = 0; lod < render::DetailGrassLodCount; ++lod)
+            Require(estimate.trianglesPerClump[lod] == mesh.lods[lod].indexCount / 3 && estimate.clumps[lod] > 0.0f,
+                    "Every LOD is counted with its clump's triangles");
+        Require(estimate.candidates > 0 && estimate.Triangles() > estimate.Clumps(), "Candidates and triangles are reported");
+
+        auto huge = layer;
+        huge.density = 64.0f; // every clump within 60 m: millions of candidates
+        huge.fullDensityDistance = 60.0f;
+        huge.drawDistance = 300.0f;
+        Require(render::EstimateDetailGrass(huge).clumpsPerSquareMetre < 64.0f, "The estimate reports the candidate cap");
+    }
+
     void ComponentRoundTrip()
     {
         DetailGrassComponent component;
@@ -292,6 +340,7 @@ try
     RingsEvaluateEachCandidateOnce();
     DensityThinning();
     ClumpMesh();
+    PresetsAndEstimate();
     ComponentRoundTrip();
     HeightFieldFollowsTerrain();
     std::cout << "Detail grass tests passed\n";

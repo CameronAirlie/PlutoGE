@@ -85,6 +85,7 @@ namespace PlutoGE::ui::icons
     inline constexpr const char *ArrowLeft = "\xef\x81\xa0"; // arrow-left
     inline constexpr const char *ArrowRight = "\xef\x81\xa1"; // arrow-right
     inline constexpr const char *ArrowUp = "\xef\x81\xa2"; // arrow-up
+    inline constexpr const char *ArrowDown = "\xef\x81\xa3"; // arrow-down
     inline constexpr const char *FolderPlus = "\xef\x99\x9e"; // folder-plus
     inline constexpr const char *ListView = "\xef\x80\xba"; // list
     inline constexpr const char *GridView = "\xef\x80\x8a"; // table-cells
@@ -124,7 +125,7 @@ namespace PlutoGE::ui::icons
         0xf054, 0xf054,
         0xf057, 0xf057,
         0xf05a, 0xf05b,
-        0xf060, 0xf062,
+        0xf060, 0xf063,
         0xf065, 0xf066,
         0xf067, 0xf067,
         0xf06e, 0xf06e,

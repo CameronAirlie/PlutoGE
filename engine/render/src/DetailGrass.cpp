@@ -283,4 +283,147 @@ namespace PlutoGE::render
     {
         return distance < layer.lod1Distance ? 0u : distance < layer.lod2Distance ? 1u : 2u;
     }
+
+    namespace
+    {
+        struct PresetInfo
+        {
+            const char *name;
+            const char *description;
+        };
+        constexpr std::array<PresetInfo, std::size_t(DetailGrassPreset::Count)> Presets{{
+            {"Meadow", "Dense, knee-high mixed grass with dry patches."},
+            {"Lawn", "Short, very dense and even, like mown or grazed grass."},
+            {"Tall Grass", "Sparse, waist-high soft grass that sways strongly."},
+            {"Dry Tufts", "Scattered straw-coloured tufts for forest floors and dry ground."},
+            {"Weeds", "A few low, broad-leaved plants among other cover."},
+        }};
+
+        const PresetInfo &Info(DetailGrassPreset preset)
+        {
+            return Presets[std::min(std::size_t(preset), Presets.size() - 1)];
+        }
+
+        // The settings a preset owns; the rest of the layer is left as constructed.
+        struct PresetValues
+        {
+            float density;
+            glm::vec2 height, width;
+            float alignToGround;
+            float fullDensityDistance, drawDistance, widthCompensation;
+            glm::vec2 lodDistances;
+            glm::vec3 color, dryColor;
+            float dryAmount, patchSize, colorJitter;
+            float groundTint, rootOcclusion, normalBend, roughness, translucency;
+            float windStiffness, windFlutter;
+            DetailGrassClumpShape shape;
+        };
+
+        PresetValues Values(DetailGrassPreset preset)
+        {
+            switch (preset)
+            {
+            case DetailGrassPreset::Lawn:
+                return {40.0f, {0.06f, 0.14f}, {0.9f, 1.2f}, 0.6f, 10.0f, 60.0f, 3.0f, {10.0f, 24.0f},
+                        {0.20f, 0.38f, 0.08f}, {0.42f, 0.42f, 0.16f}, 0.12f, 6.0f, 0.12f,
+                        0.35f, 0.4f, 0.75f, 0.55f, 0.4f, 0.3f, 0.2f,
+                        {.blades = 24, .radius = 0.12f, .bladeWidth = 0.006f, .minBladeHeight = 0.5f, .lean = 0.2f, .curvature = 0.3f}};
+            case DetailGrassPreset::TallGrass:
+                return {10.0f, {0.7f, 1.4f}, {0.9f, 1.4f}, 0.15f, 16.0f, 90.0f, 2.0f, {16.0f, 40.0f},
+                        {0.28f, 0.36f, 0.10f}, {0.60f, 0.50f, 0.25f}, 0.45f, 14.0f, 0.2f,
+                        0.4f, 0.25f, 0.55f, 0.6f, 0.5f, 0.05f, 0.4f,
+                        {.blades = 16, .radius = 0.18f, .bladeWidth = 0.02f, .minBladeHeight = 0.4f, .lean = 0.35f, .curvature = 0.7f}};
+            case DetailGrassPreset::DryTufts:
+                return {4.0f, {0.25f, 0.55f}, {0.8f, 1.2f}, 0.4f, 10.0f, 55.0f, 2.0f, {12.0f, 28.0f},
+                        {0.30f, 0.31f, 0.12f}, {0.52f, 0.42f, 0.20f}, 0.65f, 6.0f, 0.18f,
+                        0.65f, 0.35f, 0.55f, 0.7f, 0.35f, 0.25f, 0.3f,
+                        {.blades = 10, .radius = 0.1f, .bladeWidth = 0.013f, .minBladeHeight = 0.45f, .lean = 0.28f, .curvature = 0.35f}};
+            case DetailGrassPreset::Weeds:
+                return {3.0f, {0.15f, 0.4f}, {0.8f, 1.3f}, 0.5f, 10.0f, 45.0f, 1.5f, {10.0f, 24.0f},
+                        {0.18f, 0.30f, 0.08f}, {0.35f, 0.33f, 0.12f}, 0.2f, 8.0f, 0.25f,
+                        0.3f, 0.4f, 0.4f, 0.5f, 0.5f, 0.4f, 0.4f,
+                        {.blades = 8, .radius = 0.08f, .bladeWidth = 0.03f, .minBladeHeight = 0.5f, .lean = 0.55f, .curvature = 0.3f}};
+            case DetailGrassPreset::Meadow:
+            case DetailGrassPreset::Count:
+                break;
+            }
+            return {22.0f, {0.22f, 0.8f}, {0.8f, 1.5f}, 0.3f, 14.0f, 85.0f, 2.5f, {14.0f, 34.0f},
+                    {0.26f, 0.37f, 0.09f}, {0.55f, 0.47f, 0.22f}, 0.35f, 11.0f, 0.22f,
+                    0.45f, 0.3f, 0.6f, 0.6f, 0.45f, 0.15f, 0.35f,
+                    {.blades = 20, .radius = 0.2f, .bladeWidth = 0.017f, .minBladeHeight = 0.35f, .lean = 0.45f, .curvature = 0.6f}};
+        }
+    }
+
+    const char *DetailGrassPresetName(DetailGrassPreset preset) { return Info(preset).name; }
+    const char *DetailGrassPresetDescription(DetailGrassPreset preset) { return Info(preset).description; }
+
+    DetailGrassLayer DetailGrassApplyPreset(const DetailGrassLayer &source, DetailGrassPreset preset)
+    {
+        const auto values = Values(preset);
+        DetailGrassLayer layer = source;
+        layer.density = values.density;
+        layer.minHeight = values.height.x, layer.maxHeight = values.height.y;
+        layer.minWidth = values.width.x, layer.maxWidth = values.width.y;
+        layer.alignToGround = values.alignToGround;
+        layer.fullDensityDistance = values.fullDensityDistance;
+        layer.drawDistance = values.drawDistance;
+        layer.maxWidthCompensation = values.widthCompensation;
+        layer.lod1Distance = values.lodDistances.x, layer.lod2Distance = values.lodDistances.y;
+        layer.color = values.color, layer.dryColor = values.dryColor;
+        layer.dryAmount = values.dryAmount, layer.patchSize = values.patchSize, layer.colorJitter = values.colorJitter;
+        layer.groundTint = values.groundTint, layer.rootOcclusion = values.rootOcclusion, layer.normalBend = values.normalBend;
+        layer.roughness = values.roughness, layer.translucency = values.translucency;
+        layer.wind.enabled = true;
+        layer.wind.stiffness = values.windStiffness, layer.wind.flutter = values.windFlutter;
+        const auto shapeSeed = layer.shape.seed;
+        layer.shape = values.shape;
+        layer.shape.seed = shapeSeed;
+        return layer.Sanitized();
+    }
+
+    DetailGrassLayer DetailGrassPresetLayer(DetailGrassPreset preset)
+    {
+        DetailGrassLayer layer;
+        layer.name = DetailGrassPresetName(preset);
+        return DetailGrassApplyPreset(layer, preset);
+    }
+
+    float DetailGrassEstimate::Clumps() const noexcept
+    {
+        float total = 0.0f;
+        for (const float count : clumps) total += count;
+        return total;
+    }
+
+    float DetailGrassEstimate::Triangles() const noexcept
+    {
+        float total = 0.0f;
+        for (std::uint32_t lod = 0; lod < DetailGrassLodCount; ++lod) total += clumps[lod] * float(trianglesPerClump[lod]);
+        return total;
+    }
+
+    DetailGrassEstimate EstimateDetailGrass(const DetailGrassLayer &source, const DetailGrassClumpMesh *clump)
+    {
+        const auto layer = source.Sanitized();
+        const auto lattice = MakeDetailGrassLattice(layer);
+        DetailGrassEstimate estimate;
+        estimate.clumpsPerSquareMetre = 1.0f / (lattice.spacing * lattice.spacing);
+        for (std::uint32_t ring = 0; ring < lattice.rings; ++ring)
+            estimate.candidates += lattice.ringSide[ring] * lattice.ringSide[ring];
+
+        const auto built = clump ? DetailGrassClumpMesh{} : BuildDetailGrassClump(layer.shape);
+        const auto &lods = clump ? clump->lods : built.lods;
+        for (std::uint32_t lod = 0; lod < DetailGrassLodCount; ++lod) estimate.trianglesPerClump[lod] = lods[lod].indexCount / 3u;
+
+        // Expected clumps: the density times the kept share over the disc out to the draw distance, by annulus.
+        constexpr float step = 0.05f;
+        for (float inner = 0.0f; inner < layer.drawDistance; inner += step)
+        {
+            const float outer = std::min(inner + step, layer.drawDistance);
+            const float middle = 0.5f * (inner + outer);
+            const float area = glm::pi<float>() * (outer * outer - inner * inner);
+            estimate.clumps[DetailGrassLod(layer, middle)] += area * estimate.clumpsPerSquareMetre * lattice.Keep(middle);
+        }
+        return estimate;
+    }
 }

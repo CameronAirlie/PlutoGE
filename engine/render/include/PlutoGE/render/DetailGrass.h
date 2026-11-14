@@ -168,6 +168,41 @@ namespace PlutoGE::render
     // The LOD a clump at `distance` draws with.
     std::uint32_t DetailGrassLod(const DetailGrassLayer &layer, float distance);
 
+    // Starting points for a layer: size, density, distances, colours, shading, wind and clump shape. Where a layer grows
+    // (its density map, threshold and slope) belongs to the scene, so applying a preset to an existing layer should keep
+    // those (DetailGrassApplyPreset).
+    enum class DetailGrassPreset
+    {
+        Meadow,    // dense, knee-high mixed grass
+        Lawn,      // short, very dense, uniform
+        TallGrass, // sparse, waist-high, soft and swaying
+        DryTufts,  // scattered straw-coloured tufts
+        Weeds,     // a few broad-leaved low plants
+        Count,
+    };
+    const char *DetailGrassPresetName(DetailGrassPreset preset);
+    // One-line description for tooltips.
+    const char *DetailGrassPresetDescription(DetailGrassPreset preset);
+    // A new layer of the preset, named after it.
+    DetailGrassLayer DetailGrassPresetLayer(DetailGrassPreset preset);
+    // `layer` with the preset's look, size and distances, keeping its name, enabled state, placement and seed.
+    DetailGrassLayer DetailGrassApplyPreset(const DetailGrassLayer &layer, DetailGrassPreset preset);
+
+    // What a layer costs around a camera standing on fully painted, flat ground, before view culling (a 90-degree view
+    // sees about a quarter of it). Counts are expected values; the lattice's candidate cap is included.
+    struct DetailGrassEstimate
+    {
+        float clumpsPerSquareMetre = 0.0f;                 // near the camera, after the candidate cap
+        std::array<float, DetailGrassLodCount> clumps{};   // per LOD
+        std::array<std::uint32_t, DetailGrassLodCount> trianglesPerClump{};
+        std::uint32_t candidates = 0;                      // lattice points dispatched per frame
+
+        [[nodiscard]] float Clumps() const noexcept;
+        [[nodiscard]] float Triangles() const noexcept;
+    };
+    // `clump` is the layer's clump mesh when the caller already has it (it is built otherwise).
+    DetailGrassEstimate EstimateDetailGrass(const DetailGrassLayer &layer, const DetailGrassClumpMesh *clump = nullptr);
+
     // Clumps the GPU generated, read back without waiting: an earlier frame's (BasicRendererFrameStats::detailGrass).
     struct DetailGrassStats
     {

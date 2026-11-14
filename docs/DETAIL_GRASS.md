@@ -10,8 +10,29 @@ detail grass for the carpet underneath them.
 
 ## Authoring
 
-Add **Rendering → Detail Grass** to an entity that has a `TerrainComponent`. A new component has one layer that grows
-everywhere. Each layer (`Layer.N.*` in the inspector, up to eight) is one kind of cover:
+Add **Rendering → Detail Grass** to an entity that has a `TerrainComponent`. A new component has one Meadow layer that
+grows everywhere.
+
+### The inspector
+
+- **Summary**: roughly how many clumps and triangles the enabled layers put in view, or a warning when the entity has
+  no terrain.
+- **Layer list**: one row per layer, with an enable box, its healthy and dry colours, its name, and the terrain layer
+  it grows on. A warning marks a layer whose terrain layer does not exist, because such a layer grows nothing.
+  - **Add Layer** creates a layer from a preset.
+  - The buttons duplicate, move or remove the selected layer, and a row's right-click menu does the same.
+  - Each is one undo step. A duplicate gets a new seed so it does not grow on top of the original.
+- **Preset** buttons replace a layer's size, colours, shading, wind, clump and distances. They keep its name, where it
+  grows and its seeds. The presets are Meadow, Lawn, Tall Grass, Dry Tufts and Weeds (`render::DetailGrassPreset`).
+- **Sections**, ordered by how often they are tuned:
+  - **Where It Grows** picks the terrain layer from a list.
+  - **Colour** shows a strip of blades with the dry patches and variation. Colours are shown as they appear on screen
+    and stored as linear albedo.
+  - **Clump Shape** previews the clump at each LOD; drag the preview to turn it.
+  - **Distance And Cost** graphs the share of clumps kept against distance, with the LOD bands. Hover the graph for a
+    readout. A table gives each LOD's clumps and triangles in view (`render::EstimateDetailGrass`).
+
+Each layer (`Layer.N.*` in the scene file, up to eight) is one kind of cover:
 
 | Group | Settings | Notes |
 | --- | --- | --- |
@@ -131,13 +152,19 @@ Ways to make it cheaper if a scene needs it:
 - Grass is invisible to GI (DDGI and voxels): it would add noise and cost for little light.
 - The terrain's world transform may rotate and translate it. Non-uniform scale stretches the lattice and normals
   slightly.
-- The inspector is the generic property list. A layer list with add, remove and presets would be friendlier.
+- The inspector's estimate assumes a camera on fully painted, flat ground. The renderer's real clump counts
+  (`BasicRendererFrameStats::detailGrass`) are not yet shown in the editor.
 
 ## Tests
 
-- `PlutoGEDetailGrassTests` (CPU): the lattice's layout and rings, exactly-once evaluation against a brute-force walk,
-  density thinning, the clump mesh at every LOD, component round trip and sanitizing, and the height field following
-  its terrain.
+- `PlutoGEDetailGrassTests` (CPU) covers:
+  - the lattice's layout and rings, and exactly-once evaluation against a brute-force walk;
+  - density thinning and the clump mesh at every LOD;
+  - presets, which keep placement, and the estimate, checked against the closed form and the candidate cap;
+  - component round trip and sanitizing, and the height field following its terrain.
+- `PlutoGEDetailGrassInspectorTests` draws the inspector (`ui::DrawDetailGrassInspector`, through a test host) in a
+  hidden OpenGL window with every section open. An untouched inspector must report no edits. With an output prefix
+  argument, it writes screenshots for visual review.
 - `PlutoGE{Vulkan,OpenGL}DetailGrassTests` (`--detail-grass`): a half-painted flat terrain grows grass only where it is
   painted. Unchanged views render and generate identically, calm wind changes nothing, a disabled layer draws nothing,
   and a small camera step keeps the field.

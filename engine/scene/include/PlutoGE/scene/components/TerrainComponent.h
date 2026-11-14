@@ -73,6 +73,9 @@ namespace PlutoGE::scene
         float GetHeightScale() const { return m_heightScale; }
         float GetSurfaceSmoothing() const { return m_surfaceSmoothing; }
         float GetHeightAtLocalPosition(float x, float z) const;
+        // The height the mesh draws at sample (x, z), at full detail: the stored sample smoothed by SurfaceSmoothing.
+        // Samples outside the grid clamp to its edge. Surfaces that must sit on the drawn terrain (detail grass) use it.
+        float GetSurfaceSampleHeight(int x, int z) const;
         // Bounded local surface query. Unlike GetHeightAtLocalPosition, this
         // rejects out-of-terrain coordinates instead of clamping them.
         bool TrySampleSurface(float x, float z, float &height, glm::vec3 &normal) const;

@@ -7,6 +7,7 @@
 #include "PlutoGE/render/ShadowGeometry.h"
 #include "PlutoGE/render/ShadowFaceCache.h"
 #include <optional>
+#include "PlutoGE/render/DetailGrass.h"
 #include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/SceneWeather.h"
 #include "PlutoGE/render/ImpostorLayout.h"
@@ -87,6 +88,7 @@ namespace PlutoGE::render
     class LightClusterGrid;
     class GpuDrivenOpaque;
     class GpuInstanceCulling;
+    class DetailGrassRenderer;
     struct BindlessMaterialFallbacks;
 
     enum class BasicPostProcessEffectType : std::uint8_t
@@ -295,6 +297,24 @@ namespace PlutoGE::render
         }
     };
 
+    // Detail grass (docs/DETAIL_GRASS.md): the generation pass (DetailGrassGenerate.slang) and the BasicLitGrass variant,
+    // the standard material path drawn from generated clumps: vertex stages for shading and for colour-only layouts and
+    // coverage depth, and the fragments of each geometry layout. Without them SetDetailGrass draws nothing.
+    struct BasicDetailGrassShaderPackage
+    {
+        rhi::ComputePipelineDescriptor::ShaderCode generate;
+        rhi::GraphicsPipelineDescriptor::ShaderCode vertex, colorVertex;
+        rhi::GraphicsPipelineDescriptor::ShaderCode fragment, coverageFragment, indirectFragment;
+        std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> compactFragments; // colour, colour+motion
+        [[nodiscard]] bool Available() const
+        {
+            const auto present = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
+            return present(generate) && present(vertex) && present(colorVertex) && present(fragment) &&
+                   present(coverageFragment) && present(indirectFragment) && present(compactFragments[0]) &&
+                   present(compactFragments[1]);
+        }
+    };
+
     // GPU instance culling (InstanceCulling.slang, GpuInstanceCulling): count, scan and scatter passes that bin instanced
     // draws' instances by LOD on the GPU. Without them the renderer bins on the CPU.
     struct BasicInstanceCullingShaderPackage
@@ -347,6 +367,7 @@ namespace PlutoGE::render
         std::array<BasicPostProcessShaderPackage, 2> opaqueDepth;
         BasicTerrainShaderPackage terrain;
         BasicImpostorShaderPackage impostor;
+        BasicDetailGrassShaderPackage detailGrass;
         BasicInstanceCullingShaderPackage instanceCulling;
         BasicBindlessShaderPackage bindless;
         // Optional per-graph specialisations of fragment, compactFragments[0]
@@ -672,6 +693,37 @@ namespace PlutoGE::render
         rhi::TextureHandle normalDepth;
     };
 
+    // A detail grass draw's generated clumps (DetailGrassRenderer): where this frame's generation pass wrote them and
+    // their indirect draws, one per LOD, and the layer's shading constants (BasicLitGrass.slang).
+    struct BasicDetailGrassDraw
+    {
+        rhi::BufferHandle instances, arguments;
+        std::size_t argumentOffset = 0; // bytes; LOD l's draw is at argumentOffset + l * 20
+        std::array<std::uint32_t, DetailGrassLodCount> firstInstance{};
+        glm::vec4 shading{0.0f}; // normal bend, root occlusion, ground tint, align to ground
+    };
+
+    struct BasicDraw;
+    // One detail grass layer over one terrain for a frame (BasicRenderer::SetDetailGrass). The renderer generates its
+    // clumps on the GPU around the camera and draws them through the geometry passes with `material`'s surface.
+    struct BasicDetailGrassField
+    {
+        // Stable across frames: seeds the layer and keys the renderer's caches.
+        std::uint64_t id = 0;
+        glm::mat4 terrainToWorld{1.0f};
+        std::shared_ptr<const DetailGrassHeightField> heights;
+        // Where the layer grows: dot(texel, densityChannel) of this RGBA8 map over the terrain's 0..1 UVs (a terrain
+        // weight map and its layer's channel). Without one it grows everywhere.
+        rhi::TextureHandle density;
+        glm::vec4 densityChannel{1.0f, 0.0f, 0.0f, 0.0f};
+        // The ground's colour over the same UVs (the terrain's macro albedo, sRGB), for the roots; optional.
+        rhi::TextureHandle groundAlbedo;
+        DetailGrassLayer layer;
+        // The surface the clumps shade with: a BasicDraw's material fields (its mesh, model and instances are
+        // ignored). DetailGrassDefaultMaterial gives the layer's own.
+        std::shared_ptr<const BasicDraw> material;
+    };
+
     struct BasicDraw
     {
         const BasicMesh *mesh = nullptr;
@@ -779,7 +831,14 @@ namespace PlutoGE::render
         // Wind response (RenderCommand::foliageWind). Every pass deforms enabled draws the same way, with the
         // scene's wind from BasicLighting::wind (FoliageWindDraws.h).
         FoliageWindResponse foliageWind{};
+        // Set on detail grass draws (built by the renderer from SetDetailGrass): the mesh is the clump, drawn through
+        // the BasicLitGrass vertex stages from the generated instances rather than instanceModels.
+        std::shared_ptr<const BasicDetailGrassDraw> detailGrass;
     };
+
+    // The surface a detail grass layer shades with when it names no material: white (the clumps carry the colour),
+    // two-sided, with the layer's roughness and translucency.
+    BasicDraw DetailGrassDefaultMaterial(const DetailGrassLayer &layer);
 
     // One outline style and the draws whose silhouette it outlines (BasicRenderer::SetOutlines).
     struct BasicOutlineLayer
@@ -1085,6 +1144,10 @@ namespace PlutoGE::render
         std::size_t gpuDrivenDraws = 0, gpuDrivenBatches = 0, gpuDrivenMaterials = 0;
         // Instanced draws binned by GpuInstanceCulling (their triangles and instances are not counted).
         std::size_t gpuBinnedDraws = 0;
+        // Detail grass this frame: fields generated and the candidates their lattices dispatched; and the latest
+        // generated clumps per LOD read back (an earlier frame's; DetailGrassStats).
+        std::size_t detailGrassFields = 0, detailGrassCandidates = 0;
+        DetailGrassStats detailGrass;
         // Whether GPU instance culling ran its second occlusion phase (GpuInstanceCulling::TwoPhase), and its latest
         // diagnostics (an earlier frame's).
         bool gpuCullingSecondPhase = false;
@@ -1161,6 +1224,8 @@ namespace PlutoGE::render
         static constexpr std::uint32_t InstanceIndexSlot = 2;
         // Instanced draws' storage parameters (BasicLit.slang InstanceStorageParameters, set 3 binding 3; OpenGL 18).
         static constexpr std::uint32_t InstanceStorageSlot = 18;
+        // Detail grass draws' generated clumps (BasicLitGrass.slang grassInstances, set 3 binding 4; OpenGL storage 3).
+        static constexpr std::uint32_t DetailGrassInstanceSlot = 3;
         // The sky lighting atlas in volumetric fog, for the cloud shadow map (VolumetricFog.slang cloudShadowAtlas).
         static constexpr std::uint32_t CloudShadowAtlasSlot = 16;
         // The fog's froxel volume (FogFroxels.slang): this frame's, read by the march, and last frame's, read by the
@@ -1319,6 +1384,12 @@ namespace PlutoGE::render
         // Outlines drawn on the display output of the next Render, in order (later layers on top); layers past
         // MaxOutlineLayers are dropped. The layers and their draws are borrowed and must stay valid until then.
         void SetOutlines(std::span<const BasicOutlineLayer> layers) noexcept { m_outlineLayers = layers; }
+        // Detail grass for the next Render (docs/DETAIL_GRASS.md): each field's clumps are generated on the GPU around
+        // the camera and drawn with the opaque geometry. Render consumes the span, which (with the fields' shared data)
+        // must stay valid until it returns; a Render without a preceding call draws no grass.
+        void SetDetailGrass(std::span<const BasicDetailGrassField> fields) noexcept { m_detailGrassFields = fields; }
+        // Whether the device and shaders allow detail grass (Initialize).
+        [[nodiscard]] bool DetailGrassAvailable() const noexcept { return static_cast<bool>(m_detailGrass); }
         void SetVirtualShadowMembershipCachingEnabled(bool enabled) noexcept
         { if (m_virtualShadows) m_virtualShadows->SetMembershipCachingEnabled(enabled); }
         [[nodiscard]] const BasicRendererTimingStats &GetTimingStats() const noexcept { return m_timingStats; }
@@ -1382,6 +1453,9 @@ namespace PlutoGE::render
         std::unique_ptr<GpuDrivenOpaque> m_gpuDriven;
         bool m_gpuDrivenOpaqueEnabled = true;
         std::unique_ptr<GpuInstanceCulling> m_gpuInstanceCulling;
+        std::unique_ptr<DetailGrassRenderer> m_detailGrass;
+        std::span<const BasicDetailGrassField> m_detailGrassFields;
+        BasicDetailGrassShaderPackage m_detailGrassShaders;
         bool m_gpuInstanceCullingEnabled = false;
         // Renders so far, and the one whose occlusion hierarchy the next may cull against (GpuInstanceCulling), with
         // its camera position.

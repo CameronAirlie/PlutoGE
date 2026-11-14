@@ -163,6 +163,13 @@ namespace PlutoGE::render
             .indirectFragment = Load("BasicLitTerrainIndirect", "fragment"),
             .compactFragments = {Load("BasicLitTerrainColor", "fragment"), Load("BasicLitTerrainColorMotion", "fragment")}};
         result.impostor = {.vertex = Load("BasicLitImpostor", "vertex"), .colorVertex = Load("BasicLitImpostorColor", "vertex")};
+        result.detailGrass = {.generate = Load("DetailGrassGenerate", "compute"),
+                              .vertex = Load("BasicLitGrass", "vertex"),
+                              .colorVertex = Load("BasicLitGrassColor", "vertex"),
+                              .fragment = Load("BasicLitGrass", "fragment"),
+                              .coverageFragment = Load("BasicLitGrassCoverage", "fragment"),
+                              .indirectFragment = Load("BasicLitGrassIndirect", "fragment"),
+                              .compactFragments = {Load("BasicLitGrassColor", "fragment"), Load("BasicLitGrassColorMotion", "fragment")}};
         result.instanceCulling = {Load("InstanceCullingCount", "compute"), Load("InstanceCullingScan", "compute"),
                                   Load("InstanceCullingScatter", "compute")};
         result.ssaoDenoise = {Load("SSAODenoise", "vertex"),Load("SSAODenoise", "fragment")};

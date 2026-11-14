@@ -16,6 +16,7 @@
 #include "CloudTemporalChecks.h"
 #include "InstanceLodChecks.h"
 #include "FoliageWindRenderingChecks.h"
+#include "DetailGrassRenderingChecks.h"
 #include "ImpostorChecks.h"
 #include "GpuInstanceCullingChecks.h"
 #include "CloudTransformChecks.h"
@@ -291,6 +292,14 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         loadPostProcess(render::BasicPostProcessEffectType::VolumetricCloud, "VolumetricCloud");
         shaders.indirectFragments[0].glsl = ReadText("BasicLitIndirect.fragment.glsl");
         shaders.indirectFragments[1].glsl = ReadText("BasicLitStandardIndirect.fragment.glsl");
+        shaders.detailGrass.generate.glsl = ReadText("DetailGrassGenerate.compute.glsl");
+        shaders.detailGrass.vertex.glsl = ReadText("BasicLitGrass.vertex.glsl");
+        shaders.detailGrass.colorVertex.glsl = ReadText("BasicLitGrassColor.vertex.glsl");
+        shaders.detailGrass.fragment.glsl = ReadText("BasicLitGrass.fragment.glsl");
+        shaders.detailGrass.coverageFragment.glsl = ReadText("BasicLitGrassCoverage.fragment.glsl");
+        shaders.detailGrass.indirectFragment.glsl = ReadText("BasicLitGrassIndirect.fragment.glsl");
+        shaders.detailGrass.compactFragments[0].glsl = ReadText("BasicLitGrassColor.fragment.glsl");
+        shaders.detailGrass.compactFragments[1].glsl = ReadText("BasicLitGrassColorMotion.fragment.glsl");
         shaders.ssaoDenoise.vertex.glsl=ReadText("SSAODenoise.vertex.glsl");
         shaders.ssaoDenoise.fragment.glsl=ReadText("SSAODenoise.fragment.glsl");
         shaders.ssaoUpsample.vertex.glsl=ReadText("SSAOUpsample.vertex.glsl");
@@ -773,6 +782,17 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
             }, false);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--detail-grass")
+        {
+            CheckDetailGrass(basicRenderer, device, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-culling")

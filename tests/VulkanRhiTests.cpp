@@ -18,6 +18,7 @@
 #include "CloudTemporalChecks.h"
 #include "InstanceLodChecks.h"
 #include "FoliageWindRenderingChecks.h"
+#include "DetailGrassRenderingChecks.h"
 #include "ImpostorChecks.h"
 #include "EditorFoliageChecks.h"
 #include "GpuInstanceCullingChecks.h"
@@ -151,6 +152,14 @@ int main(int argc, char **argv)
         shaders.bindless.fragments[2].spirv = ReadSpirv("BasicLitBindlessColorMotion.fragment.spv");
         shaders.bindless.fragments[3].spirv = ReadSpirv("BasicLitBindlessIndirect.fragment.spv");
         shaders.bindless.visibility.spirv = ReadSpirv("GpuDrivenVisibility.compute.spv");
+        shaders.detailGrass.generate.spirv = ReadSpirv("DetailGrassGenerate.compute.spv");
+        shaders.detailGrass.vertex.spirv = ReadSpirv("BasicLitGrass.vertex.spv");
+        shaders.detailGrass.colorVertex.spirv = ReadSpirv("BasicLitGrassColor.vertex.spv");
+        shaders.detailGrass.fragment.spirv = ReadSpirv("BasicLitGrass.fragment.spv");
+        shaders.detailGrass.coverageFragment.spirv = ReadSpirv("BasicLitGrassCoverage.fragment.spv");
+        shaders.detailGrass.indirectFragment.spirv = ReadSpirv("BasicLitGrassIndirect.fragment.spv");
+        shaders.detailGrass.compactFragments[0].spirv = ReadSpirv("BasicLitGrassColor.fragment.spv");
+        shaders.detailGrass.compactFragments[1].spirv = ReadSpirv("BasicLitGrassColorMotion.fragment.spv");
         const std::array<const char *, 7> vsmCompute{"VSMReset", "VSMRequest", "VSMAllocate", "VSMSignature", "VSMBudget", "VSMBin", "VSMPublish"};
         for (std::size_t index = 0; index < vsmCompute.size(); ++index)
             shaders.virtualShadows.compute[index].spirv = ReadSpirv((std::string(vsmCompute[index]) + ".compute.spv").c_str());
@@ -610,6 +619,11 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--foliage-wind")
         {
             CheckFoliageWind(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--detail-grass")
+        {
+            CheckDetailGrass(renderer, device, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-culling")

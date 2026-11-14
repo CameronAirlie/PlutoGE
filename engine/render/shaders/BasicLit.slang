@@ -82,6 +82,10 @@ struct VertexOutput
 #endif
     // LOD crossfade (instanceLodFade): 0 drawn whole, f > 0 the finer side, -f the coarser side of a switch.
     nointerpolation float lodFade : TEXCOORD10;
+#ifdef PLUTO_DETAIL_GRASS
+    // Detail grass (BasicLitGrass.slang): rgb multiplies the albedo, a the material occlusion.
+    float4 grassTint : TEXCOORD11;
+#endif
 };
 
 struct FragmentOutput
@@ -1162,6 +1166,9 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
     output.worldPosition = worldPosition.xyz;
     output.worldTangent = float4(normalize(mul((float3x3)objectModel, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     output.lodFade = 0.0;
+#ifdef PLUTO_DETAIL_GRASS
+    output.grassTint = float4(1.0, 1.0, 1.0, 1.0);
+#endif
     return output;
 }
 
@@ -1250,6 +1257,54 @@ struct DirectionalShadowSample
 float foliageShadowOffset(float3 worldPosition)
 {
     return 0.04 + 0.004 * length(cameraPositionAmbient.xyz - worldPosition);
+}
+
+// The shadow terminator. A smooth-shaded mesh is lit by its interpolated normals but casts its flat triangles. Near the
+// terminator, a triangle whose plane already turns from the sun while its normals still face it lies behind its
+// neighbours' silhouette: a lookup from its plane finds them, and the terminator steps along the polygons (sharply up
+// close, where virtual shadow texels are finer than the triangles and the texel-scaled bias no longer hides it).
+// Subsurface wrap lighting, which reaches past the terminator onto exactly those triangles, makes it plain on skin.
+//
+// The lookup moves along the smooth normal onto the surface the normals describe, as "Hacking the Shadow Terminator"
+// (Hanika, Ray Tracing Gems) does from the triangle's vertices: the polygon is inscribed in that surface, so from there
+// the body's own triangles no longer shadow it, and the shadow follows the interpolated normals. Without the vertices,
+// the lift comes from the local radius of curvature R = 1 / |dN/dP| (the screen derivatives of the normal). A triangle
+// spanning angle phi = s / R (s its size) must rise about phi^2 R = s^2 / R to clear its neighbours' silhouette. The
+// normals within it deviate from its plane by up to phi / 2 (theta), which gives 4 theta^2 R towards its edges; at its
+// centre theta is zero, though that is where it lies deepest, so a typical character triangle's size
+// (ShadowTerminatorTriangleSize) sets a floor of s^2 / R, which vanishes on flat surfaces. Past the smooth terminator,
+// wrapped light still reaches as far as `wrapReach` in N.L (x): the body's own silhouette rises above the surface there
+// by R (1 / cos - 1), about x^2 R / 2.
+//
+// The lift is zero away from the terminator and on surfaces curved more gently than ShadowTerminatorMaxRadius
+// (terrain, walls: their triangles' steps fall within distant shadow texels, and a lifted pixel leaves the shadow mask
+// to filter in the surface shader, which across open ground at a low sun would undo the mask's saving). It is capped,
+// so real occluders only lose a few millimetres of contact. `smoothNormal` is the vertex normal and `plane` the
+// triangle's, both on the shaded side.
+static const float ShadowTerminatorFacetScale = 4.0;
+static const float ShadowTerminatorTriangleSize = 0.015;
+static const float ShadowTerminatorMaxRadius = 1.0;
+static const float ShadowTerminatorMaxLift = 0.03;
+float shadowTerminatorLift(float3 smoothNormal, float3 plane, float3 lightDirection, float wrapReach,
+                           SurfaceDerivatives derivatives)
+{
+    const float ndotl = dot(smoothNormal, lightDirection);
+    const float facing = dot(smoothNormal, plane);
+    // Well lit (no triangle there turns from the sun), unlit, or normals unrelated to the plane (authored ones).
+    if (ndotl >= 0.5 || ndotl <= -wrapReach || facing < 0.5) return 0.0;
+    const float curvature = sqrt(max(
+        dot(derivatives.normalDx, derivatives.normalDx) / max(dot(derivatives.worldDx, derivatives.worldDx), 1.e-12),
+        dot(derivatives.normalDy, derivatives.normalDy) / max(dot(derivatives.worldDy, derivatives.worldDy), 1.e-12)));
+    const float deviation = 2.0 * (1.0 - facing); // theta^2
+    const float past = max(-ndotl, 0.0);
+    if (curvature * ShadowTerminatorMaxRadius < 1.0) return 0.0;
+    const float radius = 1.0 / curvature;
+    const float lift = max(ShadowTerminatorFacetScale * deviation * radius,
+                           ShadowTerminatorTriangleSize * ShadowTerminatorTriangleSize * curvature) +
+                       0.5 * past * past * radius;
+    // Fades in over the band the triangles can turn from the sun in, so lit surfaces keep the mask.
+    const float lifted = min(lift, ShadowTerminatorMaxLift) * saturate((0.5 - ndotl) / 0.2);
+    return lifted > 1.e-4 ? lifted : 0.0;
 }
 
 DirectionalShadowSample evaluateDirectionalShadow(float3 worldPosition, float3 shadowNormal, float3 worldDx,
@@ -1444,6 +1499,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
 {
     const float4 sampledBaseColor = baseColorTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy);
     float4 sampledColor = sampledBaseColor * baseColor;
+#ifdef PLUTO_DETAIL_GRASS
+    sampledColor.rgb *= input.grassTint.rgb;
+#endif
 
     // Coverage must remain intact for these controlled cost comparisons.
     const bool skipDetailTextures = !transparentPass && pointParameters.w == 5.0 && shaderGraph.header.x == 0;
@@ -1484,6 +1542,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (!glass && surfaceTexturePresent(SurfaceTextureOcclusion) && !skipDetailTextures)
         materialOcclusion = lerp(1.0, occlusionTexture.SampleGrad(input.uv * uvScale, derivatives.uvDx, derivatives.uvDy)
             [surfaceTextureChannel(SurfaceTextureOcclusion)], saturate(occlusionParameters.x));
+#ifdef PLUTO_DETAIL_GRASS
+    materialOcclusion *= input.grassTint.a;
+#endif
     // Clear coat and sheen layers (SurfaceLayers.slang), each map scaling its factor. Glass has neither.
     float layerClearCoat = glass || !kSurfaceLayers ? 0.0 : clearCoatParameters.x;
     float layerClearCoatRoughness = clearCoatParameters.y;
@@ -1650,12 +1711,16 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     float shadowVisibility = 1.0;
     float rawShadowVisibility = 1.0;
     float normalizedCascade = 0.0;
+    const float terminatorLift = farSunNdotL > 0.0 ? 0.0 : shadowTerminatorLift(normalize(geometricNormal),
+        dot(pointReceiverNormal, toCamera) < 0.0 ? -pointReceiverNormal : pointReceiverNormal, lightDirection,
+        subsurfaceStrength > 0.0 ? subsurfaceRadius * 0.25 : 0.0, derivatives);
     // pointParameters.w records the explicit geometry diagnostic mode.
     // Mode 2 bypasses directional receiver sampling without changing page generation.
     if (shadowsEnabled != 0 && pointParameters.w != 2.0 && needsDirectionalShadow)
     {
 #ifndef PLUTO_GLASS
-        if (kSurfaceShadowMask && farSunNdotL <= 0.0)
+        // The mask's receiver has no smooth normal to lift along: terminator pixels filter here instead.
+        if (kSurfaceShadowMask && farSunNdotL <= 0.0 && terminatorLift <= 0.0)
         {
             // A prepassed pipeline reads the shadow DirectionalShadowMask.slang filtered at this pixel's coverage
             // depth, which is this fragment's: the shaded pass tests depth for equality.
@@ -1676,7 +1741,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             if (dot(shadowNormal, farSunNdotL > 0.0 ? lightDirection : toCamera) < 0.0)
                 shadowNormal = -shadowNormal;
             const float3 shadowPosition = farSunNdotL > 0.0
-                ? input.worldPosition + lightDirection * foliageShadowOffset(input.worldPosition) : input.worldPosition;
+                ? input.worldPosition + lightDirection * foliageShadowOffset(input.worldPosition)
+                : input.worldPosition + normalize(geometricNormal) * terminatorLift;
             const DirectionalShadowSample directional = evaluateDirectionalShadow(shadowPosition, shadowNormal,
                 pointWorldDx, pointWorldDy, input.position.xy, lightDirection);
             shadowVisibility = directional.visibility;

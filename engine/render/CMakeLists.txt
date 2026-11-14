@@ -49,6 +49,9 @@ add_library(PlutoGERender
     src/ImpostorDraws.cpp
     src/DirectionalShadowCascades.cpp
     src/GpuInstanceCulling.cpp
+    src/DetailGrass.cpp
+    src/DetailGrassRenderer.cpp
+    src/RhiDetailGrass.cpp
     src/SkinningLodLayout.cpp
     src/RhiSceneRenderer.cpp
     src/RhiTerrainLayerCache.cpp
@@ -201,6 +204,9 @@ if (PLUTO_SLANGC_EXECUTABLE)
         if (MODULE MATCHES "^DDGI")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIReflection.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
         endif()
+        if (MODULE MATCHES "^DetailGrass")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DetailGrassCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DetailGrassLayout.h")
+        endif()
         if (MODULE MATCHES "^SSR|^ScreenSpace")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuide.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang")
         endif()
@@ -311,6 +317,21 @@ if (PLUTO_SLANGC_EXECUTABLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ImpostorLayout.slang")
     pluto_add_slang_graphics_shader(BasicLitImpostorColor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitImpostor.slang" impostorColorVertexMain colorMain
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ImpostorLayout.slang")
+    # Detail grass (docs/DETAIL_GRASS.md): the generation pass, and the BasicLitGrass variant's vertex stages with the
+    # fragments of every geometry layout.
+    pluto_add_slang_compute_shader(DetailGrassGenerate "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DetailGrassGenerate.slang" generateMain)
+    set(PLUTO_DETAIL_GRASS_SHADERS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DetailGrassCommon.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DetailGrassLayout.h")
+    pluto_add_slang_graphics_shader(BasicLitGrass "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitGrass.slang" grassVertexMain fragmentMain
+        ${PLUTO_DETAIL_GRASS_SHADERS})
+    pluto_add_slang_graphics_shader(BasicLitGrassColor "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitGrass.slang" grassColorVertexMain colorMain
+        ${PLUTO_DETAIL_GRASS_SHADERS})
+    pluto_add_slang_graphics_shader(BasicLitGrassColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitGrass.slang" grassVertexMain colorMotionMain
+        ${PLUTO_DETAIL_GRASS_SHADERS})
+    pluto_add_slang_graphics_shader(BasicLitGrassCoverage "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitGrass.slang" grassColorVertexMain coverageMain
+        ${PLUTO_DETAIL_GRASS_SHADERS})
+    pluto_add_slang_graphics_shader(BasicLitGrassIndirect "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitGrass.slang" grassVertexMain indirectMain
+        ${PLUTO_DETAIL_GRASS_SHADERS})
     foreach(material IN ITEMS BasicLit BasicLitStandard BasicLitTerrain)
         pluto_add_slang_graphics_shader(${material}Color "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" colorVertexMain colorMain)
         pluto_add_slang_graphics_shader(${material}ColorMotion "${CMAKE_CURRENT_SOURCE_DIR}/shaders/${material}.slang" vertexMain colorMotionMain)

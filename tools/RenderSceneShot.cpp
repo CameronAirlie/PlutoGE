@@ -157,6 +157,8 @@ int main(int argc, char **argv) try
                 render::RenderCommand draw;
                 draw.mesh = mesh; draw.material = material;
                 draw.submeshIndex = static_cast<std::uint32_t>(index);
+                // The component's shadow caster floor, as MeshComponent submits it at runtime.
+                draw.minShadowLodIndex = static_cast<std::uint32_t>(component->GetMinShadowLod());
                 draw.model = draw.previousModel = entity->GetWorldTransform();
                 draw.worldBounds = mesh->GetSubmesh(index).bounds;
                 draw.worldBounds.center = glm::vec3(draw.model * glm::vec4(draw.worldBounds.center, 1));

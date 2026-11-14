@@ -17,6 +17,7 @@
 #include "LightClusterGrid.h"
 #include "GpuDrivenOpaque.h"
 #include "GpuInstanceCulling.h"
+#include "DetailGrassRenderer.h"
 #include "InstanceBinning.h"
 #include "LtcTable.h"
 #include "gi/RayQueryDdgiRaySource.h"
@@ -1683,6 +1684,14 @@ namespace PlutoGE::render
                 if (culling->Initialize(device, shaders.instanceCulling))
                     m_gpuInstanceCulling = std::move(culling);
             }
+            // Detail grass needs its generation pass and the BasicLitGrass variant (GeometryPipeline).
+            m_detailGrassShaders = shaders.detailGrass;
+            if (m_detailGrassShaders.Available())
+            {
+                auto grass = std::make_unique<DetailGrassRenderer>();
+                if (grass->Initialize(device, m_detailGrassShaders))
+                    m_detailGrass = std::move(grass);
+            }
             m_screenSampler = rhi::Sampler(device, device.CreateSampler({true, false, "BasicRenderer screen sampler"}));
             m_shadowSampler = rhi::Sampler(device, device.CreateSampler({false, false, "BasicRenderer shadow sampler"}));
             m_vctVolumeSampler = rhi::Sampler(device, device.CreateSampler(
@@ -1785,6 +1794,9 @@ namespace PlutoGE::render
             m_gpuDriven->Shutdown(*m_device);
         m_gpuDriven.reset();
         m_gpuInstanceCulling.reset();
+        m_detailGrass.reset();
+        m_detailGrassShaders = {};
+        m_detailGrassFields = {};
         m_bindlessGeometryPipelines.clear();
         m_gpuSkinning.reset();
         m_deferredProbeIrradiance.reset();
@@ -2917,6 +2929,17 @@ namespace PlutoGE::render
             m_frameStats.instanceRecordUploads = m_instanceStorage->UploadedRecords();
             m_frameStats.residentInstanceRecords = m_instanceStorage->ResidentRecords();
         }
+        // Detail grass: this frame's clumps are generated here, outside rendering, before the coverage depth and
+        // geometry passes draw them (DetailGrassRenderer).
+        if (m_detailGrass)
+        {
+            m_detailGrass->Prepare(*this, std::exchange(m_detailGrassFields, {}),
+                                   {viewProjection, lighting.cameraPosition, &m_foliageWind});
+            m_detailGrass->Record(commands);
+            m_frameStats.detailGrassFields = m_detailGrass->Draws().size();
+            m_frameStats.detailGrassCandidates = m_detailGrass->Candidates();
+            m_frameStats.detailGrass = m_detailGrass->Stats();
+        }
         instanceBinningScope.End();
         m_timingStats.instancePreparationMs = elapsedMs(instanceBinningStart, instancePreparationEnd);
         m_timingStats.instanceBinningMs = elapsedMs(instancePreparationEnd, std::chrono::steady_clock::now());
@@ -3795,6 +3818,10 @@ namespace PlutoGE::render
             if (!draw.mesh || !draw.mesh->IsValid())
                 return;
             const bool instanced = !transparent && draw.instanceModels && draw.instanceModels->size() > 1;
+            // Detail grass draws its generated clumps through the instanced input (DetailGrassRenderer).
+            const BasicDetailGrassDraw *grass = transparent ? nullptr : draw.detailGrass.get();
+            if (grass && !m_detailGrass)
+                return;
             // Impostor cards draw only through their instance bins, with their own vertex stages (GeometryPipeline).
             const BasicImpostor *impostor = draw.impostor.get();
             if (impostor && (!m_impostorShaders.Available() || !instanced || !draw.instanceLods))
@@ -3803,9 +3830,9 @@ namespace PlutoGE::render
             if (instanced && IsBinnedInstanceDraw(draw) && !instanceView.ClusterVisible(draw))
                 return;
             // Occlusion-culled indirect draws keep their own buffer: the GPU writes their arguments.
-            const bool streamed = objectStreaming && !instanced && !transparent &&
+            const bool streamed = objectStreaming && !instanced && !transparent && !grass &&
                 !(occlusionActive && !recordingDepth && !draw.outlinePass);
-            const bool instancedInput = instanced || streamed;
+            const bool instancedInput = instanced || streamed || grass;
             const auto pipeline = transparent
                 ? (recordingParticleBoundary
                     ? (draw.twoSided ? m_particleBoundaryTwoSidedPipeline.Get() : m_particleBoundaryPipeline.Get())
@@ -3822,7 +3849,7 @@ namespace PlutoGE::render
                 frameResourcesBound = true;
                 bindFrameResources(commands);
             }
-            if (!instanced)
+            if (!instanced && !grass)
             {
                 const bool singleInstance = draw.instanceModels && draw.instanceModels->size() == 1;
                 const glm::mat4 &model = singleInstance ? draw.instanceModels->front() : draw.model;
@@ -3965,6 +3992,32 @@ namespace PlutoGE::render
             {
                 // The next alpha/graph draw must re-establish its material bindings.
                 geometryResourcesBound = false;
+            }
+            if (grass)
+            {
+                // One indirect draw per LOD: the generation pass wrote each LOD's clump count, and its arguments carry
+                // absolute first indices, so the index buffer binds at zero. The LOD's first clump and the layer's
+                // shading ride in the instance block (BasicLitGrass.slang).
+                commands.BindVertexBuffer(draw.mesh->m_vertexBuffer);
+                commands.BindIndexBuffer(draw.mesh->m_indexBuffer, rhi::Format::R32Uint, 0);
+                boundDrawMesh = nullptr;
+                commands.BindStorageBuffer(DetailGrassInstanceSlot, grass->instances);
+                // The instanced layout's other instance paths are declared too: keep them bound to valid buffers.
+                commands.BindStorageBuffer(InstanceRecordSlot, m_instanceStoragePlaceholder.Get());
+                commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStoragePlaceholder.Get());
+                commands.BindUniformBuffer(17, streamedBlockPlaceholder());
+                boundObjectBlock = {};
+                for (std::uint32_t lod = 0; lod < DetailGrassLodCount; ++lod)
+                {
+                    const BasicInstanceDrawParameters parameters{glm::uvec4(grass->firstInstance[lod], 0u, 0u, 0u), grass->shading};
+                    std::size_t key = 0x2c1b3c6dull;
+                    HashBatchValue(key, parameters.range.x);
+                    for (int component = 0; component < 4; ++component) HashBatchValue(key, parameters.debugParameters[component]);
+                    commands.BindUniformBuffer(InstanceStorageSlot, m_geometryParameters->Acquire(*m_device, Bytes(parameters), key));
+                    commands.DrawIndexedIndirect(grass->arguments, grass->argumentOffset + std::size_t(lod) * 20u);
+                    ++m_frameStats.geometryDraws;
+                }
+                return;
             }
             if (impostor)
             {
@@ -4215,6 +4268,9 @@ namespace PlutoGE::render
                 gpuBinPhases = secondPhase ? 1u : 3u;
                 for (std::size_t index = 0; index < draws.size(); ++index)
                     if (prepassEligible(draws[index])) recordDraw(commands, draws[index], false, index);
+                if (m_detailGrass)
+                    for (const auto &grass : m_detailGrass->Draws())
+                        if (prepassEligible(grass)) recordDraw(commands, grass, false, m_previousModels.size());
                 if (secondPhase)
                 {
                     // Two-phase occlusion: a hierarchy of the depth so far, then the instances the previous frame's
@@ -4378,6 +4434,13 @@ namespace PlutoGE::render
                 ++historyIndex;
             }
             if (rangeScopeOpen) commands.EndGpuScope();
+            if (m_detailGrass && !m_detailGrass->Draws().empty())
+            {
+                commands.BeginGpuScope("RHI Geometry / Detail grass");
+                for (const auto &grass : m_detailGrass->Draws())
+                    recordDraw(commands, grass, false, m_previousModels.size());
+                commands.EndGpuScope();
+            }
             commands.EndGpuScope();
             commands.BeginGpuScope("RHI Geometry / Outlines");
             // Draw shells after all opaque surfaces so foreground geometry occludes them.

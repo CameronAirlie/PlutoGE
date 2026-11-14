@@ -97,6 +97,9 @@ namespace PlutoGE::render
         // cannot use material-free depth take it.
         if (draw.shaderGraphProgram && (draw.alphaMode != 0 || DeformsVertices(draw)))
             return DepthResources::Full;
+        // Detail grass places its clumps in its own vertex stages, which only its full pipelines carry.
+        if (draw.detailGrass)
+            return DepthResources::Full;
         // Material-free depth has no material constants, so it cannot apply wind; the standard coverage shaders
         // share the shaded pass's vertex transform (BasicLit transformSurfaceVertex) and so match its depth.
         const auto &opaque = m_opaqueDepth[instanced ? 1 : 0];
@@ -135,7 +138,9 @@ namespace PlutoGE::render
         const bool terrain = draw.terrainLayers && m_terrainShaders.Available();
         // Impostor cards: their own vertex stages (one card per instance, no vertex input) with the standard fragments.
         const bool impostor = draw.impostor && m_impostorShaders.Available();
-        const bool standard = terrain || (!draw.shaderGraphProgram &&
+        // Detail grass clumps: their own vertex stages (from the generated clumps) and the BasicLitGrass fragments.
+        const bool grass = draw.detailGrass && m_detailGrassShaders.Available();
+        const bool standard = terrain || grass || (!draw.shaderGraphProgram &&
             (!m_standardFragment.glsl.empty() || !m_standardFragment.spirv.empty()));
         const auto cull = GeometryCullMode(draw);
         const auto depthResources = depthOnly ? GeometryDepthResources(draw, instanced) : DepthResources::Full;
@@ -157,11 +162,12 @@ namespace PlutoGE::render
         // and the shading pass drops the discard, letting depth be tested before shading (kSurfacePrepassedCoverage).
         const bool prepassedCoverage = !depthOnly && prepassed && m_prepassedCoverage && draw.alphaMode == 1 &&
             !draw.shaderGraphProgram && !impostor;
+        static_assert(SurfaceFeatureCount <= 6, "GeometryPipelineKey packs surface features in bits 13-18");
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
                 (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
                 (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (features << 13) | (unsigned(shadowMask) << 19) |
-                (unsigned(deferredLocalLights) << 20) | (unsigned(prepassedCoverage) << 21),
+                (unsigned(deferredLocalLights) << 20) | (unsigned(prepassedCoverage) << 21) | (unsigned(grass) << 22),
             graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
@@ -231,19 +237,31 @@ namespace PlutoGE::render
                                                                                          : m_impostorShaders.vertex;
             descriptor.vertexLayout = {};
         }
+        if (grass)
+        {
+            const auto &shaders = m_detailGrassShaders;
+            const bool colorOnly = depthOnly || layout == GeometryOutputLayout::Color;
+            descriptor.vertexShader = colorOnly ? shaders.colorVertex : shaders.vertex;
+            descriptor.fragmentShader = depthOnly ? shaders.coverageFragment
+                : layout < GeometryOutputLayout::Surface ? shaders.compactFragments[static_cast<unsigned>(layout)]
+                : layout == GeometryOutputLayout::SurfaceIndirect ? shaders.indirectFragment : shaders.fragment;
+            descriptor.resourceBindings.push_back({DetailGrassInstanceSlot, 3, 4, rhi::ResourceBindingType::StorageBuffer,
+                                                   rhi::ShaderStageMask::Vertex});
+        }
         if (graphFragment) descriptor.fragmentShader = {.glsl = {}, .spirv = *graphFragment};
         ApplySurfaceFeatures(descriptor, features);
         ApplySurfaceShadowMask(descriptor, shadowMask);
         ApplySurfaceDeferredLocalLights(descriptor, deferredLocalLights);
         ApplySurfacePrepassedCoverage(descriptor, prepassedCoverage);
         if (prepassedCoverage) descriptor.depthCompare = rhi::CompareOperation::Equal;
-        descriptor.debugName = impostor ? (depthOnly ? "Impostor coverage" : "Impostor cards")
+        descriptor.debugName = grass ? (depthOnly ? "Detail grass coverage" : "Detail grass")
+            : impostor ? (depthOnly ? "Impostor coverage" : "Impostor cards")
             : terrain ? (depthOnly ? "Terrain coverage" : "Terrain layers")
             : depthOnly ? "Geometry coverage" : "Geometry required outputs";
         auto pipeline = rhi::GraphicsPipeline(*m_device, m_device->CreateGraphicsPipeline(descriptor));
         const auto handle = pipeline.Get();
         m_geometryPipelines.emplace(key, std::move(pipeline));
-        if (standard && !terrain && !impostor)
+        if (standard && !terrain && !impostor && !grass)
         {
             // Prepare the matching graph path when the scene first prepares
             // ordinary geometry. Unlit loot and hit effects use this path;

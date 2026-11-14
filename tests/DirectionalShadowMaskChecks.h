@@ -9,7 +9,104 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+
+// The shadow terminator: a smooth-shaded mesh of flat triangles is lit by its interpolated normals, but the shadow map
+// holds its flat triangles. Near the terminator, a triangle whose own plane already turns from the sun while its
+// normals still face it lies behind the neighbouring triangles' silhouette, and a shadow lookup from its plane finds
+// them: the triangle darkens on its own, and the terminator steps along the polygons. Close to the camera virtual
+// shadow texels are finer than the triangles, so the bias no longer hides it. A convex body casts no shadow on itself,
+// so a lone smooth sphere of limb-sized triangles, seen up close, must look the same with shadows as without.
+template<class ReadPixels>
+void CheckDirectionalShadowTerminator(PlutoGE::render::BasicRenderer &renderer, ReadPixels readPixels)
+{
+    using namespace PlutoGE::render;
+    const auto require = [](bool condition, const std::string &message) {
+        if (!condition) throw std::runtime_error(message);
+    };
+    constexpr std::uint32_t Width = 320, Height = 240;
+    renderer.Resize(Width, Height);
+    // A limb: 6 cm radius, 24 segments around (1.6 cm triangles, as on a character's body), smooth normals.
+    constexpr int Segments = 24, Rings = 12;
+    constexpr float Radius = 0.06f;
+    std::vector<BasicVertex> vertices;
+    std::vector<std::uint32_t> indices;
+    for (int ring = 0; ring <= Rings; ++ring)
+        for (int segment = 0; segment <= Segments; ++segment)
+        {
+            const float theta = glm::pi<float>() * float(ring) / Rings;
+            const float phi = glm::two_pi<float>() * float(segment) / Segments;
+            const glm::vec3 normal(std::sin(theta) * std::cos(phi), std::cos(theta), std::sin(theta) * std::sin(phi));
+            BasicVertex vertex;
+            vertex.position = {normal.x * Radius, normal.y * Radius, normal.z * Radius};
+            vertex.normal = {normal.x, normal.y, normal.z};
+            vertex.uv = {float(segment) / Segments, float(ring) / Rings};
+            vertices.push_back(vertex);
+        }
+    for (int ring = 0; ring < Rings; ++ring)
+        for (int segment = 0; segment < Segments; ++segment)
+        {
+            const std::uint32_t a = ring * (Segments + 1) + segment, b = a + Segments + 1;
+            indices.insert(indices.end(), {a, a + 1, b, a + 1, b + 1, b});
+        }
+    auto sphere = renderer.CreateMesh({vertices, indices});
+    BasicDraw draw;
+    draw.mesh = &sphere;
+    draw.baseColor = {0.8f, 0.8f, 0.8f, 1};
+    draw.roughness = 1.0f;
+
+    BasicLighting lighting;
+    lighting.shadowsEnabled = true;
+    lighting.shadowMethod = ShadowMethod::Virtual;
+    // The sun from the side and a little above, so the terminator crosses the view.
+    lighting.directionalDirection = glm::normalize(glm::vec3(-1.0f, -0.35f, 0.15f));
+    lighting.directionalIntensity = 3.0f;
+    lighting.ambientIntensity = 0.05f;
+    lighting.cameraPosition = {0.0f, 0.02f, 0.22f};
+    lighting.view = glm::lookAtRH(lighting.cameraPosition, glm::vec3(0.0f), glm::vec3(0, 1, 0));
+    const auto projection = glm::perspectiveRH_ZO(glm::radians(50.0f), float(Width) / Height, 100.0f, 0.02f);
+    const auto render = [&](bool mask, bool shadows)
+    {
+        renderer.SetDirectionalShadowMask(mask);
+        auto frameLighting = lighting;
+        frameLighting.shadowsEnabled = shadows;
+        for (int frame = 0; frame < 6; ++frame)
+            renderer.Render(projection * frameLighting.view, frameLighting, {&draw, 1});
+        return readPixels(renderer.GetColorTexture());
+    };
+    // Plain, with subsurface scattering (whose wrapped lighting reaches past the terminator, onto the triangles that
+    // shadow themselves), two-sided as well (a character's skin: its casters draw back faces too), and with the
+    // directional light's screen-space contact shadows, which trace the same triangles' depth.
+    struct Variant { const char *name; float subsurface; bool twoSided; float contactShadowLength = 0.0f; };
+    std::string failures;
+    for (const Variant variant : {Variant{"plain", 0.0f, false}, Variant{"subsurface", 0.2f, false},
+                                  Variant{"two-sided subsurface", 0.2f, true},
+                                  Variant{"two-sided subsurface, contact shadows", 0.2f, true, 0.5f}})
+    {
+        draw.subsurface = variant.subsurface;
+        draw.subsurfaceColor = {0.97f, 0.38f, 0.27f};
+        draw.subsurfaceRadius = 1.0f;
+        draw.twoSided = variant.twoSided;
+        lighting.contactShadowLength = variant.contactShadowLength;
+        const auto unshadowed = render(false, false);
+        for (const bool mask : {false, true})
+        {
+            const auto shadowed = render(mask, true);
+            const std::string name = std::string(variant.name) + (mask ? ", mask" : ", filter");
+            // Each channel's darkening counts up to 8 levels: a two-sided silhouette's few grazing specular sparkles
+            // (which differ between any two renders) must not outweigh the shaded band. Before the terminator lift the
+            // plain sphere measured 0.0137 and the subsurface ones about 0.08; after it, at most 0.005.
+            double darkening = 0.0;
+            for (std::size_t i = 0; i < shadowed.size(); ++i)
+                if (i % 4 != 3) darkening += std::min(std::max(int(unshadowed[i]) - int(shadowed[i]), 0), 8);
+            darkening /= double(Width) * Height * 3.0;
+            std::cout << "Directional shadow terminator (" << name << "): darkening " << darkening << " mean\n";
+            if (darkening >= 0.008) failures += (failures.empty() ? "" : "; ") + name;
+        }
+    }
+    require(failures.empty(), "shadow terminator (" + failures + "): a smooth convex mesh must not shadow its own triangles");
+}
 
 // The directional shadow mask (DirectionalShadowMask.h) filters the directional shadow once per pixel of the coverage
 // depth, from receivers rebuilt from that depth, and prepassed surfaces read it. Planar receivers rebuild exactly, so
@@ -157,6 +254,7 @@ void CheckDirectionalShadowMask(PlutoGE::render::BasicRenderer &renderer, ReadPi
         require(maskDarkening / channels < 0.5, "grazing ground: the mask must not shadow an uncovered ground");
         require(double(different) / channels < 0.005, "grazing ground: the mask must match the surfaces' own filter");
     }
+    CheckDirectionalShadowTerminator(renderer, readPixels);
     renderer.SetDirectionalShadowMask(true);
     renderer.Resize(width, height);
 }

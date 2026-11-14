@@ -307,6 +307,11 @@ pipelines carry no fallback filter at all. Transparent, outline and diagnostic p
 - **Scope.** Vulkan only: OpenGL has no specialisation constants to select the mask. `BasicRenderer::
   SetDirectionalShadowMask(false)` restores in-shader filtering; `BasicFrameStats::directionalShadowMask` reports it.
   The pass shows as `RHI Geometry / Directional shadow mask`.
+- **Shadow terminator (2026-11-14).** Pixels near the sun's terminator on curved, smooth-shaded surfaces (radius
+  under 1 m: characters, props) skip the mask and filter in the surface shader from a point lifted along the vertex
+  normal (`shadowTerminatorLift` in BasicLit), because the mask's depth-only receiver has no smooth normal. Without the
+  lift, triangles past their own terminator shadowed themselves, sharply up close and plainly on subsurface skin.
+  Terrain and walls keep the mask. `CheckDirectionalShadowTerminator` (`--shadow-mask`) covers it.
 
 ### Interleaved cloud trace
 

@@ -49,6 +49,7 @@ namespace PlutoGE::scene
     class WindComponent;
     class WeatherComponent;
     class OutlineComponent;
+    class DetailGrassComponent;
     class CanvasComponent;
     class RmlWidgetComponent;
     class ParticleSystemComponent;
@@ -335,6 +336,8 @@ namespace PlutoGE::scene
         const std::vector<WeatherComponent *> &GetWeatherComponents() const;
         // Every OutlineComponent in hierarchy order (render::BuildSceneOutline skips disabled ones and inactive entities).
         const std::vector<OutlineComponent *> &GetOutlineComponents() const;
+        // Every DetailGrassComponent in hierarchy order (the renderer draws those enabled on active entities).
+        const std::vector<DetailGrassComponent *> &GetDetailGrassComponents() const;
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
         // A collider's geometry changed in place (a terrain's holes): the next physics query recreates every collider
@@ -382,6 +385,7 @@ namespace PlutoGE::scene
         mutable std::vector<WindComponent *> m_winds;
         mutable std::vector<WeatherComponent *> m_weathers;
         mutable std::vector<OutlineComponent *> m_outlines;
+        mutable std::vector<DetailGrassComponent *> m_detailGrass;
         void AddLight(Light *light) { m_lights.push_back(light); }
         void RemoveLight(Light *light)
         {

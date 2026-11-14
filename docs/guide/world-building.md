@@ -147,6 +147,14 @@ scriptable tree entities, and foliage collision does not automatically create
 navigation obstacles. Use ordinary prefabs for trees that need independent
 destruction logic. See [foliage settings and limits](../FOLIAGE.md).
 
+### Grass
+
+For dense grass, add **Rendering > Detail Grass** to the terrain entity instead
+of painting grass as foliage. Each layer names the terrain layer whose painted
+weight is its density, so painting that layer paints the grass. The GPU grows the
+clumps around the camera every frame, so the scene stores only the settings. See
+[Detail grass](../DETAIL_GRASS.md).
+
 ## Splines and roads
 
 SplineComponent uses control points to generate a strip of geometry and optional

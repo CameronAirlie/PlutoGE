@@ -938,34 +938,35 @@ namespace PlutoGE::scene
         return glm::mix(h0, h1, tz);
     }
 
+    float TerrainComponent::GetSurfaceSampleHeight(int x, int z) const
+    {
+        const float raw = GetHeightSample(x, z);
+        if (m_surfaceSmoothing <= 0.0f)
+        {
+            return raw;
+        }
+
+        float total = 0.0f;
+        float weight = 0.0f;
+        for (int offsetZ = -1; offsetZ <= 1; ++offsetZ)
+        {
+            for (int offsetX = -1; offsetX <= 1; ++offsetX)
+            {
+                const float sampleWeight = (offsetX == 0 && offsetZ == 0) ? 4.0f :
+                                           (offsetX == 0 || offsetZ == 0 ? 2.0f : 1.0f);
+                total += GetHeightSample(x + offsetX, z + offsetZ) * sampleWeight;
+                weight += sampleWeight;
+            }
+        }
+        return glm::mix(raw, total / std::max(weight, 0.0001f), m_surfaceSmoothing);
+    }
+
     glm::vec3 TerrainComponent::ComputeNormal(int x, int z) const
     {
-        const auto smoothed = [&](int sx, int sz)
-        {
-            const float raw = GetHeightSample(sx, sz);
-            if (m_surfaceSmoothing <= 0.0f)
-            {
-                return raw;
-            }
-
-            float total = 0.0f;
-            float weight = 0.0f;
-            for (int oz = -1; oz <= 1; ++oz)
-            {
-                for (int ox = -1; ox <= 1; ++ox)
-                {
-                    const float sampleWeight = (ox == 0 && oz == 0) ? 4.0f : (ox == 0 || oz == 0 ? 2.0f : 1.0f);
-                    total += GetHeightSample(sx + ox, sz + oz) * sampleWeight;
-                    weight += sampleWeight;
-                }
-            }
-            return glm::mix(raw, total / std::max(weight, 0.0001f), m_surfaceSmoothing);
-        };
-
-        const float left = smoothed(x - 1, z);
-        const float right = smoothed(x + 1, z);
-        const float down = smoothed(x, z - 1);
-        const float up = smoothed(x, z + 1);
+        const float left = GetSurfaceSampleHeight(x - 1, z);
+        const float right = GetSurfaceSampleHeight(x + 1, z);
+        const float down = GetSurfaceSampleHeight(x, z - 1);
+        const float up = GetSurfaceSampleHeight(x, z + 1);
         return glm::normalize(glm::vec3(left - right, 2.0f * m_cellSize, down - up));
     }
 
@@ -1059,28 +1060,7 @@ namespace PlutoGE::scene
     {
         EnsureHeightStorage();
 
-        const auto smoothedHeight = [&](int x, int z)
-        {
-            const float raw = GetHeightSample(x, z);
-            if (m_surfaceSmoothing <= 0.0f)
-            {
-                return raw;
-            }
-
-            float total = 0.0f;
-            float weight = 0.0f;
-            for (int offsetZ = -1; offsetZ <= 1; ++offsetZ)
-            {
-                for (int offsetX = -1; offsetX <= 1; ++offsetX)
-                {
-                    const float sampleWeight = (offsetX == 0 && offsetZ == 0) ? 4.0f :
-                                               (offsetX == 0 || offsetZ == 0 ? 2.0f : 1.0f);
-                    total += GetHeightSample(x + offsetX, z + offsetZ) * sampleWeight;
-                    weight += sampleWeight;
-                }
-            }
-            return glm::mix(raw, total / std::max(weight, 0.0001f), m_surfaceSmoothing);
-        };
+        const auto smoothedHeight = [&](int x, int z) { return GetSurfaceSampleHeight(x, z); };
 
         const auto coarseHeight = [&](int x, int z, int step)
         {

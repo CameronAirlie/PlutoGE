@@ -288,6 +288,8 @@ namespace PlutoGE::render
             std::span<const BasicParticleDraw> particles;
             std::vector<BasicPostProcessEffect> effects;
             std::vector<BasicDecalDraw> decals;
+            // The scene's detail grass (BasicRenderer::SetDetailGrass); Record hands it over for its frame.
+            std::vector<BasicDetailGrassField> detailGrass;
             PostProcessDebugView debugView = PostProcessDebugView::None;
             bool useTemporalUpscaler = false;
             std::optional<rhi::TemporalUpscalerFrame> upscalerFrame;

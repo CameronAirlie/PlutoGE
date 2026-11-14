@@ -18,6 +18,7 @@
 #include "PlutoGE/scene/components/WindComponent.h"
 #include "PlutoGE/scene/components/WeatherComponent.h"
 #include "PlutoGE/scene/components/OutlineComponent.h"
+#include "PlutoGE/scene/components/DetailGrassComponent.h"
 #include "PlutoGE/scripting/ScriptRuntime.h"
 #include <unordered_map>
 
@@ -41,7 +42,7 @@ namespace PlutoGE::scene
             return typeID == GetComponentTypeID<LightComponent>() || typeID == GetComponentTypeID<PhysicalSkyComponent>() ||
                    typeID == GetComponentTypeID<VolumetricCloudComponent>() ||
                    typeID == GetComponentTypeID<WindComponent>() || typeID == GetComponentTypeID<WeatherComponent>() ||
-                   typeID == GetComponentTypeID<OutlineComponent>();
+                   typeID == GetComponentTypeID<OutlineComponent>() || typeID == GetComponentTypeID<DetailGrassComponent>();
         }
 
         const std::string &ComponentTraceName(const Component &component)

@@ -49,6 +49,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
+| Dense grass generated on the GPU over a terrain | [Detail grass](DETAIL_GRASS.md) |
 | Wind and swaying vegetation | [Foliage wind](FOLIAGE_WIND.md) |
 | Light through leaves and canopies, on voxel and hardware GI | [Foliage transmission](FOLIAGE_TRANSMISSION.md) |
 | Surface marks | [Decals](decals.md) |

@@ -251,6 +251,8 @@ add_test(NAME PlutoGEVulkanSurfaceWetnessTests COMMAND PlutoGEVulkanRhiTests --s
 add_test(NAME PlutoGEOpenGLSurfaceWetnessTests COMMAND PlutoGEOpenGLRhiTests --surface-wetness)
 add_test(NAME PlutoGEVulkanFoliageWindTests COMMAND PlutoGEVulkanRhiTests --foliage-wind)
 add_test(NAME PlutoGEOpenGLFoliageWindTests COMMAND PlutoGEOpenGLRhiTests --foliage-wind)
+add_test(NAME PlutoGEVulkanDetailGrassTests COMMAND PlutoGEVulkanRhiTests --detail-grass)
+add_test(NAME PlutoGEOpenGLDetailGrassTests COMMAND PlutoGEOpenGLRhiTests --detail-grass)
 add_test(NAME PlutoGEVulkanImpostorTests COMMAND PlutoGEVulkanRhiTests --impostors)
 add_test(NAME PlutoGEOpenGLImpostorTests COMMAND PlutoGEOpenGLRhiTests --impostors)
 add_test(NAME PlutoGEVulkanGpuInstanceCullingTests COMMAND PlutoGEVulkanRhiTests --gpu-instance-culling)
@@ -435,6 +437,10 @@ add_test(NAME PlutoGEWeatherComponentTests COMMAND PlutoGEWeatherComponentTests)
 add_executable(PlutoGEFoliageWindTests FoliageWindTests.cpp)
 pluto_link_engine(PlutoGEFoliageWindTests)
 add_test(NAME PlutoGEFoliageWindTests COMMAND PlutoGEFoliageWindTests)
+
+add_executable(PlutoGEDetailGrassTests DetailGrassTests.cpp)
+pluto_link_engine(PlutoGEDetailGrassTests)
+add_test(NAME PlutoGEDetailGrassTests COMMAND PlutoGEDetailGrassTests)
 
 add_executable(PlutoGESceneOutlineTests SceneOutlineTests.cpp)
 pluto_link_engine(PlutoGESceneOutlineTests)
@@ -1401,3 +1407,18 @@ foreach(target IN ITEMS
         target_link_libraries(${target} PRIVATE PlutoGE::glad)
     endif()
 endforeach()
+
+# Give the tests their own OpenGL driver shader cache. The driver's per-user cache is shared with every other GL
+# application and the suite's shader variants fill it; once full, the driver stops storing programs and the OpenGL
+# tests recompile every changed shader on each run (20-30 s per BasicLit variant), which looks like a hang.
+# PlutoGETrimGlShaderCache clears this private cache before it reaches the driver's limit.
+set(PLUTOGE_TEST_GL_SHADER_CACHE "${CMAKE_BINARY_DIR}/test-gl-shader-cache")
+add_test(NAME PlutoGETrimGlShaderCache
+         COMMAND ${CMAKE_COMMAND} "-DCACHE_DIR=${PLUTOGE_TEST_GL_SHADER_CACHE}"
+                 -P "${CMAKE_CURRENT_SOURCE_DIR}/TrimGlShaderCache.cmake")
+set_tests_properties(PlutoGETrimGlShaderCache PROPERTIES FIXTURES_SETUP PlutoGEGlShaderCache)
+get_property(pluto_all_tests DIRECTORY PROPERTY TESTS)
+list(REMOVE_ITEM pluto_all_tests PlutoGETrimGlShaderCache)
+set_tests_properties(${pluto_all_tests} PROPERTIES
+    ENVIRONMENT_MODIFICATION "__GL_SHADER_DISK_CACHE_PATH=set:${PLUTOGE_TEST_GL_SHADER_CACHE}"
+    FIXTURES_REQUIRED PlutoGEGlShaderCache)

@@ -118,6 +118,13 @@ Settings that depend on the scene, meaning **where** a plant grows, go in a **sc
 
 ### GPU detail grass
 
+> **Status (2026-11-14): implemented ahead of Phases 1-4, see `docs/DETAIL_GRASS.md`.** The differences from the design below:
+> density comes straight from a painted terrain layer's weight map (and later from procedural layers through the same
+> maps), and ground colour from the terrain's macro albedo, so nothing is baked. Heights are a storage buffer of the
+> drawn (smoothed) samples, not a texture. The "clipmap of tiles" is a nested lattice whose rings dispatch every 2^k-th
+> candidate (no popping, constant cost per ring). Detail layers live on a `DetailGrassComponent` beside the terrain until
+> biomes exist. Still open: Hi-Z occlusion in the generation pass, mesh (model) clumps, and Phase 5b trampling.
+
 - A **detail layer** (inside a biome, or scene-level) contains:
   - mesh: a small model, or built-in generated blade cards;
   - material;

@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/components/ClothComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
+#include "PlutoGE/scene/components/DetailGrassComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/FoliageProxyComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
@@ -136,6 +137,11 @@ namespace PlutoGE::scene
                 return name == "SourceMesh" || name == "MaterialAsset" ||
                        name.ends_with(".SourceMesh") || name.ends_with(".MaterialAsset") || name.ends_with(".ProxyPrefab");
             };
+            // Grass grows on the terrain of its own entity.
+            auto &detailGrass = registry.Register<DetailGrassComponent>("DetailGrassComponent", "Detail Grass");
+            detailGrass.canAdd = HasSibling<TerrainComponent>;
+            detailGrass.isAssetPathProperty = [](std::string_view name) { return name.ends_with(".Material"); };
+
             // Created only by PromoteFoliageInstance, so it has no Add Component menu item.
             registry.Register<FoliageProxyComponent>("FoliageProxyComponent", "Foliage Proxy");
 
@@ -173,6 +179,7 @@ namespace PlutoGE::scene
             registry.AddMenuItem<SplineComponent>("Rendering/Road / Spline Track");
             registry.AddMenuItem<OceanComponent>("Rendering/Ocean");
             registry.AddMenuItem<FoliageComponent>("Rendering/Foliage");
+            registry.AddMenuItem<DetailGrassComponent>("Rendering/Detail Grass");
             registry.AddMenuItem<ClothComponent>("Rendering/Cloth");
             registry.AddMenuItem<ParticleSystemComponent>("Rendering/Particle System");
             registry.AddMenuItem<CameraComponent>("Rendering/Camera");

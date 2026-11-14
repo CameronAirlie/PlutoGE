@@ -25,6 +25,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
+#include "RhiDetailGrass.h"
 #include "RhiDrawPreparationCache.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "PlutoGE/render/DdgiConfig.h"
@@ -2396,6 +2397,23 @@ namespace PlutoGE::render
                 decals.push_back(draw);
             }
         }
+        // Detail grass: the scene's grass layers as fields over their terrains' maps (RhiDetailGrass.h). Scene-wide, like
+        // particles: secondary views leave it to the main one.
+        std::vector<BasicDetailGrassField> detailGrass;
+        if (scene && m_sceneEffectsEnabled && m_renderer->DetailGrassAvailable())
+        {
+            core::CpuScope grassScope("Detail grass preparation", core::CpuCategory::Rendering);
+            RhiDetailGrassResolvers resolvers;
+            resolvers.texture = [&](const Texture *texture, bool srgb)
+            {
+                return srgb ? uploadTexture(texture, rhi::Format::R8G8B8A8Srgb, TextureCacheKind::Srgb, "Detail grass ground",
+                                            TextureUse::Compressible)
+                            : uploadTexture(texture, rhi::Format::R8G8B8A8Unorm, TextureCacheKind::Linear, "Terrain weights");
+            };
+            resolvers.material = [&](const Material *material)
+            { return std::make_shared<const BasicDraw>(prepareMaterial(material).draw); };
+            detailGrass = CollectRhiDetailGrass(*scene, cameraData.tagFilter, resolvers);
+        }
         // Every material this frame draws was prepared at the current residency (TextureCache::retired).
         *m_preparedResidency = m_textureCache->residencyRevision;
         PreparedFrame frame;
@@ -2410,6 +2428,7 @@ namespace PlutoGE::render
         frame.particles = std::span<const BasicParticleDraw>(m_orderedParticleDraws.data(), orderedParticleDrawCount);
         frame.effects = std::move(basicEffects);
         frame.decals = std::move(decals);
+        frame.detailGrass = std::move(detailGrass);
         frame.debugView = debugView;
         frame.useTemporalUpscaler = useTemporalUpscaler;
         if (useTemporalUpscaler) frame.upscalerFrame = upscalerFrame;
@@ -2439,6 +2458,7 @@ namespace PlutoGE::render
         const ScopedShaderGraphClock clock(frame.clock);
         const auto recordStart = std::chrono::steady_clock::now();
         m_renderer->SetOutlines(std::span(frame.outlines).first(frame.outlineCount));
+        m_renderer->SetDetailGrass(frame.detailGrass);
         m_renderer->Render(frame.viewProjection, frame.lighting, frame.draws, frame.effects, frame.shadowDraws, frame.debugView,
                            frame.upscalerFrame ? &*frame.upscalerFrame : nullptr,
                            frame.useTemporalUpscaler ? &frame.unjitteredViewProjection : nullptr, frame.submit, frame.giDraws,

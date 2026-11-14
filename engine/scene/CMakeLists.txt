@@ -49,6 +49,7 @@ add_library(PlutoGEScene
     src/components/ColliderComponent.cpp
     src/components/DecalComponent.cpp
     src/components/FoliageComponent.cpp
+    src/components/DetailGrassComponent.cpp
     src/components/FoliageProxyComponent.cpp
     src/components/IblCaptureComponent.cpp
     src/components/AmbientLightVolumeComponent.cpp

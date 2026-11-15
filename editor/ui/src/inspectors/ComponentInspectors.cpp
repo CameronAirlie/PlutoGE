@@ -27,7 +27,8 @@ namespace PlutoGE::ui
         {
             static const bool registered =
                 (RegisterUIComponentInspectors(), RegisterUIStyleInspectors(), RegisterWindInspectors(), RegisterFoliageInspectors(),
-                 RegisterDetailGrassInspectors(), RegisterOutfitInspectors(), true);
+                 RegisterDetailGrassInspectors(), RegisterOutfitInspectors(), RegisterProceduralTerrainInspectors(),
+                 RegisterTerrainWorldInspectors(), RegisterWaterInspectors(), true);
             (void)registered;
         }
     }

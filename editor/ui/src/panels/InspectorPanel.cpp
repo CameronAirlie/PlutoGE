@@ -5,6 +5,8 @@
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorTheme.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
+#include "PlutoGE/ui/TerrainHeightEditing.h"
+#include "PlutoGE/ui/WaterEditing.h"
 #include "PlutoGE/ui/ComponentActions.h"
 #include "PlutoGE/ui/EntityNaming.h"
 #include "PlutoGE/ui/IKInspector.h"
@@ -613,29 +615,6 @@ namespace PlutoGE::ui
             return droppedReference;
         }
 
-        std::optional<std::string> AcceptDroppedTextureAssetReference()
-        {
-            std::optional<std::string> droppedReference;
-            if (ImGui::BeginDragDropTarget())
-            {
-                if (const ImGuiPayload *payload = ImGui::AcceptDragDropPayload(kContentBrowserAssetDragDropPayload))
-                {
-                    if (payload->Data && payload->DataSize > 0)
-                    {
-                        const auto *data = static_cast<const char *>(payload->Data);
-                        const std::string reference(data, data + payload->DataSize - 1);
-                        if (assets::Project::GetAssetTypeForReference(reference) == assets::ProjectAssetType::Texture)
-                        {
-                            droppedReference = reference;
-                        }
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            return droppedReference;
-        }
-
         bool AssignMaterialAssetToSlot(scene::MeshComponent &meshComponent,
                                        size_t materialSlotIndex,
                                        const std::string &materialAssetReference,
@@ -1145,12 +1124,6 @@ namespace PlutoGE::ui
             glm::vec3 parsedValue{0.0f};
             std::sscanf(value.c_str(), "%f,%f,%f", &parsedValue.x, &parsedValue.y, &parsedValue.z);
             return parsedValue;
-        }
-
-        std::array<char, kInspectorPathBufferSize> &GetTerrainHeightMapPathBuffer(const scene::Entity &entity)
-        {
-            static std::unordered_map<scene::EntityID, std::array<char, kInspectorPathBufferSize>> heightMapPathBuffers;
-            return heightMapPathBuffers[entity.GetID()];
         }
 
         std::string GetComponentDisplayName(const scene::Component &component)
@@ -2979,73 +2952,7 @@ namespace PlutoGE::ui
                                 {"PaintEnabled", scene::PropertyType::Bool, terrainComponent->IsPaintEnabled() ? "true" : "false"},
                             };
 
-                            ImGui::Text("Resolution: %d x %d", terrainComponent->GetWidth(), terrainComponent->GetDepth());
-
-                            auto &heightMapPathBuffer = GetTerrainHeightMapPathBuffer(*entity);
-                            static std::unordered_map<scene::EntityID, std::string> cachedTerrainHeightMapPaths;
-                            auto &cachedHeightMapPath = cachedTerrainHeightMapPaths[entity->GetID()];
-                            if (cachedHeightMapPath != terrainComponent->GetHeightMapPath())
-                            {
-                                std::fill(heightMapPathBuffer.begin(), heightMapPathBuffer.end(), '\0');
-                                strncpy_s(heightMapPathBuffer.data(), heightMapPathBuffer.size(), terrainComponent->GetHeightMapPath().c_str(), _TRUNCATE);
-                                cachedHeightMapPath = terrainComponent->GetHeightMapPath();
-                            }
-
-                            ImGui::InputText("Height Map", heightMapPathBuffer.data(), heightMapPathBuffer.size());
-                            if (auto droppedReference = AcceptDroppedTextureAssetReference())
-                            {
-                                std::fill(heightMapPathBuffer.begin(), heightMapPathBuffer.end(), '\0');
-                                strncpy_s(heightMapPathBuffer.data(), heightMapPathBuffer.size(), droppedReference->c_str(), _TRUNCATE);
-                                if (terrainComponent->LoadHeightMap(*droppedReference))
-                                {
-                                    cachedHeightMapPath = terrainComponent->GetHeightMapPath();
-                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightMap");
-                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightSamples");
-                                    editorShell.MarkSceneDirty();
-                                }
-                                else
-                                {
-                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to load terrain height map: " + *droppedReference);
-                                }
-                            }
-
-                            ImGui::SameLine();
-                            if (ImGui::Button("...##TerrainHeightMap"))
-                            {
-#ifdef _WIN32
-                                OPENFILENAMEA ofn = {};
-                                char fileName[MAX_PATH] = "";
-                                ofn.lStructSize = sizeof(ofn);
-                                ofn.hwndOwner = nullptr;
-                                ofn.lpstrFilter = "Height Maps\0*.png;*.jpg;*.jpeg;*.tga;*.bmp\0All Files\0*.*\0";
-                                ofn.lpstrFile = fileName;
-                                ofn.nMaxFile = MAX_PATH;
-                                ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
-                                if (GetOpenFileNameA(&ofn))
-                                {
-                                    strncpy_s(heightMapPathBuffer.data(), heightMapPathBuffer.size(), fileName, _TRUNCATE);
-                                }
-#endif
-                            }
-
-                            ImGui::SameLine();
-                            ImGui::BeginDisabled(std::strlen(heightMapPathBuffer.data()) == 0);
-                            if (ImGui::Button("Load##TerrainHeightMap"))
-                            {
-                                const std::string heightMapPath = heightMapPathBuffer.data();
-                                if (terrainComponent->LoadHeightMap(heightMapPath))
-                                {
-                                    cachedHeightMapPath = terrainComponent->GetHeightMapPath();
-                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightMap");
-                                    entity->AddPrefabOverride("Component:TerrainComponent:HeightSamples");
-                                    editorShell.MarkSceneDirty();
-                                }
-                                else
-                                {
-                                    editorShell.Log(EditorShell::ConsoleSeverity::Error, "Failed to load terrain height map: " + heightMapPath);
-                                }
-                            }
-                            ImGui::EndDisabled();
+                            RenderTerrainHeightInspector(editorShell, *entity, *terrainComponent);
 
                             if (auto selection = terrainComponent->GetMaterialAssetReference();
                                 RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
@@ -3320,6 +3227,7 @@ namespace PlutoGE::ui
                             };
                             applyOceanPreset("Apply Harbour Preset", true);
                             applyOceanPreset("Apply Stylized Sea Preset", false);
+                            RenderLakeTools(editorShell, *entity, *oceanComponent);
                             ImGui::EndDisabled();
                             ImGui::TextWrapped("Harbour: calm city water. Stylized Sea: exposed ocean swells. Both presets preserve masks and visibility depth.");
                             propertiesProvided = true;
@@ -3477,6 +3385,8 @@ namespace PlutoGE::ui
                             if (dynamic_cast<scene::TerrainComponent *>(componentPtr) &&
                                 (property.name == "MaterialAsset" ||
                                  property.name == "HeightMap" ||
+                                 property.name == "HeightData" ||
+                                 property.name == "LodDistanceScale" ||
                                  property.name == "HeightSamples" ||
                                  property.name == "PaintMode" ||
                                  property.name == "BrushRadius" ||

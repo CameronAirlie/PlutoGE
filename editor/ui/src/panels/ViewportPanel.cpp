@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
+#include "PlutoGE/ui/TerrainHeightEditing.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/BrushStrokeSampler.h"
@@ -3276,6 +3277,7 @@ namespace PlutoGE::ui
             bool terrainPaintActive = false;
             static bool s_terrainStrokeActive = false;
             static TerrainLayerStroke s_terrainLayerStroke;
+            static TerrainHeightStroke s_terrainHeightStroke;
             if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
             {
                 const bool canTerrainPaint = terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled();
@@ -3308,16 +3310,24 @@ namespace PlutoGE::ui
                                                      !ImGuizmo::IsUsing() &&
                                                      !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
                             terrainPaintActive = canTerrainPaint && brushActive;
-                            // Layer painting records its own undo step (the weights live in files, not the scene).
-                            const bool layerPaint = terrainComponent->GetPaintMode() == scene::TerrainPaintMode::Layer;
+                            // Layer painting and sculpting record their own undo steps (the weights and the heights
+                            // live in files, not the scene). Holes, and sculpting without a project, are scene edits.
+                            const auto paintMode = terrainComponent->GetPaintMode();
+                            const bool layerPaint = paintMode == scene::TerrainPaintMode::Layer;
+                            const bool holePaint = paintMode == scene::TerrainPaintMode::Hole || paintMode == scene::TerrainPaintMode::Fill;
+                            bool sculpted = false;
                             if (terrainPaintActive && layerPaint)
                                 s_terrainLayerStroke.Dab(editorShell, *selectedEntity, *terrainComponent, hitPoint);
-                            if (terrainPaintActive && !layerPaint && !s_terrainStrokeActive)
+                            else if (terrainPaintActive && !holePaint && !s_terrainStrokeActive)
+                                sculpted = s_terrainHeightStroke.Dab(editorShell, *selectedEntity, *terrainComponent, hitPoint,
+                                                                     ImGui::GetIO().DeltaTime);
+                            if (terrainPaintActive && !layerPaint && !sculpted && !s_terrainStrokeActive)
                             {
                                 editorShell.BeginSceneEdit("Paint Terrain");
                                 s_terrainStrokeActive = true;
                             }
-                            if (terrainPaintActive && terrainComponent->PaintAtWorldPosition(hitPoint, ImGui::GetIO().DeltaTime))
+                            if (terrainPaintActive && !layerPaint && !sculpted &&
+                                terrainComponent->PaintAtWorldPosition(hitPoint, ImGui::GetIO().DeltaTime))
                             {
                                 editorShell.MarkSceneDirty();
                             }
@@ -3333,6 +3343,8 @@ namespace PlutoGE::ui
             }
             if (s_terrainLayerStroke.IsActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
                 s_terrainLayerStroke.End(editorShell);
+            if (s_terrainHeightStroke.IsActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+                s_terrainHeightStroke.End(editorShell);
 
             if (terrainPaintActive)
             {

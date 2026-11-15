@@ -36,6 +36,11 @@ namespace PlutoGE::scene
 
     using FoliageInstanceSnapshot = std::vector<std::vector<FoliageInstance>>;
 
+    // Instances placed by a generator (ProceduralTerrainComponent) have IDs with this bit set: stable across
+    // regenerations, derived from where they grow, and never equal to the IDs hand-placed instances count up from 1.
+    inline constexpr std::uint64_t ProceduralFoliageInstanceIdBit = 1ull << 63;
+    [[nodiscard]] constexpr bool IsProceduralFoliageInstanceId(std::uint64_t id) { return (id & ProceduralFoliageInstanceIdBit) != 0; }
+
     struct FoliageCellCoordinate
     {
         int x = 0;

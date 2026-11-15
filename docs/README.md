@@ -49,6 +49,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Clothing, armour and outfits (wearables posed by the character's skeleton) | [Skeletal IK: clothing and outfits](SKELETAL_IK.md#clothing-and-outfits) |
 | Physics-driven characters | [Ragdolls](RAGDOLLS.md) |
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
+| Large worlds: 16-bit heightmap import, height files, biomes, lakes and rivers, streamed terrain tiles, distant terrain | [Terrain worlds](TERRAIN_WORLDS.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
 | Dense grass generated on the GPU over a terrain | [Detail grass](DETAIL_GRASS.md) |
 | Wind and swaying vegetation | [Foliage wind](FOLIAGE_WIND.md) |

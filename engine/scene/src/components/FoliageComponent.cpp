@@ -1620,7 +1620,8 @@ namespace PlutoGE::scene
             if (!type) continue;
             const auto index = (std::min)(entry.location.instanceIndex, type->instances.size());
             type->instances.insert(type->instances.begin() + static_cast<std::ptrdiff_t>(index), entry.instance);
-            m_nextInstanceId = (std::max)(m_nextInstanceId, entry.instance.id + 1);
+            if (!IsProceduralFoliageInstanceId(entry.instance.id))
+                m_nextInstanceId = (std::max)(m_nextInstanceId, entry.instance.id + 1);
         }
         MarkInstancesDirty();
     }
@@ -2378,7 +2379,9 @@ namespace PlutoGE::scene
                     instance.id = m_nextInstanceId++;
                     ids.insert(instance.id);
                 }
-                m_nextInstanceId = (std::max)(m_nextInstanceId, instance.id + 1);
+                // Hand-placed IDs count up from 1; procedural ones live in their own range and do not move the count.
+                if (!IsProceduralFoliageInstanceId(instance.id))
+                    m_nextInstanceId = (std::max)(m_nextInstanceId, instance.id + 1);
             }
         }
     }

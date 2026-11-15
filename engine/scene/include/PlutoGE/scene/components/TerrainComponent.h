@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
+#include "PlutoGE/scene/TerrainHeightData.h"
 #include "PlutoGE/scene/TerrainHoleMask.h"
 #include "PlutoGE/scene/TerrainLayerStack.h"
 #include "PlutoGE/scene/HeavyPropertyCache.h"
@@ -9,6 +10,7 @@
 
 #include <glm/glm.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,11 +58,48 @@ namespace PlutoGE::scene
         // Missing "HeightSamples" and "HoleMask" keep the current heights and holes (unless Width or Depth changes
         // their count).
         void DeserializeKeepingHeavyData(const std::vector<Property> &properties) override { Deserialize(properties); }
-        std::uint64_t GetHeavyDataRevision() const override { return m_heightsRevision + m_holesRevision; }
+        std::uint64_t GetHeavyDataRevision() const override
+        {
+            return (m_heightDataPath.empty() ? m_heightsRevision : 0) + m_holesRevision;
+        }
         void Deserialize(const std::vector<Property> &properties) override;
 
+        // ---- heightmaps from other tools ---------------------------------------------------------------------------
+        // Replaces the heights (and the grid's size) with a heightmap file: 8/16-bit images, raw R16/R32F or
+        // .plutoheight (TerrainHeightData.h). Normalized sources map 0..1 to `heightRange` (default 0..HeightScale);
+        // float sources keep their values. Heights are clamped to 0..HeightScale. Holes are cleared when the grid
+        // changes size.
+        bool ImportHeightMap(const std::string &filePath, const TerrainHeightImportOptions &options = {},
+                             std::optional<glm::vec2> heightRange = std::nullopt, std::string *error = nullptr);
+        // ImportHeightMap with default options; remembers the path as HeightMap (reloaded when a scene names a
+        // different one).
         bool LoadHeightMap(const std::string &filePath);
+
+        // ---- heights stored in a .plutoheight file -----------------------------------------------------------------
+        // With a height file the heights load from and save to it, and the scene no longer carries them (like the
+        // layer weight PNGs). Assigning a path neither loads nor saves.
+        const std::string &GetHeightDataPath() const { return m_heightDataPath; }
+        void SetHeightDataPath(std::string reference) { m_heightDataPath = std::move(reference); }
+        bool LoadHeightData(std::string *error = nullptr);
+        bool SaveHeightData(TerrainHeightEncoding encoding = TerrainHeightEncoding::Float32, std::string *error = nullptr) const;
+        // The heights and border as they would be saved; and replacing them (the grid takes the data's size).
+        TerrainHeightData GetHeightData() const;
+        void SetHeightData(TerrainHeightData data);
+        // The samples just outside the grid (TerrainHeightBorder): empty repeats the edges, as a lone terrain does.
+        const std::vector<float> &GetHeightBorder() const { return m_border; }
+
+        // ---- editing heights -----------------------------------------------------------------------------------
+        // Sculpts with the current paint mode and brush (Raise, Lower, Smooth, Flatten) and returns the samples changed.
+        TerrainSampleRect SculptAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime);
+        // Sculpts or edits holes, depending on the paint mode; true when anything changed.
         bool PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime);
+        TerrainHeightRegion CaptureHeights(const TerrainSampleRect &rect) const;
+        // Writes a region back (undo, or a tool's edit); samples outside the grid are ignored.
+        void RestoreHeights(const TerrainHeightRegion &region);
+        // The whole grid as a rect.
+        TerrainSampleRect GetSampleBounds() const { return {0, 0, m_width, m_depth}; }
+        // The sample nearest a world position, clamped to the grid.
+        glm::ivec2 WorldToSample(const glm::vec3 &worldPosition) const;
         bool Raycast(const glm::vec3 &worldOrigin, const glm::vec3 &worldDirection, glm::vec3 &worldHitPoint) const;
         const std::vector<float> &GetHeightSamples() const { return m_heights; }
         // Bumped by every change to the height samples (collision shape caches rebuild on it).
@@ -85,6 +124,14 @@ namespace PlutoGE::scene
         int GetChunkSize() const { return m_chunkSize; }
         void SetLodCount(int lodCount);
         int GetLodCount() const { return m_lodCount; }
+        // Multiplies how far each chunk keeps its detail (2 switches to coarser LODs at twice the distance). Large
+        // terrains seen from far away raise it so ridgelines keep their shape; dense small ones lower it.
+        void SetLodDistanceScale(float scale);
+        float GetLodDistanceScale() const { return m_lodDistanceScale; }
+        // Depth of a wall hung from the terrain's outer edges (0: none). Hides cracks where tiles drawn at different
+        // detail meet; it is drawn, not collided with.
+        void SetSkirtDepth(float depth);
+        float GetSkirtDepth() const { return m_skirtDepth; }
         void SetStatic(bool isStatic) { m_isStatic = isStatic; }
         bool IsStatic() const { return m_isStatic; }
         render::Mesh *GetMeshForBaking();
@@ -148,6 +195,9 @@ namespace PlutoGE::scene
         std::vector<Property> SerializeProperties(HeavyDetail detail) const;
         float GetHeightSample(int x, int z) const;
         void SetHeightSample(int x, int z, float height);
+        // Replaces the grid, heights and border together (imports and height files).
+        void ReplaceHeights(int width, int depth, std::vector<float> heights, std::vector<float> border);
+        void HeightsChanged();
         float SampleHeight(float x, float z) const;
         glm::vec3 ComputeNormal(int x, int z) const;
         void EnsureHeightStorage();
@@ -165,8 +215,12 @@ namespace PlutoGE::scene
         float m_surfaceSmoothing = 0.35f;
         int m_chunkSize = 32;
         int m_lodCount = 4;
+        float m_lodDistanceScale = 1.0f;
+        float m_skirtDepth = 0.0f;
         bool m_isStatic = false;
         std::vector<float> m_heights;
+        std::vector<float> m_border; // TerrainHeightBorder ring, or empty
+        std::string m_heightDataPath;
         std::uint64_t m_heightsRevision = 0;
         HeavyPropertyCache m_heightsText;
         TerrainHoleMask m_holes;

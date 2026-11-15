@@ -55,6 +55,7 @@ add_library(PlutoGEEditorUI
     src/ModelHierarchyInspector.cpp
     src/SurfacePlacement.cpp
     src/TerrainLayerEditing.cpp
+    src/TerrainHeightEditing.cpp
     src/GroundPlacement.cpp
     src/GroundPlacementUI.cpp
     src/AssetReferenceSearchPanel.cpp
@@ -128,6 +129,9 @@ add_library(PlutoGEEditorUI
     src/hierarchy/UIWidgetPresets.cpp
     src/inspectors/ComponentInspectors.cpp
     src/inspectors/DetailGrassInspector.cpp
+    src/inspectors/ProceduralTerrainInspector.cpp
+    src/inspectors/TerrainWorldInspector.cpp
+    src/inspectors/WaterInspectors.cpp
     src/inspectors/OutfitInspectors.cpp
     src/inspectors/FoliageInspector.cpp
     src/inspectors/WindInspectors.cpp

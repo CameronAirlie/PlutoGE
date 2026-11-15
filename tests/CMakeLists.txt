@@ -1029,6 +1029,22 @@ add_executable(PlutoGETerrainHoleTests TerrainHoleTests.cpp)
 pluto_link_engine(PlutoGETerrainHoleTests)
 add_test(NAME PlutoGETerrainHoleTests COMMAND PlutoGETerrainHoleTests)
 
+add_executable(PlutoGETerrainHeightDataTests TerrainHeightDataTests.cpp)
+pluto_link_engine(PlutoGETerrainHeightDataTests)
+add_test(NAME PlutoGETerrainHeightDataTests COMMAND PlutoGETerrainHeightDataTests)
+
+add_executable(PlutoGETerrainWorldTests TerrainWorldTests.cpp)
+pluto_link_engine(PlutoGETerrainWorldTests)
+add_test(NAME PlutoGETerrainWorldTests COMMAND PlutoGETerrainWorldTests)
+
+add_executable(PlutoGEWaterBodyTests WaterBodyTests.cpp)
+pluto_link_engine(PlutoGEWaterBodyTests)
+add_test(NAME PlutoGEWaterBodyTests COMMAND PlutoGEWaterBodyTests)
+
+add_executable(PlutoGEProceduralTerrainTests ProceduralTerrainTests.cpp)
+pluto_link_engine(PlutoGEProceduralTerrainTests)
+add_test(NAME PlutoGEProceduralTerrainTests COMMAND PlutoGEProceduralTerrainTests)
+
 add_executable(PlutoGEPhysicsSynchronizationTests PhysicsSynchronizationTests.cpp)
 pluto_link_engine(PlutoGEPhysicsSynchronizationTests)
 add_test(NAME PlutoGEPhysicsSynchronizationTests COMMAND PlutoGEPhysicsSynchronizationTests)

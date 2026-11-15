@@ -16,6 +16,7 @@
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/FoliageEditing.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
+#include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/ui/ProjectLauncher.h"
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorCameraNavigation.h"
@@ -4175,6 +4176,8 @@ namespace PlutoGE::ui
                     // Per-component and per-script timing costs frame time; only the profiler reads it.
                     m_scene->SetDetailedTimingEnabled(m_profiler.IsRecording() || (profilerPanel && profilerPanel->IsOpen()));
                     m_scene->SetRuntimePaused(m_runtimePaused);
+                    // Terrain worlds stream around the editor's camera while the game is not running.
+                    scene::TerrainWorldComponent::SetEditorViewer(m_editorCamera.position);
                     m_scene->Update(deltaTime.count());
                     const auto &sceneTimingStats = m_scene->GetUpdateTimingStats();
                     frameTimingStats.scenePreparationMs = sceneTimingStats.preparationMs;

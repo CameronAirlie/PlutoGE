@@ -1,6 +1,11 @@
 # Procedural terrain texturing, foliage and biomes: plan
 
-Written 2026-11-10. Status: planned, nothing implemented.
+Written 2026-11-10. Status (2026-11-15): GPU detail grass is built (`docs/DETAIL_GRASS.md`), and a first cut of
+phases 1-4 is built as part of the large-world work (`docs/TERRAIN_WORLDS.md`, `scene/procedural/`): the evaluator
+(noise, rules, stacks, masks, spline distances), coverage-semantics texturing baked into the weight map, world-aligned
+scatter with procedural IDs, and biomes held by `ProceduralTerrainComponent`. Not yet: override planes and painted
+masks in the editor, per-cell incremental regeneration, foliage overrides for moved/removed procedural instances, the
+`.plutobiome` asset (the definition's text format is ready for it), and the viewport heat-map overlay.
 
 ## Decisions
 

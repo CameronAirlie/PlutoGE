@@ -25,6 +25,9 @@
 #include "PlutoGE/scene/components/NavAgentComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
+#include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
+#include "PlutoGE/scene/components/RiverComponent.h"
+#include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/RagdollTuningComponent.h"
@@ -107,9 +110,16 @@ namespace PlutoGE::scene
             };
             terrain.isAssetPathProperty = [](std::string_view name)
             {
-                // HeightMap, the layers' Layer.<n>.<Kind>Map textures and the WeightMap<n> files.
-                return name == "MaterialAsset" || name == "PaintedAlbedo" ||
+                // HeightMap, HeightData, the layers' Layer.<n>.<Kind>Map textures and the WeightMap<n> files.
+                return name == "MaterialAsset" || name == "PaintedAlbedo" || name == "HeightData" ||
                        name.ends_with("Map") || name.starts_with("WeightMap");
+            };
+
+            // Streams tiles of a large terrain as transient children.
+            auto &terrainWorld = registry.Register<TerrainWorldComponent>("TerrainWorldComponent", "Terrain World");
+            terrainWorld.isAssetPathProperty = [](std::string_view name)
+            {
+                return name == "TilePrefab" || name == "TileMaterial" || name == "OverviewFile" || name == "OverviewMaterial";
             };
 
             auto &spline = registry.Register<SplineComponent>("SplineComponent", "Spline Track Component");
@@ -126,6 +136,9 @@ namespace PlutoGE::scene
             spline.isAssetPathProperty = [](std::string_view name) { return name == "MaterialAsset"; };
 
             registry.Register<OceanComponent>("OceanComponent", "Ocean Component");
+            // A river is water along the spline of its own entity.
+            auto &river = registry.Register<RiverComponent>("RiverComponent", "River");
+            river.canAdd = HasSibling<SplineComponent>;
 
             auto &foliage = registry.Register<FoliageComponent>("FoliageComponent", "Foliage Component");
             foliage.createForAuthoring = [](Entity &)
@@ -143,6 +156,9 @@ namespace PlutoGE::scene
             auto &detailGrass = registry.Register<DetailGrassComponent>("DetailGrassComponent", "Detail Grass");
             detailGrass.canAdd = HasSibling<TerrainComponent>;
             detailGrass.isAssetPathProperty = [](std::string_view name) { return name.ends_with(".Material"); };
+            // Biomes paint the terrain of their own entity and fill the foliage beside it.
+            auto &procedural = registry.Register<ProceduralTerrainComponent>("ProceduralTerrainComponent", "Procedural Terrain");
+            procedural.canAdd = HasSibling<TerrainComponent>;
 
             // Created only by PromoteFoliageInstance, so it has no Add Component menu item.
             registry.Register<FoliageProxyComponent>("FoliageProxyComponent", "Foliage Proxy");
@@ -178,10 +194,13 @@ namespace PlutoGE::scene
             registry.AddMenuItem<MeshComponent>("Rendering/Mesh");
             registry.AddMenuItem<DecalComponent>("Rendering/Decal");
             registry.AddMenuItem<TerrainComponent>("Rendering/Terrain");
+            registry.AddMenuItem<TerrainWorldComponent>("Rendering/Terrain World");
             registry.AddMenuItem<SplineComponent>("Rendering/Road / Spline Track");
             registry.AddMenuItem<OceanComponent>("Rendering/Ocean");
+            registry.AddMenuItem<RiverComponent>("Rendering/River");
             registry.AddMenuItem<FoliageComponent>("Rendering/Foliage");
             registry.AddMenuItem<DetailGrassComponent>("Rendering/Detail Grass");
+            registry.AddMenuItem<ProceduralTerrainComponent>("Rendering/Procedural Terrain");
             registry.AddMenuItem<ClothComponent>("Rendering/Cloth");
             registry.AddMenuItem<ParticleSystemComponent>("Rendering/Particle System");
             registry.AddMenuItem<CameraComponent>("Rendering/Camera");

@@ -120,6 +120,12 @@ size, and paint them with **Paint > Mode: Layer**. Layers tile in world units, s
 the ground keeps its detail however large the terrain. See
 [Terrain Material Layers](../TERRAIN_LAYERS.md).
 
+**Large worlds.** For kilometres of terrain, import a 16-bit heightmap from a terrain
+tool, keep the heights in a `.plutoheight` file rather than the scene, paint and
+plant biomes with a Procedural Terrain component, add lakes and rivers, and split
+the world into streamed tiles with a Terrain World. See
+[Terrain Worlds](../TERRAIN_WORLDS.md).
+
 **Caves and holes.** A heightfield cannot overhang. For a cave mouth or a shaft,
 build the space from meshes and cut the terrain cells in the way with **Paint >
 Mode: Hole**. Hole cells are not drawn and do not collide, and surface queries

@@ -12,11 +12,11 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 
-#include <stb_image.h>
-
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -137,6 +137,31 @@ namespace PlutoGE::scene
                 }
             }
             heights = std::move(parsed);
+            return true;
+        }
+
+        // An asset reference or path as a file path (references that cannot be resolved are taken as paths).
+        std::string ResolveTerrainFile(const std::string &reference)
+        {
+            auto resolved = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference);
+            return resolved.empty() ? reference : resolved;
+        }
+
+        // A file's bytes, from a mounted content pack or the file system.
+        bool ReadTerrainFile(const std::string &path, std::vector<std::uint8_t> &bytes)
+        {
+            if (content::IsMounted(path))
+            {
+                std::string packed;
+                if (!content::ReadFile(path, packed))
+                    return false;
+                bytes.assign(packed.begin(), packed.end());
+                return true;
+            }
+            std::ifstream input(path, std::ios::binary);
+            if (!input)
+                return false;
+            bytes.assign(std::istreambuf_iterator<char>(input), {});
             return true;
         }
 
@@ -285,8 +310,11 @@ namespace PlutoGE::scene
             {"SurfaceSmoothing", PropertyType::Float, std::to_string(m_surfaceSmoothing)},
             {"ChunkSize", PropertyType::Int, std::to_string(m_chunkSize)},
             {"LodCount", PropertyType::Int, std::to_string(m_lodCount)},
+            {"LodDistanceScale", PropertyType::Float, std::to_string(m_lodDistanceScale)},
+            {"SkirtDepth", PropertyType::Float, std::to_string(m_skirtDepth)},
             {"Static", PropertyType::Bool, m_isStatic ? "true" : "false"},
             {"HeightMap", PropertyType::String, m_heightMapPath},
+            {"HeightData", PropertyType::String, m_heightDataPath},
             {"MaterialAsset", PropertyType::String, m_materialAssetReference},
             {"PaintedAlbedo", PropertyType::String, m_paintedAlbedoPath},
             {"PaintEnabled", PropertyType::Bool, m_paintEnabled ? "true" : "false"},
@@ -297,17 +325,21 @@ namespace PlutoGE::scene
         };
         if (detail == HeavyDetail::Shared)
         {
-            // Stays in its long-standing position, so scene files diff cleanly.
-            Property samples{"HeightSamples", PropertyType::String};
-            samples.sharedValue = m_heightsText.Get(m_heightsRevision, [this] { return SerializeHeightSamples(m_heights); });
             const auto materialAsset = std::find_if(properties.begin(), properties.end(),
                                                     [](const Property &property) { return property.name == "MaterialAsset"; });
             // Always written (empty without holes): a missing HoleMask keeps the current holes, so undoing back to
             // a state without holes must say so.
             Property holes{"HoleMask", PropertyType::String};
             holes.sharedValue = m_holesText.Get(m_holesRevision, [this] { return m_holes.Encode(); });
-            const auto position = properties.insert(materialAsset, std::move(samples));
-            properties.insert(position + 1, std::move(holes));
+            auto position = properties.insert(materialAsset, std::move(holes));
+            // Heights kept in a height file are not part of the scene. Otherwise they stay in their long-standing
+            // position, so scene files diff cleanly.
+            if (m_heightDataPath.empty())
+            {
+                Property samples{"HeightSamples", PropertyType::String};
+                samples.sharedValue = m_heightsText.Get(m_heightsRevision, [this] { return SerializeHeightSamples(m_heights); });
+                properties.insert(position, std::move(samples));
+            }
         }
         properties.push_back({"PaintLayer", PropertyType::Int, std::to_string(m_paintLayer)});
         properties.push_back({"LayerOpacity", PropertyType::Float, std::to_string(m_layerOpacity)});
@@ -339,7 +371,10 @@ namespace PlutoGE::scene
 
     void TerrainComponent::Deserialize(const std::vector<Property> &properties)
     {
+        const int previousWidth = m_width;
+        const int previousDepth = m_depth;
         std::string heightMapPath = m_heightMapPath;
+        std::optional<std::string> heightDataPath;
         std::string materialAssetReference = m_materialAssetReference;
         std::string paintedAlbedoPath = m_paintedAlbedoPath;
         std::string serializedHeightSamples;
@@ -382,10 +417,16 @@ namespace PlutoGE::scene
                 m_chunkSize = std::max(2, std::stoi(property.value));
             else if (property.name == "LodCount")
                 m_lodCount = glm::clamp(std::stoi(property.value), 1, 6);
+            else if (property.name == "LodDistanceScale")
+                m_lodDistanceScale = glm::clamp(std::stof(property.value), 0.25f, 16.0f);
+            else if (property.name == "SkirtDepth")
+                m_skirtDepth = glm::clamp(std::stof(property.value), 0.0f, 1000.0f);
             else if (property.name == "Static")
                 m_isStatic = property.value == "true" || property.value == "1";
             else if (property.name == "HeightMap")
                 heightMapPath = property.value;
+            else if (property.name == "HeightData")
+                heightDataPath = property.value;
             else if (property.name == "HeightSamples")
                 serializedHeightSamples = property.Text();
             else if (property.name == "HoleMask")
@@ -462,22 +503,52 @@ namespace PlutoGE::scene
         else if (weightResolution != m_layers.GetWeights().GetResolution())
             m_layers.SetWeightResolution(weightResolution);
 
-        EnsureHeightStorage();
-        const std::size_t expectedHeightSampleCount = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_depth);
-        if (!serializedHeightSamples.empty() &&
-            DeserializeHeightSamples(serializedHeightSamples, expectedHeightSampleCount, m_heights))
+        // Where the heights come from. A height file supersedes everything else, and is read only when the scene names
+        // a different file than the one loaded: undoing an unrelated edit must not throw away sculpting newer than
+        // the scene state (the rule the layer weight files follow). The file also owns the grid's size.
+        const bool usesHeightFile = heightDataPath ? !heightDataPath->empty() : !m_heightDataPath.empty();
+        if (usesHeightFile)
         {
-            ++m_heightsRevision;
+            if (heightDataPath && *heightDataPath != m_heightDataPath)
+            {
+                m_heightDataPath = *heightDataPath;
+                if (!LoadHeightData())
+                    EnsureHeightStorage();
+            }
+            else
+            {
+                m_width = previousWidth;
+                m_depth = previousDepth;
+            }
             m_heightMapPath = heightMapPath;
             MarkMeshDirty();
         }
-        else if (!heightMapPath.empty() && heightMapPath != m_heightMapPath)
-        {
-            LoadHeightMap(heightMapPath);
-        }
         else
         {
-            MarkMeshDirty();
+            if (!m_heightDataPath.empty())
+            {
+                // Back to heights held by the scene (undoing "store in file"): the samples follow, or the heights stay.
+                m_heightDataPath.clear();
+                m_border.clear();
+                ++m_heightsRevision;
+            }
+            EnsureHeightStorage();
+            const std::size_t expectedHeightSampleCount = static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_depth);
+            if (!serializedHeightSamples.empty() &&
+                DeserializeHeightSamples(serializedHeightSamples, expectedHeightSampleCount, m_heights))
+            {
+                ++m_heightsRevision;
+                m_heightMapPath = heightMapPath;
+                MarkMeshDirty();
+            }
+            else if (!heightMapPath.empty() && heightMapPath != m_heightMapPath)
+            {
+                LoadHeightMap(heightMapPath);
+            }
+            else
+            {
+                MarkMeshDirty();
+            }
         }
 
         if (serializedHoles)
@@ -498,51 +569,211 @@ namespace PlutoGE::scene
             SetPaintedAlbedoPath(paintedAlbedoPath);
     }
 
-    bool TerrainComponent::LoadHeightMap(const std::string &filePath)
+    bool TerrainComponent::ImportHeightMap(const std::string &filePath, const TerrainHeightImportOptions &options,
+                                           std::optional<glm::vec2> heightRange, std::string *error)
     {
-        std::string resolvedPath = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(filePath);
-        if (resolvedPath.empty())
+        std::vector<std::uint8_t> bytes;
+        if (!ReadTerrainFile(ResolveTerrainFile(filePath), bytes))
         {
-            resolvedPath = filePath;
-        }
-
-        int width = 0;
-        int height = 0;
-        int channels = 0;
-        std::string packedBytes;
-        unsigned char *pixels = nullptr;
-        if (content::IsMounted(resolvedPath))
-        {
-            if (content::ReadFile(resolvedPath, packedBytes) && packedBytes.size() <= INT_MAX)
-                pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(packedBytes.data()), static_cast<int>(packedBytes.size()), &width, &height, &channels, 1);
-        }
-        else pixels = stbi_load(resolvedPath.c_str(), &width, &height, &channels, 1);
-        if (!pixels || width <= 1 || height <= 1)
-        {
-            if (pixels)
-            {
-                stbi_image_free(pixels);
-            }
+            if (error)
+                *error = "Could not read " + filePath + ".";
             return false;
         }
+        auto imported = DecodeTerrainHeightSource(bytes, filePath, options, error);
+        if (!imported)
+            return false;
 
-        m_width = width;
-        m_depth = height;
-        m_heights.resize(static_cast<std::size_t>(m_width * m_depth));
-        ++m_heightsRevision;
-        for (int z = 0; z < m_depth; ++z)
+        const glm::vec2 range = heightRange.value_or(glm::vec2(0.0f, m_heightScale));
+        const auto toHeight = [&](float sample) {
+            return glm::clamp(imported->normalized ? range.x + sample * (range.y - range.x) : sample, 0.0f, m_heightScale);
+        };
+        for (auto &sample : imported->field.samples)
+            sample = toHeight(sample);
+        for (auto &sample : imported->border)
+            sample = toHeight(sample);
+        const int width = imported->field.width;
+        const int depth = imported->field.depth;
+        ReplaceHeights(width, depth, std::move(imported->field.samples), std::move(imported->border));
+        if (error)
+            error->clear();
+        return true;
+    }
+
+    bool TerrainComponent::LoadHeightMap(const std::string &filePath)
+    {
+        if (!ImportHeightMap(filePath))
+            return false;
+        m_heightMapPath = filePath;
+        return true;
+    }
+
+    bool TerrainComponent::LoadHeightData(std::string *error)
+    {
+        if (m_heightDataPath.empty())
         {
-            for (int x = 0; x < m_width; ++x)
+            if (error)
+                *error = "The terrain has no height file.";
+            return false;
+        }
+        std::vector<std::uint8_t> bytes;
+        if (!ReadTerrainFile(ResolveTerrainFile(m_heightDataPath), bytes))
+        {
+            if (error)
+                *error = "Could not read " + m_heightDataPath + ".";
+            return false;
+        }
+        auto data = TerrainHeightFile::Decode(bytes, error);
+        if (!data)
+            return false;
+        SetHeightData(std::move(*data));
+        return true;
+    }
+
+    bool TerrainComponent::SaveHeightData(TerrainHeightEncoding encoding, std::string *error) const
+    {
+        if (m_heightDataPath.empty())
+        {
+            if (error)
+                *error = "The terrain has no height file.";
+            return false;
+        }
+        const std::filesystem::path path = ResolveTerrainFile(m_heightDataPath);
+        std::error_code ignored;
+        if (path.has_parent_path())
+            std::filesystem::create_directories(path.parent_path(), ignored);
+        const auto bytes = TerrainHeightFile::Encode(GetHeightData(), encoding);
+        // Written beside the target and moved over it, so a failed write never leaves half a terrain.
+        const auto staging = path.string() + ".writing";
+        {
+            std::ofstream output(staging, std::ios::binary | std::ios::trunc);
+            output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+            if (!output)
             {
-                const std::size_t src = static_cast<std::size_t>((m_depth - 1 - z) * m_width + x);
-                SetHeightSample(x, z, static_cast<float>(pixels[src]) / 255.0f * m_heightScale);
+                if (error)
+                    *error = "Could not write " + path.string() + ".";
+                return false;
             }
         }
-
-        stbi_image_free(pixels);
-        m_heightMapPath = filePath;
-        MarkMeshDirty();
+        std::error_code renameError;
+        std::filesystem::rename(staging, path, renameError);
+        if (renameError)
+        {
+            std::filesystem::remove(staging, ignored);
+            if (error)
+                *error = "Could not replace " + path.string() + ": " + renameError.message();
+            return false;
+        }
         return true;
+    }
+
+    TerrainHeightData TerrainComponent::GetHeightData() const
+    {
+        TerrainHeightData data;
+        data.field.width = m_width;
+        data.field.depth = m_depth;
+        data.field.samples = m_heights;
+        data.border = m_border;
+        return data;
+    }
+
+    void TerrainComponent::SetHeightData(TerrainHeightData data)
+    {
+        if (!data.Valid())
+            return;
+        for (auto &sample : data.field.samples)
+            sample = glm::clamp(sample, 0.0f, m_heightScale);
+        for (auto &sample : data.border)
+            sample = glm::clamp(sample, 0.0f, m_heightScale);
+        const int width = data.field.width;
+        const int depth = data.field.depth;
+        ReplaceHeights(width, depth, std::move(data.field.samples), std::move(data.border));
+    }
+
+    void TerrainComponent::ReplaceHeights(int width, int depth, std::vector<float> heights, std::vector<float> border)
+    {
+        if (width != m_width || depth != m_depth)
+        {
+            m_width = width;
+            m_depth = depth;
+            m_holes.Resize(m_width - 1, m_depth - 1);
+            ++m_holesRevision;
+        }
+        m_heights = std::move(heights);
+        m_border = border.size() == TerrainHeightBorder::Size(m_width, m_depth) ? std::move(border) : std::vector<float>{};
+        HeightsChanged();
+        if (auto *owner = GetOwner())
+            if (auto *scene = owner->GetScene())
+                scene->MarkColliderShapesDirty();
+    }
+
+    void TerrainComponent::HeightsChanged()
+    {
+        ++m_heightsRevision;
+        MarkMeshDirty();
+    }
+
+    TerrainHeightRegion TerrainComponent::CaptureHeights(const TerrainSampleRect &rect) const
+    {
+        TerrainHeightRegion region;
+        region.rect = {std::max(rect.x0, 0), std::max(rect.z0, 0), std::min(rect.x1, m_width), std::min(rect.z1, m_depth)};
+        if (region.rect.Empty())
+            return region;
+        region.samples.reserve(static_cast<std::size_t>(region.rect.x1 - region.rect.x0) * (region.rect.z1 - region.rect.z0));
+        for (int z = region.rect.z0; z < region.rect.z1; ++z)
+            for (int x = region.rect.x0; x < region.rect.x1; ++x)
+                region.samples.push_back(m_heights[static_cast<std::size_t>(z) * m_width + x]);
+        return region;
+    }
+
+    void TerrainComponent::RestoreHeights(const TerrainHeightRegion &region)
+    {
+        const int columns = region.rect.x1 - region.rect.x0;
+        if (region.rect.Empty() || region.samples.size() != static_cast<std::size_t>(columns) * (region.rect.z1 - region.rect.z0))
+            return;
+        bool changed = false;
+        for (int z = region.rect.z0; z < region.rect.z1; ++z)
+            for (int x = region.rect.x0; x < region.rect.x1; ++x)
+            {
+                if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
+                    continue;
+                const float value = glm::clamp(region.samples[static_cast<std::size_t>(z - region.rect.z0) * columns + (x - region.rect.x0)], 0.0f, m_heightScale);
+                float &target = m_heights[static_cast<std::size_t>(z) * m_width + x];
+                changed |= target != value;
+                target = value;
+            }
+        if (changed)
+        {
+            HeightsChanged();
+            if (auto *owner = GetOwner())
+                if (auto *scene = owner->GetScene())
+                    scene->MarkColliderShapesDirty();
+        }
+    }
+
+    glm::ivec2 TerrainComponent::WorldToSample(const glm::vec3 &worldPosition) const
+    {
+        const auto *entity = GetOwner();
+        const glm::vec3 local = entity ? glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f)) : worldPosition;
+        return {glm::clamp(static_cast<int>(std::lround(local.x / m_cellSize)), 0, m_width - 1),
+                glm::clamp(static_cast<int>(std::lround(local.z / m_cellSize)), 0, m_depth - 1)};
+    }
+
+    void TerrainComponent::SetLodDistanceScale(float scale)
+    {
+        scale = glm::clamp(scale, 0.25f, 16.0f);
+        if (scale == m_lodDistanceScale)
+            return;
+        m_lodDistanceScale = scale;
+        MarkMeshDirty();
+    }
+
+    void TerrainComponent::SetSkirtDepth(float depth)
+    {
+        depth = glm::clamp(depth, 0.0f, 1000.0f);
+        if (depth == m_skirtDepth)
+            return;
+        m_skirtDepth = depth;
+        MarkMeshDirty();
     }
 
     bool TerrainComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime)
@@ -552,13 +783,25 @@ namespace PlutoGE::scene
         {
             return false;
         }
+        if (m_paintMode == TerrainPaintMode::Hole || m_paintMode == TerrainPaintMode::Fill)
+        {
+            const glm::vec3 local = glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
+            return PaintHolesAtLocalPosition(local, m_paintMode == TerrainPaintMode::Hole);
+        }
+        return !SculptAtWorldPosition(worldPosition, deltaTime).Empty();
+    }
+
+    TerrainSampleRect TerrainComponent::SculptAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime)
+    {
+        auto *entity = GetOwner();
+        if (!entity || m_paintMode == TerrainPaintMode::Layer || m_paintMode == TerrainPaintMode::Hole ||
+            m_paintMode == TerrainPaintMode::Fill)
+        {
+            return {};
+        }
 
         const glm::mat4 inverseWorld = glm::inverse(entity->GetWorldTransform());
         const glm::vec3 local = glm::vec3(inverseWorld * glm::vec4(worldPosition, 1.0f));
-        if (m_paintMode == TerrainPaintMode::Hole || m_paintMode == TerrainPaintMode::Fill)
-        {
-            return PaintHolesAtLocalPosition(local, m_paintMode == TerrainPaintMode::Hole);
-        }
         const float centerX = local.x / m_cellSize;
         const float centerZ = local.z / m_cellSize;
         const float radiusInSamples = m_brushRadius / m_cellSize;
@@ -568,12 +811,19 @@ namespace PlutoGE::scene
         const int maxZ = std::min(m_depth - 1, static_cast<int>(std::ceil(centerZ + radiusInSamples)));
         if (minX > maxX || minZ > maxZ)
         {
-            return false;
+            return {};
         }
 
-        std::vector<float> sourceHeights = m_heights;
+        // Smoothing reads the samples around each one as they were before this dab: keep a copy of the brushed
+        // samples and a one-sample margin, not of the whole grid.
+        const TerrainHeightRegion source = CaptureHeights({minX - 1, minZ - 1, maxX + 2, maxZ + 2});
+        const auto sourceHeight = [&](int x, int z) {
+            x = glm::clamp(x, source.rect.x0, source.rect.x1 - 1);
+            z = glm::clamp(z, source.rect.z0, source.rect.z1 - 1);
+            return source.samples[static_cast<std::size_t>(z - source.rect.z0) * (source.rect.x1 - source.rect.x0) + (x - source.rect.x0)];
+        };
         const float signedStrength = (m_paintMode == TerrainPaintMode::Lower ? -1.0f : 1.0f) * m_brushStrength * std::max(deltaTime, 1.0f / 120.0f);
-        bool changed = false;
+        TerrainSampleRect changed;
         for (int z = minZ; z <= maxZ; ++z)
         {
             for (int x = minX; x <= maxX; ++x)
@@ -588,45 +838,37 @@ namespace PlutoGE::scene
 
                 const float falloff = 1.0f - glm::smoothstep(0.0f, m_brushRadius, distance);
                 const std::size_t index = static_cast<std::size_t>(z * m_width + x);
-                float nextHeight = sourceHeights[index];
+                const float current = sourceHeight(x, z);
+                float nextHeight = current;
                 if (m_paintMode == TerrainPaintMode::Smooth)
                 {
                     float total = 0.0f;
-                    int count = 0;
                     for (int oz = -1; oz <= 1; ++oz)
-                    {
                         for (int ox = -1; ox <= 1; ++ox)
-                        {
-                            const int sx = glm::clamp(x + ox, 0, m_width - 1);
-                            const int sz = glm::clamp(z + oz, 0, m_depth - 1);
-                            total += sourceHeights[static_cast<std::size_t>(sz * m_width + sx)];
-                            ++count;
-                        }
-                    }
-                    nextHeight = glm::mix(sourceHeights[index], total / static_cast<float>(count), glm::clamp(falloff * m_brushStrength * deltaTime, 0.0f, 1.0f));
+                            total += sourceHeight(x + ox, z + oz);
+                    nextHeight = glm::mix(current, total / 9.0f, glm::clamp(falloff * m_brushStrength * deltaTime, 0.0f, 1.0f));
                 }
                 else if (m_paintMode == TerrainPaintMode::Flatten)
                 {
-                    nextHeight = glm::mix(sourceHeights[index], m_flattenHeight, glm::clamp(falloff * m_brushStrength * deltaTime, 0.0f, 1.0f));
+                    nextHeight = glm::mix(current, m_flattenHeight, glm::clamp(falloff * m_brushStrength * deltaTime, 0.0f, 1.0f));
                 }
                 else
                 {
-                    nextHeight = sourceHeights[index] + signedStrength * falloff;
+                    nextHeight = current + signedStrength * falloff;
                 }
 
                 nextHeight = glm::clamp(nextHeight, 0.0f, m_heightScale);
                 if (std::abs(nextHeight - m_heights[index]) > 0.00001f)
                 {
                     m_heights[index] = nextHeight;
-                    changed = true;
+                    changed.Include({x, z, x + 1, z + 1});
                 }
             }
         }
 
-        if (changed)
+        if (!changed.Empty())
         {
-            ++m_heightsRevision;
-            MarkMeshDirty();
+            HeightsChanged();
         }
         return changed;
     }
@@ -750,6 +992,7 @@ namespace PlutoGE::scene
             }
         }
         m_heights.swap(resized);
+        m_border.clear();
         ++m_heightsRevision;
         if (m_holes.GetCellsX() != m_width - 1 || m_holes.GetCellsZ() != m_depth - 1)
         {
@@ -913,9 +1156,19 @@ namespace PlutoGE::scene
 
     float TerrainComponent::GetHeightSample(int x, int z) const
     {
+        if (m_heights.empty())
+            return 0.0f;
+        if (!m_border.empty())
+        {
+            // Outside the grid, the border ring holds what the neighbouring tiles have there.
+            x = glm::clamp(x, -TerrainHeightBorder::Width, m_width - 1 + TerrainHeightBorder::Width);
+            z = glm::clamp(z, -TerrainHeightBorder::Width, m_depth - 1 + TerrainHeightBorder::Width);
+            if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
+                return m_border[TerrainHeightBorder::Index(m_width, m_depth, x, z)];
+        }
         x = glm::clamp(x, 0, m_width - 1);
         z = glm::clamp(z, 0, m_depth - 1);
-        return m_heights.empty() ? 0.0f : m_heights[static_cast<std::size_t>(z * m_width + x)];
+        return m_heights[static_cast<std::size_t>(z * m_width + x)];
     }
 
     void TerrainComponent::SetHeightSample(int x, int z, float height)
@@ -1147,6 +1400,48 @@ namespace PlutoGE::scene
             }
         };
 
+        // Skirts: a copy of every outer edge sample, lowered, so a wall hangs from the terrain's edge and hides cracks
+        // against neighbouring terrain drawn at another detail (tiles, distant overview tiles).
+        const bool skirts = m_skirtDepth > 0.0f;
+        std::array<std::uint32_t, 4> skirtStart{}; // first skirt vertex of the edges z = 0, z = depth - 1, x = 0, x = width - 1
+        if (skirts)
+        {
+            const auto lowered = [&](int x, int z) {
+                auto vertex = config.data.vertices[static_cast<std::size_t>(z) * m_width + x];
+                vertex.position[1] -= m_skirtDepth;
+                for (auto &weight : vertex.weights)
+                    weight -= m_skirtDepth;
+                vertex.joints[0] -= static_cast<int>(std::round(m_skirtDepth * 4096.0f));
+                return vertex;
+            };
+            for (int edge = 0; edge < 4; ++edge)
+            {
+                skirtStart[edge] = static_cast<std::uint32_t>(config.data.vertices.size());
+                const int count = edge < 2 ? m_width : m_depth;
+                for (int i = 0; i < count; ++i)
+                    config.data.vertices.push_back(edge == 0 ? lowered(i, 0) : edge == 1 ? lowered(i, m_depth - 1)
+                                                 : edge == 2 ? lowered(0, i) : lowered(m_width - 1, i));
+            }
+        }
+        // The skirt along the samples [from, to] of an edge, every `step` samples. Both windings, so it shows from
+        // either side whatever the material's culling.
+        const auto appendSkirt = [&](int edge, int from, int to, int step) {
+            for (int i = from; i < to; i += step)
+            {
+                const int j = std::min(i + step, to);
+                if (j == i)
+                    continue;
+                const auto grid = [&](int k) {
+                    return static_cast<unsigned int>(edge == 0 ? k : edge == 1 ? (m_depth - 1) * m_width + k
+                                                   : edge == 2 ? k * m_width : k * m_width + (m_width - 1));
+                };
+                const unsigned int a = grid(i), b = grid(j);
+                const unsigned int lowA = skirtStart[edge] + static_cast<unsigned int>(i), lowB = skirtStart[edge] + static_cast<unsigned int>(j);
+                for (const unsigned int index : {a, b, lowB, a, lowB, lowA, a, lowB, b, a, lowA, lowB})
+                    config.data.indices.push_back(index);
+            }
+        };
+
         const int chunkQuads = std::max(2, m_chunkSize);
         for (int chunkZ = 0; chunkZ < m_depth - 1; chunkZ += chunkQuads)
         {
@@ -1169,13 +1464,25 @@ namespace PlutoGE::scene
                             appendQuad(x, z, step, appendQuad);
                         }
                     }
+                    if (skirts)
+                    {
+                        if (chunkZ == 0)
+                            appendSkirt(0, chunkX, maxX, step);
+                        if (maxZ == m_depth - 1)
+                            appendSkirt(1, chunkX, maxX, step);
+                        if (chunkX == 0)
+                            appendSkirt(2, chunkZ, maxZ, step);
+                        if (maxX == m_width - 1)
+                            appendSkirt(3, chunkZ, maxZ, step);
+                    }
 
                     const uint32_t lodCount = static_cast<uint32_t>(config.data.indices.size()) - lodOffset;
                     submesh.lods.push_back(render::Submesh::LodRange{
                         .indexOffset = lodOffset,
                         .indexCount = lodCount,
                         .minDistanceFactor = static_cast<float>(lodIndex) * 2.0f,
-                        .maxScreenRadiusPixels = lodIndex == 0 ? std::numeric_limits<float>::max() : 280.0f / static_cast<float>(1 << (lodIndex - 1)),
+                        .maxScreenRadiusPixels = lodIndex == 0 ? std::numeric_limits<float>::max()
+                                                               : 280.0f / (m_lodDistanceScale * static_cast<float>(1 << (lodIndex - 1))),
                     });
                     if (lodIndex == 0)
                     {

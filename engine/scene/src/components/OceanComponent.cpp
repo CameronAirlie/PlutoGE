@@ -75,6 +75,32 @@ namespace PlutoGE::scene
         m_contactFoam = .4f;
     }
 
+    void OceanComponent::ApplyLakePreset()
+    {
+        m_waveAmplitude = .025f;
+        m_waveLength = 5.f;
+        m_waveSpeed = .35f;
+        m_waveChoppiness = .25f;
+        m_directionalSpread = .9f;
+        m_windSea = .7f;
+        m_waterDepth = 6.f;
+        m_stylization = 0.f;
+        m_shallowColor = {.07f, .2f, .17f};
+        m_deepColor = {.015f, .06f, .05f};
+        m_crestColor = {.07f, .2f, .17f};
+        m_opacity = .9f;
+        m_smoothness = .93f;
+        m_maxVisibilityDepth = 3.5f;
+        m_crestFoamThreshold = 1.f;
+        m_crestFoamIntensity = 0.f;
+        m_foamIntensity = .25f;
+        m_foamDistance = .35f;
+        m_rippleStrength = .006f;
+        m_causticsIntensity = .2f;
+        m_reflectionStrength = .8f;
+        m_invertAreaMask = true;
+    }
+
     void OceanComponent::ApplyStylizedSeaPreset()
     {
         // Appearance only: preserve entity transform, masks, clock, and visibility settings.

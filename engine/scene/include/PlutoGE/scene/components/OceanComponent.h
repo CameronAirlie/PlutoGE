@@ -18,6 +18,11 @@ namespace PlutoGE::scene
     public:
         void ApplyHarbourPreset();
         void ApplyStylizedSeaPreset();
+        // Still inland water: low ripples, no whitecaps, a short visibility depth, and water only inside the areas
+        // (Invert Area Mask), so one area polygon is the lake's shore (TraceWaterOutline fits one to a terrain).
+        void ApplyLakePreset();
+        void SetInvertAreaMask(bool invert) { m_invertAreaMask = invert; }
+        void SetAreas(std::vector<OceanAreaPolygon> areas) { m_areas = std::move(areas); }
         float GetReflectionStrength() const { return m_reflectionStrength; }
         float GetReflectionDistance() const { return m_reflectionDistance; }
         float GetContactDistance() const { return m_contactDistance; }

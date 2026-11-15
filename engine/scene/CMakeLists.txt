@@ -21,6 +21,17 @@ add_library(PlutoGEScene
     src/Scene.cpp
     src/BulletCollisionShapes.cpp
     src/AnimationPoseBatch.cpp
+    src/TerrainHeightData.cpp
+    src/procedural/ProceduralNoise.cpp
+    src/procedural/TerrainRules.cpp
+    src/procedural/ProceduralInputs.cpp
+    src/procedural/ProceduralTerrainDefinition.cpp
+    src/procedural/ProceduralGeneration.cpp
+    src/components/ProceduralTerrainComponent.cpp
+    src/WaterBodies.cpp
+    src/components/RiverComponent.cpp
+    src/TerrainWorldGrid.cpp
+    src/components/TerrainWorldComponent.cpp
     src/TerrainHoleMask.cpp
     src/TerrainLayerStack.cpp
     src/TerrainWeightMap.cpp

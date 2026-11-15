@@ -159,6 +159,52 @@ namespace
         Require(changed.front().sourceObject != identityBefore, "Changing the scale should rebuild the commands");
     }
 
+    // Per-type rendering settings beside the scale: a type's shadow choice and distance beat the component's.
+    void TestFoliageTypeShadows()
+    {
+        scene::Scene world;
+        auto *owner = world.AddEntity(std::make_unique<scene::Entity>());
+        auto *foliage = owner->CreateComponent<scene::FoliageComponent>();
+        foliage->SetCastShadows(false);
+        foliage->SetMaxShadowDistance(80.0f);
+        for (const char *name : {"Follows", "Tree", "Grass"})
+            foliage->AddType(name);
+        auto tree = foliage->GetType(1)->asset;
+        tree.shadows = scene::FoliageShadowMode::On;
+        tree.maxShadowDistance = 150.0f;
+        foliage->ApplyTypeAsset(1, tree);
+        auto grass = foliage->GetType(2)->asset;
+        grass.shadows = scene::FoliageShadowMode::Off;
+        foliage->ApplyTypeAsset(2, grass);
+
+        auto mesh = TwoLodMesh();
+        render::Material material;
+        for (std::size_t type = 0; type < 3; ++type)
+        {
+            foliage->GetType(type)->instances.push_back(scene::FoliageInstance{.id = type + 1, .position = glm::vec3(static_cast<float>(type) * 100.0f, 0, 0)});
+            foliage->SetTypeMeshAndMaterials(type, &mesh, {&material}, {});
+        }
+        const auto commandAt = [&](float x) -> const render::RenderCommand &
+        {
+            const auto &commands = foliage->GetRenderCommands();
+            const auto found = std::find_if(commands.begin(), commands.end(), [&](const auto &command) { return Near(command.model[3].x, x); });
+            Require(found != commands.end(), "Every type should draw");
+            return *found;
+        };
+        Require(!commandAt(0.0f).castsShadow && Near(commandAt(0.0f).maxShadowDistance, 80.0f), "Inherit follows the component");
+        Require(commandAt(100.0f).castsShadow && Near(commandAt(100.0f).maxShadowDistance, 150.0f), "A tree casts though the component does not");
+        Require(!commandAt(200.0f).castsShadow, "Grass stays shadowless");
+        foliage->SetCastShadows(true);
+        Require(commandAt(0.0f).castsShadow && !commandAt(200.0f).castsShadow, "The component's switch reaches inheriting types only");
+
+        scene::FoliageComponent restored;
+        restored.Deserialize(foliage->Serialize());
+        Require(restored.GetType(1)->asset.shadows == scene::FoliageShadowMode::On && Near(restored.GetType(1)->asset.maxShadowDistance, 150.0f) &&
+                    restored.GetType(2)->asset.shadows == scene::FoliageShadowMode::Off &&
+                    restored.GetType(0)->asset.shadows == scene::FoliageShadowMode::Inherit,
+                "Each type's shadows survive scene serialization");
+    }
+
     void TestFoliageTypeAsset()
     {
         const auto directory = std::filesystem::temp_directory_path() / "PlutoGELodDistanceScaleTests";
@@ -198,6 +244,7 @@ try
     TestChainSelection();
     TestClusterLod();
     TestFoliageType();
+    TestFoliageTypeShadows();
     TestFoliageTypeAsset();
     std::cout << "LOD distance scale tests passed\n";
     return 0;

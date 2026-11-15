@@ -31,6 +31,8 @@ add_library(PlutoGEScene
     src/WaterBodies.cpp
     src/components/RiverComponent.cpp
     src/TerrainWorldGrid.cpp
+    src/TerrainEditSurface.cpp
+    src/TerrainTileSource.cpp
     src/components/TerrainWorldComponent.cpp
     src/TerrainHoleMask.cpp
     src/TerrainLayerStack.cpp

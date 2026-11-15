@@ -171,11 +171,13 @@ and a `FoliageTypeAsset` with all its authored settings:
 - **Prototype:** mesh or model reference and identity, material override, mesh parts
 - **Placement:** scale range and growth orientation for new instances
 - **Rendering:** cell size, draw distance (`0` inherits the component setting), LOD
-  distance scale
+  distance scale, and **Shadows**: *Foliage Component's Setting* (the default, so older types
+  draw as before), *Cast Shadows* or *No Shadows*, with a shadow distance (`0` inherits the
+  component's). Let trees cast shadows and keep grass and small ground cover without them.
 - **Collision:** whether it is enabled, and the local capsule's center, radius and height
 - **Wind:** see [Foliage wind](FOLIAGE_WIND.md)
 
-The component keeps what applies to all its types: cast shadows, static, the default draw
+The component keeps what applies to all its types: cast shadows (for types that follow it), static, the default draw
 and shadow distances, and the finest LODs it renders and casts shadows from. New
 components use every LOD (`MinRenderLod` and `MinShadowLod` of `0`).
 
@@ -229,6 +231,7 @@ ALIGN_TO_NORMAL	0
 CELL_SIZE	32
 MAX_DRAW_DISTANCE	60
 LOD_DISTANCE_SCALE	1
+SHADOWS	On	0
 COLLISION_ENABLED	1
 COLLISION_CENTER	0	1.5	0
 COLLISION_CAPSULE	0.4	3

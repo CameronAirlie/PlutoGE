@@ -748,12 +748,16 @@ namespace PlutoGE::scene
                     command.maxDrawDistance = type.asset.maxDrawDistance > 0.0f
                                                   ? type.asset.maxDrawDistance
                                                   : m_maxDrawDistance;
-                    command.maxShadowDistance = m_maxShadowDistance;
+                    command.maxShadowDistance = type.asset.maxShadowDistance > 0.0f
+                                                    ? type.asset.maxShadowDistance
+                                                    : m_maxShadowDistance;
                     command.lodDistanceScale = type.asset.lodDistanceScale;
                     command.impostor = type.impostor.get();
                     command.impostorOwner = type.impostor && submeshIndex == impostorOwner;
                     command.isStatic = m_isStatic;
-                    command.castsShadow = m_castShadows;
+                    command.castsShadow = type.asset.shadows == FoliageShadowMode::Inherit
+                                              ? m_castShadows
+                                              : type.asset.shadows == FoliageShadowMode::On;
                     command.foliageWind = type.asset.wind;
                     // The instance array is rebuilt (a new identity) whenever it changes, so the renderer may reuse
                     // its prepared packet, batches and shadow signatures for as long as this command lives.
@@ -877,6 +881,8 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
             properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
             properties.push_back({prefix + "LodDistanceScale", PropertyType::Float, std::to_string(type.asset.lodDistanceScale)});
+            properties.push_back({prefix + "Shadows", PropertyType::String, std::string(FoliageShadowModeName(type.asset.shadows))});
+            properties.push_back({prefix + "MaxShadowDistance", PropertyType::Float, std::to_string(type.asset.maxShadowDistance)});
             properties.push_back({prefix + "CollisionEnabled", PropertyType::Bool, type.asset.collisionEnabled ? "true" : "false"});
             properties.push_back({prefix + "CollisionCenter", PropertyType::Vec3,
                                   std::to_string(type.asset.collisionCenter.x) + "," +
@@ -1008,6 +1014,10 @@ namespace PlutoGE::scene
                 else if (fieldName == "LodDistanceScale")
                     type.asset.lodDistanceScale = render::SanitizeLodDistanceScale(
                         ParseFloatOr(property.value, render::DefaultLodDistanceScale));
+                else if (fieldName == "Shadows")
+                    type.asset.shadows = ParseFoliageShadowMode(property.value);
+                else if (fieldName == "MaxShadowDistance")
+                    type.asset.maxShadowDistance = (std::max)(0.0f, ParseFloatOr(property.value, 0.0f));
                 else if (fieldName == "CollisionEnabled")
                     type.asset.collisionEnabled = property.value == "true" || property.value == "1";
                 else if (fieldName == "CollisionCenter")

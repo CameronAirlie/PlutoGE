@@ -5,6 +5,7 @@
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/SceneWind.h"
 #include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/DetailGrassComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
@@ -12,6 +13,7 @@
 #include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/EditorWidgets.h"
+#include "PlutoGE/ui/TerrainEditTool.h"
 
 #include <glm/glm.hpp>
 #include <imgui.h>
@@ -652,7 +654,7 @@ namespace PlutoGE::ui
             return ImGui::CollapsingHeader(title, openByDefault ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None);
         }
 
-        void DrawWhere(Controls &controls, Layer &layer, const TerrainLayers &terrain)
+        void DrawWhere(Controls &controls, Layer &layer, const TerrainLayers &terrain, DetailGrassInspectorHost &host)
         {
             if (!Section("Where It Grows", true)) return;
             const bool resolves = terrain.Resolves(layer.densityLayer);
@@ -683,6 +685,13 @@ namespace PlutoGE::ui
             else if (terrain.names.empty())
                 ImGui::TextDisabled("Add layers to the terrain to choose where this grows.");
 
+            if (!layer.densityLayer.empty() && resolves && host.CanPaintTerrain())
+            {
+                if (ImGui::Button((std::string(icons::Paint) + " Paint Where It Grows").c_str()))
+                    host.PaintTerrainLayer(layer.densityLayer);
+                ImGui::SetItemTooltip("Paint the \"%s\" layer in the viewport: grass grows where it is painted.", layer.densityLayer.c_str());
+            }
+
             ImGui::BeginDisabled(layer.densityLayer.empty());
             controls.Slider("Paint Threshold", layer.settings.weightThreshold, 0.0f, 0.95f, "%.2f",
                             "Paint weaker than this grows nothing; above it the grass thickens to full.\n"
@@ -690,6 +699,26 @@ namespace PlutoGE::ui
             ImGui::EndDisabled();
             controls.Slider("Max Slope", layer.settings.maxSlopeDegrees, 0.0f, 90.0f, "%.0f deg",
                             "Steeper ground thins out to nothing over the last 10 degrees.");
+
+            auto &grass = layer.settings;
+            bool limited = grass.minAltitude > -9999.0f || grass.maxAltitude < 9999.0f;
+            if (ImGui::Checkbox("Limit Height", &limited))
+            {
+                grass.minAltitude = limited ? 0.0f : -10000.0f;
+                grass.maxAltitude = limited ? 100.0f : 10000.0f;
+                controls.changed = true;
+            }
+            ImGui::SetItemTooltip("Grow only between two world heights: above a beach, below a snow line.");
+            if (limited)
+            {
+                controls.Range("Heights", grass.minAltitude, grass.maxAltitude, 0.5f, -10000.0f, 10000.0f, "%.1f m",
+                               "The world heights the grass grows between.");
+                controls.Drag("Height Fade", grass.altitudeFade, 0.1f, 0.01f, 500.0f, "%.1f m",
+                              "Over how many metres beyond the heights the grass thins out to nothing.");
+            }
+            controls.Slider("Bare Patches", grass.clustering, 0.0f, 0.95f, "%.2f",
+                            "Leave patches of bare ground: 0 covers everything the rest allows, higher values leave more\n"
+                            "and larger gaps. The patches are as big as the colour patches (Colour > Patch Size).");
         }
 
         void DrawSize(Controls &controls, Layer &layer, const render::DetailGrassEstimate &estimate)
@@ -860,7 +889,7 @@ namespace PlutoGE::ui
             }
 
             const auto &estimate = Estimate(layer.settings);
-            DrawWhere(controls, layer, terrain);
+            DrawWhere(controls, layer, terrain, context.host);
             DrawSize(controls, layer, estimate);
             DrawColor(controls, layer);
             DrawShading(controls, layer, context.host.Project());
@@ -882,6 +911,24 @@ namespace PlutoGE::ui
             }
             void Changed() override { m_shell.MarkSceneDirty(); }
             const assets::Project *Project() const override { return m_shell.GetProject(); }
+            bool CanPaintTerrain() const override { return true; }
+            void PaintTerrainLayer(const std::string &layer) override
+            {
+                auto *scene = m_shell.GetScene();
+                auto *entity = scene ? scene->FindEntityByID(m_entity) : nullptr;
+                const auto target = TerrainEditTarget::Resolve(entity);
+                const auto *terrain = target.Terrain();
+                if (!terrain)
+                    return;
+                const auto &layers = terrain->GetLayers().GetLayers();
+                const auto found = std::find_if(layers.begin(), layers.end(), [&](const auto &candidate) { return candidate.name == layer; });
+                if (found == layers.end())
+                    return;
+                // On a world's template this paints the world's tiles.
+                auto &tool = m_shell.GetTerrainTool();
+                tool.paint.layer = static_cast<std::size_t>(found - layers.begin());
+                tool.SetMode(TerrainToolMode::Paint, target.RootId());
+            }
 
         private:
             EditorShell &m_shell;
@@ -909,6 +956,12 @@ namespace PlutoGE::ui
         ImGui::PushID("SelectedGrassLayer");
         DrawSelectedLayer(context, grass, terrain, selected);
         ImGui::PopID();
+    }
+
+    void DrawDetailGrassEditor(EditorShell &shell, scene::Entity &entity, scene::DetailGrassComponent &grass)
+    {
+        ShellHost host(shell, entity.GetID());
+        DrawDetailGrassInspector(grass, entity, host);
     }
 
     void RegisterDetailGrassInspectors()

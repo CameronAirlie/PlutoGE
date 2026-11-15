@@ -13,22 +13,57 @@ The design and its reasoning are in [dev/LARGE_WORLD_PLAN.md](dev/LARGE_WORLD_PL
 | Tiles and streaming | `scene/TerrainWorldGrid.h`, `TerrainWorldComponent` |
 | Distant terrain | the world's overview, `TerrainComponent` skirts and `LodDistanceScale` |
 
+## The Terrain Editor
+
+**Window > Terrain Editor** is the one place to make and edit terrain, laid out like the Post Process Editor: a toolbar
+(what it edits, and the tool the viewport uses: Select, Sculpt, Paint or Holes), the problems it finds (each opens the
+section that fixes it), and a list of sections beside the selected one: Sculpt, Paint, Biomes, Grass, Heights, World
+(worlds only) and Setup. It follows the selection: a terrain, a terrain world, one of the world's tiles or its tile
+template (all of which edit the world).
+
+- **Nothing selected**: *Create Terrain* (a size, a cell size, and ticks for collision, foliage, detail grass and
+  biomes) or *Create Terrain World* (tiles, tile samples, cell size; it starts as flat tiles in the project). The
+  hierarchy's Create menu has both too.
+- **Sculpt**, **Paint**, **Holes**: the terrain tool. Choose it here, in the inspector, or in the viewport's Paint menu;
+  a bar at the bottom of the viewport holds the brush. Drag on the ground; Shift swaps raise and lower (and cut and
+  fill), `[` `]` resize, Ctrl+click picks the Flatten height, Esc stops. Each stroke is one undo step. On a world, a
+  stroke reaches every loaded tile under the brush and the tiles' shared edges and borders are kept matched, so
+  sculpting across tile edges leaves no seams. Holes are for single terrains (tile holes are not saved yet).
+- **Biomes**: *Add Biomes* (a starter biome: grass, rock on slopes), then the biome rules; *Generate* on a terrain,
+  or nothing on a world: its loaded tiles regenerate when the rules change. Under the rules, **Plant Shadows** sets
+  whether the plants cast shadows (the Foliage component's default and shadow distance) and lists each plant's own
+  choice: plants from a foliage type asset open in the Foliage Editor (*Rendering > Shadows*), scene-only ones are set
+  in place.
+- **Grass**: the detail grass layers (*Add Detail Grass* first): what each looks like and where it grows (a terrain
+  layer's paint, slope, a height band, bare patches). On a world, every tile grows them.
+- **Heights**: import a heightmap, the height file, LOD reach. On a world: build its tiles from one heightmap, or flat.
+- **World**: the grid (applied together, since a new grid drops every tile), streaming, loaded tiles.
+- **Setup**: the material, and the parts (collision, foliage, detail grass, biomes) as ticks.
+
+The brush is the editor's, not the terrain's: nothing about it is saved with the scene. The Terrain, Terrain World and
+Procedural Terrain inspectors show a summary and the same tool buttons, and point here.
+
+**Worlds and their Tile Template.** A world's settings live on its **Tile Template**, an inactive child entity created
+with the world: the terrain's material and layers, the collider, foliage types, detail grass and biomes. Tiles are
+copies of it. Edit it from the Terrain Editor or select it (Setup > *Select Tile Template*) and use the inspector like
+any entity: the loaded tiles pick up the change within a moment, keeping their heights and paint (adding or removing a
+component rebuilds them). A tile prefab can replace the template. Each tile keeps its heights in its height file and its
+paint in `tile_x_z_weights0.png` beside it; a painted tile keeps its paint, and its biomes then only plant it.
+
 ## A suggested workflow
 
 1. **Sketch** the layout at low resolution (a painted greyscale of land and sea, and one of biome regions).
 2. **Make the heightmap** in a terrain tool (Gaea, World Machine, World Creator) from the sketch: erosion is what makes
    mountains read as real. Export **16-bit PNG or raw R16** at the world's sample count (see the grid below), plus any
    masks (flow, slope, biome regions) as images.
-3. **Create the world**: an entity with a **Terrain World** component. Set the grid (tiles, tile samples, cell size,
-   height scale), then *Build World From Heightmap* in its inspector. This writes the tiles and an overview into the
-   project.
-4. **Make a tile prefab**: a terrain with your material layers (grass, rock, snow, sand...), a terrain collider, a
-   Foliage component with your plant types, Detail Grass, and a **Procedural Terrain** component with the biomes. Put
-   the masks in the definition with the **world's rectangle** so every tile reads the same image. Set it as the world's
-   Tile Prefab.
-5. **Add water**: an Ocean for the sea, lakes (an Ocean per lake, *Apply Lake Preset*, *Fit Area To Terrain*), and
+3. **Create the world** in the Terrain Editor, then *Heights > Build From Heightmap*. This writes the tiles and an
+   overview into the project.
+4. **Set up the tiles** (Setup and Paint tabs): material layers (grass, rock, snow, sand...), foliage types, detail
+   grass, and biomes. Put masks in the biome definition with the **world's rectangle** so every tile reads the same image.
+5. **Touch up** with the Sculpt and Paint tools.
+6. **Add water**: an Ocean for the sea, lakes (an Ocean per lake, *Apply Lake Preset*, *Fit Area To Terrain*), and
    rivers (a spline with a River component).
-6. **Play**: tiles stream around the main camera; in the editor they stream around the editor camera.
+7. **Play**: tiles stream around the main camera; in the editor they stream around the editor camera.
 
 ## Heightmaps
 
@@ -142,9 +177,10 @@ frame (each builds its mesh and collision). The viewer is the editor camera whil
 *Stream In Editor* to stop that), else the scene's main camera; gameplay and tools can set an override.
 `LoadAround(position)` streams synchronously (loading screens, tests).
 
-**Tiles** are transient child entities, never saved. With a **Tile Prefab**, each tile is an instance of it (put the
-terrain's material layers, collider, detail grass and Procedural Terrain there); without one, a terrain with the Tile
-Material and a terrain collider. Each tile keeps its height file, so sculpting a tile in the editor saves into it.
+**Tiles** are transient child entities, never saved, made by a tile source (`TerrainTileSource.h`): the world's Tile
+Template (above), else a **Tile Prefab**, else a plain terrain with the Tile Material and a terrain collider. Each tile
+keeps its height file, so sculpting a tile in the editor saves into it; `SyncTileEdges` keeps neighbours' shared
+edges and border rings in step (loaded tiles in memory, unloaded ones in their files).
 Navigation meshes are invalidated over a tile when it appears or goes.
 
 **Distance.** The world's **overview** (written by *Build World From Heightmap*, *Overview Detail* cells per tile) draws
@@ -161,9 +197,8 @@ colour beyond it).
 
 ## Limits and next steps
 
-- Sculpting across a tile edge edits one tile: its neighbour's shared edge and border ring are not updated, so seams can
-  open where you sculpt right at an edge. Rebuild from the source heightmap, or sculpt away from edges, until edge sync
-  exists.
+- Holes cannot be cut in a world's tiles yet (the tile files hold heights, not holes).
+- Undoing paint on a tile that has since unloaded leaves that tile's weight file as it is.
 - Tiles are axis-aligned and unscaled relative to the world entity; terrains are assumed unrotated by carving.
 - Procedural texturing and scatter regenerate a whole terrain (no dirty regions yet); scatter runs on one thread.
 - Biomes paint up to the terrain's 8 material layers.

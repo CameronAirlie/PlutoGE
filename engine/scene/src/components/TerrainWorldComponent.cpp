@@ -246,9 +246,247 @@ namespace PlutoGE::scene
         }
     }
 
-    void TerrainWorldComponent::Update(float)
+    void TerrainWorldComponent::Update(float deltaTime)
     {
+        WatchTileSource(deltaTime);
         Stream(false);
+    }
+
+    void TerrainWorldComponent::WatchTileSource(float deltaTime)
+    {
+        // Edits to the tile template (in any inspector) reach the loaded tiles a moment later.
+        m_sourceCheckTimer -= deltaTime;
+        if (m_sourceCheckTimer > 0.0f || !GetOwner())
+            return;
+        m_sourceCheckTimer = 0.25f;
+        const auto signature = MakeTileSource()->Signature();
+        if (std::any_of(m_tiles.begin(), m_tiles.end(), [&](const auto &entry) {
+                return entry.second.state == TerrainTileState::Active && entry.second.entity && entry.second.sourceSignature != signature;
+            }))
+            RefreshTiles();
+    }
+
+    Entity *TerrainWorldComponent::GetTileTemplate() const
+    {
+        const auto *owner = GetOwner();
+        if (!owner)
+            return nullptr;
+        for (auto *child : owner->GetChildren())
+            if (child && !child->IsTransient() && child->HasTag(std::string(TileTemplateTag)))
+                return child;
+        return nullptr;
+    }
+
+    bool TerrainWorldComponent::IsTileTemplate(const Entity &entity)
+    {
+        const auto *parent = entity.GetParent();
+        return entity.HasTag(std::string(TileTemplateTag)) && parent && parent->GetComponent<TerrainWorldComponent>();
+    }
+
+    Entity *TerrainWorldComponent::EnsureTileTemplate()
+    {
+        if (auto *existing = GetTileTemplate())
+            return existing;
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        if (!scene)
+            return nullptr;
+        auto *entity = scene->AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Tile Template", .tags = {std::string(TileTemplateTag)}}), owner);
+        // Inactive: it is a description of tiles, never drawn or collided with itself.
+        entity->SetActive(false);
+        auto *terrain = entity->CreateComponent<TerrainComponent>(TerrainComponentConfig{.width = 2, .depth = 2});
+        terrain->Deserialize({{"MaterialAsset", PropertyType::String,
+                               m_tileMaterial.empty() ? std::string("engine://builtin/material/default-shaded") : m_tileMaterial}});
+        entity->CreateComponent<ColliderComponent>()->SetShape(ColliderShape::Terrain);
+        return entity;
+    }
+
+    std::unique_ptr<TerrainTileSource> TerrainWorldComponent::MakeTileSource() const
+    {
+        if (!m_tilePrefab.empty())
+            return std::make_unique<PrefabTileSource>(m_tilePrefab);
+        if (const auto *tileTemplate = GetTileTemplate())
+            return std::make_unique<TemplateTileSource>(*tileTemplate);
+        return std::make_unique<DefaultTileSource>(m_tileMaterial);
+    }
+
+    void TerrainWorldComponent::RefreshTiles()
+    {
+        auto *owner = GetOwner();
+        auto *scene = owner ? owner->GetScene() : nullptr;
+        if (!scene)
+            return;
+        const auto source = MakeTileSource();
+        const auto signature = source->Signature();
+        for (auto &[coord, tile] : m_tiles)
+        {
+            auto *entity = tile.state == TerrainTileState::Active && tile.entity ? scene->FindEntityByID(tile.entity) : nullptr;
+            if (!entity)
+                continue;
+            if (!source->Refresh(*entity))
+            {
+                // The source changed shape (components added or removed): build the tiles again.
+                UnloadAll();
+                break;
+            }
+            // Layers may have been added: painted weight files still name the tile's own.
+            if (auto *terrain = entity->GetComponent<TerrainComponent>(); terrain && !terrain->GetLayers().Empty() &&
+                                                                        terrain->GetLayers().GetWeightMapPaths()[0].empty())
+                terrain->GetLayers().SetWeightMapPaths({TileWeightFile(coord, 0), TileWeightFile(coord, 1)});
+            tile.sourceSignature = signature;
+            StartGeneration(tile, *entity);
+        }
+    }
+
+    TerrainEditSurface TerrainWorldComponent::GetEditSurface() const
+    {
+        std::vector<TerrainComponent *> terrains;
+        for (const auto &[coord, tile] : m_tiles)
+            if (auto *terrain = tile.state == TerrainTileState::Active ? GetTileTerrain(coord) : nullptr)
+                terrains.push_back(terrain);
+        return TerrainEditSurface(std::move(terrains));
+    }
+
+    std::optional<TerrainTileCoord> TerrainWorldComponent::FindTile(const Entity &entity) const
+    {
+        for (const auto &[coord, tile] : m_tiles)
+            if (tile.state == TerrainTileState::Active && tile.entity == entity.GetID())
+                return coord;
+        return std::nullopt;
+    }
+
+    std::optional<TerrainTileCoord> TerrainWorldComponent::FindTile(const TerrainComponent &terrain) const
+    {
+        return terrain.GetOwner() ? FindTile(*terrain.GetOwner()) : std::nullopt;
+    }
+
+    std::string TerrainWorldComponent::TileWeightFile(TerrainTileCoord tile, std::size_t plane) const
+    {
+        auto file = TerrainTileFile(m_tileFiles, tile);
+        constexpr std::string_view extension = TerrainHeightFile::Extension;
+        if (file.size() >= extension.size() && file.compare(file.size() - extension.size(), extension.size(), extension) == 0)
+            file.resize(file.size() - extension.size());
+        return file + "_weights" + std::to_string(plane) + ".png";
+    }
+
+    bool TerrainWorldComponent::PatchTileHeights(TerrainTileCoord coord, const TerrainHeightRegion &region, TerrainComponent **loaded)
+    {
+        if (loaded)
+            *loaded = nullptr;
+        if (auto *terrain = GetTileTerrain(coord))
+        {
+            terrain->RestoreHeights(region);
+            if (loaded)
+                *loaded = terrain;
+            return true;
+        }
+        const auto path = ResolvePath(TerrainTileFile(m_tileFiles, coord));
+        std::string error;
+        auto data = ReadHeightFile(path, &error);
+        if (!data)
+            return false;
+        const int columns = region.rect.x1 - region.rect.x0;
+        for (int z = region.rect.z0; z < region.rect.z1; ++z)
+            for (int x = region.rect.x0; x < region.rect.x1; ++x)
+                if (x >= 0 && z >= 0 && x < data->field.width && z < data->field.depth)
+                    data->field.At(x, z) = region.samples[static_cast<std::size_t>(z - region.rect.z0) * columns + (x - region.rect.x0)];
+        return WriteFile(path, TerrainHeightFile::Encode(*data));
+    }
+
+    std::vector<TerrainComponent *> TerrainWorldComponent::SyncTileEdges(const std::vector<TerrainTileCoord> &touched)
+    {
+        std::vector<TerrainComponent *> changedTerrains;
+        auto *owner = GetOwner();
+        if (!owner || touched.empty() || !m_grid.Valid())
+            return changedTerrains;
+        const int samples = m_grid.tileSamples;
+        const int step = samples - 1;
+
+        // The heights of every tile involved: the touched ones and their neighbours, loaded or read from their files.
+        struct Heights
+        {
+            TerrainHeightData data;
+            TerrainComponent *terrain = nullptr; // loaded
+            bool touched = false;
+        };
+        std::map<TerrainTileCoord, Heights> tiles;
+        for (const auto &centre : touched)
+            for (int dz = -1; dz <= 1; ++dz)
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    const TerrainTileCoord coord{centre.x + dx, centre.z + dz};
+                    if (!m_grid.Contains(coord) || tiles.contains(coord))
+                        continue;
+                    Heights heights;
+                    if ((heights.terrain = GetTileTerrain(coord)))
+                        heights.data = heights.terrain->GetHeightData();
+                    else
+                    {
+                        std::string error;
+                        auto data = ReadHeightFile(ResolvePath(TerrainTileFile(m_tileFiles, coord)), &error);
+                        if (!data || data->field.width != samples || data->field.depth != samples)
+                            continue;
+                        heights.data = std::move(*data);
+                    }
+                    if (heights.data.border.size() != TerrainHeightBorder::Size(samples, samples))
+                        heights.data.border = TerrainHeightBorder::Clamped(heights.data.field);
+                    tiles.emplace(coord, std::move(heights));
+                }
+        for (const auto &coord : touched)
+            if (auto found = tiles.find(coord); found != tiles.end())
+                found->second.touched = true;
+
+        // What the touched tiles now say a world sample is (their average where several hold it), read from a copy so
+        // the values written below do not feed back.
+        std::map<TerrainTileCoord, TerrainHeightField> edited;
+        for (const auto &[coord, heights] : tiles)
+            if (heights.touched)
+                edited.emplace(coord, heights.data.field);
+        const int worldX = m_grid.WorldSamplesX(), worldZ = m_grid.WorldSamplesZ();
+        const auto touchedValue = [&](int gx, int gz) -> std::optional<float> {
+            gx = std::clamp(gx, 0, worldX - 1);
+            gz = std::clamp(gz, 0, worldZ - 1);
+            float total = 0.0f;
+            int count = 0;
+            for (int tz = (gz - 1) / step; tz <= gz / step; ++tz)
+                for (int tx = (gx - 1) / step; tx <= gx / step; ++tx)
+                    if (const auto found = edited.find({tx, tz}); found != edited.end() && tx >= 0 && tz >= 0)
+                    {
+                        const int lx = gx - tx * step, lz = gz - tz * step;
+                        if (lx >= 0 && lz >= 0 && lx < samples && lz < samples)
+                            total += found->second.At(lx, lz), ++count;
+                    }
+            return count ? std::optional<float>(total / static_cast<float>(count)) : std::nullopt;
+        };
+
+        for (auto &[coord, heights] : tiles)
+        {
+            const auto before = heights.data;
+            const int x0 = coord.x * step, z0 = coord.z * step;
+            // Edge samples are shared with neighbours: they take what the touched tiles hold there.
+            for (int z = 0; z < samples; ++z)
+                for (int x = 0; x < samples; ++x)
+                    if (x == 0 || z == 0 || x == samples - 1 || z == samples - 1)
+                        if (const auto value = touchedValue(x0 + x, z0 + z))
+                            heights.data.field.At(x, z) = *value;
+            // The border ring holds neighbours' samples: those inside touched tiles are refreshed.
+            for (int z = -TerrainHeightBorder::Width; z < samples + TerrainHeightBorder::Width; ++z)
+                for (int x = -TerrainHeightBorder::Width; x < samples + TerrainHeightBorder::Width; ++x)
+                    if (const auto index = TerrainHeightBorder::Index(samples, samples, x, z); index != TerrainHeightBorder::npos)
+                        if (const auto value = touchedValue(x0 + x, z0 + z))
+                            heights.data.border[index] = *value;
+            if (heights.data == before)
+                continue;
+            if (heights.terrain)
+            {
+                heights.terrain->RestoreHeights({heights.terrain->GetSampleBounds(), heights.data.field.samples});
+                heights.terrain->SetHeightBorder(heights.data.border);
+                changedTerrains.push_back(heights.terrain);
+            }
+            else if (!WriteFile(ResolvePath(TerrainTileFile(m_tileFiles, coord)), TerrainHeightFile::Encode(heights.data)))
+                ReportError("Could not update tile " + std::to_string(coord.x) + "," + std::to_string(coord.z) + "'s file.");
+        }
+        return changedTerrains;
     }
 
     void TerrainWorldComponent::ValidateEntities()
@@ -349,16 +587,15 @@ namespace PlutoGE::scene
             return;
         }
 
-        Entity *entity = nullptr;
-        if (!m_tilePrefab.empty())
-        {
-            std::string error;
-            entity = Prefab::Instantiate(*scene, m_tilePrefab, owner, &error);
-            if (!entity)
-                ReportError("Tile prefab " + m_tilePrefab + ": " + error);
-        }
+        std::string error;
+        const auto source = MakeTileSource();
+        tile.sourceSignature = source->Signature();
+        Entity *entity = source->Create(*scene, *owner, &error);
         if (!entity)
-            entity = scene->AddEntity(std::make_unique<Entity>(EntityConfig{.name = TileName("Tile", coord)}), owner);
+        {
+            ReportError("Tile source: " + error);
+            entity = DefaultTileSource(m_tileMaterial).Create(*scene, *owner, &error);
+        }
         entity->SetName(TileName("Tile", coord));
         entity->SetTransient(true);
         const glm::vec2 origin = m_grid.TileOrigin(coord);
@@ -371,35 +608,50 @@ namespace PlutoGE::scene
             if (!entity->GetComponent<ColliderComponent>())
                 entity->CreateComponent<ColliderComponent>()->SetShape(ColliderShape::Terrain);
         }
-        std::vector<Property> settings{
+        // What belongs to the tile: the world's grid, the tile's heights, and its own weight files when it was painted.
+        terrain->Deserialize({
             {"CellSize", PropertyType::Float, std::to_string(m_grid.cellSize)},
             {"HeightScale", PropertyType::Float, std::to_string(m_grid.heightScale)},
             {"SkirtDepth", PropertyType::Float, std::to_string(m_tileSkirtDepth)},
             {"Static", PropertyType::Bool, "true"},
-        };
-        if (!m_tileMaterial.empty() && m_tilePrefab.empty())
-            settings.push_back({"MaterialAsset", PropertyType::String, m_tileMaterial});
-        terrain->Deserialize(settings);
+        });
         terrain->SetHeightData(std::move(*tile.data));
         terrain->SetHeightDataPath(TerrainTileFile(m_tileFiles, coord));
         tile.data.reset();
+        tile.paintedWeights = false;
+        if (!terrain->GetLayers().Empty())
+        {
+            terrain->GetLayers().SetWeightMapPaths({TileWeightFile(coord, 0), TileWeightFile(coord, 1)});
+            std::error_code ignored;
+            if (std::filesystem::exists(ResolvePath(TileWeightFile(coord, 0)), ignored))
+                tile.paintedWeights = terrain->GetLayers().LoadWeightMaps();
+        }
         tile.entity = entity->GetID();
         tile.state = TerrainTileState::Active;
-
-        // A procedural tile paints and plants itself on a worker; the result lands a few frames later.
-        if (auto *procedural = entity->GetComponent<ProceduralTerrainComponent>())
-        {
-            procedural->SetGenerateOnLoad(false);
-            if (auto prepared = procedural->Prepare())
-            {
-                tile.generation = std::async(std::launch::async, [prepared = std::move(*prepared)] { return prepared.Run(); });
-                tile.generating = true;
-            }
-        }
+        StartGeneration(tile, *entity);
         if (const auto overview = m_overviewEntities.find(coord); overview != m_overviewEntities.end())
             if (auto *overviewEntity = scene->FindEntityByID(overview->second))
                 overviewEntity->SetActive(false);
         InvalidateNavigation(coord);
+    }
+
+    void TerrainWorldComponent::StartGeneration(Tile &tile, Entity &entity)
+    {
+        // A procedural tile paints and plants itself on a worker; the result lands a few frames later. A painted tile
+        // keeps its weights and is only planted.
+        auto *procedural = entity.GetComponent<ProceduralTerrainComponent>();
+        if (!procedural)
+            return;
+        procedural->SetGenerateOnLoad(false);
+        procedural->SetTexture(!tile.paintedWeights);
+        if (tile.generation.valid())
+            m_abandonedGenerations.push_back(std::move(tile.generation));
+        tile.generating = false;
+        if (auto prepared = procedural->Prepare())
+        {
+            tile.generation = std::async(std::launch::async, [prepared = std::move(*prepared)] { return prepared.Run(); });
+            tile.generating = true;
+        }
     }
 
     void TerrainWorldComponent::PollGeneration(Tile &tile, bool wait)
@@ -450,6 +702,13 @@ namespace PlutoGE::scene
         for (auto &[coord, tile] : m_tiles)
             Unload(coord, tile);
         m_tiles.clear();
+    }
+
+    void TerrainWorldComponent::Reload()
+    {
+        UnloadAll();
+        ClearOverview();
+        m_errors.clear();
     }
 
     void TerrainWorldComponent::EnsureOverview()

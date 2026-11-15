@@ -42,23 +42,5 @@ namespace PlutoGE::ui
 
     // The "Heights" inspector section: the height file, heightmap import with its options, and LOD reach.
     void RenderTerrainHeightInspector(EditorShell &shell, scene::Entity &entity, scene::TerrainComponent &terrain);
-
-    // One sculpting stroke on a terrain with a height file: one undo step covering the samples changed, and the file
-    // written when the stroke ends. Dab returns false when the terrain cannot have a height file (no project), and the
-    // caller then records the stroke as a scene edit instead.
-    class TerrainHeightStroke
-    {
-    public:
-        [[nodiscard]] bool IsActive() const { return m_active; }
-        bool Dab(EditorShell &shell, scene::Entity &entity, scene::TerrainComponent &terrain, const glm::vec3 &worldHit,
-                 float deltaTime);
-        void End(EditorShell &shell);
-
-    private:
-        bool m_active = false;
-        std::uint64_t m_entity = 0;
-        int m_width = 0;
-        std::vector<float> m_before;
-        scene::TerrainSampleRect m_changed;
-    };
+    // Sculpt strokes are TerrainViewportTool's: they record the samples they changed and write the height files.
 }

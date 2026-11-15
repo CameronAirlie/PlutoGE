@@ -15,6 +15,10 @@
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainWorldComponent.h"
+#include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/TerrainCreation.h"
+#include "PlutoGE/ui/TerrainEditorSections.h"
 #include "PlutoGE/scene/components/VolumetricCloudComponent.h"
 
 #include <array>
@@ -161,20 +165,19 @@ namespace PlutoGE::ui
             return entity;
         }
 
+        // A terrain with collision; the Terrain Editor adds the rest (layers, plants, grass, biomes).
         scene::Entity *CreateTerrain(const EntityPresetContext &context)
         {
-            auto *entity = AddEntity(context.scene, context.parent, "Terrain");
-            if (!entity)
-            {
-                return nullptr;
-            }
-            const std::string materialReference(assets::Project::kBuiltinDefaultShadedMaterialReference);
-            if (auto *terrain = entity->CreateComponent<scene::TerrainComponent>(scene::TerrainComponentConfig{
-                    .material = context.assets.LoadMaterialAsset(materialReference),
-                }))
-            {
-                terrain->SetMaterialAssetReference(materialReference);
-            }
+            return CreateTerrainEntity(context.scene, context.parent, TerrainCreateOptions{});
+        }
+
+        // A terrain world of flat tiles, with a tile template for its settings.
+        scene::Entity *CreateTerrainWorld(const EntityPresetContext &context)
+        {
+            auto *entity = CreateTerrainWorldEntity(context.scene, context.parent, TerrainWorldCreateOptions{});
+            auto &shell = EditorShell::GetInstance();
+            if (auto *world = entity ? entity->GetComponent<scene::TerrainWorldComponent>() : nullptr; world && shell.GetProject())
+                WriteFlatTerrainWorld(shell, *entity, *world, 20.0f);
             return entity;
         }
 
@@ -190,6 +193,7 @@ namespace PlutoGE::ui
             EntityPresetDefinition{"Ocean", "Create Ocean", false,
                                    [](const EntityPresetContext &c) { return AddEntityWith<scene::OceanComponent>(c, "Ocean"); }, false},
             EntityPresetDefinition{"Terrain", "Create Terrain", false, &CreateTerrain, false},
+            EntityPresetDefinition{"Terrain World", "Create Terrain World", false, &CreateTerrainWorld, false},
             EntityPresetDefinition{"Cloth", "Create Cloth", false,
                                    [](const EntityPresetContext &c) { return AddEntityWith<scene::ClothComponent>(c, "Cloth"); }},
             EntityPresetDefinition{"Particle System", "Create Particle System", false,

@@ -35,6 +35,7 @@
 #include "PlutoGE/ui/panels/AnimationGraphEditorPanel.h"
 #include "PlutoGE/ui/panels/AnimationClipEditorPanel.h"
 #include "PlutoGE/ui/panels/FoliageEditorPanel.h"
+#include "PlutoGE/ui/panels/TerrainEditorPanel.h"
 #include "PlutoGE/ui/panels/SequencerEditorPanel.h"
 #include "PlutoGE/ui/panels/MaterialEditorPanel.h"
 #include "PlutoGE/ui/panels/ParticleSystemEditorPanel.h"
@@ -2773,6 +2774,11 @@ namespace PlutoGE::ui
             scene::RefreshCameraPostProcessPresets(*m_scene);
     }
 
+    void EditorShell::OpenTerrainEditor()
+    {
+        if (m_terrainEditor) m_terrainEditor->Focus();
+    }
+
     void EditorShell::OpenFoliageTypeAsset(const std::string &reference)
     {
         if (m_foliageEditor) m_foliageEditor->OpenAsset(reference);
@@ -3818,6 +3824,9 @@ namespace PlutoGE::ui
         m_postProcessEditor = new PostProcessEditorPanel(PanelConfig{"Post Process Editor", false});
         m_postProcessEditor->Initialize();
         m_panelManager.AddPanel(m_postProcessEditor);
+
+        m_terrainEditor = new TerrainEditorPanel(PanelConfig{"Terrain Editor", false});
+        m_panelManager.AddPanel(m_terrainEditor);
 
         m_foliageEditor = new FoliageEditorPanel(PanelConfig{"Foliage Editor", false});
         m_foliageEditor->Initialize();

@@ -69,6 +69,9 @@ namespace PlutoGE::scene
             visit.Float("Density", grass.density);
             visit.Float("WeightThreshold", grass.weightThreshold);
             visit.Float("MaxSlope", grass.maxSlopeDegrees);
+            visit.Range("Altitude", grass.minAltitude, grass.maxAltitude);
+            visit.Float("AltitudeFade", grass.altitudeFade);
+            visit.Float("Clustering", grass.clustering);
             visit.Range("Height", grass.minHeight, grass.maxHeight);
             visit.Range("Width", grass.minWidth, grass.maxWidth);
             visit.Float("AlignToGround", grass.alignToGround);

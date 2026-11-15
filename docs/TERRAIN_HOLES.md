@@ -14,7 +14,7 @@ shaft's rim), at least a cell's diagonal past the space you cut.
 
 ## Editing holes
 
-Select the terrain, enable painting, and choose **Paint > Mode: Hole**. Then drag over the terrain: every cell whose
+Select the terrain and choose the terrain tool's **Holes** brush (in the Terrain Editor, the inspector or the viewport's Paint menu). Then drag over the terrain: every cell whose
 centre is under the brush is cut, and a brush smaller than a cell cuts the cell under it. **Mode: Fill Hole**
 restores cells. The toolbar shows how many cells are cut. Strokes are ordinary scene edits, so undo works. Holes are
 saved with the scene and kept when the terrain is resized (cells outside the new size are dropped).

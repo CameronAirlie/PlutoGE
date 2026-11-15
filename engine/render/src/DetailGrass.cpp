@@ -145,6 +145,10 @@ namespace PlutoGE::render
         result.density = Clamp(density, 0.1f, 64.0f, 14.0f);
         result.weightThreshold = Clamp(weightThreshold, 0.0f, 0.95f, 0.2f);
         result.maxSlopeDegrees = Clamp(maxSlopeDegrees, 0.0f, 90.0f, 45.0f);
+        result.minAltitude = Clamp(minAltitude, -10000.0f, 10000.0f, -10000.0f);
+        result.maxAltitude = Clamp(maxAltitude, result.minAltitude, 10000.0f, 10000.0f);
+        result.altitudeFade = Clamp(altitudeFade, 0.01f, 500.0f, 4.0f);
+        result.clustering = Clamp(clustering, 0.0f, 1.0f, 0.0f);
         result.minHeight = Clamp(minHeight, 0.01f, 5.0f, 0.35f);
         result.maxHeight = Clamp(maxHeight, result.minHeight, 5.0f, result.minHeight);
         result.minWidth = Clamp(minWidth, 0.1f, 5.0f, 0.85f);

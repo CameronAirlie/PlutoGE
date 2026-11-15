@@ -2,6 +2,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
 #include "PlutoGE/ui/TerrainHeightEditing.h"
+#include "PlutoGE/ui/TerrainViewportTool.h"
 #include "PlutoGE/ui/EditorSettings.h"
 #include "PlutoGE/ui/MultiEntityEdit.h"
 #include "PlutoGE/ui/BrushStrokeSampler.h"
@@ -175,104 +176,6 @@ namespace PlutoGE::ui
             std::string selectedSource;
             std::string rayFailureReason;
         };
-
-        const char *GetTerrainPaintModeLabel(scene::TerrainPaintMode mode)
-        {
-            switch (mode)
-            {
-            case scene::TerrainPaintMode::Lower:
-                return "Lower";
-            case scene::TerrainPaintMode::Smooth:
-                return "Smooth";
-            case scene::TerrainPaintMode::Flatten:
-                return "Flatten";
-            case scene::TerrainPaintMode::Layer:
-                return "Layer";
-            case scene::TerrainPaintMode::Hole:
-                return "Hole";
-            case scene::TerrainPaintMode::Fill:
-                return "Fill Hole";
-            case scene::TerrainPaintMode::Raise:
-            default:
-                return "Raise";
-            }
-        }
-
-        void RenderTerrainPaintToolbar(scene::TerrainComponent &terrainComponent)
-        {
-            ImGui::Separator();
-            ImGui::TextUnformatted("Terrain Paint");
-            ImGui::SameLine();
-
-            const char *currentMode = GetTerrainPaintModeLabel(terrainComponent.GetPaintMode());
-            ImGui::SetNextItemWidth(120.0f);
-            if (ImGui::BeginCombo("Mode##TerrainPaint", currentMode))
-            {
-                constexpr scene::TerrainPaintMode modes[] = {
-                    scene::TerrainPaintMode::Raise,
-                    scene::TerrainPaintMode::Lower,
-                    scene::TerrainPaintMode::Smooth,
-                    scene::TerrainPaintMode::Flatten,
-                    scene::TerrainPaintMode::Layer,
-                    scene::TerrainPaintMode::Hole,
-                    scene::TerrainPaintMode::Fill,
-                };
-                for (auto mode : modes)
-                {
-                    const bool selected = terrainComponent.GetPaintMode() == mode;
-                    if (ImGui::Selectable(GetTerrainPaintModeLabel(mode), selected))
-                    {
-                        terrainComponent.SetPaintMode(mode);
-                    }
-                    if (selected)
-                    {
-                        ImGui::SetItemDefaultFocus();
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            ImGui::SameLine();
-            float radius = terrainComponent.GetBrushRadius();
-            ImGui::SetNextItemWidth(110.0f);
-            if (ImGui::DragFloat("Radius##TerrainPaint", &radius, 0.05f, 0.05f, 512.0f, "%.2f"))
-            {
-                terrainComponent.SetBrushRadius(radius);
-            }
-
-            if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Layer)
-            {
-                RenderTerrainLayerPaintControls(terrainComponent);
-                return;
-            }
-            if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Hole ||
-                terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Fill)
-            {
-                // Holes are whole cells: the brush cuts (or restores) every cell whose centre it covers.
-                ImGui::SameLine();
-                ImGui::TextDisabled("%zu cells cut", terrainComponent.GetHoles().GetHoleCount());
-                return;
-            }
-
-            ImGui::SameLine();
-            float strength = terrainComponent.GetBrushStrength();
-            ImGui::SetNextItemWidth(110.0f);
-            if (ImGui::DragFloat("Strength##TerrainPaint", &strength, 0.05f, 0.0f, 128.0f, "%.2f"))
-            {
-                terrainComponent.SetBrushStrength(strength);
-            }
-
-            if (terrainComponent.GetPaintMode() == scene::TerrainPaintMode::Flatten)
-            {
-                ImGui::SameLine();
-                float flattenHeight = terrainComponent.GetFlattenHeight();
-                ImGui::SetNextItemWidth(120.0f);
-                if (ImGui::DragFloat("Height##TerrainPaint", &flattenHeight, 0.05f, 0.0f, terrainComponent.GetHeightScale(), "%.2f"))
-                {
-                    terrainComponent.SetFlattenHeight(flattenHeight);
-                }
-            }
-        }
 
         void CollectEntitiesRecursive(scene::Entity *entity, std::vector<scene::Entity *> &entities)
         {
@@ -2019,6 +1922,7 @@ namespace PlutoGE::ui
             {
                 controlsHovered = RenderViewSelectionGizmo(viewportMin, imageSize) || controlsHovered;
                 controlsHovered = m_foliageTool.RenderToolBar(EditorShell::GetInstance(), viewportMin, imageSize, m_platformViewport) || controlsHovered;
+                controlsHovered = m_terrainTool.RenderToolBar(EditorShell::GetInstance(), viewportMin, imageSize, m_platformViewport) || controlsHovered;
             }
             m_isViewportHovered = m_isViewportHovered && !controlsHovered;
         }
@@ -2451,12 +2355,12 @@ namespace PlutoGE::ui
                 ImGui::TextDisabled("Selected object paint tools");
                 if (auto *selectedEntity = EditorShell::GetInstance().GetSelectedEntity())
                 {
-                    if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+                    if (const auto terrainTarget = TerrainEditTarget::Resolve(selectedEntity))
                     {
-                        if (terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled())
-                        {
-                            RenderTerrainPaintToolbar(*terrainComponent);
-                        }
+                        ImGui::Separator();
+                        ImGui::TextUnformatted("Terrain");
+                        ImGui::SameLine();
+                        DrawTerrainToolModeButtons(EditorShell::GetInstance().GetTerrainTool(), terrainTarget);
                     }
                     if (auto *foliageComponent = selectedEntity->GetComponent<scene::FoliageComponent>())
                     {
@@ -2741,6 +2645,7 @@ namespace PlutoGE::ui
         auto &editorShell = EditorShell::GetInstance();
         const bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
         m_foliageTool.BeginFrame(editorShell, mouseDown, m_isViewportHovered, controlsHovered);
+        m_terrainTool.BeginFrame(editorShell, mouseDown);
         m_isTransformGizmoUsing = false;
         m_entityIconHits.clear();
         if (m_outputExtent.IsEmpty() || !m_rhiRenderService || !m_rhiRenderService->IsInitialized() ||
@@ -3274,84 +3179,29 @@ namespace PlutoGE::ui
                 return;
             }
 
-            bool terrainPaintActive = false;
-            static bool s_terrainStrokeActive = false;
-            static TerrainLayerStroke s_terrainLayerStroke;
-            static TerrainHeightStroke s_terrainHeightStroke;
-            if (auto *terrainComponent = selectedEntity->GetComponent<scene::TerrainComponent>())
+            // While on, the terrain tool owns the mouse too: no entity gizmo or picking.
+            if (TerrainViewportTool::IsActive(editorShell))
             {
-                const bool canTerrainPaint = terrainComponent->IsEnabled() && terrainComponent->IsPaintEnabled();
-                if (canTerrainPaint)
+                std::optional<glm::vec3> rayOrigin;
+                std::optional<glm::vec3> rayDirection;
+                if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
                 {
-                    if (const auto ray = BuildPickRay(cameraData, viewportMin, viewportSize))
-                    {
-                        glm::vec3 hitPoint{0.0f};
-                        if (terrainComponent->Raycast(ray->origin, ray->direction, hitPoint))
-                        {
-                            const glm::mat4 worldTransform = selectedEntity->GetWorldTransform();
-                            // Brush radii are authored and applied in terrain-local units. Preserve the
-                            // owner's scale here so the preview covers the same local-space footprint.
-                            const glm::vec3 right = glm::vec3(worldTransform[0]);
-                            const glm::vec3 forward = glm::vec3(worldTransform[2]);
-                            auto *drawList = ImGui::GetWindowDrawList();
-                            drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
-                            DrawWorldCircle(drawList,
-                                            hitPoint,
-                                            right * terrainComponent->GetBrushRadius(),
-                                            forward * terrainComponent->GetBrushRadius(),
-                                            cameraData,
-                                            viewportMin,
-                                            viewportSize,
-                                            IM_COL32(120, 220, 140, 230));
-                            drawList->PopClipRect();
-
-                            const bool brushActive = m_isViewportHovered && !controlsHovered &&
-                                                     !ImGuizmo::IsOver() &&
-                                                     !ImGuizmo::IsUsing() &&
-                                                     !ImGui::GetIO().KeyAlt && ImGui::IsMouseDown(ImGuiMouseButton_Left);
-                            terrainPaintActive = canTerrainPaint && brushActive;
-                            // Layer painting and sculpting record their own undo steps (the weights and the heights
-                            // live in files, not the scene). Holes, and sculpting without a project, are scene edits.
-                            const auto paintMode = terrainComponent->GetPaintMode();
-                            const bool layerPaint = paintMode == scene::TerrainPaintMode::Layer;
-                            const bool holePaint = paintMode == scene::TerrainPaintMode::Hole || paintMode == scene::TerrainPaintMode::Fill;
-                            bool sculpted = false;
-                            if (terrainPaintActive && layerPaint)
-                                s_terrainLayerStroke.Dab(editorShell, *selectedEntity, *terrainComponent, hitPoint);
-                            else if (terrainPaintActive && !holePaint && !s_terrainStrokeActive)
-                                sculpted = s_terrainHeightStroke.Dab(editorShell, *selectedEntity, *terrainComponent, hitPoint,
-                                                                     ImGui::GetIO().DeltaTime);
-                            if (terrainPaintActive && !layerPaint && !sculpted && !s_terrainStrokeActive)
-                            {
-                                editorShell.BeginSceneEdit("Paint Terrain");
-                                s_terrainStrokeActive = true;
-                            }
-                            if (terrainPaintActive && !layerPaint && !sculpted &&
-                                terrainComponent->PaintAtWorldPosition(hitPoint, ImGui::GetIO().DeltaTime))
-                            {
-                                editorShell.MarkSceneDirty();
-                            }
-                        }
-                    }
+                    rayOrigin = ray->origin;
+                    rayDirection = ray->direction;
                 }
-            }
-
-            if (s_terrainStrokeActive && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-            {
-                editorShell.EndSceneEdit();
-                s_terrainStrokeActive = false;
-            }
-            if (s_terrainLayerStroke.IsActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-                s_terrainLayerStroke.End(editorShell);
-            if (s_terrainHeightStroke.IsActive() && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
-                s_terrainHeightStroke.End(editorShell);
-
-            if (terrainPaintActive)
-            {
-                if (viewportClicked)
-                {
-                    editorShell.Log(EditorShell::ConsoleSeverity::Info, "[Pick] blocked=paint-active");
-                }
+                auto *drawList = ImGui::GetWindowDrawList();
+                drawList->PushClipRect(viewportMin, ImVec2(viewportMin.x + viewportSize.x, viewportMin.y + viewportSize.y), true);
+                m_terrainTool.Update(editorShell, TerrainViewportContext{
+                    .camera = cameraData,
+                    .rayOrigin = rayOrigin,
+                    .rayDirection = rayDirection,
+                    .hovered = m_isViewportHovered && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing(),
+                    .controlsHovered = controlsHovered,
+                    .deltaTime = ImGui::GetIO().DeltaTime,
+                    .drawCircle = [&](const glm::vec3 &center, const glm::vec3 &axisA, const glm::vec3 &axisB, ImU32 color)
+                    { DrawWorldCircle(drawList, center, axisA, axisB, cameraData, viewportMin, viewportSize, color); },
+                });
+                drawList->PopClipRect();
                 return;
             }
 

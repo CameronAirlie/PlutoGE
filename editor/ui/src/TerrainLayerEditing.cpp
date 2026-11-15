@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/TerrainEditTool.h"
 
 #include <imgui.h>
 
@@ -39,7 +40,7 @@ namespace PlutoGE::ui
         // Prefab overrides for everything the layer list serializes (a layer edit can renumber layers).
         void OverrideLayerProperties(scene::Entity &entity, const scene::TerrainComponent &terrain)
         {
-            for (const char *name : {"LayerCount", "HeightBlend", "DetailDistance", "WeightResolution", "WeightMap0", "WeightMap1", "PaintLayer"})
+            for (const char *name : {"LayerCount", "HeightBlend", "DetailDistance", "WeightResolution", "WeightMap0", "WeightMap1"})
                 entity.AddPrefabOverride(std::string("Component:TerrainComponent:") + name);
             for (std::size_t index = 0; index < terrain.GetLayers().GetLayers().size(); ++index)
                 for (const char *field : kLayerFields)
@@ -148,18 +149,17 @@ namespace PlutoGE::ui
         {
             ImGui::PushID(static_cast<int>(index));
             auto layer = layers[index];
-            const bool painting = terrain.IsPaintEnabled() && terrain.GetPaintMode() == scene::TerrainPaintMode::Layer &&
-                                  terrain.GetPaintLayer() == static_cast<int>(index);
+            // One click to painting this layer with the terrain tool (for a world's template: on its tiles).
+            auto &tool = shell.GetTerrainTool();
+            const auto target = TerrainEditTarget::Resolve(&entity);
+            const bool painting = tool.IsActiveFor(target.RootId()) && tool.GetMode() == TerrainToolMode::Paint && tool.paint.layer == index;
             if (ImGui::RadioButton("##Paint", painting))
             {
-                // One click from the inspector to painting this layer.
-                terrain.SetPaintEnabled(true);
-                terrain.SetPaintMode(scene::TerrainPaintMode::Layer);
-                terrain.SetPaintLayer(static_cast<int>(index));
-                shell.MarkSceneDirty();
+                tool.paint.layer = index;
+                tool.SetMode(TerrainToolMode::Paint, target.RootId());
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Paint this layer (Paint > Layer in the viewport)");
+                ImGui::SetTooltip("Paint this layer in the viewport");
             ImGui::SameLine();
             const std::string title = (layer.name.empty() ? "Layer " + std::to_string(index + 1) : layer.name) + "###Layer";
             const bool open = ImGui::TreeNodeEx(title.c_str(), ImGuiTreeNodeFlags_SpanAvailWidth);
@@ -227,13 +227,7 @@ namespace PlutoGE::ui
         {
             scene::TerrainLayer layer;
             layer.name = "Layer " + std::to_string(layers.size() + 1);
-            const bool first = stack.Empty();
             stack.AddLayer(std::move(layer));
-            if (first)
-            {
-                // The first layer is ready to paint over.
-                terrain.SetPaintLayer(0);
-            }
             OverrideLayerProperties(entity, terrain);
             shell.MarkSceneDirty();
         }
@@ -281,87 +275,4 @@ namespace PlutoGE::ui
                 ImGui::TextDisabled("Weights %zu: %s", plane, path.c_str());
     }
 
-    void RenderTerrainLayerPaintControls(scene::TerrainComponent &terrain)
-    {
-        const auto &layers = terrain.GetLayers().GetLayers();
-        if (layers.empty())
-        {
-            ImGui::SameLine();
-            ImGui::TextDisabled("Add material layers in the inspector");
-            return;
-        }
-        const int selected = std::clamp(terrain.GetPaintLayer(), 0, static_cast<int>(layers.size()) - 1);
-        const auto label = [&](std::size_t index) {
-            return layers[index].name.empty() ? "Layer " + std::to_string(index + 1) : layers[index].name;
-        };
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(140.0f);
-        if (ImGui::BeginCombo("Layer##TerrainPaint", label(static_cast<std::size_t>(selected)).c_str()))
-        {
-            for (std::size_t index = 0; index < layers.size(); ++index)
-                if (ImGui::Selectable((label(index) + "##" + std::to_string(index)).c_str(), static_cast<int>(index) == selected))
-                    terrain.SetPaintLayer(static_cast<int>(index));
-            ImGui::EndCombo();
-        }
-        ImGui::SameLine();
-        float opacity = terrain.GetLayerOpacity();
-        ImGui::SetNextItemWidth(100.0f);
-        if (ImGui::SliderFloat("Opacity##TerrainPaint", &opacity, 0.01f, 1.0f, "%.2f"))
-            terrain.SetLayerOpacity(opacity);
-        ImGui::SameLine();
-        float hardness = terrain.GetBrushHardness();
-        ImGui::SetNextItemWidth(100.0f);
-        if (ImGui::SliderFloat("Hardness##TerrainPaint", &hardness, 0.0f, 1.0f, "%.2f"))
-            terrain.SetBrushHardness(hardness);
-    }
-
-    void TerrainLayerStroke::Dab(EditorShell &shell, scene::Entity &entity, scene::TerrainComponent &terrain, const glm::vec3 &worldHit)
-    {
-        if (!m_before || m_entity != entity.GetID())
-        {
-            if (m_before)
-                End(shell);
-            shell.FlushPendingSceneEdits();
-            EnsureWeightMapPaths(shell, entity, terrain);
-            m_entity = entity.GetID();
-            m_before = terrain.GetLayers().GetWeights();
-            m_changed = {};
-            m_sampler.Reset();
-        }
-        const glm::mat4 world = entity.GetWorldTransform();
-        const glm::vec3 local = glm::vec3(glm::inverse(world) * glm::vec4(worldHit, 1.0f));
-        // Dabs a quarter radius apart, so a stroke's coverage does not depend on frame rate or mouse speed.
-        m_sampler.Sample({local.x, local.z}, std::max(0.05f, terrain.GetBrushRadius() * 0.25f), [&](glm::vec2 dab) {
-            m_changed.Include(terrain.PaintLayerAtWorldPosition(glm::vec3(world * glm::vec4(dab.x, local.y, dab.y, 1.0f))));
-        });
-    }
-
-    void TerrainLayerStroke::End(EditorShell &shell)
-    {
-        if (!m_before)
-            return;
-        scene::Entity *entity = nullptr;
-        auto *terrain = FindTerrain(m_entity, &entity);
-        if (terrain && !m_changed.Empty())
-        {
-            auto before = m_before->Capture(m_changed);
-            auto after = terrain->GetLayers().GetWeights().Capture(m_changed);
-            SaveTerrainWeightMaps(shell, *entity, *terrain);
-            const auto bytes = before.weights.size() + after.weights.size();
-            const auto restore = [id = m_entity](const scene::TerrainWeightMap::Region &region) {
-                scene::Entity *owner = nullptr;
-                auto *target = FindTerrain(id, &owner);
-                if (!target)
-                    return false;
-                target->GetLayers().RestoreWeights(region);
-                SaveTerrainWeightMaps(EditorShell::GetInstance(), *owner, *target);
-                return true;
-            };
-            shell.PushSceneEditCommand("Paint Terrain Layer", [restore, before = std::move(before)] { return restore(before); },
-                                       [restore, after = std::move(after)] { return restore(after); }, bytes);
-        }
-        m_before.reset();
-        m_changed = {};
-        m_sampler.Reset();
-    }
 }

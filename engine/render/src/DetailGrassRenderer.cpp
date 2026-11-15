@@ -234,17 +234,17 @@ namespace PlutoGE::render
                 parameters.planes[plane] = glm::vec4(frustum.planes[plane].normal, frustum.planes[plane].distance);
             parameters.cameraWorld = glm::vec4(view.cameraPosition, windReach);
             parameters.cameraLocal = glm::vec4(cameraLocal, lattice.spacing);
-            parameters.terrainGrid = glm::vec4(field.heights->cellSize, float(field.heights->columns), float(field.heights->rows), 0.0f);
+            parameters.terrainGrid = glm::vec4(field.heights->cellSize, float(field.heights->columns), float(field.heights->rows), layer.clustering);
             parameters.distances = {layer.fullDensityDistance, layer.densityFalloff, layer.drawDistance, layer.maxWidthCompensation};
             parameters.sizes = {layer.minHeight, layer.maxHeight, layer.minWidth, layer.maxWidth};
             parameters.placement = {layer.weightThreshold, std::cos(maxSlope),
-                                    std::cos(std::max(0.0f, maxSlope - glm::radians(10.0f))), 0.0f};
+                                    std::cos(std::max(0.0f, maxSlope - glm::radians(10.0f))), layer.altitudeFade};
             parameters.densityChannel = field.densityChannel;
             parameters.color = glm::vec4(layer.color, layer.dryAmount);
             parameters.dryColor = glm::vec4(layer.dryColor, layer.colorJitter);
             parameters.surface = {1.0f / layer.patchSize, field.groundAlbedo ? 1.0f : 0.0f, clump.source.radius,
                                   field.density ? 1.0f : 0.0f};
-            parameters.lods = {layer.lod1Distance, layer.lod2Distance, 0.0f, 0.0f};
+            parameters.lods = {layer.lod1Distance, layer.lod2Distance, layer.minAltitude, layer.maxAltitude};
             // A field's seed mixes its layer's with its identity, so two terrains with one layer differ.
             const auto seed = layer.seed ^ static_cast<std::uint32_t>(field.id) ^ static_cast<std::uint32_t>(field.id >> 32u);
             parameters.lattice = {lattice.rings, lattice.TopLevel(), seed, static_cast<std::uint32_t>(arguments.size())};

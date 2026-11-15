@@ -12,6 +12,18 @@
 
 namespace PlutoGE::scene
 {
+    // Whether a foliage type casts shadows. Inherit follows the owning FoliageComponent's Cast Shadows, so types
+    // written before the setting existed keep drawing as they did.
+    enum class FoliageShadowMode : std::uint8_t
+    {
+        Inherit,
+        On,
+        Off,
+    };
+    [[nodiscard]] std::string_view FoliageShadowModeName(FoliageShadowMode mode);
+    // Unknown names give Inherit.
+    [[nodiscard]] FoliageShadowMode ParseFoliageShadowMode(std::string_view name);
+
     // Everything that defines one kind of plant, independent of where it is placed. A FoliageType owns one of these;
     // with a non-empty `assetReference` the values come from that .plutofoliage file, and otherwise from the scene.
     struct FoliageTypeAsset
@@ -42,6 +54,9 @@ namespace PlutoGE::scene
         float maxDrawDistance = 0.0f;
         // Moves the type's LOD and impostor switches nearer or farther (render/LodDistanceScale.h).
         float lodDistanceScale = render::DefaultLodDistanceScale;
+        FoliageShadowMode shadows = FoliageShadowMode::Inherit;
+        // Zero inherits the owning foliage component's shadow distance. Small plants rarely need shadows far away.
+        float maxShadowDistance = 0.0f;
 
         // Collision.
         bool collisionEnabled = false;

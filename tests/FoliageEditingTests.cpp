@@ -86,6 +86,8 @@ namespace
         asset.cellSize = 64.0f;
         asset.maxDrawDistance = 120.0f;
         asset.lodDistanceScale = 1.5f;
+        asset.shadows = FoliageShadowMode::Off;
+        asset.maxShadowDistance = 45.0f;
         asset.collisionEnabled = true;
         asset.collisionCenter = {0.0f, 1.5f, 0.25f};
         asset.collisionRadius = 0.4f;
@@ -120,6 +122,15 @@ namespace
         FoliageTypeAsset one;
         ReadFoliageTypeAsset(singlePart, one);
         Require(one.submeshIndex == 4 && one.submeshIndices == std::vector<int>{4}, "One part should set the single index too");
+        Require(one.shadows == FoliageShadowMode::Inherit && one.maxShadowDistance == 0.0f,
+                "Files written before shadow settings follow the component");
+        Require(ParseFoliageShadowMode(FoliageShadowModeName(FoliageShadowMode::On)) == FoliageShadowMode::On &&
+                    ParseFoliageShadowMode("Bogus") == FoliageShadowMode::Inherit,
+                "Shadow mode names round trip, and unknown ones inherit");
+        FoliageTypeAsset shadowed;
+        shadowed.shadows = FoliageShadowMode::On;
+        Require(ChangedFoliageTypeProperties(FoliageTypeAsset{}, shadowed) == std::vector<std::string_view>{"Shadows"},
+                "A shadow change is recorded as its own override");
     }
 
     void TestAssetVersions()

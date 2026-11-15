@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/Mesh.h"
 #include "PlutoGE/render/RenderCommand.h"
+#include "PlutoGE/scene/TerrainBrush.h"
 #include "PlutoGE/scene/TerrainHeightData.h"
 #include "PlutoGE/scene/TerrainHoleMask.h"
 #include "PlutoGE/scene/TerrainLayerStack.h"
@@ -87,12 +88,23 @@ namespace PlutoGE::scene
         void SetHeightData(TerrainHeightData data);
         // The samples just outside the grid (TerrainHeightBorder): empty repeats the edges, as a lone terrain does.
         const std::vector<float> &GetHeightBorder() const { return m_border; }
+        // Replaces the border ring (a neighbouring tile changed); a ring of the wrong size clears it.
+        void SetHeightBorder(std::vector<float> border);
 
-        // ---- editing heights -----------------------------------------------------------------------------------
-        // Sculpts with the current paint mode and brush (Raise, Lower, Smooth, Flatten) and returns the samples changed.
+        // ---- editing ---------------------------------------------------------------------------------------------
+        // One dab of a sculpt brush centred on a world position; returns the samples changed.
+        TerrainSampleRect Sculpt(const glm::vec3 &worldPosition, const TerrainSculptBrush &brush, float deltaTime);
+        // One dab of a hole brush (cuts or fills the cells whose centres it covers); true when anything changed.
+        bool PaintHoles(const glm::vec3 &worldPosition, const TerrainHoleBrush &brush);
+        // One dab of a layer brush; returns the weight texels changed.
+        TerrainWeightRect PaintLayer(const glm::vec3 &worldPosition, const TerrainPaintBrush &brush);
+
+        // Legacy convenience for scripts and older tools: the same edits with a brush held by the component (the
+        // Paint* and Brush* setters below). It is not saved with the scene.
         TerrainSampleRect SculptAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime);
-        // Sculpts or edits holes, depending on the paint mode; true when anything changed.
         bool PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime);
+        // Properties older scenes saved for the brush; read, never written.
+        bool IsRetiredProperty(std::string_view name) const override;
         TerrainHeightRegion CaptureHeights(const TerrainSampleRect &rect) const;
         // Writes a region back (undo, or a tool's edit); samples outside the grid are ignored.
         void RestoreHeights(const TerrainHeightRegion &region);
@@ -159,6 +171,7 @@ namespace PlutoGE::scene
         const std::string &GetPaintedAlbedoPath() const { return m_paintedAlbedoPath; }
         const std::string &GetHeightMapPath() const { return m_heightMapPath; }
 
+        // The legacy brush (session state for SculptAtWorldPosition / PaintAtWorldPosition; not saved).
         void SetPaintEnabled(bool enabled) { m_paintEnabled = enabled; }
         bool IsPaintEnabled() const { return m_paintEnabled; }
         void SetPaintMode(TerrainPaintMode mode) { m_paintMode = mode; }
@@ -202,7 +215,6 @@ namespace PlutoGE::scene
         glm::vec3 ComputeNormal(int x, int z) const;
         void EnsureHeightStorage();
         void HolesChanged();
-        bool PaintHolesAtLocalPosition(const glm::vec3 &local, bool hole);
         void MarkMeshDirty();
         void RebuildMesh();
         void RebuildMaterialFromReference();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <string>
 
 namespace PlutoGE::assets
 {
@@ -28,8 +29,16 @@ namespace PlutoGE::ui
         virtual void Changed() = 0;
         // For the material picker; may be null.
         [[nodiscard]] virtual const assets::Project *Project() const = 0;
+        // Whether the host can start painting the terrain (the editor can).
+        [[nodiscard]] virtual bool CanPaintTerrain() const { return false; }
+        // Starts painting a terrain layer: the one a grass layer grows on.
+        virtual void PaintTerrainLayer(const std::string &layer) { (void)layer; }
     };
+
+    class EditorShell;
 
     // Draws the inspector for `grass` on `entity`, recording prefab overrides on the entity for whatever it changes.
     void DrawDetailGrassInspector(scene::DetailGrassComponent &grass, scene::Entity &entity, DetailGrassInspectorHost &host);
+    // The same with the editor as the host (the Terrain Editor's Grass tab).
+    void DrawDetailGrassEditor(EditorShell &shell, scene::Entity &entity, scene::DetailGrassComponent &grass);
 }

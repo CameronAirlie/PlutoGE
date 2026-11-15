@@ -73,6 +73,7 @@ namespace PlutoGE::ui
     void RegisterDetailGrassInspectors();
     void RegisterOutfitInspectors();
     void RegisterProceduralTerrainInspectors();
+    void RegisterTerrainInspectors();
     void RegisterTerrainWorldInspectors();
     void RegisterWaterInspectors();
 }

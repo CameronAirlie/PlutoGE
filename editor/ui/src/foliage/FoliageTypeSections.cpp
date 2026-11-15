@@ -239,6 +239,23 @@ namespace PlutoGE::ui
                                         render::MaxLodDistanceScale, "%.2f", ImGuiSliderFlags_AlwaysClamp);
             ImGui::SetItemTooltip("Multiplies the distance of this type's LOD and impostor switches: 2 keeps detail twice as far away.\n"
                                   "Triangles grow with its square. Floors such as Min Render LOD still apply.");
+
+            int shadows = static_cast<int>(asset.shadows);
+            if (ImGui::Combo("Shadows", &shadows, "Foliage Component's Setting\0Cast Shadows\0No Shadows\0"))
+            {
+                asset.shadows = static_cast<scene::FoliageShadowMode>(shadows);
+                changed = true;
+            }
+            ImGui::SetItemTooltip("Whether instances cast shadows. Trees and bushes usually should; grass and small ground cover\n"
+                                  "rarely need to, and skipping them saves shadow rendering.\n"
+                                  "\"Foliage Component's Setting\" follows Cast Shadows on the Foliage component.");
+            ImGui::BeginDisabled(asset.shadows == scene::FoliageShadowMode::Off);
+            changed |= ImGui::DragFloat("Shadow Distance", &asset.maxShadowDistance, 1.0f, 0.0f, 10000.0f,
+                                        asset.maxShadowDistance > 0.0f ? "%.1f m" : "Component Default");
+            ImGui::SetItemTooltip("How far from the camera instances still cast shadows.\n"
+                                  "0 uses the component's Max Shadow Distance.");
+            ImGui::EndDisabled();
+
             changed |= ImGui::DragFloat("Cell Size", &asset.cellSize, 1.0f, 1.0f, 256.0f, "%.1f m");
             ImGui::SetItemTooltip("Instances are grouped into cells of this size for culling and collision. Large cells (64-128 m)\n"
                                   "draw cheaper; small ones make local edits and physics rebuilds more granular.");

@@ -25,7 +25,12 @@ grows everywhere.
 - **Preset** buttons replace a layer's size, colours, shading, wind, clump and distances. They keep its name, where it
   grows and its seeds. The presets are Meadow, Lawn, Tall Grass, Dry Tufts and Weeds (`render::DetailGrassPreset`).
 - **Sections**, ordered by how often they are tuned:
-  - **Where It Grows** picks the terrain layer from a list.
+  - **Where It Grows** picks the terrain layer from a list (*Paint Where It Grows* starts the terrain tool's Paint brush
+    on that layer), the paint threshold and maximum slope, an optional world **height band** (*Limit Height*: between two
+    heights, thinning out over *Height Fade* metres beyond them, for beaches and snow lines), and **Bare Patches**
+    (noise at the colour patches' scale that leaves gaps in the cover). All of them are evaluated on the GPU as clumps
+    are generated (`DetailGrassGenerate.slang`), so nothing is baked.
+  - The Terrain Editor's **Grass** section shows the same settings for a terrain, or for every tile of a terrain world.
   - **Colour** shows a strip of blades with the dry patches and variation. Colours are shown as they appear on screen
     and stored as linear albedo.
   - **Clump Shape** previews the clump at each LOD; drag the preview to turn it.

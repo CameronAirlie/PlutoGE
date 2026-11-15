@@ -11,6 +11,7 @@
 #include "PlutoGE/ui/EditorCompositor.h"
 #include "PlutoGE/ui/EditorViewportOverlay.h"
 #include "PlutoGE/ui/FoliageViewportTool.h"
+#include "PlutoGE/ui/TerrainViewportTool.h"
 #include "PlutoGE/ui/ViewportEntityIcons.h"
 
 
@@ -144,6 +145,7 @@ namespace PlutoGE::ui
         struct PlacementState;
         std::unique_ptr<PlacementState> m_placement;
         FoliageViewportTool m_foliageTool;
+        TerrainViewportTool m_terrainTool;
         bool m_enableSnap = false;
         ImGuizmo::OPERATION m_gizmoOperation = ImGuizmo::TRANSLATE;
         ImGuizmo::MODE m_gizmoMode = ImGuizmo::LOCAL;

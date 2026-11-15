@@ -317,11 +317,6 @@ namespace PlutoGE::scene
             {"HeightData", PropertyType::String, m_heightDataPath},
             {"MaterialAsset", PropertyType::String, m_materialAssetReference},
             {"PaintedAlbedo", PropertyType::String, m_paintedAlbedoPath},
-            {"PaintEnabled", PropertyType::Bool, m_paintEnabled ? "true" : "false"},
-            {"PaintMode", PropertyType::String, std::to_string(static_cast<int>(m_paintMode))},
-            {"BrushRadius", PropertyType::Float, std::to_string(m_brushRadius)},
-            {"BrushStrength", PropertyType::Float, std::to_string(m_brushStrength)},
-            {"FlattenHeight", PropertyType::Float, std::to_string(m_flattenHeight)},
         };
         if (detail == HeavyDetail::Shared)
         {
@@ -341,9 +336,6 @@ namespace PlutoGE::scene
                 properties.insert(position, std::move(samples));
             }
         }
-        properties.push_back({"PaintLayer", PropertyType::Int, std::to_string(m_paintLayer)});
-        properties.push_back({"LayerOpacity", PropertyType::Float, std::to_string(m_layerOpacity)});
-        properties.push_back({"BrushHardness", PropertyType::Float, std::to_string(m_brushHardness)});
         properties.push_back({"HeightBlend", PropertyType::Float, std::to_string(m_layers.GetHeightBlend())});
         properties.push_back({"DetailDistance", PropertyType::Float, std::to_string(m_layers.GetDetailDistance())});
         properties.push_back({"WeightResolution", PropertyType::Int, std::to_string(m_layers.GetWeights().GetResolution())});
@@ -706,6 +698,16 @@ namespace PlutoGE::scene
                 scene->MarkColliderShapesDirty();
     }
 
+    void TerrainComponent::SetHeightBorder(std::vector<float> border)
+    {
+        if (border.size() != TerrainHeightBorder::Size(m_width, m_depth))
+            border.clear();
+        if (border == m_border)
+            return;
+        m_border = std::move(border);
+        HeightsChanged();
+    }
+
     void TerrainComponent::HeightsChanged()
     {
         ++m_heightsRevision;
@@ -776,35 +778,68 @@ namespace PlutoGE::scene
         MarkMeshDirty();
     }
 
+    bool TerrainComponent::IsRetiredProperty(std::string_view name) const
+    {
+        // The brush was saved with the terrain until the editor's terrain tool took it over.
+        return name == "PaintEnabled" || name == "PaintMode" || name == "BrushRadius" || name == "BrushStrength" ||
+               name == "FlattenHeight" || name == "PaintLayer" || name == "LayerOpacity" || name == "BrushHardness";
+    }
+
     bool TerrainComponent::PaintAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime)
     {
-        auto *entity = GetOwner();
-        if (!entity || !m_paintEnabled || m_paintMode == TerrainPaintMode::Layer)
-        {
+        if (!GetOwner() || !m_paintEnabled || m_paintMode == TerrainPaintMode::Layer)
             return false;
-        }
         if (m_paintMode == TerrainPaintMode::Hole || m_paintMode == TerrainPaintMode::Fill)
-        {
-            const glm::vec3 local = glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
-            return PaintHolesAtLocalPosition(local, m_paintMode == TerrainPaintMode::Hole);
-        }
+            return PaintHoles(worldPosition, TerrainHoleBrush{m_brushRadius, m_paintMode == TerrainPaintMode::Hole});
         return !SculptAtWorldPosition(worldPosition, deltaTime).Empty();
     }
 
     TerrainSampleRect TerrainComponent::SculptAtWorldPosition(const glm::vec3 &worldPosition, float deltaTime)
     {
+        TerrainSculptBrush brush{TerrainSculptMode::Raise, m_brushRadius, m_brushStrength, m_flattenHeight};
+        switch (m_paintMode)
+        {
+        case TerrainPaintMode::Raise: brush.mode = TerrainSculptMode::Raise; break;
+        case TerrainPaintMode::Lower: brush.mode = TerrainSculptMode::Lower; break;
+        case TerrainPaintMode::Smooth: brush.mode = TerrainSculptMode::Smooth; break;
+        case TerrainPaintMode::Flatten: brush.mode = TerrainSculptMode::Flatten; break;
+        default: return {};
+        }
+        return Sculpt(worldPosition, brush, deltaTime);
+    }
+
+    bool TerrainComponent::PaintHoles(const glm::vec3 &worldPosition, const TerrainHoleBrush &brush)
+    {
+        const auto *entity = GetOwner();
+        if (!entity || !(brush.radius > 0.0f))
+            return false;
+        const glm::vec3 local = glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
+        if (!m_holes.PaintCircle(local.x / m_cellSize, local.z / m_cellSize, brush.radius / m_cellSize, brush.cut))
+            return false;
+        HolesChanged();
+        return true;
+    }
+
+    TerrainWeightRect TerrainComponent::PaintLayer(const glm::vec3 &worldPosition, const TerrainPaintBrush &brush)
+    {
+        return PaintLayerAtWorldPosition(worldPosition, brush.layer, brush.radius, brush.dab);
+    }
+
+    TerrainSampleRect TerrainComponent::Sculpt(const glm::vec3 &worldPosition, const TerrainSculptBrush &brush, float deltaTime)
+    {
         auto *entity = GetOwner();
-        if (!entity || m_paintMode == TerrainPaintMode::Layer || m_paintMode == TerrainPaintMode::Hole ||
-            m_paintMode == TerrainPaintMode::Fill)
+        if (!entity || !(brush.radius > 0.0f))
         {
             return {};
         }
+        const float brushRadius = brush.radius;
+        const float brushStrength = std::max(brush.strength, 0.0f);
 
         const glm::mat4 inverseWorld = glm::inverse(entity->GetWorldTransform());
         const glm::vec3 local = glm::vec3(inverseWorld * glm::vec4(worldPosition, 1.0f));
         const float centerX = local.x / m_cellSize;
         const float centerZ = local.z / m_cellSize;
-        const float radiusInSamples = m_brushRadius / m_cellSize;
+        const float radiusInSamples = brushRadius / m_cellSize;
         const int minX = std::max(0, static_cast<int>(std::floor(centerX - radiusInSamples)));
         const int maxX = std::min(m_width - 1, static_cast<int>(std::ceil(centerX + radiusInSamples)));
         const int minZ = std::max(0, static_cast<int>(std::floor(centerZ - radiusInSamples)));
@@ -818,11 +853,12 @@ namespace PlutoGE::scene
         // samples and a one-sample margin, not of the whole grid.
         const TerrainHeightRegion source = CaptureHeights({minX - 1, minZ - 1, maxX + 2, maxZ + 2});
         const auto sourceHeight = [&](int x, int z) {
-            x = glm::clamp(x, source.rect.x0, source.rect.x1 - 1);
-            z = glm::clamp(z, source.rect.z0, source.rect.z1 - 1);
+            // Beyond the grid: the border ring (a neighbouring tile's samples), so smoothing is seamless across tiles.
+            if (x < 0 || z < 0 || x >= m_width || z >= m_depth)
+                return GetHeightSample(x, z);
             return source.samples[static_cast<std::size_t>(z - source.rect.z0) * (source.rect.x1 - source.rect.x0) + (x - source.rect.x0)];
         };
-        const float signedStrength = (m_paintMode == TerrainPaintMode::Lower ? -1.0f : 1.0f) * m_brushStrength * std::max(deltaTime, 1.0f / 120.0f);
+        const float signedStrength = (brush.mode == TerrainSculptMode::Lower ? -1.0f : 1.0f) * brushStrength * std::max(deltaTime, 1.0f / 120.0f);
         TerrainSampleRect changed;
         for (int z = minZ; z <= maxZ; ++z)
         {
@@ -831,26 +867,26 @@ namespace PlutoGE::scene
                 const float dx = (static_cast<float>(x) - centerX) * m_cellSize;
                 const float dz = (static_cast<float>(z) - centerZ) * m_cellSize;
                 const float distance = std::sqrt(dx * dx + dz * dz);
-                if (distance > m_brushRadius)
+                if (distance > brushRadius)
                 {
                     continue;
                 }
 
-                const float falloff = 1.0f - glm::smoothstep(0.0f, m_brushRadius, distance);
+                const float falloff = 1.0f - glm::smoothstep(0.0f, brushRadius, distance);
                 const std::size_t index = static_cast<std::size_t>(z * m_width + x);
                 const float current = sourceHeight(x, z);
                 float nextHeight = current;
-                if (m_paintMode == TerrainPaintMode::Smooth)
+                if (brush.mode == TerrainSculptMode::Smooth)
                 {
                     float total = 0.0f;
                     for (int oz = -1; oz <= 1; ++oz)
                         for (int ox = -1; ox <= 1; ++ox)
                             total += sourceHeight(x + ox, z + oz);
-                    nextHeight = glm::mix(current, total / 9.0f, glm::clamp(falloff * m_brushStrength * deltaTime, 0.0f, 1.0f));
+                    nextHeight = glm::mix(current, total / 9.0f, glm::clamp(falloff * brushStrength * deltaTime, 0.0f, 1.0f));
                 }
-                else if (m_paintMode == TerrainPaintMode::Flatten)
+                else if (brush.mode == TerrainSculptMode::Flatten)
                 {
-                    nextHeight = glm::mix(current, m_flattenHeight, glm::clamp(falloff * m_brushStrength * deltaTime, 0.0f, 1.0f));
+                    nextHeight = glm::mix(current, brush.flattenHeight, glm::clamp(falloff * brushStrength * deltaTime, 0.0f, 1.0f));
                 }
                 else
                 {
@@ -1281,14 +1317,6 @@ namespace PlutoGE::scene
             return false;
         const glm::vec3 local = glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
         return IsHoleAtLocalPosition(local.x, local.z);
-    }
-
-    bool TerrainComponent::PaintHolesAtLocalPosition(const glm::vec3 &local, bool hole)
-    {
-        if (!m_holes.PaintCircle(local.x / m_cellSize, local.z / m_cellSize, m_brushRadius / m_cellSize, hole))
-            return false;
-        HolesChanged();
-        return true;
     }
 
     void TerrainComponent::HolesChanged()

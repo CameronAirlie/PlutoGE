@@ -74,6 +74,12 @@ namespace PlutoGE::render
         float density = 14.0f;          // clumps per square metre near the camera, where the density map is full
         float weightThreshold = 0.2f;   // density map value below which nothing grows; above it density ramps to full
         float maxSlopeDegrees = 45.0f;  // steeper ground thins out to nothing over the last 10 degrees
+        // World heights the grass grows between (a snow line, a beach); it thins out over `altitudeFade` metres outside.
+        float minAltitude = -10000.0f, maxAltitude = 10000.0f;
+        float altitudeFade = 4.0f;
+        // Bare patches breaking up the cover: 0 grows wherever the rest allows, 1 leaves only scattered tufts. The
+        // patches are the size of the colour patches (patchSize).
+        float clustering = 0.0f;
         float minHeight = 0.35f, maxHeight = 0.7f; // clump height range, metres
         float minWidth = 0.85f, maxWidth = 1.25f;  // horizontal scale range of the clump mesh
         float alignToGround = 0.35f;    // 0 grows straight up, 1 grows along the ground's normal

@@ -130,6 +130,12 @@ add_library(PlutoGEEditorUI
     src/inspectors/ComponentInspectors.cpp
     src/inspectors/DetailGrassInspector.cpp
     src/inspectors/ProceduralTerrainInspector.cpp
+    src/inspectors/TerrainInspector.cpp
+    src/terrain/TerrainEditTool.cpp
+    src/terrain/TerrainCreation.cpp
+    src/terrain/TerrainViewportTool.cpp
+    src/terrain/TerrainEditorAnalysis.cpp
+    src/panels/TerrainEditorPanel.cpp
     src/inspectors/TerrainWorldInspector.cpp
     src/inspectors/WaterInspectors.cpp
     src/inspectors/OutfitInspectors.cpp

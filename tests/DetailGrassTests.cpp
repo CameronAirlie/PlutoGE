@@ -281,6 +281,10 @@ namespace
         meadow.settings.lod2Distance = 25.0f;
         meadow.densityLayer = "Forest floor";
         meadow.materialAsset = "asset://0123#0";
+        meadow.settings.minAltitude = 2.0f;
+        meadow.settings.maxAltitude = 120.0f;
+        meadow.settings.altitudeFade = 6.0f;
+        meadow.settings.clustering = 0.4f;
         DetailGrassComponent::Layer flowers;
         flowers.settings.name = "Flowers";
         flowers.settings.enabled = false;
@@ -297,7 +301,18 @@ namespace
                     glm::length(b.settings.color - a.settings.color) < 1.0e-4f && !b.settings.wind.enabled &&
                     b.settings.shape.blades == 9 && std::abs(b.settings.lod2Distance - 25.0f) < 1.0e-4f,
                 "Layer settings round-trip");
+        Require(b.settings.minAltitude == 2.0f && b.settings.maxAltitude == 120.0f && b.settings.altitudeFade == 6.0f &&
+                    std::abs(b.settings.clustering - 0.4f) < 1.0e-4f,
+                "The height band and bare patches round-trip");
+        Require(loaded.GetLayers()[1].settings.minAltitude == -10000.0f && loaded.GetLayers()[1].settings.clustering == 0.0f,
+                "Layers without them grow at every height, without gaps");
         Require(!loaded.GetLayers()[1].settings.enabled, "Disabled layers stay disabled");
+        render::DetailGrassLayer inverted;
+        inverted.minAltitude = 50.0f;
+        inverted.maxAltitude = 10.0f;
+        inverted.clustering = 3.0f;
+        Require(inverted.Sanitized().maxAltitude >= inverted.Sanitized().minAltitude && inverted.Sanitized().clustering == 1.0f,
+                "Height bands stay ordered and clustering in range");
 
         // Out-of-range values are sanitized rather than trusted.
         loaded.Deserialize({{"Layer.0.Density", PropertyType::Float, "100000"}, {"Layer.0.Height", PropertyType::Vec2, "2,0.5"}});

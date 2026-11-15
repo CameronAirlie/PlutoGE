@@ -18,6 +18,7 @@ namespace PlutoGE::scene
     {
         float strength = 0.5f; // weight added at the brush centre by one dab, 0..1
         float hardness = 0.5f; // fraction of the radius at full strength before the falloff, 0..1
+        bool operator==(const TerrainLayerBrush &) const = default;
     };
 
     // A rectangle of weight-map texels, [x0, x1) x [y0, y1).

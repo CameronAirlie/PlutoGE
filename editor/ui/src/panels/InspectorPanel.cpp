@@ -746,27 +746,6 @@ namespace PlutoGE::ui
             return true;
         }
 
-        bool AssignMaterialAssetToTerrain(scene::TerrainComponent &terrainComponent,
-                                          const std::string &materialAssetReference,
-                                          core::Engine &engine)
-        {
-            if (assets::Project::GetAssetTypeForReference(ResolveAssetPickerReference(
-                    engine.GetAssetManager().GetAssetCatalog().get(), materialAssetReference)) != assets::ProjectAssetType::Material)
-            {
-                return false;
-            }
-
-            auto *materialAsset = engine.GetAssetManager().LoadMaterialAsset(materialAssetReference);
-            if (!materialAsset)
-            {
-                return false;
-            }
-
-            terrainComponent.SetMaterial(materialAsset);
-            terrainComponent.SetMaterialAssetReference(materialAssetReference);
-            return true;
-        }
-
         bool AssignMaterialAssetToSpline(scene::SplineComponent &splineComponent,
                                          const std::string &materialAssetReference,
                                          core::Engine &engine)
@@ -2938,32 +2917,6 @@ namespace PlutoGE::ui
                                 entity->AddPrefabOverride("Component:DecalComponent:MaterialAsset");
                                 editorShell.MarkSceneDirty();
                             }
-                        }
-                        else if (auto *terrainComponent = dynamic_cast<scene::TerrainComponent *>(componentPtr))
-                        {
-                            propertiesProvided = true;
-                            properties = {
-                                {"Static", scene::PropertyType::Bool, terrainComponent->IsStatic() ? "true" : "false"},
-                                {"CellSize", scene::PropertyType::Float, std::to_string(terrainComponent->GetCellSize())},
-                                {"HeightScale", scene::PropertyType::Float, std::to_string(terrainComponent->GetHeightScale())},
-                                {"SurfaceSmoothing", scene::PropertyType::Float, std::to_string(terrainComponent->GetSurfaceSmoothing())},
-                                {"ChunkSize", scene::PropertyType::Int, std::to_string(terrainComponent->GetChunkSize())},
-                                {"LodCount", scene::PropertyType::Int, std::to_string(terrainComponent->GetLodCount())},
-                                {"PaintEnabled", scene::PropertyType::Bool, terrainComponent->IsPaintEnabled() ? "true" : "false"},
-                            };
-
-                            RenderTerrainHeightInspector(editorShell, *entity, *terrainComponent);
-
-                            if (auto selection = terrainComponent->GetMaterialAssetReference();
-                                RenderProjectAssetPicker("Material Asset", editorShell.GetProject(), assets::ProjectAssetType::Material, selection,
-                                                         {.noneLabel = nullptr, .emptyPreview = "Default Shaded", .includeEngineAssets = true}) &&
-                                AssignMaterialAssetToTerrain(*terrainComponent, selection, core::Engine::GetInstance()))
-                            {
-                                entity->AddPrefabOverride("Component:TerrainComponent:MaterialAsset");
-                                editorShell.MarkSceneDirty();
-                            }
-
-                            RenderTerrainLayerInspector(editorShell, *entity, *terrainComponent);
                         }
                         else if (auto *sequencer = dynamic_cast<scene::SequencerComponent *>(componentPtr))
                         {

@@ -7,6 +7,7 @@
 #include "PlutoGE/ui/EntityLocks.h"
 #include "PlutoGE/ui/EntitySelection.h"
 #include "PlutoGE/ui/FoliageEditTool.h"
+#include "PlutoGE/ui/TerrainEditTool.h"
 #include "PlutoGE/ui/AuthoringRegistry.h"
 #include "PlutoGE/ui/ScriptSourceWatch.h"
 #include "PlutoGE/ui/AssetHotReload.h"
@@ -77,6 +78,7 @@ namespace PlutoGE::ui
     class InputMappingEditorPanel;
     class PostProcessEditorPanel;
     class FoliageEditorPanel;
+    class TerrainEditorPanel;
     struct UIThemeTarget;
     class ContentBrowserPanel;
     class SceneHierarchyPanel;
@@ -181,6 +183,10 @@ namespace PlutoGE::ui
         [[nodiscard]] glm::vec3 GetSpawnPointInView() const;
         [[nodiscard]] glm::vec3 GetEditorCameraForward() const;
         [[nodiscard]] FoliageEditTool &GetFoliageTool() { return m_foliageTool; }
+        // The terrain tool's session state: the active tool and brushes (docs/dev/TERRAIN_EDITOR_PLAN.md).
+        [[nodiscard]] TerrainEditTool &GetTerrainTool() { return m_terrainTool; }
+        // Shows the Terrain Editor panel (it follows the selection).
+        void OpenTerrainEditor();
         // Selects an asset in the Content Browser and shows its details. Returns false if there is no browser.
         bool RevealAsset(const std::string &reference);
         // The Content Browser's cached preview of an asset, or 0 while there is none. An ImTextureID, drawn with V flipped.
@@ -537,6 +543,7 @@ namespace PlutoGE::ui
 
         EntitySelection m_entitySelection;
         FoliageEditTool m_foliageTool;
+        TerrainEditTool m_terrainTool;
         EntityLocks m_entityLocks;
         scene::Entity *m_selectedEntity = nullptr;
         bool m_isEditorCameraSelected = false;
@@ -613,6 +620,7 @@ namespace PlutoGE::ui
         InputMappingEditorPanel *m_inputMappingEditor = nullptr;
         PostProcessEditorPanel *m_postProcessEditor = nullptr;
         FoliageEditorPanel *m_foliageEditor = nullptr;
+        TerrainEditorPanel *m_terrainEditor = nullptr;
         // Owns Ctrl+C/V/D and Delete for files while it has keyboard focus.
         ContentBrowserPanel *m_contentBrowser = nullptr;
         SceneHierarchyPanel *m_sceneHierarchyPanel = nullptr;

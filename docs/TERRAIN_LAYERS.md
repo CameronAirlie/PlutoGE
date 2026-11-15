@@ -21,7 +21,7 @@ with its material exactly as before.
    Strength**, **Roughness** (multiplies the map) and **Metallic** shade the layer. **Anti-Tiling** hides the maps'
    repeats (stochastic tiling: each map is sampled twice, from offsets chosen by a slow noise), which matters for small
    scans that would otherwise read as a grid from a distance.
-3. Press the round button beside a layer (or choose **Paint > Mode: Layer** in the viewport) and paint with the left
+3. Press the round button beside a layer (or choose the terrain tool's **Paint** brush and its layer) and paint with the left
    mouse button. **Radius** (world units), **Opacity** (how much one dab adds) and **Hardness** (how much of the
    radius paints at full opacity before the soft edge) shape the brush. Dabs are spaced along the stroke, so the
    result does not depend on frame rate or mouse speed.

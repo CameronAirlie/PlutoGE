@@ -12,15 +12,15 @@ struct DetailGrassGenerateParameters
     float4 planes[4];              // left, right, bottom, top (world)
     float4 cameraWorld;            // xyz camera, w wind reach per metre of clump height
     float4 cameraLocal;            // xyz camera in terrain space, w lattice spacing
-    float4 terrainGrid;            // x cell size, y sample columns, z sample rows
+    float4 terrainGrid;            // x cell size, y sample columns, z sample rows, w clustering (share of bare patches)
     float4 distances;              // x full-density distance, y density falloff, z draw distance, w max width compensation
     float4 sizes;                  // x min height, y max height (m), z min width, w max width scale
-    float4 placement;              // x weight threshold, y cos of the max slope, z cos 10 degrees shallower, w unused
+    float4 placement;              // x weight threshold, y cos of the max slope, z cos 10 degrees shallower, w altitude fade (m)
     float4 densityChannel;         // dotted with the density map texel; unused without a map
     float4 color;                  // healthy linear albedo, w dry share
     float4 dryColor;               // dry linear albedo, w colour jitter
     float4 surface;                // x 1 / patch size, y 1 with a ground albedo map, z clump radius (m), w 1 with a density map
-    float4 lods;                   // x LOD 1 distance, y LOD 2 distance
+    float4 lods;                   // x LOD 1 distance, y LOD 2 distance, z min altitude, w max altitude (world)
     uint4 lattice;                 // x rings, y top level, z seed, w first argument word of this field
     uint4 regions;                 // first instance of each LOD's region
     uint4 capacities;              // instances each LOD's region holds
@@ -157,6 +157,15 @@ void generateMain(uint3 id : SV_DispatchThreadID)
         mask = saturate((weight - grass.placement.x) / max(1.0 - grass.placement.x, 1.0e-4));
     }
     mask *= saturate((ground.normal.y - grass.placement.y) / max(grass.placement.z - grass.placement.y, 1.0e-4));
+    // The height band (world heights), thinning out over the fade distance outside it.
+    const float altitudeFade = max(grass.placement.w, 1.0e-3);
+    mask *= saturate((root.y - grass.lods.z) / altitudeFade + 1.0) * saturate((grass.lods.w - root.y) / altitudeFade + 1.0);
+    // Bare patches: low-frequency noise at the colour patches' scale, offset from them, cut at the clustering share.
+    if (grass.terrainGrid.w > 0.0)
+    {
+        const float patches = valueNoise(root.xz * grass.surface.x + float2(53.7, 19.3));
+        mask *= smoothstep(grass.terrainGrid.w - 0.08, grass.terrainGrid.w + 0.08, patches);
+    }
     const float share = keep * mask;
     const float rank = detailGrassRank(point, level);
     if (rank >= share) return;

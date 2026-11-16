@@ -39,6 +39,7 @@
 #include "OutlineRenderingChecks.h"
 #include "SceneOutlineRenderingChecks.h"
 #include "ParticlePointRenderingChecks.h"
+#include "ParticleScatteringRenderingChecks.h"
 #include "DecalRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
@@ -529,6 +530,13 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--particles-points-only")
         {
             CheckParticlePointRendering(renderer, [&](rhi::TextureHandle texture) {
+                return device.ReadTextureRgba8(texture);
+            });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--particle-scattering")
+        {
+            CheckParticleScattering(renderer, [&](rhi::TextureHandle texture) {
                 return device.ReadTextureRgba8(texture);
             });
             return 0;

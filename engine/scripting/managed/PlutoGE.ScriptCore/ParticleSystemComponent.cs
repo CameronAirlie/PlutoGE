@@ -7,6 +7,8 @@ public enum ParticleSimulationSpace
 {
     Local = 0,
     World = 1,
+    /// <summary>A field around every camera: particles wrap into a box centred on each view (dust motes, pollen).</summary>
+    CameraVolume = 2,
 }
 
 public enum ParticleShape

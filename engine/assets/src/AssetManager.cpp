@@ -534,7 +534,39 @@ namespace PlutoGE::assets
 
         const char *ToString(ParticleSimulationSpace simulationSpace)
         {
-            return simulationSpace == ParticleSimulationSpace::World ? "World" : "Local";
+            switch (simulationSpace)
+            {
+            case ParticleSimulationSpace::World:
+                return "World";
+            case ParticleSimulationSpace::CameraVolume:
+                return "CameraVolume";
+            case ParticleSimulationSpace::Local:
+            default:
+                return "Local";
+            }
+        }
+
+        const char *ToString(ParticleLighting lighting)
+        {
+            switch (lighting)
+            {
+            case ParticleLighting::Smoke:
+                return "Smoke";
+            case ParticleLighting::Scattering:
+                return "Scattering";
+            case ParticleLighting::Unlit:
+            default:
+                return "Unlit";
+            }
+        }
+
+        ParticleLighting ParseParticleLighting(const std::string &value)
+        {
+            if (value == "Smoke" || value == "1")
+                return ParticleLighting::Smoke;
+            if (value == "Scattering" || value == "2")
+                return ParticleLighting::Scattering;
+            return ParticleLighting::Unlit;
         }
 
         const char *ToString(ParticleShape shape)
@@ -579,7 +611,11 @@ namespace PlutoGE::assets
 
         ParticleSimulationSpace ParseParticleSimulationSpace(const std::string &value)
         {
-            return value == "World" || value == "1" ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local;
+            if (value == "World" || value == "1")
+                return ParticleSimulationSpace::World;
+            if (value == "CameraVolume" || value == "2")
+                return ParticleSimulationSpace::CameraVolume;
+            return ParticleSimulationSpace::Local;
         }
 
         ParticleShape ParseParticleShape(const std::string &value)
@@ -2701,6 +2737,7 @@ namespace PlutoGE::assets
 
         ParticleSystemAsset asset = CreateDefaultParticleSystemAsset();
         bool sawHeader = false;
+        bool sawLighting = false;
         std::string line;
         while (std::getline(input, line))
         {
@@ -2719,6 +2756,8 @@ namespace PlutoGE::assets
                 asset.playOnAwake = ParseBoolValue(value);
             else if (key == "Looping")
                 asset.looping = ParseBoolValue(value);
+            else if (key == "Prewarm")
+                asset.prewarm = ParseBoolValue(value);
             else if (key == "Duration")
                 asset.duration = std::max(ParseFloatValue(value, asset.duration), 0.0001f);
             else if (key == "MaxParticles")
@@ -2755,6 +2794,8 @@ namespace PlutoGE::assets
                 asset.windVelocity = ParseVec3Value(value, asset.windVelocity);
             else if (key == "SceneWindDrag")
                 asset.sceneWindDrag = std::max(ParseFloatValue(value, asset.sceneWindDrag), 0.0f);
+            else if (key == "SceneWindScale")
+                asset.sceneWindScale = SanitizedSceneWindScale(ParseFloatValue(value, asset.sceneWindScale));
             else if (key == "VelocityStretch")
                 asset.velocityStretch = std::max(ParseFloatValue(value, asset.velocityStretch), 0.0f);
             else if (key == "TurbulenceStrength")
@@ -2809,8 +2850,17 @@ namespace PlutoGE::assets
                 asset.softParticlesEnabled = ParseBoolValue(value);
             else if (key == "SoftParticleDistance")
                 asset.softParticleDistance = std::max(ParseFloatValue(value, asset.softParticleDistance), 0.0001f);
+            else if (key == "Lighting")
+            {
+                asset.lighting = ParseParticleLighting(value);
+                sawLighting = true;
+            }
             else if (key == "SmokeLightingEnabled")
-                asset.smokeLightingEnabled = ParseBoolValue(value);
+            {
+                // Written before Lighting replaced it; a Lighting line, wherever it stands, takes precedence.
+                if (ParseBoolValue(value) && !sawLighting)
+                    asset.lighting = ParticleLighting::Smoke;
+            }
             else if (key == "SmokeLightingStrength")
                 asset.smokeLightingStrength = std::clamp(ParseFloatValue(value, asset.smokeLightingStrength), 0.0f, 1.0f);
             else if (key == "SmokeAmbient")
@@ -2827,6 +2877,24 @@ namespace PlutoGE::assets
                 asset.volumeSelfShadow = std::clamp(ParseFloatValue(value, asset.volumeSelfShadow), 0.0f, 4.0f);
             else if (key == "VolumeConserveMass")
                 asset.volumeConserveMass = ParseBoolValue(value);
+            else if (key == "ScatteringAnisotropy")
+                asset.scattering.anisotropy = ParseFloatValue(value, asset.scattering.anisotropy);
+            else if (key == "ScatteringSunStrength")
+                asset.scattering.sunStrength = ParseFloatValue(value, asset.scattering.sunStrength);
+            else if (key == "ScatteringAmbientStrength")
+                asset.scattering.ambientStrength = ParseFloatValue(value, asset.scattering.ambientStrength);
+            else if (key == "ScatteringSunShadows")
+                asset.scattering.sunShadows = ParseBoolValue(value);
+            else if (key == "CameraVolumeSize")
+                asset.cameraVolume.size = ParseVec3Value(value, asset.cameraVolume.size);
+            else if (key == "CameraVolumeEdgeFade")
+                asset.cameraVolume.edgeFade = ParseFloatValue(value, asset.cameraVolume.edgeFade);
+            else if (key == "NearFadeDistance")
+                asset.viewFade.nearDistance = ParseFloatValue(value, asset.viewFade.nearDistance);
+            else if (key == "MinScreenSize")
+                asset.viewFade.minScreenSize = ParseFloatValue(value, asset.viewFade.minScreenSize);
+            else if (key == "WetWeatherFade")
+                asset.wetWeatherFade = SanitizedWetWeatherFade(ParseFloatValue(value, asset.wetWeatherFade));
             else if (key == "CollisionEnabled")
                 asset.collisionEnabled = ParseBoolValue(value);
             else if (key == "CollisionMode")
@@ -2865,6 +2933,9 @@ namespace PlutoGE::assets
         {
             return CreateDefaultParticleSystemAsset();
         }
+        asset.scattering = Sanitized(asset.scattering);
+        asset.cameraVolume = Sanitized(asset.cameraVolume);
+        asset.viewFade = Sanitized(asset.viewFade);
 
         m_particleSystemCache[assetReference] = asset;
         if (loaded)
@@ -2919,6 +2990,7 @@ namespace PlutoGE::assets
         output << "ParticleSystemVersion=2\n";
         output << "PlayOnAwake=" << (asset.playOnAwake ? "true" : "false") << "\n";
         output << "Looping=" << (asset.looping ? "true" : "false") << "\n";
+        output << "Prewarm=" << (asset.prewarm ? "true" : "false") << "\n";
         output << "Duration=" << asset.duration << "\n";
         output << "MaxParticles=" << asset.maxParticles << "\n";
         output << "StartLifetime=" << asset.startLifetime << "\n";
@@ -2937,6 +3009,7 @@ namespace PlutoGE::assets
         output << "Buoyancy=" << asset.buoyancy << "\n";
         output << "WindVelocity=" << asset.windVelocity.x << "," << asset.windVelocity.y << "," << asset.windVelocity.z << "\n";
         output << "SceneWindDrag=" << asset.sceneWindDrag << "\n";
+        output << "SceneWindScale=" << asset.sceneWindScale << "\n";
         output << "VelocityStretch=" << asset.velocityStretch << "\n";
         output << "TurbulenceStrength=" << asset.turbulenceStrength << "\n";
         output << "TurbulenceFrequency=" << asset.turbulenceFrequency << "\n";
@@ -2964,7 +3037,7 @@ namespace PlutoGE::assets
         output << "FlipbookRandomStart=" << (asset.flipbookRandomStart ? "true" : "false") << "\n";
         output << "SoftParticlesEnabled=" << (asset.softParticlesEnabled ? "true" : "false") << "\n";
         output << "SoftParticleDistance=" << asset.softParticleDistance << "\n";
-        output << "SmokeLightingEnabled=" << (asset.smokeLightingEnabled ? "true" : "false") << "\n";
+        output << "Lighting=" << ToString(asset.lighting) << "\n";
         output << "SmokeLightingStrength=" << asset.smokeLightingStrength << "\n";
         output << "SmokeAmbient=" << asset.smokeAmbient << "\n";
         output << "VolumeDensity=" << asset.volumeDensity << "\n";
@@ -2973,6 +3046,16 @@ namespace PlutoGE::assets
         output << "VolumeEdgeSoftness=" << asset.volumeEdgeSoftness << "\n";
         output << "VolumeSelfShadow=" << asset.volumeSelfShadow << "\n";
         output << "VolumeConserveMass=" << (asset.volumeConserveMass ? "true" : "false") << "\n";
+        output << "ScatteringAnisotropy=" << asset.scattering.anisotropy << "\n";
+        output << "ScatteringSunStrength=" << asset.scattering.sunStrength << "\n";
+        output << "ScatteringAmbientStrength=" << asset.scattering.ambientStrength << "\n";
+        output << "ScatteringSunShadows=" << (asset.scattering.sunShadows ? "true" : "false") << "\n";
+        output << "CameraVolumeSize=" << asset.cameraVolume.size.x << "," << asset.cameraVolume.size.y << ","
+               << asset.cameraVolume.size.z << "\n";
+        output << "CameraVolumeEdgeFade=" << asset.cameraVolume.edgeFade << "\n";
+        output << "NearFadeDistance=" << asset.viewFade.nearDistance << "\n";
+        output << "MinScreenSize=" << asset.viewFade.minScreenSize << "\n";
+        output << "WetWeatherFade=" << asset.wetWeatherFade << "\n";
         output << "CollisionEnabled=" << (asset.collisionEnabled ? "true" : "false") << "\n";
         output << "CollisionMode=" << ToString(asset.collisionMode) << "\n";
         output << "CollisionDampening=" << asset.collisionDampening << "\n";

@@ -15,6 +15,8 @@ namespace PlutoGE::scene
     {
         Local = 0,
         World = 1,
+        // A field around every camera (assets::ParticleSimulationSpace::CameraVolume, docs/AIRBORNE_PARTICLES.md).
+        CameraVolume = 2,
     };
 
     enum class ParticleShape
@@ -83,6 +85,8 @@ namespace PlutoGE::scene
         bool GetLooping() const { return m_looping; }
         void SetLooping(bool looping) { m_looping = looping; }
         bool GetPlayOnAwake() const { return m_playOnAwake; }
+        // Starting play fills the system as if it had run for one particle lifetime (assets::ParticleSystemAsset::prewarm).
+        bool GetPrewarm() const { return m_prewarm; }
         void SetPlayOnAwake(bool playOnAwake) { m_playOnAwake = playOnAwake; }
         float GetDuration() const { return m_duration; }
         void SetDuration(float duration);
@@ -108,6 +112,7 @@ namespace PlutoGE::scene
         float GetBuoyancy() const { return m_buoyancy; }
         const glm::vec3 &GetWindVelocity() const { return m_windVelocity; }
         float GetSceneWindDrag() const { return m_sceneWindDrag; }
+        float GetSceneWindScale() const { return m_sceneWindScale; }
         // Seconds of motion each particle is drawn stretched along (ParticleSystemAsset::velocityStretch); 0 billboards.
         float GetVelocityStretch() const { return m_velocityStretch; }
         float GetTurbulenceStrength() const { return m_turbulenceStrength; }
@@ -147,7 +152,7 @@ namespace PlutoGE::scene
         bool GetFlipbookRandomStart() const { return m_flipbookRandomStart; }
         bool GetSoftParticlesEnabled() const { return m_softParticlesEnabled; }
         float GetSoftParticleDistance() const { return m_softParticleDistance; }
-        bool GetSmokeLightingEnabled() const { return m_smokeLightingEnabled; }
+        assets::ParticleLighting GetLighting() const { return m_lighting; }
         float GetSmokeLightingStrength() const { return m_smokeLightingStrength; }
         float GetSmokeAmbient() const { return m_smokeAmbient; }
         float GetVolumeDensity() const { return m_volumeDensity; }
@@ -156,6 +161,11 @@ namespace PlutoGE::scene
         float GetVolumeEdgeSoftness() const { return m_volumeEdgeSoftness; }
         float GetVolumeSelfShadow() const { return m_volumeSelfShadow; }
         bool GetVolumeConserveMass() const { return m_volumeConserveMass; }
+        const assets::ParticleScatteringSettings &GetScattering() const { return m_scattering; }
+        // The box a CameraVolume system fills around each camera; unused in the other simulation spaces.
+        const assets::ParticleCameraVolumeSettings &GetCameraVolume() const { return m_cameraVolume; }
+        const assets::ParticleViewFadeSettings &GetViewFade() const { return m_viewFade; }
+        float GetWetWeatherFade() const { return m_wetWeatherFade; }
         bool UsesCpuSimulation() const;
         const std::vector<ParticleCpuData> &GetCpuParticles() const { return m_cpuParticles; }
         void BuildTrailRenderSegments(std::vector<ParticleTrailRenderSegment> &segments) const;
@@ -179,11 +189,14 @@ namespace PlutoGE::scene
         void SpawnCpuParticlesFromAsset(const assets::ParticleSystemAsset &asset, const glm::vec3 &worldPosition, int count);
         void SpawnSubEmitter(const std::string &assetReference, int count, const glm::vec3 &worldPosition);
         void ResizeCpuStorage();
+        void Prewarm();
 
         bool m_playing = false;
         bool m_paused = false;
         bool m_playOnAwake = true;
         bool m_looping = true;
+        bool m_prewarm = false;
+        bool m_prewarming = false;
         bool m_burstFiredThisCycle = false;
         float m_duration = 5.0f;
         float m_time = 0.0f;
@@ -213,6 +226,7 @@ namespace PlutoGE::scene
         float m_buoyancy = 0.0f;
         glm::vec3 m_windVelocity{0.0f};
         float m_sceneWindDrag = 0.0f;
+        float m_sceneWindScale = 1.0f;
         float m_velocityStretch = 0.0f;
         float m_turbulenceStrength = 0.0f;
         float m_turbulenceFrequency = 0.5f;
@@ -240,7 +254,7 @@ namespace PlutoGE::scene
         bool m_flipbookRandomStart = true;
         bool m_softParticlesEnabled = false;
         float m_softParticleDistance = 0.5f;
-        bool m_smokeLightingEnabled = false;
+        assets::ParticleLighting m_lighting = assets::ParticleLighting::Unlit;
         float m_smokeLightingStrength = 0.65f;
         float m_smokeAmbient = 0.35f;
         float m_volumeDensity = 2.0f;
@@ -249,6 +263,10 @@ namespace PlutoGE::scene
         float m_volumeEdgeSoftness = 1.5f;
         float m_volumeSelfShadow = 0.75f;
         bool m_volumeConserveMass = false;
+        assets::ParticleScatteringSettings m_scattering;
+        assets::ParticleCameraVolumeSettings m_cameraVolume;
+        assets::ParticleViewFadeSettings m_viewFade;
+        float m_wetWeatherFade = 0.0f;
         bool m_collisionEnabled = false;
         assets::ParticleCollisionMode m_collisionMode = assets::ParticleCollisionMode::Kill;
         float m_collisionDampening = 0.0f;

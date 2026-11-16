@@ -862,11 +862,13 @@ namespace PlutoGE::render
         glm::mat4 viewProjection{1};
         glm::mat4 inverseProjection{1};
         glm::mat4 view{1};
-        // Lanes: material 0-1, shape/depth 2, flipbook 3, smoke 4-6,
+        // Lanes: material 0-1, shape/depth 2, flipbook 3, lighting model (4.y) and smoke 4-6,
         // volume 7-8, local positions/ranges 9-12, colors/types 13-16,
         // local directions 17-20, trail 21, spot cone cosines 22, viewport / transparency clipping 23,
-        // volumetric fog 24-27 (the VolumetricFog effect's parameters[0-3], filled by BasicRenderer; zero disables).
-        std::array<glm::vec4, 28> values{};
+        // volumetric fog 24-27 (the VolumetricFog effect's parameters[0-3], filled by BasicRenderer; zero disables),
+        // scattering 28 (anisotropy, sun strength, ambient strength, sun shadows), terrain sun shadow grid 29 (world
+        // XZ origin, extent; filled by BasicRenderer, extent 0 disables).
+        std::array<glm::vec4, 30> values{};
     };
     // Matches the structured buffer in Particles.slang. One record per billboard.
     struct alignas(16) BasicParticleInstance
@@ -1465,6 +1467,11 @@ namespace PlutoGE::render
         std::span<const BasicDetailGrassField> m_detailGrassFields;
         // Creates the fog's terrain shadow texture when the shadow changed (Render, before any recording).
         void UploadFogTerrainShadow();
+        // Sunlight in the air, shared by volumetric fog, water and scattering particles (DirectionalVolumeShadow.slang):
+        // the frame lighting block (7), shadow cascades (8-11) and virtual shadow maps (12-14).
+        void BindSunShadowResources(rhi::ICommandContext &commands, const VirtualShadowReceivers &receivers);
+        // What dims the sun beyond the shadow maps: the cloud shadow map (16) and terrain sun occlusion (17).
+        void BindSunOcclusionMaps(rhi::ICommandContext &commands);
         std::shared_ptr<const FogTerrainShadow> m_fogTerrainShadow;
         rhi::Texture m_fogTerrainShadowTexture;
         const FogTerrainShadow *m_fogTerrainShadowUploaded = nullptr;

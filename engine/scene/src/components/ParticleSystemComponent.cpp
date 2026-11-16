@@ -52,7 +52,25 @@ namespace PlutoGE::scene
 
         ParticleSimulationSpace ToSceneSimulationSpace(assets::ParticleSimulationSpace simulationSpace)
         {
-            return simulationSpace == assets::ParticleSimulationSpace::World ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local;
+            switch (simulationSpace)
+            {
+            case assets::ParticleSimulationSpace::World:
+                return ParticleSimulationSpace::World;
+            case assets::ParticleSimulationSpace::CameraVolume:
+                return ParticleSimulationSpace::CameraVolume;
+            case assets::ParticleSimulationSpace::Local:
+            default:
+                return ParticleSimulationSpace::Local;
+            }
+        }
+
+        ParticleSimulationSpace ParseSimulationSpace(const std::string &value)
+        {
+            if (value == "World" || value == "1")
+                return ParticleSimulationSpace::World;
+            if (value == "CameraVolume" || value == "2")
+                return ParticleSimulationSpace::CameraVolume;
+            return ParticleSimulationSpace::Local;
         }
 
         ParticleShape ToSceneShape(assets::ParticleShape shape)
@@ -251,6 +269,8 @@ namespace PlutoGE::scene
 
     void ParticleSystemComponent::Play()
     {
+        // Resuming from a pause keeps the particles as they were; only a start from empty is prewarmed.
+        const bool startingEmpty = !m_paused && !m_playing && m_particleCountEstimate == 0;
         if (!m_paused && !m_playing && (m_time > 0.0f || m_burstFiredThisCycle))
         {
             ResetPlaybackState(false);
@@ -258,6 +278,25 @@ namespace PlutoGE::scene
 
         m_playing = true;
         m_paused = false;
+        if (startingEmpty)
+            Prewarm();
+    }
+
+    void ParticleSystemComponent::Prewarm()
+    {
+        // Only a looping CPU system has a steady state to start in; GPU particles simulate on the device.
+        if (!m_prewarm || !m_looping || m_prewarming || !GetOwner() || !UsesCpuSimulation())
+            return;
+        // One full lifetime brings the field to its steady state: every particle alive then was born within it.
+        // Coarse steps are enough for drifting particles and keep the one-off cost low.
+        const float span = m_startLifetime * (1.0f + m_lifetimeVariation);
+        constexpr float kStep = 0.2f;
+        const int steps = std::clamp(static_cast<int>(std::ceil(span / kStep)), 1, 240);
+        const float step = span / static_cast<float>(steps);
+        m_prewarming = true;
+        for (int index = 0; index < steps; ++index)
+            Update(step);
+        m_prewarming = false;
     }
 
     void ParticleSystemComponent::Pause()
@@ -501,6 +540,10 @@ namespace PlutoGE::scene
         SpawnCpuParticlesAt(origin, count);
         if (m_maxParticles <= 0)
             return;
+        // A camera volume is laid out in world axes around the emitter's position (SpawnCpuParticlesAt) and is
+        // never carried by it: the renderer wraps it around each camera.
+        if (m_simulationSpace == ParticleSimulationSpace::CameraVolume)
+            return;
         const auto transform = owner->GetWorldTransform();
         for (int emitted = 0; emitted < std::min(count, m_maxParticles); ++emitted)
         {
@@ -522,7 +565,8 @@ namespace PlutoGE::scene
 
         ResizeCpuStorage();
         auto *owner = GetOwner();
-        const glm::mat4 emitterTransform = owner ? owner->GetWorldTransform() : glm::mat4(1.0f);
+        const bool cameraVolume = m_simulationSpace == ParticleSimulationSpace::CameraVolume;
+        const glm::mat4 emitterTransform = owner && !cameraVolume ? owner->GetWorldTransform() : glm::mat4(1.0f);
         const glm::mat3 emitterBasis(emitterTransform);
 
         const int emitCount = std::min(count, m_maxParticles);
@@ -530,8 +574,12 @@ namespace PlutoGE::scene
         {
             const int particleIndex = m_nextCpuEmitIndex;
             const float seed = static_cast<float>(m_nextEmitSequence + emitIndex) * 17.0f + static_cast<float>(emitIndex) * 12.9898f;
-            const glm::vec3 localOffset = EmitOffset(m_shape, m_shapeSize, m_shapeRadius, seed);
-            const glm::vec3 localDirection = EmitDirection(m_shape, m_coneAngle, seed, localOffset);
+            // A camera volume spawns evenly through its whole box, moving in any direction, so the wrapped field
+            // is uniform around every camera.
+            const glm::vec3 localOffset = cameraVolume ? RandomBox(seed, m_cameraVolume.size)
+                                                       : EmitOffset(m_shape, m_shapeSize, m_shapeRadius, seed);
+            const glm::vec3 localDirection =
+                cameraVolume ? RandomDirection(seed) : EmitDirection(m_shape, m_coneAngle, seed, localOffset);
             const glm::vec3 spawnDirection = glm::normalize(emitterBasis * localDirection);
 
             auto &particle = m_cpuParticles[static_cast<std::size_t>(particleIndex)];
@@ -698,7 +746,8 @@ namespace PlutoGE::scene
             if (followSceneWind)
             {
                 // Relax the horizontal velocity toward the air's: wind carries particles, it does not lift them.
-                const glm::vec3 air = render::SceneWindVelocity(sceneWind, particle.position, sceneWindTime);
+                const glm::vec3 air =
+                    render::SceneWindVelocity(sceneWind, particle.position, sceneWindTime) * m_sceneWindScale;
                 particle.velocity.x += (air.x - particle.velocity.x) * sceneWindBlend;
                 particle.velocity.z += (air.z - particle.velocity.z) * sceneWindBlend;
             }
@@ -896,7 +945,7 @@ namespace PlutoGE::scene
             else if (property.name == "BurstCount")
                 SetBurstCount(std::stoi(property.value));
             else if (property.name == "SimulationSpace")
-                SetSimulationSpace(property.value == "World" || property.value == "1" ? ParticleSimulationSpace::World : ParticleSimulationSpace::Local);
+                SetSimulationSpace(ParseSimulationSpace(property.value));
             else if (property.name == "Shape")
             {
                 if (property.value == "Sphere" || property.value == "1")
@@ -950,6 +999,7 @@ namespace PlutoGE::scene
     {
         m_playOnAwake = asset.playOnAwake;
         m_looping = asset.looping;
+        m_prewarm = asset.prewarm;
         m_duration = std::max(asset.duration, 0.0001f);
         m_maxParticles = std::clamp(asset.maxParticles, 1, 200000);
         m_startLifetime = std::max(asset.startLifetime, 0.0001f);
@@ -968,6 +1018,7 @@ namespace PlutoGE::scene
         m_buoyancy = asset.buoyancy;
         m_windVelocity = asset.windVelocity;
         m_sceneWindDrag = std::max(asset.sceneWindDrag, 0.0f);
+        m_sceneWindScale = assets::SanitizedSceneWindScale(asset.sceneWindScale);
         m_velocityStretch = std::max(asset.velocityStretch, 0.0f);
         m_turbulenceStrength = std::max(asset.turbulenceStrength, 0.0f);
         m_turbulenceFrequency = std::max(asset.turbulenceFrequency, 0.0001f);
@@ -995,7 +1046,7 @@ namespace PlutoGE::scene
         m_flipbookRandomStart = asset.flipbookRandomStart;
         m_softParticlesEnabled = asset.softParticlesEnabled;
         m_softParticleDistance = std::max(asset.softParticleDistance, 0.0001f);
-        m_smokeLightingEnabled = asset.smokeLightingEnabled;
+        m_lighting = asset.lighting;
         m_smokeLightingStrength = std::clamp(asset.smokeLightingStrength, 0.0f, 1.0f);
         m_smokeAmbient = std::clamp(asset.smokeAmbient, 0.0f, 1.0f);
         m_volumeDensity = std::max(asset.volumeDensity, 0.0f);
@@ -1004,6 +1055,10 @@ namespace PlutoGE::scene
         m_volumeEdgeSoftness = std::max(asset.volumeEdgeSoftness, 0.01f);
         m_volumeSelfShadow = std::clamp(asset.volumeSelfShadow, 0.0f, 4.0f);
         m_volumeConserveMass = asset.volumeConserveMass;
+        m_scattering = assets::Sanitized(asset.scattering);
+        m_cameraVolume = assets::Sanitized(asset.cameraVolume);
+        m_viewFade = assets::Sanitized(asset.viewFade);
+        m_wetWeatherFade = assets::SanitizedWetWeatherFade(asset.wetWeatherFade);
         m_collisionEnabled = asset.collisionEnabled;
         m_collisionMode = asset.collisionMode;
         m_collisionDampening = std::clamp(asset.collisionDampening, 0.0f, 1.0f);
@@ -1023,5 +1078,8 @@ namespace PlutoGE::scene
         ResizeCpuStorage();
         m_particleCountEstimate = std::min(m_particleCountEstimate, m_maxParticles);
         Clear();
+        // An asset saved while the system plays (editor tuning) restarts it full rather than empty.
+        if (m_playing)
+            Prewarm();
     }
 }

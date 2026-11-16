@@ -2740,7 +2740,9 @@ namespace PlutoGE::scripting
         {
             if (auto *component = FindParticleSystem(entityId))
             {
-                component->SetSimulationSpace(value == 1 ? scene::ParticleSimulationSpace::World : scene::ParticleSimulationSpace::Local);
+                component->SetSimulationSpace(value == 1   ? scene::ParticleSimulationSpace::World
+                                              : value == 2 ? scene::ParticleSimulationSpace::CameraVolume
+                                                           : scene::ParticleSimulationSpace::Local);
             }
         }
         int32_t GetParticleSystemShape(uint32_t entityId)

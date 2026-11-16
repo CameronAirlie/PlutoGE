@@ -10,6 +10,9 @@ changes over time:
 | `WindComponent` | The wind field foliage bends in, and particles can drift in ([FOLIAGE_WIND.md](FOLIAGE_WIND.md)). |
 | `ParticleSystemComponent` | Rain or snow: a world-space emitter the script keeps above the camera. |
 
+Airborne dust and pollen thin out in wet weather by themselves: a particle asset's **Wet Weather Fade** reads
+`Wetness` and `Precipitation` ([AIRBORNE_PARTICLES.md](AIRBORNE_PARTICLES.md)).
+
 Each one follows the first enabled component on an active entity, so a scene has one weather.
 
 ## WeatherComponent

@@ -1,3 +1,8 @@
+// The sky lighting atlas: its cloud shadow map dims the sun on scattering particles under clouds
+// (CloudOcclusion.slang). Declared before any cloud lighting include.
+[[vk::binding(16, 0)]] Sampler2D cloudShadowAtlas : register(t16, space0);
+#define PLUTO_CLOUD_SHADOW_ATLAS cloudShadowAtlas
+
 struct VertexInput
 {
     float3 position : POSITION;
@@ -15,16 +20,22 @@ struct VertexOutput
     nointerpolation float3 centerView : TEXCOORD2;
     // Camera-to-particle fog: in-scattered radiance and transmittance.
     nointerpolation float4 fog : TEXCOORD3;
+    // Where this fragment of the billboard is, for the sun's shadows on scattering particles.
+    float3 worldPosition : TEXCOORD4;
 };
 [[vk::binding(0, 0)]] cbuffer ParticleParameters : register(b0, space0)
 {
     column_major float4x4 viewProjection;
     column_major float4x4 inverseProjection;
     column_major float4x4 view;
-    float4 values[28];
+    float4 values[30];
 };
 #include "FogLightingParameters.slang"
 #include "FogIntegration.slang"
+#include "VirtualShadowCommon.slang"
+#include "VirtualShadowSampling.slang"
+// Shadow cascades, virtual shadow maps and terrain sun occlusion (slots 8-14 and 17), shared with the fog.
+#include "DirectionalVolumeShadow.slang"
 static const float PI = 3.14159265359;
 #include "PhysicalSkyEnvironment.slang"
 #include "FogEnvironment.slang"
@@ -103,6 +114,7 @@ VertexOutput instancedVertexMain(uint vertexId : SV_VertexID, uint instanceId : 
     output.data = particle.data;
     output.centerView = mul(view, float4(particle.centerRotation.xyz, 1)).xyz;
     output.fog = particleFog(particle.centerRotation.xyz);
+    output.worldPosition = particle.centerRotation.xyz + offset;
     return output;
 }
 [shader("vertex")] VertexOutput vertexMain(VertexInput input) {
@@ -113,6 +125,7 @@ VertexOutput instancedVertexMain(uint vertexId : SV_VertexID, uint instanceId : 
     output.data = input.data;
     output.centerView = mul(view, float4(input.center, 1)).xyz;
     output.fog = particleFog(input.center);
+    output.worldPosition = input.position;
     return output;
 }
 #define uInverseProjection (inverseProjection)
@@ -128,7 +141,8 @@ VertexOutput instancedVertexMain(uint vertexId : SV_VertexID, uint instanceId : 
 #define uFlipbookFramesPerSecond (values[3].z)
 #define uFlipbookLooping (int(values[3].w))
 #define uFlipbookRandomStart (int(values[4].x))
-#define uSmokeLightingEnabled (int(values[4].y))
+// assets::ParticleLighting: 0 unlit, 1 smoke, 2 scattering.
+#define uLightingModel (int(values[4].y))
 #define uSmokeLightingStrength (values[4].z)
 #define uSmokeAmbient (values[4].w)
 #define uSmokeLightDirectionView (values[5].xyz)
@@ -151,6 +165,34 @@ float valueNoise(float2 p)
     f = f * f * (3.0 - 2.0 * f);
     return lerp(lerp(hash21(cell), hash21(cell + float2(1.0, 0.0)), f.x),
                 lerp(hash21(cell + float2(0.0, 1.0)), hash21(cell + float2(1.0)), f.x), f.y);
+}
+
+// Scattering (assets::ParticleLighting::Scattering): a speck in the air lit as the volumetric fog's medium is
+// (FogEnvironment.slang fogPointRadiance). The sun arrives through a Henyey-Greenstein phase scaled so even scattering
+// is 1, dimmed by the shadow maps, terrain and clouds at this point; the sky arrives under the cloud cover. Lane 28:
+// anisotropy, sun strength, ambient strength, sun shadows (0/1). Lane 29: terrain shadow grid origin XZ and extent.
+float3 scatteringLighting(float3 worldPosition)
+{
+    const float3 toParticle = worldPosition - fogCameraPositionAmbient.xyz;
+    const float3 viewDirection = toParticle / max(length(toParticle), 0.0001);
+    const CloudLighting cloud = evaluateCloudLighting(fogCloudOcclusion, worldPosition,
+        fogDirectionalDirectionIntensity.w > 0.0 ? normalize(-fogDirectionalDirectionIntensity.xyz) : float3(0, 1, 0));
+    const float3 sky = fogEnvironmentLighting(fogCameraPositionAmbient.w) * cloud.sky + cloud.overcast * (1.0 - cloud.sky);
+    float3 lighting = sky * max(values[28].z, 0.0);
+    if (fogDirectionalDirectionIntensity.w > 0.0 && values[28].y > 0.0)
+    {
+        const float3 sunDirection = normalize(-fogDirectionalDirectionIntensity.xyz);
+        const float g = clamp(values[28].x, -0.9, 0.9);
+        const float phase = (1.0 - g * g) /
+            pow(max(1.0 + g * g - 2.0 * g * dot(viewDirection, sunDirection), 0.0001), 1.5);
+        float visibility = 1.0;
+        if (values[28].w > 0.5)
+            visibility = directionalVisibility(worldPosition) *
+                         terrainSunVisibility(worldPosition, values[29].xy, values[29].z);
+        lighting += max(fogDirectionalColor.rgb, 0.0) * fogDirectionalDirectionIntensity.w * values[28].y * phase *
+                    visibility * cloud.sun;
+    }
+    return lighting;
 }
 
 float viewDepth(float2 uv, float depth)
@@ -243,7 +285,9 @@ float viewDepth(float2 uv, float depth)
         discard;
     }
 
-    if (uSmokeLightingEnabled != 0)
+    if (uLightingModel == 2)
+        color.rgb *= scatteringLighting(input.worldPosition);
+    else if (uLightingModel == 1)
     {
         float2 centered = input.uv * 2.0 - 1.0;
         float radial = dot(centered, centered);

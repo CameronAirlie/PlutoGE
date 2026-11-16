@@ -10,6 +10,7 @@
 #include "PlutoGE/render/VirtualShadowConfig.h"
 #include "ParticleDrawOrder.h"
 #include "ParticleStreak.h"
+#include "ParticleViewShaping.h"
 #include "ParticleVisibility.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -2210,6 +2211,29 @@ namespace PlutoGE::render
                     continue;
                 if (system->GetParticleCount() == 0 && !system->GetTrailsEnabled())
                     continue;
+                // How this view shapes the system's particles (ParticleViewShaping.h): a camera volume is wrapped
+                // around the camera and fades toward its faces; any system can fade near the camera, keep a minimum
+                // screen size and thin out in wet weather.
+                const bool cameraVolume = system->GetSimulationSpace() == scene::ParticleSimulationSpace::CameraVolume;
+                const auto &volume = system->GetCameraVolume();
+                const auto &viewFade = system->GetViewFade();
+                const float weatherVisibility =
+                    ParticleWeatherVisibility(effectiveLighting.weather, system->GetWetWeatherFade());
+                if (weatherVisibility <= 0.0f && !system->GetTrailsEnabled())
+                    continue;
+                const auto drawnPosition = [&](const scene::ParticleCpuData &particle)
+                {
+                    return cameraVolume ? WrapIntoCameraVolume(particle.position, effectiveLighting.cameraPosition, volume.size)
+                                        : particle.position;
+                };
+                const auto viewOpacity = [&](const glm::vec3 &position)
+                {
+                    const glm::vec3 offset = position - effectiveLighting.cameraPosition;
+                    float opacity = weatherVisibility * CameraNearFade(glm::length(offset), viewFade.nearDistance);
+                    if (cameraVolume)
+                        opacity *= CameraVolumeEdgeFade(offset, volume.size, volume.edgeFade);
+                    return opacity;
+                };
                 // Cull live billboards before sorting, material lookup, and light
                 // selection. Scratch capacity survives across emitters and frames.
                 auto &sorted = m_sortedParticles;
@@ -2218,11 +2242,17 @@ namespace PlutoGE::render
                 {
                     if (!particle.active || particle.age >= particle.lifetime)
                         continue;
-                    const float maximumSize = system->GetSizeOverLifetimeEnabled()
-                        ? std::max(std::abs(particle.size), std::abs(system->GetEndSize())) : std::abs(particle.size);
-                    if (visibility.IsVisible(particle.position, maximumSize * 0.707107f +
+                    const glm::vec3 position = drawnPosition(particle);
+                    if (viewOpacity(position) <= 0.0f)
+                        continue;
+                    // A minimum screen size can widen a particle by a few pixels; the cull keeps half a metre spare
+                    // for it rather than projecting every particle twice.
+                    const float maximumSize = std::max(system->GetSizeOverLifetimeEnabled()
+                        ? std::max(std::abs(particle.size), std::abs(system->GetEndSize())) : std::abs(particle.size),
+                        viewFade.minScreenSize > 0.0f ? 0.5f : 0.0f);
+                    if (visibility.IsVisible(position, maximumSize * 0.707107f +
                                                  ParticleStreakLength(particle.velocity, system->GetVelocityStretch())))
-                        sorted.emplace_back(&particle, glm::dot(particle.position - effectiveLighting.cameraPosition, forward));
+                        sorted.emplace_back(&particle, glm::dot(position - effectiveLighting.cameraPosition, forward));
                 }
                 if (sorted.empty() && !system->GetTrailsEnabled())
                     continue;
@@ -2252,15 +2282,20 @@ namespace PlutoGE::render
                         system->GetSoftParticlesEnabled() ? 1.0f : 0.0f, system->GetSoftParticleDistance()};
                 v[3] = {system->GetFlipbookColumns(), system->GetFlipbookRows(), system->GetFlipbookFramesPerSecond(),
                         system->GetFlipbookLooping() ? 1.0f : 0.0f};
-                v[4] = {system->GetFlipbookRandomStart() ? 1.0f : 0.0f, system->GetSmokeLightingEnabled() ? 1.0f : 0.0f,
+                // Lane 4.y selects the lighting model (assets::ParticleLighting): 0 unlit, 1 smoke, 2 scattering.
+                v[4] = {system->GetFlipbookRandomStart() ? 1.0f : 0.0f, static_cast<float>(system->GetLighting()),
                         system->GetSmokeLightingStrength(), system->GetSmokeAmbient()};
                 v[5] = {glm::mat3(cameraData.view) * -effectiveLighting.directionalDirection, 0};
                 v[6] = {effectiveLighting.directionalColor * effectiveLighting.directionalIntensity, 0};
                 v[7] = {system->GetVolumeDensity(), system->GetVolumeNoiseStrength(), system->GetVolumeNoiseFrequency(),
                         system->GetVolumeEdgeSoftness()};
                 v[8].x = system->GetVolumeSelfShadow();
+                // Scattering (Particles.slang scatteringLighting); BasicRenderer adds the terrain shadow grid in lane 29.
+                const auto &scattering = system->GetScattering();
+                v[28] = {scattering.anisotropy, scattering.sunStrength, scattering.ambientStrength,
+                         scattering.sunShadows ? 1.0f : 0.0f};
                 std::vector<const scene::Light *> smokeLights;
-                if (system->GetSmokeLightingEnabled())
+                if (system->GetLighting() == assets::ParticleLighting::Smoke)
                     for (const auto *light : sceneLights)
                         if (light && light->type != scene::LightType::Directional && light->GetRange() > 0 && light->intensity > 0)
                             smokeLights.push_back(light);
@@ -2292,13 +2327,20 @@ namespace PlutoGE::render
                     draw.vertices.reserve(sorted.size() * 6);
                 else
                     draw.instances.reserve(sorted.size());
+                const float viewportHeight = static_cast<float>(renderSize.height);
                 for (const auto &entry : sorted)
                 {
                     const auto *particle = entry.first;
+                    const glm::vec3 position = drawnPosition(*particle);
                     const float age = glm::clamp(particle->age / std::max(particle->lifetime, 0.0001f), 0.0f, 1.0f);
-                    const float size = system->GetSizeOverLifetimeEnabled()
-                                           ? glm::mix(particle->size, system->GetEndSize(), age)
-                                           : particle->size;
+                    const float simulatedSize = system->GetSizeOverLifetimeEnabled()
+                                                    ? glm::mix(particle->size, system->GetEndSize(), age)
+                                                    : particle->size;
+                    // entry.second is the particle's depth along the view.
+                    const auto fit = FitParticleToScreen(
+                        simulatedSize, ParticlePixelsPerMetre(cameraData.projection, viewportHeight, entry.second),
+                        viewFade.minScreenSize);
+                    const float size = fit.size;
                     glm::vec4 color = particle->color;
                     if (system->GetColorOverLifetimeEnabled())
                         color = glm::mix(color, system->GetEndColor(), age);
@@ -2308,6 +2350,7 @@ namespace PlutoGE::render
                         color.a *= glm::smoothstep(0.0f, system->GetFadeInFraction(), age);
                     if (system->GetFadeOutFraction() > 0)
                         color.a *= 1.0f - glm::smoothstep(1.0f - system->GetFadeOutFraction(), 1.0f, age);
+                    color.a *= fit.opacity * viewOpacity(position);
                     const float angle =
                         glm::radians(system->GetStartRotation() +
                                      (hash(particle->seed + 23) * 2 - 1) * system->GetStartRotationVariation()) +
@@ -2316,18 +2359,18 @@ namespace PlutoGE::render
                             particle->age;
                     // Mass-conserving volumes thin with the cube of their growth;
                     // optical depth through the centre then falls with its square.
-                    const float growth = particle->size > 0.0f ? size / particle->size : 1.0f;
+                    const float growth = particle->size > 0.0f ? simulatedSize / particle->size : 1.0f;
                     const float densityScale = system->GetVolumeConserveMass() && growth > 0.0f
                         ? 1.0f / (growth * growth * growth) : 1.0f;
                     if (stretch > 0.0f)
                     {
-                        AppendParticleStreak(draw.vertices, particle->position, particle->velocity, stretch, size,
+                        AppendParticleStreak(draw.vertices, position, particle->velocity, stretch, size,
                                              effectiveLighting.cameraPosition, right, up, color,
                                              {particle->age, densityScale, hash(particle->seed), size});
                         continue;
                     }
                     m_particleInstanceKeys.push_back({entry.second, drawIndex, static_cast<std::uint32_t>(draw.instances.size())});
-                    draw.instances.push_back({glm::vec4(particle->position, angle), color,
+                    draw.instances.push_back({glm::vec4(position, angle), color,
                         {particle->age, densityScale, hash(particle->seed), size}});
                 }
                 if (system->GetTrailsEnabled())

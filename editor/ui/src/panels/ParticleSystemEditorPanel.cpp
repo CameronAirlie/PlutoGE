@@ -113,6 +113,11 @@ namespace PlutoGE::ui
         m_asset.shapeSize = glm::max(m_asset.shapeSize, glm::vec3(0.0f));
         m_asset.shapeRadius = std::max(m_asset.shapeRadius, 0.0f);
         m_asset.coneAngle = std::clamp(m_asset.coneAngle, 0.0f, 89.0f);
+        m_asset.sceneWindScale = assets::SanitizedSceneWindScale(m_asset.sceneWindScale);
+        m_asset.scattering = assets::Sanitized(m_asset.scattering);
+        m_asset.cameraVolume = assets::Sanitized(m_asset.cameraVolume);
+        m_asset.viewFade = assets::Sanitized(m_asset.viewFade);
+        m_asset.wetWeatherFade = assets::SanitizedWetWeatherFade(m_asset.wetWeatherFade);
         m_asset.collisionDampening = std::clamp(m_asset.collisionDampening, 0.0f, 1.0f);
         m_asset.collisionBounce = std::max(m_asset.collisionBounce, 0.0f);
         m_asset.collisionLifetimeLoss = std::clamp(m_asset.collisionLifetimeLoss, 0.0f, 1.0f);
@@ -164,6 +169,12 @@ namespace PlutoGE::ui
 
         if (ImGui::Checkbox("Play On Awake", &m_asset.playOnAwake)) m_dirty = true;
         if (ImGui::Checkbox("Looping", &m_asset.looping)) m_dirty = true;
+        ImGui::BeginDisabled(!m_asset.looping);
+        if (ImGui::Checkbox("Prewarm", &m_asset.prewarm)) m_dirty = true;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Start as if already playing for one particle lifetime, so an ambient field is full on "
+                              "its first frame. Looping systems only.");
+        ImGui::EndDisabled();
         if (ImGui::DragFloat("Duration", &m_asset.duration, 0.05f, 0.0001f, 100000.0f, "%.3f")) m_dirty = true;
         if (ImGui::DragInt("Max Particles", &m_asset.maxParticles, 1.0f, 1, 200000)) m_dirty = true;
 
@@ -202,6 +213,12 @@ namespace PlutoGE::ui
         if (ImGui::DragFloat("Scene Wind Drag", &m_asset.sceneWindDrag, 0.01f, 0.0f, 20.0f, "%.2f")) m_dirty = true;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("How fast particles take up the scene's Wind component, per second. 0 ignores it.");
+        ImGui::BeginDisabled(m_asset.sceneWindDrag <= 0.0f);
+        if (ImGui::SliderFloat("Scene Wind Scale", &m_asset.sceneWindScale, 0.0f, 2.0f, "%.2f")) m_dirty = true;
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("The share of the wind's speed particles take up, gusts included. Below 1 drifts with "
+                              "the wind's direction and gusts but slower (motes in sheltered air).");
+        ImGui::EndDisabled();
         if (ImGui::DragFloat("Velocity Stretch", &m_asset.velocityStretch, 0.001f, 0.0f, 1.0f, "%.3f s")) m_dirty = true;
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Draws each particle as a streak along its motion over this many seconds (rain about "
@@ -220,12 +237,26 @@ namespace PlutoGE::ui
 
         ImGui::SeparatorText("Shape");
         int simulationSpace = static_cast<int>(m_asset.simulationSpace);
-        const char *simulationItems[] = {"Local", "World"};
+        const char *simulationItems[] = {"Local", "World", "Camera Volume"};
         if (ImGui::Combo("Simulation Space", &simulationSpace, simulationItems, IM_ARRAYSIZE(simulationItems)))
         {
-            m_asset.simulationSpace = simulationSpace == 1 ? assets::ParticleSimulationSpace::World : assets::ParticleSimulationSpace::Local;
+            m_asset.simulationSpace = static_cast<assets::ParticleSimulationSpace>(std::clamp(simulationSpace, 0, 2));
             m_dirty = true;
         }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Camera Volume fills a box that every camera carries with it (dust, pollen, snow): "
+                              "particles drift in world space and wrap to the far side as the camera moves.");
+        const bool cameraVolume = m_asset.simulationSpace == assets::ParticleSimulationSpace::CameraVolume;
+        if (cameraVolume)
+        {
+            if (ImGui::DragFloat3("Volume Size", &m_asset.cameraVolume.size.x, 0.1f, 0.1f, 10000.0f, "%.1f m")) m_dirty = true;
+            if (ImGui::SliderFloat("Volume Edge Fade", &m_asset.cameraVolume.edgeFade, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Share of the half-size over which particles fade toward the box's faces, so they "
+                                  "never visibly wrap.");
+            ImGui::TextDisabled("Particles spawn through the whole volume; the shape below is not used.");
+        }
+        ImGui::BeginDisabled(cameraVolume);
 
         int shape = static_cast<int>(m_asset.shape);
         const char *shapeItems[] = {"Point", "Sphere", "Box", "Cone"};
@@ -247,6 +278,7 @@ namespace PlutoGE::ui
         {
             if (ImGui::SliderFloat("Cone Angle", &m_asset.coneAngle, 0.0f, 89.0f, "%.1f")) m_dirty = true;
         }
+        ImGui::EndDisabled();
 
         ImGui::SeparatorText("Rendering");
         if (ImGui::SliderFloat("Fade In Fraction", &m_asset.fadeInFraction, 0.0f, 1.0f, "%.2f")) m_dirty = true;
@@ -265,6 +297,18 @@ namespace PlutoGE::ui
             m_asset.renderShape = renderShape == 1 ? assets::ParticleRenderShape::Quad : assets::ParticleRenderShape::Circle;
             m_dirty = true;
         }
+        if (ImGui::DragFloat("Near Fade Distance", &m_asset.viewFade.nearDistance, 0.01f, 0.0f, 1000.0f, "%.2f m"))
+            m_dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Particles nearer the camera than this fade out, gone at half of it. 0 off.");
+        if (ImGui::SliderFloat("Min Screen Size", &m_asset.viewFade.minScreenSize, 0.0f, 16.0f, "%.1f px")) m_dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Particles smaller on screen are drawn this wide, fainter by the area they gained, so "
+                              "tiny specks stay steady instead of flickering. 0 off.");
+        if (ImGui::SliderFloat("Wet Weather Fade", &m_asset.wetWeatherFade, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("How much rain or wet ground (the scene's Weather component) thins these particles. "
+                              "1 removes them in a downpour; 0 ignores the weather.");
 
         ImGui::SeparatorText("Texture Animation");
         if (ImGui::DragInt("Flipbook Columns", &m_asset.flipbookColumns, 1.0f, 1, 64)) m_dirty = true;
@@ -293,11 +337,36 @@ namespace PlutoGE::ui
         ImGui::BeginDisabled(!m_asset.softParticlesEnabled);
         if (ImGui::DragFloat("Soft Intersection Distance", &m_asset.softParticleDistance, 0.01f, 0.0001f, 100.0f, "%.3f")) m_dirty = true;
         ImGui::EndDisabled();
-        if (ImGui::Checkbox("Smoke Lighting", &m_asset.smokeLightingEnabled)) m_dirty = true;
-        ImGui::BeginDisabled(!m_asset.smokeLightingEnabled);
-        if (ImGui::SliderFloat("Lighting Strength", &m_asset.smokeLightingStrength, 0.0f, 1.0f, "%.2f")) m_dirty = true;
-        if (ImGui::SliderFloat("Ambient Light", &m_asset.smokeAmbient, 0.0f, 1.0f, "%.2f")) m_dirty = true;
-        ImGui::EndDisabled();
+
+        ImGui::SeparatorText("Lighting");
+        int lighting = static_cast<int>(m_asset.lighting);
+        const char *lightingItems[] = {"Unlit", "Smoke", "Scattering"};
+        if (ImGui::Combo("Lighting", &lighting, lightingItems, IM_ARRAYSIZE(lightingItems)))
+        {
+            m_asset.lighting = static_cast<assets::ParticleLighting>(std::clamp(lighting, 0, 2));
+            m_dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Smoke: lit puffs (sun and local lights). Scattering: specks in the air (dust, pollen) lit "
+                              "like the volumetric fog, glowing in sunbeams and fading in shade.");
+        if (m_asset.lighting == assets::ParticleLighting::Smoke)
+        {
+            if (ImGui::SliderFloat("Lighting Strength", &m_asset.smokeLightingStrength, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+            if (ImGui::SliderFloat("Ambient Light", &m_asset.smokeAmbient, 0.0f, 1.0f, "%.2f")) m_dirty = true;
+        }
+        else if (m_asset.lighting == assets::ParticleLighting::Scattering)
+        {
+            auto &scattering = m_asset.scattering;
+            if (ImGui::SliderFloat("Anisotropy", &scattering.anisotropy, -0.9f, 0.9f, "%.2f")) m_dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Above 0 scatters forward: specks shine brightest looking toward the sun (dust about "
+                                  "0.6). 0 scatters evenly.");
+            if (ImGui::DragFloat("Sun Strength", &scattering.sunStrength, 0.01f, 0.0f, 100.0f, "%.2f")) m_dirty = true;
+            if (ImGui::DragFloat("Sky Strength", &scattering.ambientStrength, 0.01f, 0.0f, 100.0f, "%.2f")) m_dirty = true;
+            if (ImGui::Checkbox("Sun Shadows", &scattering.sunShadows)) m_dirty = true;
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Darken specks the sun cannot reach: shadow maps, clouds and distant terrain.");
+        }
 
         auto *project = editorShell.GetProject();
         const ProjectAssetPickerOptions materialPicker{.noneLabel = "Default", .includeEngineAssets = true};

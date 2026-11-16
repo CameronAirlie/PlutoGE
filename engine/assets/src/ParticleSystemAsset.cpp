@@ -1,10 +1,57 @@
 #include "PlutoGE/assets/ParticleSystemAsset.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace PlutoGE::assets
 {
+    namespace
+    {
+        float Clamped(float value, float low, float high, float fallback)
+        {
+            return std::isfinite(value) ? std::clamp(value, low, high) : fallback;
+        }
+    }
+
     ParticleSystemAsset CreateDefaultParticleSystemAsset()
     {
         return {};
+    }
+
+    ParticleScatteringSettings Sanitized(ParticleScatteringSettings settings)
+    {
+        const ParticleScatteringSettings defaults;
+        settings.anisotropy = Clamped(settings.anisotropy, -0.9f, 0.9f, defaults.anisotropy);
+        settings.sunStrength = Clamped(settings.sunStrength, 0.0f, 100.0f, defaults.sunStrength);
+        settings.ambientStrength = Clamped(settings.ambientStrength, 0.0f, 100.0f, defaults.ambientStrength);
+        return settings;
+    }
+
+    ParticleCameraVolumeSettings Sanitized(ParticleCameraVolumeSettings settings)
+    {
+        const ParticleCameraVolumeSettings defaults;
+        // A box thinner than 10 cm would wrap particles every frame.
+        for (int axis = 0; axis < 3; ++axis)
+            settings.size[axis] = Clamped(settings.size[axis], 0.1f, 10000.0f, defaults.size[axis]);
+        settings.edgeFade = Clamped(settings.edgeFade, 0.0f, 1.0f, defaults.edgeFade);
+        return settings;
+    }
+
+    ParticleViewFadeSettings Sanitized(ParticleViewFadeSettings settings)
+    {
+        settings.nearDistance = Clamped(settings.nearDistance, 0.0f, 1000.0f, 0.0f);
+        settings.minScreenSize = Clamped(settings.minScreenSize, 0.0f, 16.0f, 0.0f);
+        return settings;
+    }
+
+    float SanitizedSceneWindScale(float scale)
+    {
+        return Clamped(scale, 0.0f, 4.0f, 1.0f);
+    }
+
+    float SanitizedWetWeatherFade(float fade)
+    {
+        return Clamped(fade, 0.0f, 1.0f, 0.0f);
     }
 
     ParticleSystemAsset CreateWaterSplashParticleSystemAsset()

@@ -704,6 +704,8 @@ endif()
 
 add_test(NAME PlutoGEVulkanParticlePointTests COMMAND PlutoGEVulkanRhiTests --particles-points-only)
 add_test(NAME PlutoGEOpenGLParticlePointTests COMMAND PlutoGEOpenGLRhiTests --particles-points-only)
+add_test(NAME PlutoGEVulkanParticleScatteringTests COMMAND PlutoGEVulkanRhiTests --particle-scattering)
+add_test(NAME PlutoGEOpenGLParticleScatteringTests COMMAND PlutoGEOpenGLRhiTests --particle-scattering)
 add_test(NAME PlutoGEVulkanDecalTests COMMAND PlutoGEVulkanRhiTests --decals-only)
 add_test(NAME PlutoGEOpenGLDecalTests COMMAND PlutoGEOpenGLRhiTests --decals-only)
 
@@ -898,6 +900,11 @@ add_executable(PlutoGEParticleStreakTests ParticleStreakTests.cpp)
 target_link_libraries(PlutoGEParticleStreakTests PRIVATE PlutoGE::Scene)
 target_include_directories(PlutoGEParticleStreakTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 add_test(NAME PlutoGEParticleStreakTests COMMAND PlutoGEParticleStreakTests)
+
+add_executable(PlutoGEAirborneParticleTests AirborneParticleTests.cpp)
+pluto_link_engine(PlutoGEAirborneParticleTests)
+target_include_directories(PlutoGEAirborneParticleTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+add_test(NAME PlutoGEAirborneParticleTests COMMAND PlutoGEAirborneParticleTests)
 
 add_executable(PlutoGESnapshotDamageTests SnapshotDamageTests.cpp)
 target_include_directories(PlutoGESnapshotDamageTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include ${CMAKE_SOURCE_DIR}/engine/render/src)

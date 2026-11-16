@@ -1057,8 +1057,21 @@ namespace PlutoGE::render
                     {2, 0, 2, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {4, 0, 4, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                     {5, 0, 5, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                    // Frame lighting prefix for per-particle fog (see Particles.slang).
-                    {7, 0, 7, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Vertex}};
+                    // Frame lighting prefix: per-particle fog in the vertex stage, the sun of scattering particles in
+                    // the fragment stage (see Particles.slang).
+                    {7, 0, 7, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::AllGraphics},
+                    // The sun's visibility for scattering particles (DirectionalVolumeShadow.slang): cascades,
+                    // virtual shadow maps, the cloud shadow map and terrain sun occlusion.
+                    {12, 0, 12, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
+                    {13, 0, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {14, 0, 14, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                    {CloudShadowAtlasSlot, 0, CloudShadowAtlasSlot, rhi::ResourceBindingType::SampledTexture,
+                     rhi::ShaderStageMask::Fragment},
+                    {FogTerrainShadowSlot, 0, FogTerrainShadowSlot, rhi::ResourceBindingType::SampledTexture,
+                     rhi::ShaderStageMask::Fragment}};
+                for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+                    particle.resourceBindings.push_back({8 + cascade, 0, 8 + cascade, rhi::ResourceBindingType::SampledTexture,
+                                                         rhi::ShaderStageMask::Fragment});
                 particle.vertexLayout = {
                     sizeof(BasicParticleVertex),
                     {{0, rhi::Format::R32G32B32Float, offsetof(BasicParticleVertex, position)},
@@ -2248,6 +2261,29 @@ namespace PlutoGE::render
         m_staticShadowCachingEnabled = enabled;
         m_shadowCacheValid.fill(false);
         if (m_shadowLayers) m_shadowLayers->Invalidate();
+    }
+
+    void BasicRenderer::BindSunShadowResources(rhi::ICommandContext &commands, const VirtualShadowReceivers &receivers)
+    {
+        commands.BindUniformBuffer(12, receivers ? receivers.parameters : m_emptyVirtualShadowTable.Get());
+        commands.BindTexture(13, receivers ? receivers.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
+        commands.BindTexture(14, receivers ? receivers.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
+        commands.BindUniformBuffer(7, m_cameraBuffer.Get());
+        const auto fallbackShadow = m_fallbackDataTexture.Get();
+        for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
+            commands.BindTexture(8 + cascade,
+                                 m_shadowDepthTargets[cascade] ? m_shadowDepthTargets[cascade].Get() : fallbackShadow,
+                                 m_shadowSampler.Get());
+    }
+
+    void BasicRenderer::BindSunOcclusionMaps(rhi::ICommandContext &commands)
+    {
+        commands.BindTexture(CloudShadowAtlasSlot,
+                             m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(),
+                             m_screenSampler.Get());
+        commands.BindTexture(FogTerrainShadowSlot,
+                             m_fogTerrainShadowTexture ? m_fogTerrainShadowTexture.Get() : m_fallbackDataTexture.Get(),
+                             m_shadowSampler.Get());
     }
 
     void BasicRenderer::UploadFogTerrainShadow()
@@ -4779,6 +4815,11 @@ namespace PlutoGE::render
                     // Particles composite after the fog pass, so each applies
                     // the camera-to-particle fog that the background already has.
                     std::copy(glassFog.begin(), glassFog.end(), parameters.values.begin() + 24);
+                    // Terrain sun occlusion beyond the shadow maps for scattering particles, as fog reads it.
+                    const auto *terrainShadow = m_fogTerrainShadowTexture ? m_fogTerrainShadowUploaded : nullptr;
+                    parameters.values[29] = terrainShadow
+                        ? glm::vec4(terrainShadow->origin.x, terrainShadow->origin.y, terrainShadow->extent, 0.0f)
+                        : glm::vec4(0.0f);
                     m_device->UpdateBuffer(m_particleParameters[index].Get(), 0, Bytes(parameters));
                 }
             }
@@ -4798,7 +4839,8 @@ namespace PlutoGE::render
                 const auto &buffer = instanced ? m_particleInstances[index] : m_particleVertices[index];
                 commands.BindPipeline(instanced ? m_particleInstancedPipeline.Get() : m_particlePipeline.Get());
                 commands.BindUniformBuffer(0, m_particleParameters[index].Get());
-                commands.BindUniformBuffer(7, m_cameraBuffer.Get());
+                BindSunShadowResources(commands, receiverShadows);
+                BindSunOcclusionMaps(commands);
                 commands.BindTexture(1, draw.texture ? draw.texture : m_fallbackTexture.Get(), m_fallbackSampler.Get());
                 commands.BindTexture(2, m_particleDepthCopy.Get(), m_shadowSampler.Get());
                 commands.BindTexture(4, particleLowerDepth ? particleLowerDepth : m_fallbackTexture.Get(), m_shadowSampler.Get());
@@ -5360,32 +5402,15 @@ namespace PlutoGE::render
             // accumulating the nearest surface across all enabled oceans.
             const bool writeOceanDepth = effect.type == BasicPostProcessEffectType::Ocean && needsOceanVolumeDepth;
             // The frame's directional light and shadows, which fog and water read as opaque lighting does.
-            const auto bindSceneLighting = [&]
-            {
-                commands.BindUniformBuffer(12, receiverShadows ? receiverShadows.parameters : m_emptyVirtualShadowTable.Get());
-                commands.BindTexture(13, receiverShadows ? receiverShadows.atlas : m_fallbackDataTexture.Get(), m_shadowSampler.Get());
-                commands.BindTexture(14, receiverShadows ? receiverShadows.pageTable : m_emptyVirtualShadowPageTable.Get(), m_shadowSampler.Get());
-                commands.BindUniformBuffer(7, m_cameraBuffer.Get());
-                const auto fallbackShadow = m_fallbackDataTexture.Get();
-                for (std::uint32_t cascade = 0; cascade < 4; ++cascade)
-                    commands.BindTexture(8 + cascade,
-                                         m_shadowDepthTargets[cascade]
-                                             ? m_shadowDepthTargets[cascade].Get()
-                                             : fallbackShadow,
-                                         m_shadowSampler.Get());
-            };
-            // Fog adds the cloud shadow map (sky lighting atlas) and the noise lattice of its density variation.
+            const auto bindSceneLighting = [&] { BindSunShadowResources(commands, receiverShadows); };
+            // Fog adds the cloud shadow map (sky lighting atlas), terrain sun occlusion, the ambient volumes' sky
+            // visibility and the noise lattice of its density variation.
             const auto bindFogLighting = [&]
             {
-                commands.BindTexture(CloudShadowAtlasSlot,
-                                     m_skyQuadratureTexture ? m_skyQuadratureTexture.Get() : m_fallbackDataTexture.Get(),
-                                     m_screenSampler.Get());
+                BindSunOcclusionMaps(commands);
                 commands.BindTexture(15, m_cloudNoise->Texture(), m_cloudNoise->Sampler());
                 commands.BindTexture(31, m_frameDiffuseProbeAtlas ? m_frameDiffuseProbeAtlas : m_fallbackTexture.Get(),
                                      m_vctVolumeSampler.Get());
-                commands.BindTexture(FogTerrainShadowSlot,
-                                     m_fogTerrainShadowTexture ? m_fogTerrainShadowTexture.Get() : m_fallbackDataTexture.Get(),
-                                     m_shadowSampler.Get());
                 bindSceneLighting();
             };
             if (fogFroxels)

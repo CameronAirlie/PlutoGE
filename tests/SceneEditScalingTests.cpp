@@ -210,7 +210,7 @@ namespace
         // to spare for timer noise on these small numbers.
         const auto &small = results.front();
         const auto &large = results.back();
-        constexpr double kNoiseFloorMs = 0.25;
+        static constexpr double kNoiseFloorMs = 0.25;
         const auto ratio = [](double to, double from) { return (std::max)(to, kNoiseFloorMs) / (std::max)(from, kNoiseFloorMs); };
         Require(ratio(large.saveMs, small.saveMs) > 5.0, "Saves should grow with the scene, or the test is not measuring it");
         Require(ratio(large.scopedEditMs, small.scopedEditMs) < 5.0, "A scoped edit's cost grew with the scene");

@@ -85,7 +85,11 @@ scenes, prefabs and `.plutofoliage` files (`WATER_HABITAT` record; older readers
 **Water Depth rule input.** Procedural rule stacks (biome weight, layers, scatter density) can read *Water Depth*:
 metres of still water above the ground, negative above the water's level, and -1,000,000 where no water covers the
 point. Its default Band (0.25 m .. 1000 m, 0.25 m falloff) means "under water". Invert it for land, or band it
-(say -0.5 .. 0.3 m) to paint a shoreline or grow reeds along it. Generation copies the water bodies on the main
+(say -0.5 .. 0.3 m) to paint a shoreline or grow reeds along it. A Water Depth rule *keeps* what its band covers: the
+default keeps water, so to keep trees out of the water tick **Invert** (the inspector says what the rule keeps), or
+leave the rule out and give the type a *Dry Land Only* habitat. When a scatter rule places nothing, generation warns
+which test rejected its candidates. An ocean with no areas is water everywhere, with or without *Invert Area Mask*,
+exactly as it is drawn. Generation copies the water bodies on the main
 thread (`WaterSurfaceSnapshot`) only when a rule or habitat reads them. Re-generate after moving water.
 
 ## Architecture

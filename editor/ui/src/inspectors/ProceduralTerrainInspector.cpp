@@ -199,7 +199,12 @@ namespace PlutoGE::ui
                 break;
             case procedural::RuleInput::WaterDepth:
                 ImGui::TextDisabled("Metres of still water above the ground (negative above the water's level).");
-                ImGui::TextDisabled("Dry land away from any water reads as far above it. Invert for land only.");
+                ImGui::TextDisabled("Dry land away from any water reads as far above it.");
+                // Say what the rule keeps, the easy thing to get backwards.
+                if (rule.remap == procedural::RuleRemap::Band && rule.min >= 0.0f)
+                    ImGui::TextColored(rule.invert ? ImVec4(0.5f, 0.85f, 0.5f, 1.0f) : ImVec4(0.45f, 0.7f, 1.0f, 1.0f),
+                                       rule.invert ? "Keeps: dry land (and water shallower than %.2f m)" : "Keeps: only under water, %.2f m deep or more",
+                                       rule.min);
                 break;
             default:
                 break;

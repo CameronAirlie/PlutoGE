@@ -88,7 +88,10 @@ namespace PlutoGE::scene::water
 
     bool WaterSurfaceSnapshot::OceanCovers(const Ocean &ocean, glm::vec2 local)
     {
-        // Areas carve holes in the sea, or with Invert Area Mask are the only water (lakes).
+        // Areas carve holes in the sea, or with Invert Area Mask are the only water (lakes). Without areas the mask does
+        // nothing and the whole plane is water, as the renderer draws it (Ocean.slang waterAt), inverted or not.
+        if (ocean.areas.empty())
+            return true;
         bool insideArea = false;
         for (const auto &area : ocean.areas)
             insideArea = insideArea || PointInPolygon(area, local);

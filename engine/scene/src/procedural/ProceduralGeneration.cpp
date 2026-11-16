@@ -358,6 +358,8 @@ namespace PlutoGE::scene::procedural
             const int x0 = static_cast<int>(std::floor(worldLow.x / spacing)), x1 = static_cast<int>(std::ceil(worldHigh.x / spacing));
             const int z0 = static_cast<int>(std::floor(worldLow.y / spacing)), z1 = static_cast<int>(std::ceil(worldHigh.y / spacing));
             auto &out = result[entry.type];
+            // Why candidates in the biome failed, to explain a rule that places nothing.
+            std::size_t inBiome = 0, placedHere = 0, byLimits = 0, byHabitat = 0, byDensity = 0;
             for (int gz = z0; gz <= z1; ++gz)
                 for (int gx = x0; gx <= x1; ++gx)
                 {
@@ -372,17 +374,27 @@ namespace PlutoGE::scene::procedural
                     float chance = biomes.Sample(entry.biome, uv) * rule.densityScale;
                     if (chance <= 0.0f || UnitFloat(cell(3)) >= chance)
                         continue;
+                    ++inBiome;
                     const auto point = surface.PointAt(local);
                     if (point.slope < rule.slopeLimits.x || point.slope > rule.slopeLimits.y ||
                         point.height < rule.heightLimits.x || point.height > rule.heightLimits.y)
+                    {
+                        ++byLimits;
                         continue;
+                    }
                     if (entry.type < habitats.size() && habitats[entry.type].NeedsWater() &&
                         !habitats[entry.type].Accepts(inputs.WaterDepth(point.world, point.height)))
+                    {
+                        ++byHabitat;
                         continue;
+                    }
                     // The density stack last: it is the most expensive test.
                     chance *= rule.density.Evaluate(point, inputs);
                     if (UnitFloat(cell(3)) >= chance)
+                    {
+                        ++byDensity;
                         continue;
+                    }
 
                     const int cx = static_cast<int>(std::floor(local.x / ExclusionCell));
                     const int cz = static_cast<int>(std::floor(local.y / ExclusionCell));
@@ -413,7 +425,29 @@ namespace PlutoGE::scene::procedural
                     instance.rotationDegrees = RotationFor(up, yaw);
                     instance.scale = glm::vec3(scale);
                     out.push_back(instance);
+                    ++placedHere;
                 }
+            // Candidates the biome offered, all turned down: say which test did it, so a rule that removes everything
+            // (a Water Depth rule not inverted, a habitat at odds with the rules) is not silent.
+            if (placedHere == 0 && inBiome >= 8)
+            {
+                const std::string name = "\"" + rule.foliageType + "\" in biome \"" + biome.name + "\"";
+                if (byDensity >= byLimits && byDensity >= byHabitat)
+                {
+                    std::string hint;
+                    if (rule.density.Uses(RuleInput::WaterDepth))
+                        hint = inputs.HasWater() ? " (a Water Depth rule keeps only what it covers: Invert it to keep dry land)"
+                                                 : " (its Water Depth rule found no water: everywhere reads as dry land)";
+                    WarnOnce(warnings, name + " placed nothing: its density rules rejected all " + std::to_string(inBiome) +
+                                           " candidates" + hint + ".");
+                }
+                else if (byHabitat >= byLimits)
+                    WarnOnce(warnings, name + " placed nothing: the foliage type's Water habitat rejected " + std::to_string(byHabitat) +
+                                           " of " + std::to_string(inBiome) + " candidates.");
+                else
+                    WarnOnce(warnings, name + " placed nothing: its slope and height limits rejected " + std::to_string(byLimits) +
+                                           " of " + std::to_string(inBiome) + " candidates.");
+            }
         }
         return result;
     }

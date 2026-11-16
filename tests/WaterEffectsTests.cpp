@@ -106,6 +106,12 @@ namespace
         Require(over && Near(over->x, 10.0f) && Near(over->y, 2.0f), "Over the water, the point straight below");
         Require(!snapshot.NearestSurfacePoint(9999, {}), "Unknown bodies have no point");
 
+        // Invert Area Mask without areas: the renderer draws water everywhere, so queries must agree.
+        ocean->SetAreas({});
+        const auto everywhere = WaterSurfaceSnapshot::Capture(scene);
+        Require(everywhere.Sample({500.0f, 0.0f, -500.0f}, WaterSampleMode::Still) && IsUnderwater(scene, {500.0f, 0.0f, -500.0f}),
+                "An inverted mask with no areas is water everywhere, as drawn");
+
         ocean->SetEnabled(false);
         Require(WaterSurfaceSnapshot::Capture(scene).Empty(), "Disabled bodies are not captured");
     }
@@ -396,6 +402,49 @@ namespace
         input.inputs = &dry;
         const auto withoutWater = Generate(input);
         Require(withoutWater.instances[0].empty() && !withoutWater.warnings.empty(), "Underwater types without water warn and grow nowhere");
+
+        // A survival-style setup: a sea level over a terrain partly above it, trees on dry land. A density Water Depth
+        // rule left un-inverted keeps only the water, which the habitat forbids: nothing grows, and the warning says why.
+        Scene seaScene;
+        auto *sea = seaScene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Sea"}));
+        sea->SetPosition({0.0f, 2.0f, 0.0f});
+        auto *seaOcean = sea->CreateComponent<OceanComponent>();
+        seaOcean->SetInvertAreaMask(true); // as left by the lake preset, with no areas
+        auto seaInputs = std::make_shared<ProceduralInputs>();
+        seaInputs->SetWater(std::make_shared<const WaterSurfaceSnapshot>(WaterSurfaceSnapshot::Capture(seaScene)));
+        TerrainSurface slope(65, 65, 1.0f, glm::mat4(1.0f), [](int x, int) { return static_cast<float>(x) * 0.1f; }); // 0..6.4 m
+        ProceduralTerrainDefinition forest;
+        ProceduralBiome woods;
+        woods.name = "Woods";
+        ProceduralScatterRule trees{.foliageType = "Pine", .spacing = 2.0f};
+        auto waterRule = TerrainRule::Make(RuleInput::WaterDepth);
+        waterRule.min = 0.0f;
+        waterRule.max = 10000.0f;
+        trees.density.rules.push_back(waterRule);
+        woods.scatter.push_back(trees);
+        forest.biomes.push_back(woods);
+        ProceduralGenerationInput forestInput;
+        forestInput.definition = &forest;
+        forestInput.surface = &slope;
+        forestInput.inputs = seaInputs.get();
+        forestInput.foliageTypes = {"Pine"};
+        forestInput.foliageHabitats = {{.mode = WaterHabitatMode::DryLand}};
+        forestInput.texture = false;
+        const auto shoreline = Generate(forestInput);
+        for (const auto &tree : shoreline.instances[0])
+            Require(tree.position.x * 0.1f >= 2.0f - 0.05f && tree.position.x * 0.1f <= 2.25f + 0.05f,
+                    "Un-inverted, only the rule's 25 cm falloff above the water is both dry and kept: x=" + std::to_string(tree.position.x) + " y=" + std::to_string(tree.position.y));
+        forest.biomes[0].scatter[0].density.rules[0].falloff = 0.0f;
+        const auto barren = Generate(forestInput);
+        Require(barren.instances[0].empty(), "An un-inverted Water Depth rule with a dry-land habitat grows nothing");
+        Require(std::any_of(barren.warnings.begin(), barren.warnings.end(),
+                            [](const std::string &warning) { return warning.find("Invert it") != std::string::npos; }),
+                "The warning points at the Water Depth rule");
+        forest.biomes[0].scatter[0].density.rules[0].invert = true;
+        const auto grown = Generate(forestInput);
+        Require(grown.instances[0].size() > 100, "Inverted, the rule keeps dry land: " + std::to_string(grown.instances[0].size()));
+        for (const auto &tree : grown.instances[0])
+            Require(tree.position.x * 0.1f >= 2.0f - 0.3f, "Trees stay above the sea level");
     }
 
     // Counts what a gameplay listener hears: the extension point.

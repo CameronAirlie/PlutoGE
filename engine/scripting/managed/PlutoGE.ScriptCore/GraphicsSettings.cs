@@ -1,7 +1,7 @@
 namespace PlutoGE.ScriptCore;
 
 /// <summary>Live display controls. Scene-specific graphics must be reapplied after a scene load.</summary>
-public static class GraphicsSettings
+public static partial class GraphicsSettings
 {
     public static bool QualitySupported => Native.ScriptBridge.GraphicsQualitySupported;
 

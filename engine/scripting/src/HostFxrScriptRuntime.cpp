@@ -41,6 +41,7 @@
 
 #include "TerrainScriptApi.h"
 #include "FoliageScriptApi.h"
+#include "UpscalerScriptApi.h"
 #include "ComponentScriptApi.h"
 
 #include <algorithm>
@@ -4035,6 +4036,7 @@ namespace PlutoGE::scripting
         register_surface_response_api_fn registerSurfaceResponseApi = nullptr;
         register_terrain_api_fn registerTerrainApi = nullptr;
         register_foliage_api_fn registerFoliageApi = nullptr;
+        int(PLUTO_HOST_CALL *registerUpscalerApi)(void *) = nullptr;
         register_component_property_api_fn registerComponentPropertyApi = nullptr;
         register_camera_rig_api_fn registerCameraRigApi = nullptr;
         register_debug_draw_api_fn registerDebugDrawApi = nullptr;
@@ -4175,6 +4177,7 @@ namespace PlutoGE::scripting
             impl.registerSurfaceResponseApi = nullptr;
             impl.registerTerrainApi = nullptr;
             impl.registerFoliageApi = nullptr;
+            impl.registerUpscalerApi = nullptr;
             impl.registerComponentPropertyApi = nullptr;
             impl.registerCameraRigApi = nullptr;
             impl.registerDebugDrawApi = nullptr;
@@ -4546,6 +4549,7 @@ namespace PlutoGE::scripting
                 LoadManagedExport(impl, HOST_TEXT("RegisterSurfaceResponseApi"), impl.registerSurfaceResponseApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterTerrainApi"), impl.registerTerrainApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterFoliageApi"), impl.registerFoliageApi) &&
+                LoadManagedExport(impl, HOST_TEXT("RegisterUpscalerApi"), impl.registerUpscalerApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterComponentPropertyApi"), impl.registerComponentPropertyApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterCameraRigApi"), impl.registerCameraRigApi) &&
                 LoadManagedExport(impl, HOST_TEXT("RegisterSceneStreamingApi"), impl.registerSceneStreamingApi) &&
@@ -5595,6 +5599,11 @@ namespace PlutoGE::scripting
         if (!m_impl->registerFoliageApi || m_impl->registerFoliageApi(reinterpret_cast<void *>(&ControlFoliage)) == 0)
         {
             setManagedBridgeFailure("RegisterFoliageApi");
+            return false;
+        }
+        if (!m_impl->registerUpscalerApi || m_impl->registerUpscalerApi(reinterpret_cast<void *>(&ControlUpscaler)) == 0)
+        {
+            setManagedBridgeFailure("RegisterUpscalerApi");
             return false;
         }
         if (!m_impl->registerComponentPropertyApi ||

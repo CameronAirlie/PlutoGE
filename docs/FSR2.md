@@ -50,6 +50,9 @@ softens the image and turns one-pixel features into dashes in motion. AMD
 positions Performance for 4K output. At 1080p or lower prefer Quality, or
 render natively with TAA when the GPU allows it.
 
+Games can let the player choose the upscaler, its quality and sharpening from a settings menu instead; see
+[UPSCALER_SETTINGS.md](UPSCALER_SETTINGS.md).
+
 ## Frame contract
 
 FSR2 consumes the renderer's jittered HDR color, D32 inverted depth, RG32

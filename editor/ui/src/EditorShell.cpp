@@ -3945,8 +3945,13 @@ namespace PlutoGE::ui
                                                : render::rhi::TemporalUpscalerOptions{};
             // Both hosted views should match the project's runtime image
             // reconstruction path. Their renderers retain independent history.
+            // During play the game view follows the game's own choice (the
+            // player's settings), as a built game's renderer does; the engine
+            // drops that choice when play stops.
+            const auto &gameUpscaler = m_engine.GetRuntimeTemporalUpscaler();
             viewportPanel->SetTemporalUpscalerOptions(viewportUpscaler);
-            viewportPanel2->SetTemporalUpscalerOptions(viewportUpscaler);
+            viewportPanel2->SetTemporalUpscalerOptions(gameUpscaler ? gameUpscaler->ApplyTo(viewportUpscaler)
+                                                                    : viewportUpscaler);
             core::CpuTrace cpuTrace(m_profiler.IsRecording());
             // The viewports render with the project's rendering settings, as the runtime does; the profiler can
             // override occlusion culling for the session.

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -166,6 +167,34 @@ namespace PlutoGE::render::rhi
         // technology (UpscalerSharpening), not by the SDK.
         float sharpness = 0.25f;
         auto operator<=>(const TemporalUpscalerOptions &) const = default;
+    };
+
+    // The part of the temporal upscaler a player's settings choose (scripts: GraphicsSettings.Upscaler): the
+    // technology, its quality mode and the sharpening. The rest of TemporalUpscalerOptions (HDR input, exposure)
+    // describes the host's frames, so ApplyTo keeps it from the host's options.
+    struct TemporalUpscalerChoice
+    {
+        TemporalUpscaler technology = TemporalUpscaler::None;
+        UpscalerQuality quality = UpscalerQuality::Quality;
+        float sharpness = 0.25f;
+
+        [[nodiscard]] bool IsValid() const noexcept
+        {
+            return technology <= TemporalUpscaler::Fsr2 && quality <= UpscalerQuality::Dlaa &&
+                   std::isfinite(sharpness) && sharpness >= 0.0f && sharpness <= 1.0f;
+        }
+        [[nodiscard]] TemporalUpscalerOptions ApplyTo(TemporalUpscalerOptions options) const noexcept
+        {
+            options.technology = technology;
+            options.quality = quality;
+            options.sharpness = sharpness;
+            return options;
+        }
+        [[nodiscard]] static TemporalUpscalerChoice From(const TemporalUpscalerOptions &options) noexcept
+        {
+            return {options.technology, options.quality, options.sharpness};
+        }
+        auto operator<=>(const TemporalUpscalerChoice &) const = default;
     };
 
     template <typename Tag>

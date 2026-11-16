@@ -77,7 +77,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Frame rate limit, delta time and mouse input pacing | [Frame pacing](FRAME_PACING.md) |
 | Rendering diagnostics | [Geometry profiling](GEOMETRY_PROFILING.md), [occlusion culling](OCCLUSION_CULLING.md) |
 | Player window modes | [Fullscreen and window settings](window-fullscreen.md) |
-| Quality levels players can choose | [Graphics presets](GraphicsPresets.md) |
+| Quality levels players can choose | [Graphics presets](GraphicsPresets.md), [Upscaler settings](UPSCALER_SETTINGS.md) |
 | Cooked asset containers | [Content packs](CONTENT_PACKS.md) |
 | Anti-aliasing and upscaling | [TAA](TAA.md), [FSR 2](FSR2.md), [DLSS](DLSS.md) |
 | Player builds | [Exporting](../EXPORTING.md) |

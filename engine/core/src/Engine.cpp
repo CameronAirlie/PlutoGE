@@ -293,7 +293,7 @@ namespace PlutoGE::core
                 m_window.Close();
                 return false;
             }
-            m_rhiRenderService->SetTemporalUpscalerOptions(m_config.temporalUpscaler);
+            m_rhiRenderService->SetTemporalUpscalerOptions(GetTemporalUpscalerOptions());
             m_rhiRenderService->SetDynamicResolution(m_config.dynamicResolution);
         }
         catch (const std::exception &error)
@@ -340,6 +340,32 @@ namespace PlutoGE::core
     {
         m_framePacer.SetMaxFrameRate(framesPerSecond);
         m_config.framePacing = m_framePacer.Settings();
+    }
+
+    render::rhi::TemporalUpscalerOptions Engine::GetTemporalUpscalerOptions() const noexcept
+    {
+        return m_runtimeTemporalUpscaler ? m_runtimeTemporalUpscaler->ApplyTo(m_config.temporalUpscaler)
+                                         : m_config.temporalUpscaler;
+    }
+
+    bool Engine::SetRuntimeTemporalUpscaler(std::optional<render::rhi::TemporalUpscalerChoice> choice)
+    {
+        if (choice && !choice->IsValid())
+            return false;
+        m_runtimeTemporalUpscaler = choice;
+        // Headless hosts have no renderer; the choice is still kept so scripts read back what they set.
+        if (m_rhiRenderService)
+            m_rhiRenderService->SetTemporalUpscalerOptions(GetTemporalUpscalerOptions());
+        return true;
+    }
+
+    render::rhi::TemporalUpscalerSupport Engine::GetTemporalUpscalerSupport(render::rhi::TemporalUpscaler technology) const
+    {
+        if (technology == render::rhi::TemporalUpscaler::None)
+            return {true, {}};
+        if (!m_renderDevice)
+            return {false, "There is no render device (headless host)"};
+        return m_renderDevice->GetTemporalUpscalerSupport(technology);
     }
 
     FrameTiming Engine::BeginFrame()
@@ -599,6 +625,9 @@ namespace PlutoGE::core
         m_scriptEngine->NotifyPlayStateChanged(false);
 
         render::DebugDraw::Get().Clear();
+        // A game's upscaler choice ends with it (the editor's next play starts from the project's).
+        if (m_runtimeTemporalUpscaler)
+            SetRuntimeTemporalUpscaler(std::nullopt);
         m_isRuntimeRunning = false;
         m_pendingSceneLoadRequest.reset();
         m_pendingApplicationQuitRequest = false;

@@ -96,6 +96,10 @@ if (WIN32)
     target_link_libraries(PlutoGEFramePacerTests PRIVATE winmm)
 endif()
 add_test(NAME PlutoGEFramePacerTests COMMAND PlutoGEFramePacerTests)
+add_executable(PlutoGETemporalUpscalerChoiceTests TemporalUpscalerChoiceTests.cpp)
+target_include_directories(PlutoGETemporalUpscalerChoiceTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/include)
+target_compile_features(PlutoGETemporalUpscalerChoiceTests PRIVATE cxx_std_20)
+add_test(NAME PlutoGETemporalUpscalerChoiceTests COMMAND PlutoGETemporalUpscalerChoiceTests)
 target_link_libraries(PlutoGEContentPackTests PRIVATE PlutoGE::Content)
 add_test(NAME PlutoGEContentPackTests COMMAND PlutoGEContentPackTests)
 
@@ -487,6 +491,8 @@ endif()
 if (PLUTOGE_TEST_DOTNET)
     add_test(NAME PlutoGEGraphicsQualitySmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.GraphicsQualitySmokeTests/PlutoGE.GraphicsQualitySmokeTests.csproj --configuration Release)
+    add_test(NAME PlutoGEUpscalerSmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.UpscalerSmokeTests/PlutoGE.UpscalerSmokeTests.csproj --configuration Release)
     add_test(NAME PlutoGEInputActionMapSmokeTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.InputActionMapSmokeTests/PlutoGE.InputActionMapSmokeTests.csproj --configuration Release)
     add_test(NAME PlutoGEGameplayMapTests COMMAND ${PLUTOGE_TEST_DOTNET} run

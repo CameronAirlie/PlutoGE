@@ -116,6 +116,18 @@ namespace PlutoGE::core
         FrameTiming BeginFrame();
         [[nodiscard]] FramePacer &GetFramePacer() noexcept { return m_framePacer; }
         [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return *m_rhiRenderService; }
+        // The temporal upscaler frames render with: the host's (EngineConfig::temporalUpscaler) unless the running game
+        // chose another (SetRuntimeTemporalUpscaler, from the player's settings). A game's choice lasts until the
+        // runtime stops. Hosts that render the game with their own renderer (the editor's game view) apply
+        // GetRuntimeTemporalUpscaler to it themselves.
+        [[nodiscard]] render::rhi::TemporalUpscalerOptions GetTemporalUpscalerOptions() const noexcept;
+        [[nodiscard]] const std::optional<render::rhi::TemporalUpscalerChoice> &GetRuntimeTemporalUpscaler() const noexcept
+        { return m_runtimeTemporalUpscaler; }
+        // Sets (or, with nullopt, clears) the running game's choice; false, changing nothing, when it is invalid. A
+        // technology the device cannot run is accepted: the renderer falls back to native TAA and reports why.
+        bool SetRuntimeTemporalUpscaler(std::optional<render::rhi::TemporalUpscalerChoice> choice);
+        // Whether this host's render device can run `technology` (None always can), with the reason when not.
+        [[nodiscard]] render::rhi::TemporalUpscalerSupport GetTemporalUpscalerSupport(render::rhi::TemporalUpscaler technology) const;
         [[nodiscard]] assets::AssetManager &GetAssetManager() { return *m_assetManager; }
         [[nodiscard]] assetimport::MeshImporter &GetMeshImporter() { return *m_meshImporter; }
         [[nodiscard]] render::TextureManager &GetTextureManager() { return *m_textureManager; }
@@ -165,6 +177,7 @@ namespace PlutoGE::core
 
         bool m_isInitialized = false;
         bool m_isRuntimeRunning = false;
+        std::optional<render::rhi::TemporalUpscalerChoice> m_runtimeTemporalUpscaler;
         FramePacer m_framePacer;
         std::uint32_t m_framesSinceCadenceUpdate = 0;
         SceneLoading m_sceneLoading;

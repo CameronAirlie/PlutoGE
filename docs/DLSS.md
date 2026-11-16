@@ -66,6 +66,9 @@ support. Quality mode determines the
 internal render resolution using Streamline's optimal-settings query; UI and
 presentation remain at output resolution.
 
+Games can let the player choose the upscaler, its quality and sharpening from a settings menu instead; see
+[UPSCALER_SETTINGS.md](UPSCALER_SETTINGS.md).
+
 ## Frame contract
 
 The scene renderer supplies jittered HDR input color, non-jittered row-major

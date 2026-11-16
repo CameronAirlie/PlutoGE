@@ -98,6 +98,14 @@ namespace PlutoGE::render
             m_sceneRenderer->SetGpuInstanceCulling(enabled);
     }
 
+    void RhiRenderService::SetGpuInstanceBatching(bool enabled)
+    {
+        (void)WaitForFrame();
+        m_gpuInstanceBatching = enabled;
+        if (m_sceneRenderer)
+            m_sceneRenderer->SetGpuInstanceBatching(enabled);
+    }
+
     void RhiRenderService::SetRenderThreadEnabled(bool enabled)
     {
         (void)WaitForFrame();
@@ -184,6 +192,7 @@ namespace PlutoGE::render
             sceneRenderer->SetGraphicsQuality(m_graphicsQuality);
             sceneRenderer->SetRenderingSettings(m_renderingSettings);
             sceneRenderer->SetGpuInstanceCulling(m_gpuInstanceCulling);
+            sceneRenderer->SetGpuInstanceBatching(m_gpuInstanceBatching);
             sceneRenderer->SetDynamicResolution(m_dynamicResolution);
             m_sceneRenderer = std::move(sceneRenderer);
         }

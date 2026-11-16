@@ -19,6 +19,7 @@
 #include "DetailGrassRenderingChecks.h"
 #include "ImpostorChecks.h"
 #include "GpuInstanceCullingChecks.h"
+#include "GpuInstanceBatchingChecks.h"
 #include "CloudTransformChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -824,6 +825,18 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
                 return pixels;
             });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-batching")
+        {
+            // OpenGL has no indirect first instances: every binned draw stays a batch of its own, and the image agrees.
+            CheckGpuInstanceBatching(basicRenderer, [&](render::rhi::TextureHandle texture)
+            {
+                std::vector<unsigned char> pixels(basicRenderer.GetWidth() * basicRenderer.GetHeight() * 4);
+                glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(device.GetTextureNativeHandle(texture)));
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+                return pixels;
+            }, false);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--impostors")

@@ -22,6 +22,7 @@
 #include "ImpostorChecks.h"
 #include "EditorFoliageChecks.h"
 #include "GpuInstanceCullingChecks.h"
+#include "GpuInstanceBatchingChecks.h"
 #include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
@@ -637,6 +638,13 @@ int main(int argc, char **argv)
         if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-culling")
         {
             CheckGpuInstanceCulling(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); });
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--gpu-instance-batching")
+        {
+            // Vulkan draws with indirect first instances, so cells must share batches.
+            CheckGpuInstanceBatching(renderer, [&](rhi::TextureHandle texture) { return device.ReadTextureRgba8(texture); },
+                                     device.GetImmediateContext().MaxIndexedIndirectBatchSize() > 0);
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--impostors")

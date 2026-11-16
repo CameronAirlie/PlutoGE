@@ -723,10 +723,8 @@ namespace PlutoGE::scene
             for (const auto &instance : type.instances)
             {
                 const glm::mat4 model = ComposeInstanceTransform(ownerTransform, instance, localOriginOffset);
-                const FoliageClusterKey key{
-                    .x = GetCellCoordinate(type, instance.position).x,
-                    .z = GetCellCoordinate(type, instance.position).z,
-                };
+                const auto cluster = GetRenderClusterCoordinate(type, instance.position);
+                const FoliageClusterKey key{.x = cluster.x, .z = cluster.z};
                 clusters[key].models->push_back(model);
             }
 
@@ -905,6 +903,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "MaxScale", PropertyType::Float, std::to_string(type.asset.maxScale)});
             properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
+            properties.push_back({prefix + "RenderClusterSize", PropertyType::Float, std::to_string(type.asset.renderClusterSize)});
             properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
             properties.push_back({prefix + "LodDistanceScale", PropertyType::Float, std::to_string(type.asset.lodDistanceScale)});
             properties.push_back({prefix + "ImpostorDistanceScale", PropertyType::Float, std::to_string(type.asset.impostorDistanceScale)});
@@ -1042,6 +1041,11 @@ namespace PlutoGE::scene
                     type.asset.assetReference = property.value;
                 else if (fieldName == "CellSize")
                     type.asset.cellSize = (std::max)(1.0f, std::stof(property.value));
+                else if (fieldName == "RenderClusterSize")
+                {
+                    const float size = ParseFloatOr(property.value, 0.0f);
+                    type.asset.renderClusterSize = std::isfinite(size) && size > 0.0f ? (std::max)(size, 1.0f) : 0.0f;
+                }
                 else if (fieldName == "MaxDrawDistance")
                     type.asset.maxDrawDistance = (std::max)(0.0f, std::stof(property.value));
                 else if (fieldName == "LodDistanceScale")
@@ -2271,6 +2275,15 @@ namespace PlutoGE::scene
         }
     }
 
+    void FoliageComponent::SetTypeRenderClusterSize(std::size_t index, float size)
+    {
+        if (auto *type = GetType(index))
+        {
+            type->asset.renderClusterSize = std::isfinite(size) && size > 0.0f ? (std::max)(size, 1.0f) : 0.0f;
+            MarkRenderCommandsDirty();
+        }
+    }
+
     void FoliageComponent::SetTypeMaxDrawDistance(std::size_t index, float distance)
     {
         if (auto *type = GetType(index))
@@ -2441,6 +2454,12 @@ namespace PlutoGE::scene
                     m_nextInstanceId = (std::max)(m_nextInstanceId, instance.id + 1);
             }
         }
+    }
+
+    FoliageCellCoordinate FoliageComponent::GetRenderClusterCoordinate(const FoliageType &type, const glm::vec3 &position)
+    {
+        const float size = RenderClusterSize(type.asset);
+        return {static_cast<int>(std::floor(position.x / size)), static_cast<int>(std::floor(position.z / size))};
     }
 
     FoliageCellCoordinate FoliageComponent::GetCellCoordinate(const FoliageType &type, const glm::vec3 &position) const

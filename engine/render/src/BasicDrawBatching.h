@@ -13,11 +13,11 @@ namespace PlutoGE::render
     {
         std::uint64_t operator()() const { return 0; }
     };
-    // Batch only after per-object visibility/LOD selection. Shadow and GI source
-    // lists retain their original bounds and identities for cache validation.
-    inline bool SameBasicDrawSurface(const BasicDraw &a, const BasicDraw &b)
+    // Equal shading: everything a draw's pipelines, material bindings and pass eligibility derive from. The normalized
+    // LOD is left out: only the geometry diagnostics output shows it (SameBasicDrawSurface compares it too).
+    inline bool SameBasicDrawShading(const BasicDraw &a, const BasicDraw &b)
     {
-        return a.normalizedLod == b.normalizedLod && a.probeDebug == b.probeDebug
+        return a.probeDebug == b.probeDebug
             && a.baseColor == b.baseColor
             && a.uvScale == b.uvScale
             && a.baseColorTexture == b.baseColorTexture
@@ -68,10 +68,32 @@ namespace PlutoGE::render
             && a.foliageWind == b.foliageWind;
     }
 
+    // Batch only after per-object visibility/LOD selection. Shadow and GI source
+    // lists retain their original bounds and identities for cache validation.
+    inline bool SameBasicDrawSurface(const BasicDraw &a, const BasicDraw &b)
+    {
+        return a.normalizedLod == b.normalizedLod && SameBasicDrawShading(a, b);
+    }
+
     inline bool SameBasicDrawMaterial(const BasicDraw &a, const BasicDraw &b)
     {
         return a.mesh == b.mesh && a.firstIndex == b.firstIndex && a.indexCount == b.indexCount &&
                SameBasicDrawSurface(a, b);
+    }
+
+    // Whether two instanced draws bind the same state in every pass, so one multi-draw may draw both (GpuInstanceCulling
+    // batches): equal shading, from which pipelines, materials and every pass's eligibility derive; the same vertex
+    // and index buffers (one mesh, or meshes in one geometry arena page); and the same impostor cards. Their instance
+    // arrays, LOD chains and draw distances may differ: each keeps its own bins. Their normalized LODs (the frontend's
+    // whole-cluster choice, not the per-instance LODs the bins draw) must match only when `diagnosticOutput` shows them.
+    inline bool SameInstancedDrawBindings(const BasicDraw &a, const BasicDraw &b, bool diagnosticOutput)
+    {
+        if (!a.mesh || !b.mesh || a.detailGrass || b.detailGrass || a.impostor != b.impostor)
+            return false;
+        // Cards draw from the shared card index buffer and read no vertex input.
+        if (!a.impostor && (a.mesh->VertexBuffer() != b.mesh->VertexBuffer() || a.mesh->IndexBuffer() != b.mesh->IndexBuffer()))
+            return false;
+        return (!diagnosticOutput || a.normalizedLod == b.normalizedLod) && SameBasicDrawShading(a, b);
     }
 
     // Packing at mesh upload arranges same-material ranges next to one another.
@@ -216,6 +238,26 @@ namespace PlutoGE::render
                 HashBatchValue(hash, terrain->tint[layer]);
             }
         }
+        return hash;
+    }
+
+    // Buckets instanced draws for SameInstancedDrawBindings, which decides: draws binding the same state hash equally.
+    // A few discriminating fields keep it cheap enough to run for every binned draw each frame.
+    inline std::size_t InstancedDrawBindingHash(const BasicDraw &draw, bool diagnosticOutput)
+    {
+        std::size_t hash = 0;
+        HashBatchValue(hash, draw.baseColorTexture);
+        HashBatchValue(hash, draw.normalTexture);
+        HashBatchValue(hash, draw.alphaMode);
+        HashBatchValue(hash, draw.foliageWind.enabled ? draw.foliageWind.stiffness : 0.0f);
+        HashBatchValue(hash, draw.shaderGraphProgram ? draw.shaderGraphProgram->hash : 0ull);
+        HashBatchValue(hash, draw.impostor.get());
+        if (!draw.impostor && draw.mesh)
+        {
+            HashBatchValue(hash, draw.mesh->VertexBuffer());
+            HashBatchValue(hash, draw.mesh->IndexBuffer());
+        }
+        if (diagnosticOutput) HashBatchValue(hash, draw.normalizedLod);
         return hash;
     }
 

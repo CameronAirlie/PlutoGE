@@ -40,8 +40,8 @@ struct CullRecord
 };
 struct CullDraw
 {
-    uint4 items;            // first item, item count, first record, first slot (phase 0's; phase p's follow LOD count * p later)
-    uint4 lodInfo;          // LOD count, finest LOD drawn, switch count
+    uint4 items;            // first item, item count, first record, first slot (phase 0's; phase p's are p phase strides later)
+    uint4 lodInfo;          // LOD count, finest LOD drawn, switch count, phase stride (its batch's slots per phase)
     float4 bounds;          // model-space sphere: centre, radius
     float4 screenRange;     // wind reach (a share of the rest radius), unused, draw distance, LOD distance scale
     float4 switches[3];     // BasicInstanceLodChain::BlendSwitches radii
@@ -54,8 +54,8 @@ struct CullIndex
 
 [[vk::binding(1, 0)]] StructuredBuffer<CullRecord> records : register(t1);
 [[vk::binding(2, 0)]] StructuredBuffer<CullDraw> cullDraws : register(t2);
-// Every slot's count, then every slot's scatter cursor. A draw's slots are its LODs in phase 0, then in phase 1, so one
-// indirect batch draws both phases.
+// Every slot's count, then every slot's scatter cursor. A batch of draws (GpuInstanceCulling::Bins) holds every member's
+// LODs in phase 0, then every member's in phase 1, so one indirect batch per phase draws the whole batch.
 [[vk::binding(3, 0)]] RWStructuredBuffer<uint> slotCounters : register(u3);
 // The bins: one header entry per slot (its bin's offset), then the bins' entries: a record index with its dither code
 // in the top byte (BasicLit.slang reads both).
@@ -143,7 +143,7 @@ void addLevel(inout ItemBins bins, CullDraw draw, uint record, int level, uint c
 {
     if (level < 0 || level >= int(min(draw.lodInfo.x, MaxLods))) return;
     const uint lod = max(uint(level), draw.lodInfo.y);
-    bins.slots[bins.count] = draw.items.w + cullTotals.z * min(draw.lodInfo.x, MaxLods) + lod;
+    bins.slots[bins.count] = draw.items.w + cullTotals.z * draw.lodInfo.w + lod;
     bins.entries[bins.count] = record | (code << DitherShift);
     ++bins.count;
 }

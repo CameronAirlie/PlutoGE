@@ -603,6 +603,11 @@ int RunRuntime(int argc, char **argv)
     const char *gpuCullingSetting = std::getenv("PLUTO_GPU_INSTANCE_CULLING");
     engine.GetRhiRenderService().SetGpuInstanceCulling(
         !(gpuCullingSetting && std::string_view(gpuCullingSetting) == "0") && !(projectBenchmark && projectBenchmark->cpuInstanceBinning));
+    // Its draws share multi-draw batches by default; PLUTO_GPU_INSTANCE_BATCHING=0 or --no-instance-batching records one
+    // call per draw, for comparisons.
+    const char *gpuBatchingSetting = std::getenv("PLUTO_GPU_INSTANCE_BATCHING");
+    engine.GetRhiRenderService().SetGpuInstanceBatching(
+        !(gpuBatchingSetting && std::string_view(gpuBatchingSetting) == "0") && !(projectBenchmark && projectBenchmark->noInstanceBatching));
 
     while (!window.ShouldClose())
     {
@@ -852,7 +857,8 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.instanceCulling.occluded), static_cast<double>(render.instanceCulling.recovered),
                         static_cast<double>(render.instanceCulling.drawn),
                         render.rayTracedSceneRebuilt ? 1.0 : 0.0, static_cast<double>(render.rebuiltOpaqueBatchGroups),
-                        static_cast<double>(render.rebuiltOpaqueBatchDraws), static_cast<double>(render.visibleDrawCount), 0};
+                        static_cast<double>(render.rebuiltOpaqueBatchDraws), static_cast<double>(render.visibleDrawCount),
+                        static_cast<double>(render.gpuBinnedDraws), static_cast<double>(render.gpuBinnedBatches), 0};
                     const auto addCpuScopes = [&](std::string_view group, const auto &timings)
                     {
                         for (const auto &timing : timings)

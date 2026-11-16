@@ -72,6 +72,9 @@ int main() try
         catch (const std::invalid_argument &) { rejected = true; }
         if (!rejected) throw std::runtime_error("Invalid camera pan or travel accepted");
     }
+    if (options.noInstanceBatching) throw std::runtime_error("Instance batching is off by default");
+    const std::array unbatched{"game.plutoproject", "results.csv", "--serial-render", "--no-instance-batching"};
+    if (!ProjectBenchmarkOptions::Parse(unbatched).noInstanceBatching) throw std::runtime_error("--no-instance-batching ignored");
     const std::array capture{"game.plutoproject", "results.csv", "--capture=out/frame.png"};
     if (ProjectBenchmarkOptions::Parse(capture).capture != std::filesystem::path("out/frame.png"))
         throw std::runtime_error("Capture path lost");

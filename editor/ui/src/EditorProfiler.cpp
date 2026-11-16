@@ -466,6 +466,9 @@ namespace PlutoGE::ui
                    << " hidden by the previous frame's depth, " << culling.recovered << " of them drawn by the second phase, "
                    << culling.drawn << " drawn (" << culling.crossfading << " crossfading); second phase "
                    << (culling.secondPhase ? "ran" : "off") << "\n";
+        if (rhiScene.gpuBinnedDraws != 0)
+            report << "RHI GPU-binned draws: " << rhiScene.gpuBinnedDraws << " in " << rhiScene.gpuBinnedBatches
+                   << " multi-draw batches\n";
         if (rhiScene.occlusionActive && rhiScene.occlusion.available)
             report << "RHI occlusion diagnostics: " << rhiScene.occlusion.unsupported << " unsupported, "
                    << rhiScene.occlusion.invalidBounds << " invalid bounds, " << rhiScene.occlusion.clipped

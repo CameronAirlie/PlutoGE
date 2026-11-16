@@ -77,6 +77,8 @@ namespace PlutoGE::scene
         asset.minScale = (std::min)(minScale, maxScale);
         asset.maxScale = (std::max)(minScale, maxScale);
         asset.cellSize = (std::max)(Finite(asset.cellSize, 32.0f), 1.0f);
+        // Zero (follow the cell size) or a size of at least a metre.
+        asset.renderClusterSize = Finite(asset.renderClusterSize, 0.0f) > 0.0f ? (std::max)(asset.renderClusterSize, 1.0f) : 0.0f;
         asset.maxDrawDistance = (std::max)(Finite(asset.maxDrawDistance, 0.0f), 0.0f);
         asset.lodDistanceScale = render::SanitizeLodDistanceScale(asset.lodDistanceScale);
         asset.impostorDistanceScale = std::clamp(Finite(asset.impostorDistanceScale, 1.0f), 0.1f, 10.0f);
@@ -109,6 +111,7 @@ namespace PlutoGE::scene
         add(before.alignToTerrainNormal != after.alignToTerrainNormal, {"AlignToTerrainNormal"});
         add(before.waterHabitat != after.waterHabitat, {"WaterHabitat", "WaterMinDepth", "WaterMaxDepth"});
         add(before.cellSize != after.cellSize, {"CellSize"});
+        add(before.renderClusterSize != after.renderClusterSize, {"RenderClusterSize"});
         add(before.maxDrawDistance != after.maxDrawDistance, {"MaxDrawDistance"});
         add(before.lodDistanceScale != after.lodDistanceScale, {"LodDistanceScale"});
         add(before.impostorDistanceScale != after.impostorDistanceScale, {"ImpostorDistanceScale"});
@@ -151,6 +154,8 @@ namespace PlutoGE::scene
                << "WATER_HABITAT\t" << WaterHabitatModeName(asset.waterHabitat.mode) << '\t' << asset.waterHabitat.minDepth
                << '\t' << asset.waterHabitat.maxDepth << '\n'
                << "CELL_SIZE\t" << asset.cellSize << '\n'
+               // Readers that predate it skip the record; files without it draw in cells.
+               << "RENDER_CLUSTER_SIZE\t" << asset.renderClusterSize << '\n'
                << "MAX_DRAW_DISTANCE\t" << asset.maxDrawDistance << '\n'
                << "LOD_DISTANCE_SCALE\t" << asset.lodDistanceScale << '\n'
                // Readers that predate it skip the record; files without it switch where the import placed the cards.
@@ -219,6 +224,7 @@ namespace PlutoGE::scene
                 loaded.waterHabitat.mode = ParseWaterHabitatMode(mode);
             }
             else if (key == "CELL_SIZE") stream >> loaded.cellSize;
+            else if (key == "RENDER_CLUSTER_SIZE") stream >> loaded.renderClusterSize;
             else if (key == "MAX_DRAW_DISTANCE") stream >> loaded.maxDrawDistance;
             // Version 1 files written before LOD distance scales have no record and load with the default.
             else if (key == "LOD_DISTANCE_SCALE") stream >> loaded.lodDistanceScale;

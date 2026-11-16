@@ -337,8 +337,13 @@ namespace PlutoGE::ui
             ImGui::EndDisabled();
 
             changed |= ImGui::DragFloat("Cell Size", &asset.cellSize, 1.0f, 1.0f, 256.0f, "%.1f m");
-            ImGui::SetItemTooltip("Instances are grouped into cells of this size for culling and collision. Large cells (64-128 m)\n"
-                                  "draw cheaper; small ones make local edits and physics rebuilds more granular.");
+            ImGui::SetItemTooltip("Instances are grouped into cells of this size for collision and editing, and for drawing unless\n"
+                                  "Render Cluster Size is set. Small cells make local edits and physics rebuilds more granular.");
+            changed |= ImGui::DragFloat("Render Cluster Size", &asset.renderClusterSize, 1.0f, 0.0f, 1024.0f,
+                                        asset.renderClusterSize > 0.0f ? "%.1f m" : "Cell Size", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SetItemTooltip("Instances draw in square clusters of this size, each one draw per mesh part, culled as a whole on the CPU\n"
+                                  "(GPU culling still culls each instance on screen). Larger clusters cost the CPU less per frame, but a\n"
+                                  "cluster within the shadow distance casts every instance in it. 0 uses the Cell Size.");
             return changed;
         });
     }

@@ -53,7 +53,14 @@ namespace PlutoGE::scene
         WaterHabitat waterHabitat{};
 
         // Rendering.
+        // Instances are grouped into cells of this size for collision bodies and editing, and by default for drawing.
         float cellSize = 32.0f;
+        // Groups instances into square clusters of this size for drawing instead: each cluster is one render command
+        // per mesh part, culled (frustum, draw and shadow distance) as a whole on the CPU. Zero uses cellSize. Larger
+        // clusters cost the CPU less per frame (GPU instance culling still culls each instance in the camera passes),
+        // but whole clusters within a shadow distance cast, so they can cost shadow rendering more. See
+        // RenderClusterSize and docs/FOLIAGE.md.
+        float renderClusterSize = 0.0f;
         // Zero inherits the owning foliage component's draw distance.
         float maxDrawDistance = 0.0f;
         // Moves the type's LOD and impostor switches nearer or farther (render/LodDistanceScale.h).
@@ -84,6 +91,12 @@ namespace PlutoGE::scene
 
     // Clamps every value to its valid range. Applied on load and whenever an edited asset is applied.
     void SanitizeFoliageTypeAsset(FoliageTypeAsset &asset);
+
+    // The size of the clusters a type's instances draw in: its render cluster size, else its cell size.
+    [[nodiscard]] inline float RenderClusterSize(const FoliageTypeAsset &asset) noexcept
+    {
+        return asset.renderClusterSize > 0.0f ? asset.renderClusterSize : (asset.cellSize > 1.0f ? asset.cellSize : 1.0f);
+    }
 
     // The FoliageComponent `Type.N.<name>` properties that differ between two assets, for recording prefab overrides.
     [[nodiscard]] std::vector<std::string_view> ChangedFoliageTypeProperties(const FoliageTypeAsset &before,

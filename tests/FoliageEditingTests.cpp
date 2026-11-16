@@ -84,6 +84,7 @@ namespace
         asset.maxScale = 2.5f;
         asset.alignToTerrainNormal = true;
         asset.cellSize = 64.0f;
+        asset.renderClusterSize = 256.0f;
         asset.maxDrawDistance = 120.0f;
         asset.lodDistanceScale = 1.5f;
         asset.shadows = FoliageShadowMode::Off;
@@ -174,6 +175,53 @@ namespace
         Require(Near(clamped.minScale, 1.0f) && Near(clamped.maxScale, 5.0f), "A reversed scale range should be put in order");
         Require(clamped.collisionHeight >= clamped.collisionRadius * 2.0f, "A capsule should hold its own radius");
         Require(Near(clamped.lodDistanceScale, render::MaxLodDistanceScale) && clamped.cellSize >= 1.0f, "Values should be clamped");
+    }
+
+    // Render clusters regroup what draws, one command per cluster and mesh part, without moving collision cells.
+    void TestRenderClusters()
+    {
+        Fixture fixture;
+        auto &foliage = *fixture.foliage;
+        foliage.AddType("Pine");
+        const std::size_t index = foliage.GetTypeCount() - 1;
+        render::Mesh quad(QuadMesh());
+        render::Material material;
+        foliage.SetTypeMeshAndMaterials(index, &quad, {&material}, {});
+        foliage.SetTypeCollisionEnabled(index, true);
+        // A 4 x 4 grid, one instance in each 32 m cell (the default cell size).
+        for (int x = 0; x < 4; ++x)
+            for (int z = 0; z < 4; ++z)
+                foliage.GetType(index)->instances.push_back(FoliageInstance{
+                    .id = static_cast<std::uint64_t>(1 + x * 4 + z), .position = {x * 32.0f + 1.0f, 0.0f, z * 32.0f + 1.0f}});
+        fixture.Normalize();
+        const auto drawnInstances = [&]
+        {
+            std::size_t drawn = 0;
+            for (const auto &command : foliage.GetRenderCommands()) drawn += command.instanceModels->size();
+            return drawn;
+        };
+        Require(foliage.GetRenderCommands().size() == 16 && drawnInstances() == 16, "Without render clusters every cell draws alone");
+        Require(foliage.BuildCollisionCells().size() == 16, "Collision bodies follow the cells");
+
+        foliage.SetTypeRenderClusterSize(index, 64.0f);
+        Require(foliage.GetRenderCommands().size() == 4 && drawnInstances() == 16, "64 m clusters should draw four cells each");
+        Require(foliage.BuildCollisionCells().size() == 16, "Render clusters must not change collision cells");
+
+        FoliageComponent restored;
+        restored.Deserialize(foliage.Serialize());
+        Require(Near(restored.GetType(index)->asset.renderClusterSize, 64.0f), "The render cluster size should survive the scene");
+
+        foliage.SetTypeRenderClusterSize(index, 0.25f);
+        Require(Near(foliage.GetType(index)->asset.renderClusterSize, 1.0f), "Render clusters are at least a metre");
+        foliage.SetTypeRenderClusterSize(index, 0.0f);
+        Require(foliage.GetRenderCommands().size() == 16, "Zero should follow the cell size again");
+
+        // Files written before render clusters draw in cells.
+        std::stringstream legacy("PLUTOFOLIAGE\t2\nCELL_SIZE\t48\n");
+        FoliageTypeAsset old;
+        old.renderClusterSize = 99.0f;
+        Require(ReadFoliageTypeAsset(legacy, old) && old.renderClusterSize == 0.0f && Near(RenderClusterSize(old), 48.0f),
+                "A file without a render cluster size should follow its cell size");
     }
 
     void TestChangedProperties()
@@ -594,6 +642,7 @@ try
     TestAssetRoundTrip();
     TestAssetVersions();
     TestChangedProperties();
+    TestRenderClusters();
     TestAssetReferenceScan();
     TestOldSceneCompatibility();
     TestLinkedTypes();

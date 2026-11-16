@@ -55,6 +55,8 @@ namespace PlutoGE
         // --cpu-instance-binning: bin instanced draws on the CPU, without occlusion, rather than with GPU instance
         // culling (the default). --gpu-instance-culling, the default, is still accepted.
         bool cpuInstanceBinning = false;
+        // --no-instance-batching: GPU-binned draws record one call each rather than sharing multi-draw batches.
+        bool noInstanceBatching = false;
         // --dynamic-resolution=<target FPS>: enables automatic render resolution for the run.
         std::optional<float> dynamicResolutionFps;
         // Geometry shading diagnostic applied to every measured frame.
@@ -100,9 +102,9 @@ namespace PlutoGE
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 14) // project, output, two counts and ten switches
+            if (args.size() < 2 || args.size() > 15) // project, output, two counts and eleven switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
-                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--cpu-instance-binning] "
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--cpu-instance-binning] [--no-instance-batching] "
                                             "[--quality=low|medium|high|ultra] [--foliage-detail=<0.25..2>] [--camera-pan=<degrees>] [--camera-travel=<metres>] "
                                             "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
@@ -131,6 +133,7 @@ namespace PlutoGE
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
                 else if (value == "--cpu-instance-binning" && !result.cpuInstanceBinning) result.cpuInstanceBinning = true;
+                else if (value == "--no-instance-batching" && !result.noInstanceBatching) result.noInstanceBatching = true;
                 else if (value == "--gpu-instance-culling") {}
                 else if (value.starts_with(capturePrefix) && result.capture.empty())
                 {
@@ -244,7 +247,8 @@ namespace PlutoGE
             "vsm_new_dirty_pages", "vsm_changed_dirty_pages", "vsm_evicted_pages", "vsm_cache_hits",
             "vsm_static_dirty_pages", "vsm_dynamic_chunks", "vsm_static_layer", "vsm_chunking", "vsm_lod_variant_chunks",
             "gpu_cull_instances", "gpu_cull_outside", "gpu_cull_occluded", "gpu_cull_recovered", "gpu_cull_drawn",
-            "ray_traced_rebuilt", "opaque_batch_groups_rebuilt", "opaque_batch_draws_rebuilt", "visible_packets", "gpu_observation_id"};
+            "ray_traced_rebuilt", "opaque_batch_groups_rebuilt", "opaque_batch_draws_rebuilt", "visible_packets", "gpu_binned_draws", "gpu_binned_batches",
+            "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};
         double frameMs = 0, updateMs = 0, renderPresentMs = 0;
         float gpuMs = 0, skinningMs = 0, uiMs = 0, shadowRequestMs = 0;

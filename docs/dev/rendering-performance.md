@@ -12,7 +12,7 @@ changed. Numbers are from the ThirdPersonProject startup view at 1280×720
 PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --frozen-render
                [--geometry-diagnostic=<mode>] [--capture=<frame.png>] [--serial-render]
                [--quality=low|medium|high|ultra] [--camera-pan=<degrees>] [--camera-travel=<metres>]
-               [--disable-effects=<Type>[,<Type>...]|all] [--cpu-instance-binning]
+               [--disable-effects=<Type>[,<Type>...]|all] [--cpu-instance-binning] [--no-instance-batching]
 ```
 
 * Frames record on the render thread unless `--serial-render` is given (see [frame-pipeline.md](frame-pipeline.md));
@@ -48,6 +48,9 @@ PlutoGERuntime --benchmark-project <project> <out.csv> [frames] [warmup] --froze
   (the default; `PLUTO_GPU_INSTANCE_CULLING=0` does the same outside benchmarks). Use it to A/B the culling. The
   `gpu_cull_instances`, `gpu_cull_outside`, `gpu_cull_occluded`, `gpu_cull_recovered` and `gpu_cull_drawn` columns are
   its delayed statistics (`InstanceCullingStats`).
+* `--no-instance-batching` records one call per GPU-binned draw instead of sharing multi-draw batches between draws
+  that bind the same state (`PLUTO_GPU_INSTANCE_BATCHING=0` does the same outside benchmarks; docs/FOLIAGE.md, "Shared
+  batches"). The `gpu_binned_draws` and `gpu_binned_batches` columns count the draws and the batches they shared.
 * `--disable-effects` turns off the named post-process effects (type names such as `SSAO`, `DDGI`; `all` for
   every one) on the rendering camera each frame, exactly as the editor's Enabled toggle does, so a run per effect
   shows what it costs. A disabled effect records no GPU work at all (`PlutoGE{Vulkan,OpenGL}DisabledEffectTests`).

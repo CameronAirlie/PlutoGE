@@ -194,6 +194,7 @@ namespace PlutoGE::render
             return false;
         renderer->SetSubmissionLabel(m_submissionLabel);
         renderer->SetGpuInstanceCulling(m_gpuInstanceCulling);
+        renderer->SetGpuInstanceBatching(m_gpuInstanceBatching);
         m_device = &device;
         // Weak ownership prevents cached resources outliving their device. All
         // renderers are initialized and used on the rendering thread.
@@ -270,6 +271,13 @@ namespace PlutoGE::render
         m_gpuInstanceCulling = enabled;
         if (m_renderer)
             m_renderer->SetGpuInstanceCulling(enabled);
+    }
+
+    void RhiSceneRenderer::SetGpuInstanceBatching(bool enabled)
+    {
+        m_gpuInstanceBatching = enabled;
+        if (m_renderer)
+            m_renderer->SetGpuInstanceBatching(enabled);
     }
 
     void RhiSceneRenderer::SetOutlines(std::span<const OutlineLayer> layers)
@@ -2613,6 +2621,8 @@ namespace PlutoGE::render
         m_timingStats.occlusion = frameStats.occlusion;
         m_timingStats.occlusionActive = frameStats.occlusionActive;
         m_timingStats.instanceCulling = frameStats.gpuBinnedDraws != 0 ? frameStats.instanceCulling : InstanceCullingStats{};
+        m_timingStats.gpuBinnedDraws = frameStats.gpuBinnedDraws;
+        m_timingStats.gpuBinnedBatches = frameStats.gpuBinnedBatches;
         m_timingStats.occlusionMode = frame.lighting.occlusionMode;
         m_timingStats.virtualShadows = frameStats.virtualShadows;
         m_timingStats.virtualShadowsActive = frameStats.virtualShadowsActive;

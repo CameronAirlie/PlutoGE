@@ -126,6 +126,8 @@ namespace PlutoGE::render
         bool occlusionActive = false;
         // GPU instance culling's latest diagnostics, when it binned anything (BasicRenderer::FrameStats::instanceCulling).
         InstanceCullingStats instanceCulling;
+        // This frame's GPU-binned draws and the multi-draw batches they share (BasicRenderer::FrameStats).
+        std::size_t gpuBinnedDraws = 0, gpuBinnedBatches = 0;
         float directionalShadowSoftness = 0.0f;
         unsigned skinningParticipants = 1;
         float skinningDispatchMs = 0, skinningCallerMs = 0, skinningWaitMs = 0, skinningMergeMs = 0;
@@ -211,6 +213,8 @@ namespace PlutoGE::render
         void SetSubmissionLabel(std::string label);
         // BasicRenderer::SetGpuInstanceCulling, kept across Initialize.
         void SetGpuInstanceCulling(bool enabled);
+        // BasicRenderer::SetGpuInstanceBatching, kept across Initialize.
+        void SetGpuInstanceBatching(bool enabled);
         // Camera-stack layers render the same immutable scene pose. Reuse the
         // base view's vertex streams and previous-frame positions for one Render.
         // Camera/depth/temporal reconstruction histories remain view-local.
@@ -349,6 +353,7 @@ namespace PlutoGE::render
       std::vector<const RenderCommand *> m_outlineCommands;
       std::string m_submissionLabel = "Scene";
       bool m_gpuInstanceCulling = true;
+      bool m_gpuInstanceBatching = true;
       rhi::IRenderDevice *m_device = nullptr;
       std::unique_ptr<BasicRenderer> m_renderer;
       std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;

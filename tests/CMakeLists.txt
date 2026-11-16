@@ -257,6 +257,8 @@ add_test(NAME PlutoGEVulkanImpostorTests COMMAND PlutoGEVulkanRhiTests --imposto
 add_test(NAME PlutoGEOpenGLImpostorTests COMMAND PlutoGEOpenGLRhiTests --impostors)
 add_test(NAME PlutoGEVulkanGpuInstanceCullingTests COMMAND PlutoGEVulkanRhiTests --gpu-instance-culling)
 add_test(NAME PlutoGEOpenGLGpuInstanceCullingTests COMMAND PlutoGEOpenGLRhiTests --gpu-instance-culling)
+add_test(NAME PlutoGEVulkanGpuInstanceBatchingTests COMMAND PlutoGEVulkanRhiTests --gpu-instance-batching)
+add_test(NAME PlutoGEOpenGLGpuInstanceBatchingTests COMMAND PlutoGEOpenGLRhiTests --gpu-instance-batching)
 add_test(NAME PlutoGEVulkanNightSkyTests COMMAND PlutoGEVulkanRhiTests --night-sky)
 add_test(NAME PlutoGEOpenGLNightSkyTests COMMAND PlutoGEOpenGLRhiTests --night-sky)
 add_test(NAME PlutoGEVulkanRenderOptimizationTests COMMAND PlutoGEVulkanRhiTests --render-optimizations)

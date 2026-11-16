@@ -100,6 +100,7 @@ namespace PlutoGE::render
         // Batching a draw's LODs needs multi-draw with first instances the shader sees (MaxIndexedIndirectBatchSize).
         auto &context = device.GetImmediateContext();
         m_firstInstance = context.SupportsFirstInstance() && context.MaxIndexedIndirectBatchSize() > 0;
+        m_maxBatchSlots = m_firstInstance ? context.MaxIndexedIndirectBatchSize() : 0u;
         if (!m_count || !m_scan || !m_scatter || !m_placeholder || !m_statCounters)
         {
             m_count = {}; m_scan = {}; m_scatter = {};
@@ -126,63 +127,110 @@ namespace PlutoGE::render
     void GpuInstanceCulling::Prepare(std::span<const Source> sources, const View &view)
     {
         m_bins.clear();
+        m_batches.clear();
         m_pages.clear();
         m_slots = 0;
         m_twoPhase = false;
         if (!Available() || sources.empty()) return;
         auto &device = *m_device;
 
-        // Draws grouped by records page: each page is one count and one scatter dispatch per phase.
+        // Draws grouped by records page: each page is one count and one scatter dispatch per phase. Within a page the
+        // sources keep their order, so a batch's members stay in the caller's (and its passes') order.
         std::map<std::pair<std::uint32_t, std::uint32_t>, std::vector<const Source *>> byPage;
         for (const auto &source : sources)
             if (source.draw && source.records && Supports(*source.draw))
                 byPage[{source.records.buffer.index, source.records.buffer.generation}].push_back(&source);
+        const auto lodCount = [](const Source &source)
+        { return static_cast<std::uint32_t>(source.draw->instanceLods->lods.size()); };
         std::vector<CullDraw> draws;
         std::vector<std::uint32_t> arguments, slotPhases;
         std::uint32_t items = 0;
+        // Per page: its batches' members in list order, and (by source index) the page batch each source joined.
+        std::vector<std::vector<const Source *>> pageBatches;
+        std::vector<std::uint32_t> pageBatchSlots;
+        constexpr std::size_t NoBatch = ~std::size_t(0);
+        m_sourceBatches.assign(sources.size(), NoBatch);
         for (const auto &[pageKey, pageSources] : byPage)
         {
             const auto firstDraw = static_cast<std::uint32_t>(draws.size()), firstItem = items;
+            pageBatches.clear();
+            pageBatchSlots.clear();
             for (const auto *source : pageSources)
             {
-                const auto &draw = *source->draw;
-                const auto &chain = *draw.instanceLods;
-                const auto count = static_cast<std::uint32_t>(draw.instanceModels->size());
-                const auto lods = static_cast<std::uint32_t>(chain.lods.size());
-                const auto firstSlot = static_cast<std::uint32_t>(arguments.size() / 5);
-                const auto switches = chain.BlendSwitches();
-                CullDraw entry;
-                entry.items = {items, count, source->records.first, firstSlot};
-                entry.lodInfo = {lods, switches.first, switches.count, 0u};
-                entry.bounds = glm::vec4(chain.boundsCenter, chain.boundsRadius);
-                // Swaying instances reach past their rest bounds by this share of the rest radius: this frame's wind's
-                // reach at the mesh's top (as virtual shadow maps pad casters), else any wind's (as InstanceBinning).
-                const float displacement = view.wind
-                    ? view.wind->MaxDisplacement(draw.foliageWind, chain.boundsCenter.y + chain.boundsRadius)
-                    : FoliageWindMaxDisplacement(draw.foliageWind);
-                const float windReach = chain.boundsRadius > 0.0f ? displacement / chain.boundsRadius : 0.0f;
-                entry.screenRange = {windReach, 0.0f, Finite(draw.instanceDrawDistance), chain.distanceScale};
-                for (std::uint32_t k = 0; k < switches.count; ++k)
+                // The batch of the source it shares bindings with, if that is on this page (other pages' sources have
+                // none here) and has room; else a new one.
+                std::size_t batch = pageBatches.size();
+                if (m_maxBatchSlots != 0 && source->sharesBindingsWith < sources.size())
+                    if (const auto shared = m_sourceBatches[source->sharesBindingsWith];
+                        shared != NoBatch && pageBatchSlots[shared] + lodCount(*source) <= m_maxBatchSlots)
+                        batch = shared;
+                if (batch == pageBatches.size())
                 {
-                    entry.switches[k / 4][k % 4] = Finite(switches.radius[k]);
-                    entry.coarser[k / 4][k % 4] = switches.coarser[k];
+                    pageBatches.emplace_back();
+                    pageBatchSlots.push_back(0u);
                 }
-                // Cards index their own buffer; meshes theirs, bound at zero, so their ranges start at the base index.
-                // Each phase repeats the LODs' index ranges; the scans fill in their instance counts.
-                const std::uint32_t base = draw.impostor ? 0u : draw.mesh->BaseIndex();
+                pageBatches[batch].push_back(source);
+                pageBatchSlots[batch] += lodCount(*source);
+                m_sourceBatches[static_cast<std::size_t>(source - sources.data())] = batch;
+            }
+            // Page batch indices mean nothing on the next page.
+            for (const auto *source : pageSources)
+                m_sourceBatches[static_cast<std::size_t>(source - sources.data())] = NoBatch;
+            for (std::size_t pageBatch = 0; pageBatch < pageBatches.size(); ++pageBatch)
+            {
+                const auto batchSlots = pageBatchSlots[pageBatch];
+                const std::span<const Source *const> members(pageBatches[pageBatch]);
+                const auto batchIndex = static_cast<std::uint32_t>(m_batches.size());
+                const auto batchFirstSlot = static_cast<std::uint32_t>(arguments.size() / 5);
+                m_batches.push_back({batchFirstSlot, batchSlots, static_cast<std::uint32_t>(members.size())});
+                // Each phase repeats every member's LOD index ranges, in member order; the scans fill in their instance
+                // counts. Cards index their own buffer; meshes theirs, bound at zero, so their ranges start at the base
+                // index.
                 for (std::uint32_t phase = 0; phase < PhaseCount; ++phase)
-                    for (std::uint32_t lod = 0; lod < lods; ++lod)
+                    for (const auto *source : members)
                     {
-                        const auto &range = chain.lods[lod];
-                        const std::uint32_t indexCount = draw.impostor ? range.indexCount
-                            : range.firstIndex < draw.mesh->GetIndexCount()
-                                ? std::min(range.indexCount, draw.mesh->GetIndexCount() - range.firstIndex) : 0u;
-                        arguments.insert(arguments.end(), {indexCount, 0u, base + range.firstIndex, 0u, 0u});
-                        slotPhases.push_back(phase);
+                        const auto &draw = *source->draw;
+                        const std::uint32_t base = draw.impostor ? 0u : draw.mesh->BaseIndex();
+                        for (const auto &range : draw.instanceLods->lods)
+                        {
+                            const std::uint32_t indexCount = draw.impostor ? range.indexCount
+                                : range.firstIndex < draw.mesh->GetIndexCount()
+                                    ? std::min(range.indexCount, draw.mesh->GetIndexCount() - range.firstIndex) : 0u;
+                            arguments.insert(arguments.end(), {indexCount, 0u, base + range.firstIndex, 0u, 0u});
+                            slotPhases.push_back(phase);
+                        }
                     }
-                m_bins[{draw.instanceModels.get(), draw.instanceLods.get()}] = {firstSlot, lods};
-                draws.push_back(entry);
-                items += count;
+                std::uint32_t memberSlot = batchFirstSlot;
+                for (std::uint32_t member = 0; member < members.size(); ++member)
+                {
+                    const auto &source = *members[member];
+                    const auto &draw = *source.draw;
+                    const auto &chain = *draw.instanceLods;
+                    const auto count = static_cast<std::uint32_t>(draw.instanceModels->size());
+                    const auto lods = lodCount(source);
+                    const auto switches = chain.BlendSwitches();
+                    CullDraw entry;
+                    entry.items = {items, count, source.records.first, memberSlot};
+                    entry.lodInfo = {lods, switches.first, switches.count, batchSlots};
+                    entry.bounds = glm::vec4(chain.boundsCenter, chain.boundsRadius);
+                    // Swaying instances reach past their rest bounds by this share of the rest radius: this frame's
+                    // wind's reach at the mesh's top (as virtual shadow maps pad casters), else any wind's (as
+                    // InstanceBinning).
+                    const float displacement = view.wind
+                        ? view.wind->MaxDisplacement(draw.foliageWind, chain.boundsCenter.y + chain.boundsRadius)
+                        : FoliageWindMaxDisplacement(draw.foliageWind);
+                    const float windReach = chain.boundsRadius > 0.0f ? displacement / chain.boundsRadius : 0.0f;
+                    entry.screenRange = {windReach, 0.0f, Finite(draw.instanceDrawDistance), chain.distanceScale};
+                    for (std::uint32_t k = 0; k < switches.count; ++k)
+                    {
+                        entry.switches[k / 4][k % 4] = Finite(switches.radius[k]);
+                        entry.coarser[k / 4][k % 4] = switches.coarser[k];
+                    }
+                    m_bins[{draw.instanceModels.get(), draw.instanceLods.get()}] = {memberSlot, lods, batchSlots, batchIndex, member};
+                    draws.push_back(entry);
+                    items += count;
+                    memberSlot += lods;
+                }
             }
             m_pages.push_back({pageSources.front()->records.buffer,
                                {firstDraw, static_cast<std::uint32_t>(draws.size()) - firstDraw, firstItem, items}});

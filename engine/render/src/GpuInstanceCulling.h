@@ -7,6 +7,7 @@
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <span>
@@ -26,6 +27,10 @@ namespace PlutoGE::render
     // is missing for a frame. A frame's bins and their indirect draw arguments stay on the GPU: a draw issues one
     // indirect draw per LOD and phase (or, with first instances, one batch per phase), so neither the CPU's
     // per-instance loop nor the bin upload remains. Chains of more than MaxLods LODs stay on the CPU.
+    //
+    // Draws that bind the same state (foliage cells of one plant part) can share a multi-draw batch: their slots are
+    // laid out phase by phase across the batch, so one indirect batch per phase draws every member (Batch,
+    // GpuInstanceBatchCursor). Batching needs first instances; without them every draw is a batch of its own.
     class GpuInstanceCulling
     {
     public:
@@ -33,11 +38,17 @@ namespace PlutoGE::render
 
         using Shaders = BasicInstanceCullingShaderPackage;
 
+        static constexpr std::size_t NoSource = ~std::size_t(0);
         // One instanced draw to bin: its chain and instances, and where its records are.
         struct Source
         {
             const BasicDraw *draw = nullptr;
             InstanceStorage::Range records;
+            // An earlier source (its index in the list) the caller vouches binds the same state as this draw in every
+            // pass (SameInstancedDrawBindings), so the two may share a batch; NoSource for none. Prepare also requires
+            // the same records page and keeps each batch within the device's multi-draw limit; otherwise the draw
+            // starts a new batch. Members keep the list's order, which passes must record them in.
+            std::size_t sharesBindingsWith = NoSource;
         };
 
         // The camera the bins are for.
@@ -57,14 +68,27 @@ namespace PlutoGE::render
         };
 
         static constexpr std::uint32_t PhaseCount = 2;
-        // A binned draw's slots: one per LOD and phase, its LODs in phase 0 then in phase 1, so one indirect batch of
-        // SlotCount() draws both phases. A slot's arguments are in Arguments() at its index * ArgumentStride.
+        // A binned draw's slots: one per LOD and phase. A slot's arguments are in Arguments() at its index *
+        // ArgumentStride. Draws are binned in batches (a batch of one without batching): a batch holds every member's
+        // phase-0 LODs, member after member, then every member's phase-1 LODs in the same order. A member's phases are
+        // therefore its batch's slots per phase apart, and the slots from a member to the end of its batch are
+        // contiguous within each phase.
         struct Bins
         {
-            std::uint32_t firstSlot = 0;
+            std::uint32_t firstSlot = 0;   // phase 0's finest LOD
             std::uint32_t lodCount = 0;
-            [[nodiscard]] std::uint32_t PhaseSlot(std::uint32_t phase) const noexcept { return firstSlot + phase * lodCount; }
-            [[nodiscard]] std::uint32_t SlotCount() const noexcept { return lodCount * PhaseCount; }
+            std::uint32_t phaseStride = 0; // slots from one phase's LODs to the next's: the batch's slots per phase
+            std::uint32_t batch = 0;       // index into the frame's batches (GetBatch)
+            std::uint32_t member = 0;      // position in the batch; member 0 leads it
+            [[nodiscard]] std::uint32_t PhaseSlot(std::uint32_t phase) const noexcept { return firstSlot + phase * phaseStride; }
+        };
+        // Draws binned together, whose slots one indirect batch per phase draws.
+        struct Batch
+        {
+            std::uint32_t firstSlot = 0;     // the first member's phase-0 finest LOD
+            std::uint32_t slotsPerPhase = 0; // every member's LODs
+            std::uint32_t drawCount = 0;
+            [[nodiscard]] std::uint32_t PhaseSlot(std::uint32_t phase) const noexcept { return firstSlot + phase * slotsPerPhase; }
         };
         static constexpr std::size_t ArgumentStride = 20;
 
@@ -87,6 +111,11 @@ namespace PlutoGE::render
         [[nodiscard]] InstanceCullingStats Stats() const { return *m_stats; }
         // The bins Record made for a draw this frame, or null.
         [[nodiscard]] const Bins *Find(const BasicDraw &draw) const;
+        // A draw's batch this frame.
+        [[nodiscard]] const Batch &GetBatch(const Bins &bins) const { return m_batches.at(bins.batch); }
+        [[nodiscard]] std::size_t BatchCount() const noexcept { return m_batches.size(); }
+        // The most slots one indirect batch may draw; zero without first instances, where draws are not batched.
+        [[nodiscard]] std::uint32_t MaxBatchSlots() const noexcept { return m_maxBatchSlots; }
         [[nodiscard]] rhi::BufferHandle IndexBuffer() const noexcept { return m_indices.Get(); }
         [[nodiscard]] rhi::BufferHandle Arguments() const noexcept { return m_arguments.Get(); }
         // Whether the arguments carry each bin's offset as first instance (Vulkan with indirect first instances), so a
@@ -128,6 +157,42 @@ namespace PlutoGE::render
         std::shared_ptr<InstanceCullingStats> m_stats = std::make_shared<InstanceCullingStats>();
         bool m_twoPhase = false;
         std::unordered_map<Key, Bins, KeyHash> m_bins;
+        std::vector<Batch> m_batches;
+        // Prepare's scratch: each source's batch on the page being laid out.
+        std::vector<std::size_t> m_sourceBatches;
         bool m_firstInstance = false;
+        // Slots one indirect batch may draw (zero without first instances: no shared batches).
+        std::uint32_t m_maxBatchSlots = 0;
+    };
+
+    // Which GPU-binned draws a pass has already drawn through their batches. The first member of a batch a pass records
+    // draws its own slots and every later member's (they bind the same state, so the pass records them too); the later
+    // members then record nothing. Reset at the start of every pass that records binned draws: a member is only covered
+    // by a draw recorded since, in the same pass. Members therefore draw at their first member's place in the pass, ahead
+    // of draws listed between them: only surfaces that tie exactly in depth (which draw order alone decides) can differ.
+    class GpuInstanceBatchCursor
+    {
+    public:
+        // Starts a pass (or a frame of `batchCount` batches).
+        void Reset(std::size_t batchCount)
+        {
+            if (m_firstDrawn.size() != batchCount) m_firstDrawn.assign(batchCount, NotDrawn);
+            else std::fill(m_firstDrawn.begin(), m_firstDrawn.end(), NotDrawn);
+        }
+        // Whether an earlier member of the draw's batch already drew it in this pass.
+        [[nodiscard]] bool Covered(const GpuInstanceCulling::Bins &bins) const noexcept
+        {
+            return bins.batch < m_firstDrawn.size() && m_firstDrawn[bins.batch] <= bins.member;
+        }
+        // The draw recorded its slots and every later member's.
+        void Drew(const GpuInstanceCulling::Bins &bins)
+        {
+            if (bins.batch < m_firstDrawn.size()) m_firstDrawn[bins.batch] = std::min(m_firstDrawn[bins.batch], bins.member);
+        }
+
+    private:
+        static constexpr std::uint32_t NotDrawn = ~0u;
+        // Per batch: the first member drawn this pass.
+        std::vector<std::uint32_t> m_firstDrawn;
     };
 }

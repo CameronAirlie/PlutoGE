@@ -322,9 +322,35 @@ cell.x = floor(position.x / cellSize)
 cell.z = floor(position.z / cellSize)
 ```
 
-The configurable cell size is shared by render clustering and collision
-partitioning. Render commands continue to use hardware-instanced model matrix
-arrays, with one cluster per foliage type and cell.
+The cell size partitions collision and editing, and by default rendering too: render commands use
+hardware-instanced model matrix arrays, one per foliage type, cluster and mesh part.
+
+### Render clusters
+
+A type's **Render Cluster Size** (`FoliageTypeAsset::renderClusterSize`, `RENDER_CLUSTER_SIZE` in `.plutofoliage`,
+`Type.N.RenderClusterSize` in scenes) groups instances for drawing independently of the cell size. `0`, the
+default, draws in cells. A change rebuilds only the render commands (`SetTypeRenderClusterSize`): collision bodies
+keep the cell size. `RenderClusterSize(asset)` gives the size a type draws in.
+
+Each cluster is a render command per mesh part, and the CPU pays per command every frame: frontend culling,
+translation, instance preparation, GPU culling setup and recording. GPU instance culling then culls each instance in
+the camera passes, so large clusters lose little on screen. Shadows are the limit: a producer's shadow distance keeps
+or drops whole clusters (`RhiSceneRenderer` `WithinShadowDistance`), so a cluster that reaches the shadow distance
+casts every instance in it.
+
+Measured on LakeDistrict (2026-11-16, RTX 4070 SUPER, 1280x720, serial recording, shared batches on), with every type's
+clusters scaled from its cell size (trees 64–128 m, ground cover 32–64 m, 22 m shadows):
+
+| Clusters | Frame | Scene GPU | Recording | Shadow draws | Render commands visible |
+|---|---:|---:|---:|---:|---:|
+| Cell size | 8.2 ms | 5.6 ms | 4.8 ms | 1,638 | 2,186 |
+| 2 x cell size | 6.0 ms | 6.0 ms | 3.1 ms | 3,164 | 784 |
+| 4 x cell size | 5.8 ms | 5.8 ms | 3.2 ms | 7,598 | 367 |
+| 8 x cell size | 6.0 ms | 6.1 ms | 3.0 ms | 7,635 | 210 |
+
+Twice the cell size took most of the CPU saving. Beyond it, shadow recording doubled (0.8 to 1.5 ms), and the GPU
+culled up to twice as many instances. Start at twice the cell size for types with short shadow distances or none, and
+compare with the runtime benchmark.
 
 Camera rendering rejects whole cells outside a type's draw distance, then
 filters individual instances only for cells crossing the cutoff. This is useful
@@ -521,13 +547,52 @@ Three compute passes run per phase:
 2. **Scan:** prefix sums give each bin's offset and fill the indirect draw arguments.
 3. **Scatter:** record indices, with their dither codes, are written into the bins.
 
-A draw's slots are its LODs in phase 0, then its LODs in phase 1 (`GpuInstanceCulling::Bins::PhaseSlot`), so the
-phases a pass draws are one contiguous range. Draws read the bins through the same index buffer binding as CPU bins:
+Each slot is one LOD of one draw in one phase. Draws read the bins through the same index buffer binding as CPU bins:
 
-- **Vulkan with indirect first instances:** that range goes as one indirect batch whose first instances are the bin
-  offsets: the coverage depth draws phase 0's LODs and later phase 1's, the shaded pass both at once.
+- **Vulkan with indirect first instances:** slots go as indirect batches whose first instances are the bin offsets.
 - **Otherwise (OpenGL):** each LOD is an indirect draw whose vertex shader reads its bin's offset from a header
   (`instanceRange.z == 2`).
+
+#### Shared batches
+
+A foliage component submits one draw per cell, type and mesh part, so a large world binds and records the same state
+thousands of times: LakeDistrict's 16 terrain tiles bin about 2,900 draws for some 25 plant types. On Vulkan, binned
+draws that bind the same state share **multi-draw batches** (`GpuInstanceCulling::Batch`):
+
+- **Grouping.** While listing the frame's binned draws, `BasicRenderer` links each draw to the latest earlier draw with
+  the same bindings (`SameInstancedDrawBindings`: equal shading by `SameBasicDrawShading`, the same vertex and index
+  buffers, and the same impostor cards). `InstancedDrawBindingHash` buckets the candidates. Links work wherever the
+  producers put the draws in the list, so cells from different tiles group too. The frontend's whole-cluster
+  `normalizedLod` keeps draws apart only when the geometry diagnostics output shows it.
+- **Layout.** `GpuInstanceCulling::Prepare` puts linked draws on one records page into one batch, up to the device's
+  multi-draw limit. A batch holds every member's phase-0 LODs, then every member's phase-1 LODs
+  (`Bins::phaseStride` is the batch's slots per phase; `InstanceCulling.slang` adds `phase * lodInfo.w`). One
+  indirect batch per phase then draws all members, and a whole batch's two phases are adjacent, so the shaded pass
+  draws them in one call.
+- **Recording.** The first member a pass records draws its own slots and those of every later member.
+  `GpuInstanceBatchCursor` remembers that, and the later members record nothing, not even their bindings. Every pass
+  that records binned draws resets the cursor (`beginBinnedPass`): the coverage depth, its second phase, the shaded
+  pass, the outline shells and each outline mask. A new pass of that kind must reset it too.
+- **Order.** Members draw where their first member is recorded, ahead of draws listed between them. Only surfaces that
+  tie exactly in depth, which draw order alone decides, can change.
+
+`BasicRenderer::SetGpuInstanceBatching` (on by default), `RhiRenderService::SetGpuInstanceBatching`,
+`PLUTO_GPU_INSTANCE_BATCHING=0` and the benchmark's `--no-instance-batching` switch it off for comparisons. Without
+indirect first instances (OpenGL) every draw is a batch of its own. The editor profiler reports "RHI GPU-binned draws:
+N in M multi-draw batches", and the benchmark CSV has `gpu_binned_draws` and `gpu_binned_batches` columns.
+
+On LakeDistrict (2026-11-16, RTX 4070 SUPER, 1280x720, runtime benchmark with serial recording), 2,941 binned draws
+went into 51 batches:
+
+| | Before | After |
+|---|---:|---:|
+| Geometry recording | 4.08 ms | 0.76 ms |
+| Frame | 11.9 ms | 8.5 ms |
+| Descriptor binds | 2,609 | 638 |
+
+The grouping costs about 0.25 ms in instance binning, and GPU time was unchanged. `PlutoGE{Vulkan,OpenGL}GpuInstanceBatchingTests`
+(`tests/GpuInstanceBatchingChecks.h`) compare batched, unbatched and CPU-binned frames, including both culling phases
+and outlines.
 
 Limits and fallbacks:
 
@@ -541,8 +606,8 @@ Limits and fallbacks:
   within capture noise, still and moving.
 - An indirect draw count would let the GPU skip the empty slots, but it was measured and is not worth an RHI
   capability: leaving out about 9,200 mostly empty phase-1 draws saved about 0.5 ms of GPU time on Verdant (five
-  alternating pairs), within noise. Merging each draw's phases into one batch halves the shaded pass's indirect calls,
-  with no measurable change to recording time either way.
+  alternating pairs), within noise. Shared batches (above) cut the calls, not the slots: the GPU still processes
+  every slot's arguments.
 - Swaying instances' bounds are padded by this frame's wind's reach at the mesh's top (`FoliageWindFrame::MaxDisplacement`,
   as virtual shadow maps pad casters), not the any-wind bound CPU binning uses: that one roughly doubles a tree's
   sphere, and with it the occlusion test hid little (75 ms against 60 ms on Verdant). Without the padding occlusion would
@@ -621,7 +686,8 @@ cells make a small foliage edit rebuild a larger compound and reduce culling
 granularity. A cell should normally contain tens or hundreds of trees, not one
 tree and not an entire forest. Per-chunk LOD (above) makes the render side favour
 larger cells. The Verdant Gorge sample uses 128 m for trees, rocks and deadwood,
-and 48–64 m for ground cover.
+and 48–64 m for ground cover. When rendering wants larger groups than collision does, set a Render Cluster Size
+(above) rather than growing the cells.
 
 ## Serialization and compatibility
 
@@ -632,6 +698,7 @@ Type.N.MinScale
 Type.N.MaxScale
 Type.N.AssetReference
 Type.N.CellSize
+Type.N.RenderClusterSize
 Type.N.MaxDrawDistance
 Type.N.LodDistanceScale
 Type.N.CollisionEnabled
@@ -710,4 +777,4 @@ command cache. Physics collision cells themselves are cached and revisioned.
 - `engine/render/include/PlutoGE/render/GraphicsQuality.h` (foliage detail per tier)
 - `tests/FoliageCollisionTests.cpp`, `tests/FoliageEditingTests.cpp`, `tests/FoliageProxyTests.cpp`,
   `tests/managed/PlutoGE.FoliageSmokeTests`
-- `tests/InstanceLodChecks.h`, `tests/GpuInstanceCullingChecks.h`
+- `tests/InstanceLodChecks.h`, `tests/GpuInstanceCullingChecks.h`, `tests/GpuInstanceBatchingChecks.h`

@@ -1146,8 +1146,9 @@ namespace PlutoGE::render
         std::uint32_t lightClusterUpdates = 0;
         // Opaque draws submitted through GPU-driven multi-draw indirect calls, those calls, and live bindless materials.
         std::size_t gpuDrivenDraws = 0, gpuDrivenBatches = 0, gpuDrivenMaterials = 0;
-        // Instanced draws binned by GpuInstanceCulling (their triangles and instances are not counted).
-        std::size_t gpuBinnedDraws = 0;
+        // Instanced draws binned by GpuInstanceCulling (their triangles and instances are not counted), and the
+        // multi-draw batches they were binned in (equal to the draws without batching).
+        std::size_t gpuBinnedDraws = 0, gpuBinnedBatches = 0;
         // Detail grass this frame: fields generated and the candidates their lattices dispatched; and the latest
         // generated clumps per LOD read back (an earlier frame's; DetailGrassStats).
         std::size_t detailGrassFields = 0, detailGrassCandidates = 0;
@@ -1287,6 +1288,10 @@ namespace PlutoGE::render
         // count to compact them), which costs more than CPU binning saves on integrated GPUs (docs/FOLIAGE.md). It
         // leaves triangle and instance statistics of the draws it bins uncounted (it never reads its bins back).
         void SetGpuInstanceCulling(bool enabled) noexcept { m_gpuInstanceCullingEnabled = enabled; }
+        // GPU-binned draws that bind the same state (foliage cells of one plant part) share multi-draw batches
+        // (GpuInstanceCulling::Batch): a pass records one call per batch and skips the other members' bindings. On by
+        // default where indirect first instances allow it; the image is identical, so switching it off is for comparisons.
+        void SetGpuInstanceBatching(bool enabled) noexcept { m_gpuInstanceBatchingEnabled = enabled; }
         // Whether the device and shaders allow it (Initialize).
         [[nodiscard]] bool GpuInstanceCullingAvailable() const noexcept { return static_cast<bool>(m_gpuInstanceCulling); }
         void SetGeometryOptimizations(bool compactOutputs, bool depthPrepass, bool materialCulling) noexcept
@@ -1478,6 +1483,7 @@ namespace PlutoGE::render
         std::uint64_t m_fogTerrainShadowRevision = 0;
         BasicDetailGrassShaderPackage m_detailGrassShaders;
         bool m_gpuInstanceCullingEnabled = false;
+        bool m_gpuInstanceBatchingEnabled = true;
         // Renders so far, and the one whose occlusion hierarchy the next may cull against (GpuInstanceCulling), with
         // its camera position.
         std::uint64_t m_renderCount = 0, m_occlusionHierarchyRender = 0;

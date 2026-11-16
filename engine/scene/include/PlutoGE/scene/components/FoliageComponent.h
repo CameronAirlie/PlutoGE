@@ -316,6 +316,9 @@ namespace PlutoGE::scene
         void SetTypeCollisionEnabled(std::size_t index, bool enabled);
         void SetTypeCollisionCapsule(std::size_t index, const glm::vec3 &center, float radius, float height);
         void SetTypeCellSize(std::size_t index, float cellSize);
+        // The clusters the type draws in (FoliageTypeAsset::renderClusterSize; zero follows the cell size). Changes
+        // rebuild only the render commands: collision cells keep the cell size.
+        void SetTypeRenderClusterSize(std::size_t index, float size);
         void SetTypeMaxDrawDistance(std::size_t index, float distance);
         // Moves the type's LOD and impostor switches nearer or farther (sanitized; render/LodDistanceScale.h).
         void SetTypeLodDistanceScale(std::size_t index, float scale);
@@ -344,6 +347,8 @@ namespace PlutoGE::scene
         void MarkInstancesDirty();
         void EnsureStableInstanceIds();
         FoliageCellCoordinate GetCellCoordinate(const FoliageType &type, const glm::vec3 &position) const;
+        // The render cluster (RenderClusterSize) an instance draws in.
+        static FoliageCellCoordinate GetRenderClusterCoordinate(const FoliageType &type, const glm::vec3 &position);
         void RebuildRenderCommandCache(const glm::mat4 &ownerTransform);
         void RebuildTypeMaterialFromReference(FoliageType &type);
         void RebuildTypeMeshFromReference(FoliageType &type);

@@ -2947,6 +2947,10 @@ namespace PlutoGE::render
             const bool gpuBinning = m_gpuInstanceCulling && m_gpuInstanceCullingEnabled;
             std::vector<InstanceBinning::Source> cpuSources;
             std::vector<GpuInstanceCulling::Source> gpuSources;
+            // Each binding group's latest source, by InstancedDrawBindingHash. Normalized LODs only show in the
+            // diagnostics output, so only it keeps draws of different whole-cluster LODs apart.
+            std::unordered_multimap<std::size_t, std::size_t> bindingGroups;
+            const bool diagnosticOutput = geometryLayout == GeometryOutputLayout::Diagnostics;
             for (const auto &draw : draws)
             {
                 if (!IsBinnedInstanceDraw(draw)) continue;
@@ -2959,7 +2963,26 @@ namespace PlutoGE::render
                 }
                 const auto records = recordsOf(draw);
                 if (!records) continue;
-                if (gpuBinning && GpuInstanceCulling::Supports(draw)) gpuSources.push_back({&draw, records});
+                if (gpuBinning && GpuInstanceCulling::Supports(draw))
+                {
+                    // A plant part's cells bind the same state wherever their producers put them in the list: they share
+                    // multi-draw batches (GpuInstanceCulling::Batch), which each pass records once.
+                    std::size_t sharesBindingsWith = GpuInstanceCulling::NoSource;
+                    if (m_gpuInstanceBatchingEnabled)
+                    {
+                        const auto hash = InstancedDrawBindingHash(draw, diagnosticOutput);
+                        auto [group, groupsEnd] = bindingGroups.equal_range(hash);
+                        for (; group != groupsEnd; ++group)
+                            if (SameInstancedDrawBindings(*gpuSources[group->second].draw, draw, diagnosticOutput))
+                            {
+                                sharesBindingsWith = group->second;
+                                group->second = gpuSources.size();
+                                break;
+                            }
+                        if (group == groupsEnd) bindingGroups.emplace(hash, gpuSources.size());
+                    }
+                    gpuSources.push_back({&draw, records, sharesBindingsWith});
+                }
                 else cpuSources.push_back({&draw, records});
             }
             m_frameStats.viewCulledInstances += m_instanceBinning->Bin(cpuSources, instanceView, *m_instanceStorage);
@@ -2985,6 +3008,7 @@ namespace PlutoGE::render
                                                            previous, current, &m_foliageWind});
                 m_gpuInstanceCulling->RecordPhase(commands, 0);
                 m_frameStats.gpuBinnedDraws = gpuSources.size();
+                m_frameStats.gpuBinnedBatches = m_gpuInstanceCulling->BatchCount();
                 m_frameStats.gpuCullingSecondPhase = m_gpuInstanceCulling->TwoPhase();
                 m_frameStats.instanceCulling = m_gpuInstanceCulling->Stats();
             }
@@ -3842,6 +3866,12 @@ namespace PlutoGE::render
             commands.BindStorageBuffer(InstanceIndexSlot, m_instanceStoragePlaceholder.Get());
         };
         rhi::BufferHandle boundMaterial;
+        // GPU-binned batches a pass has drawn: every pass that records binned draws starts with beginBinnedPass.
+        GpuInstanceBatchCursor gpuBatchCursor;
+        const auto beginBinnedPass = [&]
+        {
+            gpuBatchCursor.Reset(m_gpuInstanceCulling && m_gpuInstanceCullingEnabled ? m_gpuInstanceCulling->BatchCount() : 0u);
+        };
         bool recordingParticleBoundary = false;
         // Camera, light clusters, probes and reflection captures: bound once per pass.
         const auto bindFrameResources = [&](rhi::ICommandContext &commands)
@@ -3890,6 +3920,12 @@ namespace PlutoGE::render
                 return;
             // A binned cluster out of the view or beyond its draw distance has nothing to draw (and no bins).
             if (instanced && IsBinnedInstanceDraw(draw) && !instanceView.ClusterVisible(draw))
+                return;
+            // GPU bins (GpuInstanceCulling). An earlier member of the draw's batch already drew them in this pass, and
+            // bound nothing this draw needs afterwards: nothing is left to record.
+            const auto *gpuBins = instanced && draw.instanceLods && m_gpuInstanceCulling && m_gpuInstanceCullingEnabled
+                ? m_gpuInstanceCulling->Find(draw) : nullptr;
+            if (gpuBins && gpuBatchCursor.Covered(*gpuBins))
                 return;
             // Occlusion-culled indirect draws keep their own buffer: the GPU writes their arguments.
             const bool streamed = objectStreaming && !instanced && !transparent && !grass &&
@@ -4116,15 +4152,13 @@ namespace PlutoGE::render
                         : glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f,
                                     draw.probeDebug.x, draw.probeDebug.y);
                     const std::uint32_t instanceLayout = impostor ? impostor->parameters.framesPerSide : 0u;
-                    const auto *gpuBins = draw.instanceLods && m_gpuInstanceCulling && m_gpuInstanceCullingEnabled
-                        ? m_gpuInstanceCulling->Find(draw) : nullptr;
                     const auto *binned = !gpuBins && draw.instanceLods && m_instanceStorage->IndexBuffer()
                         ? m_instanceStorage->FindBins(draw.instanceModels.get(), draw.instanceLods.get()) : nullptr;
                     if (gpuBins)
                     {
                         // GPU bins (GpuInstanceCulling): the arguments hold absolute first indices, so the index buffer
-                        // binds at zero; with first instances the LODs go as one batch, else each finds its bin offset
-                        // in the bin buffer's header (instanceRange.z = 2).
+                        // binds at zero; with first instances the slots go as indirect batches, else each finds its bin
+                        // offset in the bin buffer's header (instanceRange.z = 2).
                         if (!impostor) commands.BindVertexBuffer(draw.mesh->m_vertexBuffer);
                         commands.BindIndexBuffer(impostor ? m_impostorCardIndices.Get() : draw.mesh->m_indexBuffer, rhi::Format::R32Uint, 0);
                         boundDrawMesh = nullptr;
@@ -4143,8 +4177,7 @@ namespace PlutoGE::render
                         boundObjectBlock = {};
                         const auto arguments = m_gpuInstanceCulling->Arguments();
                         constexpr auto stride = GpuInstanceCulling::ArgumentStride;
-                        // The phases this pass draws are adjacent in the draw's slots (phase 0's LODs, then phase 1's),
-                        // so they go as one range: one batch with first instances, else one draw per slot.
+                        // The phases this pass draws (gpuBinPhases), of those the frame binned.
                         const auto phases = m_gpuInstanceCulling->TwoPhase() ? GpuInstanceCulling::PhaseCount : 1u;
                         std::uint32_t firstPhase = phases, endPhase = 0;
                         for (std::uint32_t phase = 0; phase < phases; ++phase)
@@ -4153,22 +4186,44 @@ namespace PlutoGE::render
                                 firstPhase = std::min(firstPhase, phase);
                                 endPhase = phase + 1;
                             }
-                        if (firstPhase < endPhase)
+                        if (firstPhase < endPhase && m_gpuInstanceCulling->UsesFirstInstance())
                         {
-                            const auto firstSlot = gpuBins->PhaseSlot(firstPhase);
-                            const auto slotCount = (endPhase - firstPhase) * gpuBins->lodCount;
-                            if (m_gpuInstanceCulling->UsesFirstInstance())
+                            // With first instances: this draw's slots and those of the rest of its batch, per phase, as
+                            // indirect batches. The later members bind the same state and so are recorded by this pass
+                            // too; drawn here, they record nothing themselves (gpuBatchCursor).
+                            bind({0u, 1u, 1u, instanceLayout});
+                            const auto &batch = m_gpuInstanceCulling->GetBatch(*gpuBins);
+                            const auto offset = gpuBins->firstSlot - batch.firstSlot;
+                            const auto perPhase = batch.slotsPerPhase - offset;
+                            const auto maxSlots = m_gpuInstanceCulling->MaxBatchSlots();
+                            // A whole batch's consecutive phases are adjacent slots: they go as one call when it fits.
+                            std::uint32_t rangeFirst = batch.PhaseSlot(firstPhase) + offset, rangeCount = 0;
+                            for (std::uint32_t phase = firstPhase; phase < endPhase; ++phase)
                             {
-                                bind({0u, 1u, 1u, instanceLayout});
-                                commands.DrawIndexedIndirectBatch(arguments, std::size_t(firstSlot) * stride, slotCount);
-                            }
-                            else
-                                for (std::uint32_t slot = firstSlot; slot < firstSlot + slotCount; ++slot)
+                                const auto first = batch.PhaseSlot(phase) + offset;
+                                if (rangeCount != 0 && (rangeFirst + rangeCount != first || rangeCount + perPhase > maxSlots))
                                 {
+                                    commands.DrawIndexedIndirectBatch(arguments, std::size_t(rangeFirst) * stride, rangeCount);
+                                    rangeCount = 0;
+                                }
+                                if (rangeCount == 0) rangeFirst = first;
+                                rangeCount += perPhase;
+                            }
+                            commands.DrawIndexedIndirectBatch(arguments, std::size_t(rangeFirst) * stride, rangeCount);
+                            m_frameStats.geometryDraws += std::size_t(perPhase) * (endPhase - firstPhase);
+                            gpuBatchCursor.Drew(*gpuBins);
+                        }
+                        else if (firstPhase < endPhase)
+                        {
+                            // Without first instances every draw is a batch of its own: one indirect draw per slot.
+                            for (std::uint32_t phase = firstPhase; phase < endPhase; ++phase)
+                                for (std::uint32_t lod = 0; lod < gpuBins->lodCount; ++lod)
+                                {
+                                    const auto slot = gpuBins->PhaseSlot(phase) + lod;
                                     bind({slot, 1u, 2u, instanceLayout});
                                     commands.DrawIndexedIndirect(arguments, std::size_t(slot) * stride);
                                 }
-                            m_frameStats.geometryDraws += slotCount;
+                            m_frameStats.geometryDraws += std::size_t(gpuBins->lodCount) * (endPhase - firstPhase);
                         }
                     }
                     else if (binned)
@@ -4326,6 +4381,7 @@ namespace PlutoGE::render
                 depth.clearColor = false;
                 commands.BeginRendering(depth);
                 recordingDepth = true;
+                beginBinnedPass();
                 const bool secondPhase = m_gpuInstanceCulling && m_gpuInstanceCullingEnabled && m_gpuInstanceCulling->TwoPhase();
                 gpuBinPhases = secondPhase ? 1u : 3u;
                 for (std::size_t index = 0; index < draws.size(); ++index)
@@ -4351,6 +4407,7 @@ namespace PlutoGE::render
                     depth.clearDepth = false;
                     commands.BeginRendering(depth);
                     gpuBinPhases = 2u;
+                    beginBinnedPass();
                     for (std::size_t index = 0; index < draws.size(); ++index)
                         if (prepassEligible(draws[index]) && draws[index].instanceLods && m_gpuInstanceCulling->Find(draws[index]))
                             recordDraw(commands, draws[index], false, index);
@@ -4422,6 +4479,7 @@ namespace PlutoGE::render
             skyTextureBound = false;
             boundMaterial = {};
             boundObjectBlock = {};
+            beginBinnedPass();
             commands.BeginRendering(renderingInfo);
             m_frameStats.geometryColorOutputs = static_cast<std::uint32_t>(renderingInfo.colorAttachments.size());
             std::size_t historyIndex = 0;
@@ -4507,6 +4565,7 @@ namespace PlutoGE::render
             commands.BeginGpuScope("RHI Geometry / Outlines");
             // Draw shells after all opaque surfaces so foreground geometry occludes them.
             historyIndex = 0;
+            beginBinnedPass();
             for (const auto &draw : draws)
             {
                 if (draw.outlineWidth > 0.0f && draw.alphaMode == 0 && draw.surfaceType == 0)
@@ -4566,6 +4625,7 @@ namespace PlutoGE::render
                     mask.height = m_height;
                     mask.clearColor = false;
                     commands.BeginRendering(mask);
+                    beginBinnedPass();
                     for (const auto &draw : m_outlines->Draws(layer))
                         recordDraw(commands, draw, false, m_previousModels.size());
                     commands.EndRendering();

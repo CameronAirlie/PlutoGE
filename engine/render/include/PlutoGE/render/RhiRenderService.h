@@ -58,6 +58,9 @@ namespace PlutoGE::render
         // Bins instanced draws on the GPU with two-phase occlusion (BasicRenderer::SetGpuInstanceCulling); on by default,
         // where the device supports it. Off bins them on the CPU, without occlusion.
         void SetGpuInstanceCulling(bool enabled);
+        // GPU-binned draws binding the same state share multi-draw batches (BasicRenderer::SetGpuInstanceBatching); on
+        // by default. The image is identical, so switching it off is for comparisons.
+        void SetGpuInstanceBatching(bool enabled);
         // Automatic render resolution for the scene view (RhiSceneRenderer::SetDynamicResolution); off by default.
         void SetDynamicResolution(const DynamicResolutionSettings &settings);
         [[nodiscard]] bool IsRenderThreadEnabled() const noexcept { return m_renderThread != nullptr; }
@@ -131,6 +134,7 @@ namespace PlutoGE::render
         // Render thread state: the worker, the frame's runtime UI captured for it, and stats published on completion.
         std::unique_ptr<core::FrameWorker> m_renderThread;
         bool m_gpuInstanceCulling = true;
+        bool m_gpuInstanceBatching = true;
         DynamicResolutionSettings m_dynamicResolution;
         rhi::DeferredCommandList m_runtimeUiCommands;
         NativeUIRenderer m_nativeUi;

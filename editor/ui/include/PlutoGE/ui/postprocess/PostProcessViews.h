@@ -35,14 +35,25 @@ namespace PlutoGE::ui::postprocess
         std::string message;
     };
 
-    // Findings about a preset, rebuilt only when it changes.
+    // A camera rendering with the preset, for findings that depend on where it is (height fog out of its reach).
+    struct PostProcessViewer
+    {
+        std::string label;
+        float height = 0.0f; // world Y
+        bool operator==(const PostProcessViewer &) const = default;
+    };
+
+    // Findings about a preset, rebuilt only when it or its viewers change.
     struct PostProcessStackAnalysis
     {
         std::uint64_t revision = 0;
         std::vector<PostProcessIssue> issues;
         std::vector<int> effectWarnings; // per effect
+        std::vector<PostProcessViewer> viewers; // used by Analyze
 
         void Update(const PostProcessPresetSession &session);
+        // Replaces the viewers; re-analyzes on the next Update when they changed.
+        void SetViewers(std::vector<PostProcessViewer> cameras);
         void Analyze(const assets::PostProcessPresetAsset &preset);
         [[nodiscard]] int WarningCount() const;
     };

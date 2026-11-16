@@ -48,6 +48,7 @@ namespace PlutoGE::ui
         void DrawToolbar();
         void DrawProblems();
         void DrawUsage();
+        [[nodiscard]] std::vector<postprocess::PostProcessViewer> CollectViewers() const;
         void DrawSavePrompt();
         void HandleShortcuts();
         void Save();

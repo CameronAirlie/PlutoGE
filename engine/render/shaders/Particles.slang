@@ -67,7 +67,8 @@ float4 particleFog(float3 worldPosition)
         const float3 hazeLighting = horizonHazeLighting(direction, fogCameraPositionAmbient.w,
             fogDirectionalColor.rgb * max(fogDirectionalDirectionIntensity.w, 0.0), haze.z,
             evaluateCloudLighting(fogCloudOcclusion, fogCameraPositionAmbient.xyz, sunDirection));
-        fog = composeHorizonHaze(fog, midpoint, direction.y, distance, false, haze, hazeLighting);
+        fog = composeHorizonHaze(fog, midpoint, direction.y, distance, false, haze, hazeLighting,
+                                 colorDensity.rgb);
     }
     return fog;
 }

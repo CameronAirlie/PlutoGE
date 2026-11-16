@@ -384,16 +384,49 @@ namespace PlutoGE::ui::postprocess
             }
         }
 
-        void DrawParameters(const assets::PostProcessEffectAsset &effect, int effectIndex, std::vector<Edit> &edits)
+        const render::PostProcessParameterInfo *FindInfo(const std::string &typeName, const std::string &parameterName)
         {
-            if (!ImGui::BeginTable("##Parameters", 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX))
-                return;
+            const auto *defaults = render::GetPostProcessEffectDefaults(typeName);
+            if (!defaults)
+                return nullptr;
+            const auto found = std::ranges::find(defaults->parameterInfo, parameterName, &render::PostProcessParameterInfo::name);
+            return found == defaults->parameterInfo.end() ? nullptr : &*found;
+        }
+
+        bool BeginParameterTable(int group)
+        {
+            // BeginTable pushes its own ID, so the group goes into the table's name rather than a PushID around it.
+            const std::string id = "##Parameters" + std::to_string(group);
+            if (!ImGui::BeginTable(id.c_str(), 3, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_PadOuterX))
+                return false;
             ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFontSize() * 11.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
             ImGui::TableSetupColumn("Reset", ImGuiTableColumnFlags_WidthFixed, ImGui::GetFrameHeight());
+            return true;
+        }
+
+        // One table per heading the effect groups its parameters under (IPostProcessEffect::GetParameterInfo).
+        void DrawParameters(const assets::PostProcessEffectAsset &effect, int effectIndex, std::vector<Edit> &edits)
+        {
+            std::string currentGroup;
+            int groupCount = 0;
+            bool tableOpen = false;
             for (int index = 0; index < static_cast<int>(effect.parameters.size()); ++index)
             {
                 const auto &parameter = effect.parameters[index];
+                const auto *info = FindInfo(effect.typeName, parameter.name);
+                const std::string group = info ? info->group : std::string{};
+                if (index == 0 || group != currentGroup)
+                {
+                    if (tableOpen)
+                        ImGui::EndTable();
+                    currentGroup = group;
+                    if (!group.empty())
+                        ImGui::SeparatorText(group.c_str());
+                    tableOpen = BeginParameterTable(groupCount++);
+                }
+                if (!tableOpen)
+                    continue;
                 const auto *defaultParameter = FindDefault(effect.typeName, parameter.name);
                 const bool modified = defaultParameter && defaultParameter->value != parameter.value;
                 ImGui::PushID(index);
@@ -404,7 +437,9 @@ namespace PlutoGE::ui::postprocess
                 ImGui::PushStyleColor(ImGuiCol_Text, GetEditorColor(modified ? EditorColor::Text : EditorColor::TextMuted));
                 ImGui::TextUnformatted(parameter.name.c_str());
                 ImGui::PopStyleColor();
-                if (ImGui::GetItemRectSize().x > ImGui::GetColumnWidth())
+                if (info && !info->tooltip.empty())
+                    ImGui::SetItemTooltip("%s", info->tooltip.c_str());
+                else if (ImGui::GetItemRectSize().x > ImGui::GetColumnWidth())
                     ImGui::SetItemTooltip("%s", parameter.name.c_str());
 
                 ImGui::TableSetColumnIndex(1);
@@ -424,7 +459,8 @@ namespace PlutoGE::ui::postprocess
                 }
                 ImGui::PopID();
             }
-            ImGui::EndTable();
+            if (tableOpen)
+                ImGui::EndTable();
         }
 
         // Cost, memory and caveats the effect reports for its current settings.

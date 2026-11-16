@@ -15,6 +15,7 @@ namespace PlutoGE::render
         std::string GetDisplayName() const override { return "Volumetric Fog"; }
         std::vector<PostProcessParameter> GetParameters() const override;
         void SetParameters(const std::vector<PostProcessParameter> &parameters) override;
+        std::vector<PostProcessParameterInfo> GetParameterInfo() const override;
         struct Settings
         {
             glm::vec3 color;

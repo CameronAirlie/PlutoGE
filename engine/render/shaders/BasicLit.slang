@@ -1103,7 +1103,8 @@ float4 glassAtmosphere(float3 worldPosition)
             directionalColor.rgb * max(directionalDirectionIntensity.w, 0.0), glassFog[3].z,
             evaluateCloudLighting(cloudOcclusion, cameraPositionAmbient.xyz, sunDirection));
         fog = composeHorizonHaze(fog, scatterWeight > 0.0 ? scatterDistance / scatterWeight : 0.0,
-                                 direction.y, distance, false, glassFog[3], hazeLighting);
+                                 direction.y, distance, false, glassFog[3], hazeLighting,
+                                 glassFog[0].rgb);
     }
     return fog;
 }

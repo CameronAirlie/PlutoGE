@@ -67,10 +67,14 @@ float3 fogPointRadiance(FogLighting lighting, FogMedium medium, CloudOcclusionPa
 // ground fog therefore stays in front of distant aerial perspective, while a
 // distant fog layer recedes into the haze like the scene behind it. fog holds
 // in-scattered radiance and transmittance; fogDistance is its opacity-weighted
-// distance. haze holds lanes y-w of VolumetricFog lane 3.
+// distance. haze holds lanes y-w of VolumetricFog lane 3. The fog's Color (lane
+// 0.rgb) tints the haze's light as it does the height fog's. Max Opacity does
+// not limit the haze: at full strength it must hide the height fog's hard edge
+// at the horizon, which a capped haze would let through.
 float4 composeHorizonHaze(float4 fog, float fogDistance, float directionY, float distance, bool sky,
-                          float4 haze, float3 hazeLighting)
+                          float4 haze, float3 hazeLighting, float3 tint)
 {
+    hazeLighting *= max(tint, 0.0);
     const float total = horizonHazeTransmittance(directionY, distance, sky, haze.y, haze.z, haze.w);
     const float front = max(horizonHazeTransmittance(directionY, sky ? fogDistance : min(fogDistance, distance),
                                                      false, haze.y, haze.z, haze.w), total);

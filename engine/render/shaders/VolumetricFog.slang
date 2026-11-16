@@ -355,7 +355,7 @@ float4 integrateFog(FullscreenVertexOutput input, bool froxels)
     const float opacityScale = saturate(pass.parameters[2].w);
     accumulatedLight *= opacityScale;
     transmittance = 1.0 - opacityScale * (1.0 - transmittance);
-    // The opacity scale does not limit the separate, more distant haze.
+    // The opacity scale does not limit the separate, more distant haze; the colour tints it (composeHorizonHaze).
     float4 fog = float4(accumulatedLight, transmittance);
     if (pass.parameters[3].y > 0.0)
     {
@@ -363,7 +363,8 @@ float4 integrateFog(FullscreenVertexOutput input, bool froxels)
             fogDirectionalColor.rgb * max(fogDirectionalDirectionIntensity.w, 0.0), pass.parameters[3].z,
             evaluateCloudLighting(fogCloudOcclusion, pass.cameraPosition.xyz, lightDirection));
         fog = composeHorizonHaze(fog, scatterWeight > 0.0 ? scatterDistance / scatterWeight : 0.0,
-                                 rayDirection.y, surfaceDistance, sky, pass.parameters[3], hazeLighting);
+                                 rayDirection.y, surfaceDistance, sky, pass.parameters[3], hazeLighting,
+                                 pass.parameters[0].rgb);
     }
     return fog;
 }

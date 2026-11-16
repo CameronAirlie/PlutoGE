@@ -317,6 +317,43 @@ namespace
         Require(std::ranges::any_of(analysis.issues, [](const auto &issue) { return issue.severity == pp::PostProcessIssue::Severity::Note && issue.effect < 0; }),
                 "TAA with FXAA is noted");
 
+        // Volumetric Fog: a camera far above Height Offset sees almost none of the height fog.
+        auto fog = MakePreset({"VolumetricFog", "ToneMapping"});
+        const auto setFog = [&](const char *name, const char *value)
+        {
+            for (auto &parameter : fog.effects[0].parameters)
+                if (parameter.name == name)
+                    parameter.value = value;
+        };
+        analysis.viewers = {{"Main Camera", 2.0f}};
+        analysis.Analyze(fog);
+        Require(analysis.issues.empty(), "Default fog seen from near its base has no findings");
+        setFog("Height Offset", "-148");
+        analysis.Analyze(fog);
+        Require(analysis.effectWarnings[0] == 1, "Fog far below every camera is a problem");
+        analysis.viewers = {{"Main Camera", 2.0f}, {"Cave Camera", -140.0f}};
+        analysis.Analyze(fog);
+        Require(analysis.issues.empty(), "Fog within reach of one camera is fine");
+        analysis.viewers.clear();
+        setFog("Ambient Contribution", "0");
+        setFog("Directional Contribution", "0");
+        analysis.Analyze(fog);
+        Require(analysis.effectWarnings[0] == 1, "Unlit height fog is a problem");
+        setFog("Density", "0");
+        analysis.Analyze(fog);
+        Require(analysis.WarningCount() == 0 && analysis.issues.size() == 1, "Haze-only fog is a note");
+        setFog("Horizon Haze", "0");
+        analysis.Analyze(fog);
+        Require(analysis.effectWarnings[0] == 1, "Fog that draws nothing is a problem");
+
+        // The fog's settings are grouped, with an explanation for each.
+        const auto *defaults = render::GetPostProcessEffectDefaults("VolumetricFog");
+        Require(defaults && defaults->parameterInfo.size() == defaults->parameters.size(), "Every fog setting is described");
+        for (const auto &parameter : defaults->parameters)
+            Require(std::ranges::any_of(defaults->parameterInfo, [&](const auto &info)
+                                        { return info.name == parameter.name && !info.group.empty() && !info.tooltip.empty(); }),
+                    "Every fog setting has a group and a tooltip");
+
         const auto ordered = MakePreset({"ToneMapping", "Bloom", "DDGI"});
         Require(pp::PipelineOrder(ordered) == std::vector<int>{2, 1, 0}, "Effects are shown in pipeline order");
         const auto inPipelineOrder = MakePreset({"DDGI", "Bloom", "ToneMapping"});

@@ -26,6 +26,15 @@ namespace PlutoGE::render
         bool operator==(const PostProcessParameter &) const = default;
     };
 
+    // How editors present one parameter. Kept apart from PostProcessParameter so it is never serialized or compared.
+    struct PostProcessParameterInfo
+    {
+        std::string name;
+        // Parameters sharing a group sit under one heading; consecutive parameters should share it.
+        std::string group;
+        std::string tooltip;
+    };
+
     class IPostProcessEffect
     {
     public:
@@ -38,6 +47,8 @@ namespace PlutoGE::render
         // Read-only facts editors show beneath the parameters, such as the cost and memory the current settings
         // imply, or caveats. Not serialized.
         virtual std::vector<std::string> GetSummary() const { return {}; }
+        // Headings and tooltips for editors, by parameter name. Parameters without an entry show ungrouped.
+        virtual std::vector<PostProcessParameterInfo> GetParameterInfo() const { return {}; }
 
         // Route external configuration changes through this wrapper so render
         // passes can detect them without rebuilding and serializing every

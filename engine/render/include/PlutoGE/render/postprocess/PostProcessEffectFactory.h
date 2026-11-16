@@ -49,6 +49,7 @@ namespace PlutoGE::render
     {
         std::string displayName;
         std::vector<PostProcessParameter> parameters;
+        std::vector<PostProcessParameterInfo> parameterInfo;
     };
     [[nodiscard]] const PostProcessEffectDefaults *GetPostProcessEffectDefaults(std::string_view typeName);
 

@@ -162,6 +162,11 @@ void CheckFogRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels read
     fog.parameters[0].w = 0;
     lighting.ambientIntensity = 1;
     expect(sample(false), .65f, "Horizon haze must work independently of height-fog density");
+    // The fog's Color tints the haze as well as the height fog. (Max Opacity deliberately leaves the haze alone;
+    // RhiOceanTests checks the haze still hides the height fog's horizon seam under a capped opacity.)
+    fog.parameters[0] = {.5f, 1, 1, 0};
+    expect(sample(false), .325f, "Fog Color must tint the horizon haze");
+    fog.parameters[0] = {1, 1, 1, 0};
     fog.parameters[0].w = .05f;
     lighting.ambientIntensity = 0;
     fog.parameters[3] = {1,0,0,0};

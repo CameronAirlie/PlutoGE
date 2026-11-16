@@ -19,89 +19,73 @@ namespace PlutoGE::render
 
     std::vector<PostProcessParameter> VolumetricFogEffect::GetParameters() const
     {
+        // Listed in the order of GetParameterInfo's groups.
+        const auto real = [](const char *name, float value)
+        { return PostProcessParameter{.name = name, .type = PostProcessParameterType::Float, .value = std::to_string(value)}; };
+        const auto integer = [](const char *name, int value)
+        { return PostProcessParameter{.name = name, .type = PostProcessParameterType::Int, .value = std::to_string(value)}; };
         return {
-            PostProcessParameter{
-                .name = "Density",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_density),
-            },
-            PostProcessParameter{
-                .name = "Height Falloff",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_heightFalloff),
-            },
-            PostProcessParameter{
-                .name = "Height Offset",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_heightOffset),
-            },
-            PostProcessParameter{
-                .name = "Shadow Detail Distance",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_shadowDetailDistance),
-            },
-            PostProcessParameter{
-                .name = "Scattering",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_scattering),
-            },
-            PostProcessParameter{
-                .name = "Anisotropy",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_anisotropy),
-            },
-            PostProcessParameter{
-                .name = "Ambient Contribution",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_ambientContribution),
-            },
-            PostProcessParameter{
-                .name = "Directional Contribution",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_directionalContribution),
-            },
-            PostProcessParameter{.name = "Horizon Haze", .type = PostProcessParameterType::Float, .value = std::to_string(m_horizonHaze)},
-            PostProcessParameter{.name = "Haze Width", .type = PostProcessParameterType::Float, .value = std::to_string(m_hazeWidth)},
-            PostProcessParameter{.name = "Haze Distance", .type = PostProcessParameterType::Float, .value = std::to_string(m_hazeDistance)},
-            PostProcessParameter{.name = "Noise Strength", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseStrength)},
-            PostProcessParameter{.name = "Noise Scale", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseScale)},
-            PostProcessParameter{.name = "Noise Wind X", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseWind.x)},
-            PostProcessParameter{.name = "Noise Wind Z", .type = PostProcessParameterType::Float, .value = std::to_string(m_noiseWind.y)},
-            PostProcessParameter{
-                .name = "Max Opacity",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_maxOpacity),
-            },
-            PostProcessParameter{
-                .name = "Step Count",
-                .type = PostProcessParameterType::Int,
-                .value = std::to_string(m_stepCount),
-            },
-            PostProcessParameter{
-                .name = "Shadow Step Stride",
-                .type = PostProcessParameterType::Int,
-                .value = std::to_string(m_shadowStepStride),
-            },
-            PostProcessParameter{
-                .name = "Half Resolution",
-                .type = PostProcessParameterType::Bool,
-                .value = m_halfResolution ? "true" : "false",
-            },
-            PostProcessParameter{
-                .name = "Color R",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_fogColor.r),
-            },
-            PostProcessParameter{
-                .name = "Color G",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_fogColor.g),
-            },
-            PostProcessParameter{
-                .name = "Color B",
-                .type = PostProcessParameterType::Float,
-                .value = std::to_string(m_fogColor.b),
-            },
+            real("Density", m_density),
+            real("Height Falloff", m_heightFalloff),
+            real("Height Offset", m_heightOffset),
+            real("Max Opacity", m_maxOpacity),
+            real("Color R", m_fogColor.r),
+            real("Color G", m_fogColor.g),
+            real("Color B", m_fogColor.b),
+            real("Scattering", m_scattering),
+            real("Anisotropy", m_anisotropy),
+            real("Ambient Contribution", m_ambientContribution),
+            real("Directional Contribution", m_directionalContribution),
+            real("Horizon Haze", m_horizonHaze),
+            real("Haze Width", m_hazeWidth),
+            real("Haze Distance", m_hazeDistance),
+            real("Noise Strength", m_noiseStrength),
+            real("Noise Scale", m_noiseScale),
+            real("Noise Wind X", m_noiseWind.x),
+            real("Noise Wind Z", m_noiseWind.y),
+            real("Shadow Detail Distance", m_shadowDetailDistance),
+            integer("Step Count", m_stepCount),
+            integer("Shadow Step Stride", m_shadowStepStride),
+            PostProcessParameter{.name = "Half Resolution", .type = PostProcessParameterType::Bool,
+                                 .value = m_halfResolution ? "true" : "false"},
+        };
+    }
+
+    std::vector<PostProcessParameterInfo> VolumetricFogEffect::GetParameterInfo() const
+    {
+        constexpr const char *height = "Height Fog";
+        constexpr const char *look = "Colour (height fog and haze)";
+        constexpr const char *light = "Height Fog Lighting";
+        constexpr const char *haze = "Horizon Haze";
+        constexpr const char *noise = "Density Noise";
+        constexpr const char *quality = "Quality";
+        return {
+            {"Density", height, "Fog per metre at and below Height Offset. 0 leaves only the horizon haze."},
+            {"Height Falloff", height, "How fast the fog thins above Height Offset: density divides by e every 1/falloff metres "
+                                       "(0.12 = every 8 m). 0 makes the fog the same at every height."},
+            {"Height Offset", height, "World Y at which the fog has its full Density. Set it near the ground: the fog all but "
+                                      "disappears a few multiples of 1/Height Falloff above it."},
+            {"Max Opacity", height, "Scales how much the height fog hides the scene. 1 is physically based. Does not "
+                                    "limit the horizon haze, which must stay whole to hide the fog's edge at the horizon."},
+            {"Color R", look, "Tints the fog's scattered light and the horizon haze. White leaves them untinted."},
+            {"Color G", look, "Tints the fog's scattered light and the horizon haze. White leaves them untinted."},
+            {"Color B", look, "Tints the fog's scattered light and the horizon haze. White leaves them untinted."},
+            {"Scattering", light, "How much light the height fog scatters toward the camera. 0 makes it dark, absorbing fog."},
+            {"Anisotropy", light, "Forward scattering: above 0 the fog glows brighter looking toward the sun."},
+            {"Ambient Contribution", light, "Sky light the height fog scatters. With Directional Contribution at 0 too, the fog is black."},
+            {"Directional Contribution", light, "Sunlight the height fog scatters, including light shafts."},
+            {"Horizon Haze", haze, "Strength of the distant aerial haze, lit by the sky and tinted by Color. Independent of Density and Max Opacity; "
+                                  "0 turns it off."},
+            {"Haze Width", haze, "Angular height of the haze band above the horizon, in degrees."},
+            {"Haze Distance", haze, "Distance in metres over which the haze builds up."},
+            {"Noise Strength", noise, "Patchiness of the height fog. The average density stays the same."},
+            {"Noise Scale", noise, "Size of the patches in metres."},
+            {"Noise Wind X", noise, "Drift of the patches along X, in metres per second."},
+            {"Noise Wind Z", noise, "Drift of the patches along Z, in metres per second."},
+            {"Shadow Detail Distance", quality, "Distance over which shadows and noise shape the fog. Beyond it the fog is smooth."},
+            {"Step Count", quality, "Samples along each ray within Shadow Detail Distance. More is smoother and costlier."},
+            {"Shadow Step Stride", quality, "Evaluate shadows every Nth step. Higher is cheaper with coarser shafts."},
+            {"Half Resolution", quality, "Render the fog at half resolution and upscale. Much cheaper."},
         };
     }
 

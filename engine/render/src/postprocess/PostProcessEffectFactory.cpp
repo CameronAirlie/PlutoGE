@@ -107,7 +107,8 @@ namespace PlutoGE::render
         const auto effect = CreatePostProcessEffect(typeName);
         if (!effect)
             return nullptr;
-        return &cache.emplace(std::string(typeName), PostProcessEffectDefaults{effect->GetDisplayName(), effect->GetParameters()})
+        return &cache.emplace(std::string(typeName), PostProcessEffectDefaults{effect->GetDisplayName(), effect->GetParameters(),
+                                                                                  effect->GetParameterInfo()})
                     .first->second;
     }
 

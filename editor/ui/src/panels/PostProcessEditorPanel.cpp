@@ -14,6 +14,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace PlutoGE::ui
@@ -32,6 +33,17 @@ namespace PlutoGE::ui
             }
             for (auto *child : entity->GetChildren())
                 CollectSceneUsers(child, reference, users);
+        }
+
+        float RoundedHeight(float height) { return std::round(height); }
+
+        void CollectSceneViewers(scene::Entity *entity, const std::string &reference, std::vector<postprocess::PostProcessViewer> &viewers)
+        {
+            if (auto *camera = entity->GetComponent<scene::CameraComponent>();
+                camera && !camera->RendersToTexture() && camera->GetPostProcessPresetAssetReference() == reference)
+                viewers.push_back({entity->GetName(), RoundedHeight(entity->GetWorldPosition().y)});
+            for (auto *child : entity->GetChildren())
+                CollectSceneViewers(child, reference, viewers);
         }
     }
 
@@ -107,6 +119,9 @@ namespace PlutoGE::ui
         }
 
         HandleShortcuts();
+        // Where the cameras using the preset are, for height-dependent findings. Sampled, not walked every frame.
+        if (ImGui::GetFrameCount() % 15 == 0 || m_analysis.revision == 0)
+            m_analysis.SetViewers(CollectViewers());
         m_analysis.Update(*m_session);
         DrawToolbar();
         DrawProblems();
@@ -257,6 +272,21 @@ namespace PlutoGE::ui
             ImGui::PopID();
         }
         ImGui::TreePop();
+    }
+
+    std::vector<postprocess::PostProcessViewer> PostProcessEditorPanel::CollectViewers() const
+    {
+        std::vector<postprocess::PostProcessViewer> viewers;
+        const std::string reference = m_session ? m_session->GetReference() : std::string{};
+        if (reference.empty())
+            return viewers;
+        auto &shell = EditorShell::GetInstance();
+        if (auto &editorCamera = shell.GetEditorCamera(); editorCamera.GetPostProcessPresetAssetReference() == reference)
+            viewers.push_back({"the editor camera", RoundedHeight(editorCamera.position.y)});
+        if (auto *scene = shell.GetScene())
+            for (auto *root : scene->GetRootEntities())
+                CollectSceneViewers(root, reference, viewers);
+        return viewers;
     }
 
     void PostProcessEditorPanel::DrawUsage()

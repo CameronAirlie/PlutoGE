@@ -63,7 +63,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Baked global illumination (low-end GPUs) | [Ambient probe grids](ambient-probe-grids.md), [live sky, reflection occlusion and capture relighting](BAKED_ENVIRONMENT_LIGHTING.md) |
 | Dynamic global illumination | [DDGI probes](DDGI.md), [screen-space GI](SSGI.md) |
 | Voxel global illumination | [World cache](vct-world-cache.md), [secondary bounce](vct-secondary-bounce.md) |
-| Water | [Ocean waves, foam, ripples and caustics](OCEAN_WATER_EFFECTS.md) |
+| Water | [Ocean waves, foam, ripples and caustics](OCEAN_WATER_EFFECTS.md), [Water interaction, splashes, sound and habitats](WATER.md) |
 | Stylized rendering | [Toon shaders](ToonShaders.md), [outlines](OutlineShaders.md) |
 | Document UI | [RML authoring guide for developers and agents](RMLUI_AUTHORING.md), [feature reference](RMLUI_REFERENCE.md), [quick start](RMLUI_QUICKSTART.md), [integration](RMLUI_INTEGRATION.md) |
 | The player's master volume | [Audio output volume](AudioOutputVolume.md) |

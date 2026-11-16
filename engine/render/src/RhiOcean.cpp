@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
+#include "PlutoGE/scene/components/WaterEffectsComponent.h"
 #include <algorithm>
 #include <cmath>
 namespace PlutoGE::render
@@ -49,6 +50,13 @@ namespace PlutoGE::render
                         packet->areaCounts[area].x = count;
                         for (int point = 0; point < count; ++point)
                             packet->points[area * 32 + point] = {points[point].x, points[point].y, 0, 0};
+                    }
+                    if (const auto *effects = entity->GetComponent<scene::WaterEffectsComponent>();
+                        effects && effects->IsEnabled() && effects->GetProfile().ripples.enabled)
+                    {
+                        static_assert(scene::water::MaxRenderedRipples == std::tuple_size_v<decltype(packet->ripples)>);
+                        packet->rippleCount.x = static_cast<int>(effects->GetRipples().Pack(packet->ripples));
+                        packet->rippleShape = effects->GetRipples().PackShape();
                     }
                     BasicPostProcessEffect effect{BasicPostProcessEffectType::Ocean};
                     effect.worldToLocal = glm::inverse(transform); effect.ocean = std::move(packet);

@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/SceneStreaming.h"
 #include "PlutoGE/scene/UISystem.h"
+#include "PlutoGE/scene/water/WaterSystem.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/RagdollTuningComponent.h"
 #include "PlutoGE/scene/RagdollProfile.h"
@@ -1577,7 +1578,8 @@ namespace PlutoGE::scene
     Scene::Scene()
         : m_runtimeComponents(std::make_unique<RuntimeComponentIndex>()),
           m_collisionShapes(std::make_unique<BulletShapeCache>()),
-          m_uiSystem(std::make_unique<UISystem>())
+          m_uiSystem(std::make_unique<UISystem>()),
+          m_waterSystem(std::make_unique<water::WaterSystem>())
     {
         m_animationPoses = std::make_unique<AnimationPoseBatch>();
     }
@@ -2377,6 +2379,7 @@ namespace PlutoGE::scene
             return;
         }
 
+        m_waterSystem->Reset(*this);
         ResetSequencers(m_rootEntities);
         VisitCameraRigs(m_rootEntities, [](CameraRigComponent &rig)
                         { rig.ResetRuntime(); });
@@ -2492,6 +2495,7 @@ namespace PlutoGE::scene
             scriptComponent->Stop();
         }
 
+        m_waterSystem->Reset(*this);
         core::Engine::GetInstance().GetAudioSystem().ClearEmitters();
         m_sceneSounds.clear();
 
@@ -2942,6 +2946,18 @@ namespace PlutoGE::scene
         std::erase_if(m_sceneSounds, [handle](const SceneSound &sound) { return sound.key == handle; });
     }
 
+    bool Scene::UpdateSoundPlayback(uint64_t handle, const glm::vec3 &position, float volume)
+    {
+        for (auto &sound : m_sceneSounds)
+            if (sound.key == handle)
+            {
+                sound.playback.position = position;
+                sound.playback.volume = std::isfinite(volume) ? std::max(volume, 0.0f) : sound.playback.volume;
+                return true;
+            }
+        return false;
+    }
+
     bool Scene::IsEntityAlive(EntityID entityId) const
     {
         const auto *entity = entityId != 0 ? FindEntityByID(entityId) : nullptr;
@@ -3256,6 +3272,12 @@ namespace PlutoGE::scene
             }
         }
         FlushPendingDestroyEntities();
+        if (m_runtimeStarted)
+        {
+            // Water reads the bodies where physics left them: ripples, splashes and splash sounds.
+            core::CpuScope waterScope("Water.Interactions", core::CpuCategory::Physics);
+            m_waterSystem->Update(*this, simulationDeltaTime);
+        }
         physicsScope.End();
         const auto physicsEnd = Clock::now();
         core::CpuScope lateScope("Script.LateUpdate", core::CpuCategory::Scripts);
@@ -3375,6 +3397,9 @@ namespace PlutoGE::scene
                     listenerState.environmentGain *= k;
                 }
             }
+
+            // Water ambience and the underwater filter, once the listener and its environment are known.
+            m_waterSystem->UpdateAudio(*this, listenerState);
 
             emitterStates.reserve(emitters.size());
             auto &engine = core::Engine::GetInstance();
@@ -3519,6 +3544,7 @@ namespace PlutoGE::scene
                 state.pitch = sound.playback.pitch;
                 state.minDistance = sound.playback.minDistance;
                 state.maxDistance = sound.playback.maxDistance;
+                state.looping = sound.playback.looping;
                 state.occlusion = sound.occlusion;
                 emitterStates.push_back(std::move(state));
                 sound.pending = false;

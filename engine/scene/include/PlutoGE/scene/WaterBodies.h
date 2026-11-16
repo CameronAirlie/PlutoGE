@@ -4,6 +4,7 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <span>
@@ -70,12 +71,22 @@ namespace PlutoGE::scene
     struct WaterSurfaceSample
     {
         WaterBodyKind kind = WaterBodyKind::Ocean;
-        float height = 0.0f;     // world height of the surface (waves included for oceans)
-        glm::vec3 flow{0.0f};    // world velocity of the water (rivers), metres per second
+        float height = 0.0f;      // world height of the surface (waves included for oceans when sampled animated)
+        float stillHeight = 0.0f; // world height of the surface without waves (the mean level)
+        glm::vec3 flow{0.0f};     // world velocity of the water (rivers), metres per second
+        glm::vec3 normal{0.0f, 1.0f, 0.0f}; // world surface normal (waves included for oceans when sampled animated)
         const void *body = nullptr; // the component, for telling bodies apart
+        std::uint32_t entity = 0;   // the water body's entity (EntityID)
     };
 
+    // A river's surface over a world position from its world path (source to mouth) and half width: the height and
+    // flow of the nearest point along the path, or nothing beyond the water's width. Pure, so it serves both the
+    // component and WaterSurfaceSnapshot.
+    [[nodiscard]] std::optional<WaterSurfaceSample> SampleRiverPath(std::span<const glm::vec3> path, float halfWidth, float flowSpeed,
+                                                                    glm::vec3 worldPosition);
+
     // The water surface over a world position (x, z): the highest body whose area covers it. Nothing on dry land.
+    // Walks the scene each call; for many queries capture a water::WaterSurfaceSnapshot once and query that.
     [[nodiscard]] std::optional<WaterSurfaceSample> SampleWaterSurface(const Scene &scene, glm::vec3 worldPosition);
     // Whether a world position is below a water surface.
     [[nodiscard]] bool IsUnderwater(const Scene &scene, glm::vec3 worldPosition);

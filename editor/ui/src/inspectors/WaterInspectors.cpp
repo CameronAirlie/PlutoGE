@@ -1,5 +1,6 @@
-// Water tools: the River inspector (water ribbon, conforming to the terrain, carving the bed) and the lake tools of the
-// Ocean inspector (the lake preset, fitting the area to a terrain basin).
+// Water tools: the River inspector (water ribbon, conforming to the terrain, carving the bed), the lake tools of the
+// Ocean inspector (the lake preset, fitting the area to a terrain basin) and the Water Effects inspector's checks and
+// play-mode test button. The effect settings themselves are ordinary properties drawn by the generic editor.
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/WaterBodies.h"
@@ -7,6 +8,9 @@
 #include "PlutoGE/scene/components/RiverComponent.h"
 #include "PlutoGE/scene/components/SplineComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/WaterEffectsComponent.h"
+#include "PlutoGE/scene/water/WaterResponders.h"
+#include "PlutoGE/scene/water/WaterSystem.h"
 #include "PlutoGE/ui/ComponentInspectors.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/TerrainHeightEditing.h"
@@ -128,6 +132,54 @@ namespace PlutoGE::ui
             if (ImGui::IsItemHovered())
                 ImGui::SetTooltip("Lowers the terrain under the river into its bed (Depth) and banks (Bank Width)");
         }
+
+        void DrawWaterEffectsInspector(scene::Component &component, ComponentInspectorContext &context, std::vector<scene::Property> &)
+        {
+            auto &effects = static_cast<scene::WaterEffectsComponent &>(component);
+            auto &entity = context.entity;
+            const ImVec4 warning(1.0f, 0.75f, 0.3f, 1.0f);
+            const bool ocean = entity.HasComponent<scene::OceanComponent>();
+            const bool river = entity.HasComponent<scene::RiverComponent>();
+            if (!ocean && !river)
+            {
+                ImGui::TextColored(warning, "Water effects need an Ocean or River component on this entity.");
+                return;
+            }
+            ImGui::TextWrapped("Dynamic rigidbodies, and entities with a Water Interactor, make rings, splashes and sounds "
+                               "here during play. Splashes start as the engine's built-in droplets (engine://builtin/particles/water-splash); "
+                               "pick your own or clear one to skip it. Sounds left empty are skipped. Heavy variants play at or above "
+                               "Heavy Intensity.");
+            if (river && !ocean)
+                ImGui::TextColored(warning, "Rivers splash and sound, but only Ocean surfaces draw ripples.");
+
+            auto *scene = entity.GetScene();
+            if (!scene || !scene->IsRuntimeStarted())
+            {
+                ImGui::TextDisabled("Enter play mode to test splashes.");
+                return;
+            }
+            auto &water = scene->GetWaterSystem();
+            ImGui::Text("Live rings: %zu", effects.GetRipples().GetRipples().size());
+            if (water.IsListenerUnderwater())
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(listener under water)");
+            }
+            static float testIntensity = 1.0f;
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::SliderFloat("##TestIntensity", &testIntensity, 0.05f, 4.0f, "Intensity %.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("Test Splash"))
+            {
+                const auto point = water.GetSnapshot().NearestSurfacePoint(entity.GetID(), entity.GetWorldPosition());
+                if (!point || !water.Disturb(*scene, *point, testIntensity))
+                    context.shell.Log(EditorShell::ConsoleSeverity::Warning, "No water surface found for a test splash.");
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Splashes at the water nearest this entity, with every response of the profile");
+            for (const auto &failed : water.GetSplashResponder().GetFailedAssets())
+                ImGui::TextColored(warning, "Particles did not load: %s", failed.c_str());
+        }
     }
 
     bool FitOceanAreaToTerrain(EditorShell &shell, scene::Entity &entity, scene::OceanComponent &ocean)
@@ -186,5 +238,6 @@ namespace PlutoGE::ui
     void RegisterWaterInspectors()
     {
         RegisterComponentInspector(scene::GetComponentTypeID<scene::RiverComponent>(), &DrawRiverInspector);
+        RegisterComponentInspector(scene::GetComponentTypeID<scene::WaterEffectsComponent>(), &DrawWaterEffectsInspector);
     }
 }

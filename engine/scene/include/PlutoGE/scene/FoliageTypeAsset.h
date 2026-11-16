@@ -2,6 +2,7 @@
 
 #include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/LodDistanceScale.h"
+#include "PlutoGE/scene/water/WaterHabitat.h"
 
 #include <glm/glm.hpp>
 #include <cstdint>
@@ -47,6 +48,9 @@ namespace PlutoGE::scene
         float minScale = 0.8f;
         float maxScale = 1.2f;
         bool alignToTerrainNormal = false; // False keeps new instances' up axis on world +Y.
+        // Where the plant grows relative to lakes, rivers and the sea: the brush and procedural scatter skip
+        // positions it rejects (docs/WATER.md). Anywhere by default, so older types grow as before.
+        WaterHabitat waterHabitat{};
 
         // Rendering.
         float cellSize = 32.0f;

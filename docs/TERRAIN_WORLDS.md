@@ -117,6 +117,7 @@ IDs with bit 63 set, derived from where they grow, so regenerating replaces exac
 | Noise | Value, fBm or ridged noise in world space (scale in metres, octaves, seed) |
 | Mask | A named mask image |
 | Distance | Distance to splines tagged (or named) the rule's source, from their edge (rivers, roads, trails) |
+| Water Depth | Metres of still water above the ground, negative above the water's level, -1e6 on dry land ([Water](WATER.md#foliage-and-water)) |
 
 *Band* remaps give 1 between Min and Max, easing to 0 over Falloff; *Linear* maps Min..Max to 0..1 (for noise and
 masks). Blends: Multiply (a filter), Add, Subtract, Min, Max, Replace, each with an opacity. An empty stack is 1.
@@ -158,7 +159,11 @@ banks). Lakes spanning several tiles use one tile's heights for the fit.
 - Tag the entity (say `River`) and use **Distance** rules to clear trees and paint mud along it.
 
 **Queries**: `SampleWaterSurface(scene, position)` gives the highest water surface over a point (oceans with their area
-masks and waves, rivers with their flow velocity); `IsUnderwater(scene, position)`.
+masks and waves, rivers with their flow velocity); `IsUnderwater(scene, position)`. For many queries, or off the main
+thread, capture a `water::WaterSurfaceSnapshot` once.
+
+**Splashes, ripples, sound and plants in water**: a **Water Effects** component on the water body, foliage types'
+*Water* habitat and the **Water Depth** rule input; see [Water interaction](WATER.md).
 
 ## Terrain worlds (tiles and streaming)
 

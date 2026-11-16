@@ -144,7 +144,8 @@ namespace PlutoGE::ui
 
         bool EditRule(procedural::TerrainRule &rule, const std::vector<std::string> &masks)
         {
-            static constexpr std::array<const char *, 7> Inputs{"Constant", "Height", "Slope", "Curvature", "Noise", "Mask", "Distance"};
+            static constexpr std::array<const char *, 8> Inputs{"Constant", "Height", "Slope", "Curvature", "Noise", "Mask", "Distance",
+                                                                "Water Depth"};
             static constexpr std::array<const char *, 2> Remaps{"Band", "Linear"};
             static constexpr std::array<const char *, 6> Blends{"Multiply", "Add", "Subtract", "Min", "Max", "Replace"};
             static constexpr std::array<const char *, 3> NoiseTypes{"Value", "Fbm", "Ridged"};
@@ -196,6 +197,10 @@ namespace PlutoGE::ui
                 if (ImGui::IsItemHovered())
                     ImGui::SetTooltip("Splines tagged (or named) this: rivers, roads, trails. Distances are from their edge.");
                 break;
+            case procedural::RuleInput::WaterDepth:
+                ImGui::TextDisabled("Metres of still water above the ground (negative above the water's level).");
+                ImGui::TextDisabled("Dry land away from any water reads as far above it. Invert for land only.");
+                break;
             default:
                 break;
             }
@@ -205,7 +210,8 @@ namespace PlutoGE::ui
                 if (EditEnum("Remap", remap, Remaps))
                     rule.remap = static_cast<procedural::RuleRemap>(remap), changed = true;
                 const char *unit = rule.input == procedural::RuleInput::Slope ? "%.1f deg"
-                                 : (rule.input == procedural::RuleInput::Height || rule.input == procedural::RuleInput::Distance) ? "%.1f m" : "%.3f";
+                                 : (rule.input == procedural::RuleInput::Height || rule.input == procedural::RuleInput::Distance) ? "%.1f m"
+                                 : rule.input == procedural::RuleInput::WaterDepth ? "%.2f m" : "%.3f";
                 changed |= ImGui::DragFloatRange2("Range", &rule.min, &rule.max, 0.1f, -10000.0f, 10000.0f, unit, unit);
                 if (rule.remap == procedural::RuleRemap::Band)
                     changed |= ImGui::DragFloat("Falloff", &rule.falloff, 0.05f, 0.0f, 10000.0f, unit);

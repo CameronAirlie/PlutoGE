@@ -3,12 +3,14 @@
 #include "PlutoGE/scene/TerrainWeightMap.h"
 #include "PlutoGE/scene/procedural/ProceduralInputs.h"
 #include "PlutoGE/scene/procedural/ProceduralTerrainDefinition.h"
+#include "PlutoGE/scene/water/WaterHabitat.h"
 
 #include <glm/glm.hpp>
 
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -60,6 +62,7 @@ namespace PlutoGE::scene::procedural
         const ProceduralInputs *inputs = nullptr;
         std::vector<std::string> layerNames;   // the terrain's material layers, by index
         std::vector<std::string> foliageTypes; // the foliage component's types, by index (empty: no scatter)
+        std::vector<WaterHabitat> foliageHabitats; // each type's water habitat, by index (missing: anywhere)
         int weightResolution = 256;
         bool texture = true;
         bool scatter = true;
@@ -83,10 +86,12 @@ namespace PlutoGE::scene::procedural
                                                     const TerrainSurface &surface, const ProceduralInputs &inputs,
                                                     const std::vector<std::string> &layerNames, std::vector<std::string> &warnings);
     // Foliage from the biomes' scatter rules. Candidates sit on a grid aligned to the world, so neighbouring terrain
-    // tiles continue each other's pattern and an instance belongs to the one tile it stands on.
+    // tiles continue each other's pattern and an instance belongs to the one tile it stands on. `habitats` (by type
+    // index, may be shorter) drop candidates in water a type does not grow in, or out of water it needs.
     [[nodiscard]] std::vector<std::vector<ScatterInstance>> Scatter(const ProceduralTerrainDefinition &definition, const BiomeWeights &biomes,
                                                                     const TerrainSurface &surface, const ProceduralInputs &inputs,
-                                                                    const std::vector<std::string> &foliageTypes, std::vector<std::string> &warnings);
+                                                                    const std::vector<std::string> &foliageTypes, std::vector<std::string> &warnings,
+                                                                    std::span<const WaterHabitat> habitats = {});
     // Everything: biome weights, then layer weights and scatter. Pure: safe to run on a worker thread.
     [[nodiscard]] ProceduralGenerationResult Generate(const ProceduralGenerationInput &input);
 }

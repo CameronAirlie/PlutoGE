@@ -67,7 +67,8 @@ changes or play starts.
 The bar says why painting cannot work, such as a missing terrain or mesh. Painting needs
 an enabled `TerrainComponent` on the same entity. Brush radius and density belong to the
 editor session and are not saved; older scenes' brush records are ignored. Each foliage
-type has its own **Scale Range** and **Growth**.
+type has its own **Scale Range**, **Growth** and **Water** habitat (Anywhere, Dry Land Only, or Underwater Only within a
+depth range; the brush skips candidates it rejects, see [Water](WATER.md#foliage-and-water)).
 
 ## Editing individual instances
 
@@ -228,6 +229,7 @@ SUBMESHES	1	3
 GENERATED_LODS	0
 SCALE_RANGE	0.8	1.2
 ALIGN_TO_NORMAL	0
+WATER_HABITAT	Anywhere	0	1000
 CELL_SIZE	32
 MAX_DRAW_DISTANCE	60
 LOD_DISTANCE_SCALE	1

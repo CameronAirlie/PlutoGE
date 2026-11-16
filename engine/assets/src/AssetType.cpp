@@ -1,4 +1,5 @@
 #include "PlutoGE/assets/AssetType.h"
+#include "PlutoGE/assets/ParticleSystemAsset.h"
 #include <algorithm>
 #include <cctype>
 
@@ -41,6 +42,10 @@ namespace PlutoGE::assets
         if (reference.rfind("engine://builtin/shadergraph/", 0) == 0)
         {
             return ProjectAssetType::ShaderGraph;
+        }
+        if (reference.rfind(kBuiltinParticlesPrefix, 0) == 0)
+        {
+            return ProjectAssetType::ParticleSystem;
         }
         if (EndsWithInsensitive(reference, ".plutoscene"))
         {

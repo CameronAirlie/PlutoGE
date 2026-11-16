@@ -1,9 +1,6 @@
 #include "PlutoGE/scene/WaterBodies.h"
 
-#include "PlutoGE/scene/Entity.h"
-#include "PlutoGE/scene/Scene.h"
-#include "PlutoGE/scene/components/OceanComponent.h"
-#include "PlutoGE/scene/components/RiverComponent.h"
+#include "PlutoGE/scene/water/WaterSurfaceSnapshot.h"
 
 #include <algorithm>
 #include <cmath>
@@ -73,20 +70,6 @@ namespace PlutoGE::scene
             return result;
         }
 
-        // Every entity, depth first.
-        template <typename Visit>
-        void ForEachActiveEntity(const Scene &scene, Visit &&visit)
-        {
-            const auto walk = [&](auto &&self, const Entity *entity) -> void {
-                if (!entity->IsActive())
-                    return;
-                visit(*entity);
-                for (const auto *child : entity->GetChildren())
-                    self(self, child);
-            };
-            for (const auto *root : scene.GetRootEntities())
-                walk(walk, root);
-        }
     }
 
     float PolygonArea(std::span<const glm::vec2> polygon)
@@ -305,35 +288,36 @@ namespace PlutoGE::scene
         return changed;
     }
 
+    std::optional<WaterSurfaceSample> SampleRiverPath(std::span<const glm::vec3> path, float halfWidth, float flowSpeed,
+                                                      glm::vec3 worldPosition)
+    {
+        if (path.size() < 2 || halfWidth <= 0.0f)
+            return std::nullopt;
+        const glm::vec2 point(worldPosition.x, worldPosition.z);
+        float nearest = std::numeric_limits<float>::max();
+        WaterSurfaceSample sample;
+        sample.kind = WaterBodyKind::River;
+        for (std::size_t i = 0; i + 1 < path.size(); ++i)
+        {
+            float t = 0.0f;
+            const float distance = DistanceToSegment(point, {path[i].x, path[i].z}, {path[i + 1].x, path[i + 1].z}, t);
+            if (distance < nearest)
+            {
+                nearest = distance;
+                sample.height = path[i].y + (path[i + 1].y - path[i].y) * t;
+                const glm::vec3 direction = path[i + 1] - path[i];
+                sample.flow = glm::length(direction) > 0.0f ? glm::normalize(direction) * flowSpeed : glm::vec3(0.0f);
+            }
+        }
+        if (nearest > halfWidth)
+            return std::nullopt;
+        sample.stillHeight = sample.height;
+        return sample;
+    }
+
     std::optional<WaterSurfaceSample> SampleWaterSurface(const Scene &scene, glm::vec3 worldPosition)
     {
-        std::optional<WaterSurfaceSample> best;
-        const auto consider = [&](const WaterSurfaceSample &sample) {
-            if (!best || sample.height > best->height)
-                best = sample;
-        };
-        ForEachActiveEntity(scene, [&](const Entity &entity) {
-            for (const auto *ocean : entity.GetComponents<OceanComponent>())
-            {
-                if (!ocean->IsEnabled())
-                    continue;
-                const glm::mat4 world = entity.GetWorldTransform();
-                const glm::vec3 local = glm::vec3(glm::inverse(world) * glm::vec4(worldPosition, 1.0f));
-                // Areas carve holes in the sea, or with Invert Area Mask are the only water (lakes).
-                bool insideArea = false;
-                for (const auto &area : ocean->GetAreas())
-                    insideArea |= PointInPolygon(area.points, {local.x, local.z});
-                if (ocean->GetInvertAreaMask() ? !insideArea : insideArea)
-                    continue;
-                const auto wave = ocean->SampleLocalSurface({local.x, local.z});
-                consider({WaterBodyKind::Ocean, glm::vec3(world * glm::vec4(local.x, wave.height, local.z, 1.0f)).y, glm::vec3(0.0f), ocean});
-            }
-            for (const auto *river : entity.GetComponents<RiverComponent>())
-                if (river->IsEnabled())
-                    if (const auto sample = river->SampleSurface(worldPosition))
-                        consider(*sample);
-        });
-        return best;
+        return water::WaterSurfaceSnapshot::Capture(scene).Sample(worldPosition);
     }
 
     bool IsUnderwater(const Scene &scene, glm::vec3 worldPosition)

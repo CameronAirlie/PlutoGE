@@ -77,6 +77,8 @@ namespace PlutoGE::scene::procedural
                     WarnOnce(warnings, "No mask named \"" + rule.source + "\": the rule reads 0.");
                 if (rule.input == RuleInput::Distance && !inputs.Distances().Has(rule.source))
                     WarnOnce(warnings, "No distance source tagged \"" + rule.source + "\": the rule reads as far away.");
+                if (rule.input == RuleInput::WaterDepth && !inputs.HasWater())
+                    WarnOnce(warnings, "A Water Depth rule found no water in the scene: everywhere reads as dry land.");
             }
         }
     }
@@ -281,7 +283,8 @@ namespace PlutoGE::scene::procedural
 
     std::vector<std::vector<ScatterInstance>> Scatter(const ProceduralTerrainDefinition &definition, const BiomeWeights &biomes,
                                                       const TerrainSurface &surface, const ProceduralInputs &inputs,
-                                                      const std::vector<std::string> &foliageTypes, std::vector<std::string> &warnings)
+                                                      const std::vector<std::string> &foliageTypes, std::vector<std::string> &warnings,
+                                                      std::span<const WaterHabitat> habitats)
     {
         std::vector<std::vector<ScatterInstance>> result(foliageTypes.size());
         if (!surface.Valid())
@@ -309,7 +312,10 @@ namespace PlutoGE::scene::procedural
                     continue;
                 }
                 CheckInputs(rules[rule].density, inputs, warnings);
-                entries.push_back({biome, rule, static_cast<std::size_t>(found - foliageTypes.begin())});
+                const auto type = static_cast<std::size_t>(found - foliageTypes.begin());
+                if (type < habitats.size() && habitats[type].mode == WaterHabitatMode::Underwater && !inputs.HasWater())
+                    WarnOnce(warnings, "\"" + rules[rule].foliageType + "\" grows only under water, and the scene has no water.");
+                entries.push_back({biome, rule, type});
             }
         }
         // Larger plants first: they claim their ground, and smaller ones fill around them.
@@ -369,6 +375,9 @@ namespace PlutoGE::scene::procedural
                     const auto point = surface.PointAt(local);
                     if (point.slope < rule.slopeLimits.x || point.slope > rule.slopeLimits.y ||
                         point.height < rule.heightLimits.x || point.height > rule.heightLimits.y)
+                        continue;
+                    if (entry.type < habitats.size() && habitats[entry.type].NeedsWater() &&
+                        !habitats[entry.type].Accepts(inputs.WaterDepth(point.world, point.height)))
                         continue;
                     // The density stack last: it is the most expensive test.
                     chance *= rule.density.Evaluate(point, inputs);
@@ -430,7 +439,8 @@ namespace PlutoGE::scene::procedural
         if (input.texture && paints && !input.layerNames.empty())
             result.weights = BakeLayerWeights(definition, biomes, *input.surface, *input.inputs, input.layerNames, result.warnings);
         if (input.scatter)
-            result.instances = Scatter(definition, biomes, *input.surface, *input.inputs, input.foliageTypes, result.warnings);
+            result.instances = Scatter(definition, biomes, *input.surface, *input.inputs, input.foliageTypes, result.warnings,
+                                       input.foliageHabitats);
         return result;
     }
 }

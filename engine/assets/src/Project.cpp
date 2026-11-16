@@ -1042,6 +1042,7 @@ namespace PlutoGE::assets
             std::string(kBuiltinDefaultShadedMaterialReference),
             std::string(kBuiltinDefaultShaderGraphReference),
             std::string(kBuiltinDefaultUnlitShaderGraphReference),
+            std::string(kBuiltinWaterSplashParticlesReference),
         };
     }
 

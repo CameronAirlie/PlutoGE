@@ -25,7 +25,7 @@ namespace PlutoGE::scene::procedural
             return std::nullopt;
         }
 
-        constexpr std::array<std::string_view, 7> InputNames{"Constant", "Height", "Slope", "Curvature", "Noise", "Mask", "Distance"};
+        constexpr std::array<std::string_view, 8> InputNames{"Constant", "Height", "Slope", "Curvature", "Noise", "Mask", "Distance", "WaterDepth"};
         constexpr std::array<std::string_view, 2> RemapNames{"Band", "Linear"};
         constexpr std::array<std::string_view, 6> BlendNames{"Multiply", "Add", "Subtract", "Min", "Max", "Replace"};
         constexpr std::array<std::string_view, 3> NoiseNames{"Value", "Fbm", "Ridged"};
@@ -63,6 +63,12 @@ namespace PlutoGE::scene::procedural
             rule.max = 5.0f;
             rule.falloff = 5.0f;
             break;
+        case RuleInput::WaterDepth:
+            // Under water, easing in over the first 25 cm.
+            rule.min = 0.25f;
+            rule.max = 1000.0f;
+            rule.falloff = 0.25f;
+            break;
         case RuleInput::Constant:
             break;
         }
@@ -88,6 +94,7 @@ namespace PlutoGE::scene::procedural
         case RuleInput::Noise: value = EvaluateNoise(noise, point.world, inputs.Seed()); break;
         case RuleInput::Mask: value = inputs.Mask(source, point.world); break;
         case RuleInput::Distance: value = inputs.Distance(source, point.world, DistanceLimit()); break;
+        case RuleInput::WaterDepth: value = inputs.WaterDepth(point.world, point.height).value_or(NoWaterDepth); break;
         case RuleInput::Constant: break;
         }
 

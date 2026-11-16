@@ -447,7 +447,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(SSRTemporal "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain temporalMain)
     pluto_add_slang_graphics_shader(SSRComposite "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRStochastic.slang" vertexMain compositeMain)
     pluto_add_slang_graphics_shader(VolumetricFog "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricFog.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/FogFroxels.slang")
-    pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
+    pluto_add_slang_graphics_shader(Ocean "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" vertexMain fragmentMain "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanRipples.slang")
     if(BUILD_TESTING)
         pluto_add_slang_graphics_shader(CloudTransformReference "${PROJECT_SOURCE_DIR}/tests/shaders/CloudTransformReference.slang" vertexMain fragmentMain
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloudDensity.slang")
@@ -456,9 +456,9 @@ if (PLUTO_SLANGC_EXECUTABLE)
         pluto_add_slang_graphics_shader(CloudNoiseProbe "${PROJECT_SOURCE_DIR}/tests/shaders/CloudNoiseProbe.slang" vertexMain noiseProbeMain
             "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VolumetricCloud.slang")
         pluto_add_slang_graphics_shader(OceanNoiseProbe "${PROJECT_SOURCE_DIR}/tests/shaders/OceanWaveProbe.slang" vertexMain noiseProbeMain
-            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang")
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanRipples.slang")
         pluto_add_slang_graphics_shader(OceanWaveProbe "${PROJECT_SOURCE_DIR}/tests/shaders/OceanWaveProbe.slang" vertexMain probeMain
-            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang")
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/Ocean.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanWaves.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanRipples.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanLighting.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/OceanSceneEffects.slang")
     endif()
     pluto_add_slang_graphics_shader(PhysicalSky "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSky.slang" vertexMain fragmentMain)
     pluto_add_slang_graphics_shader(SkyQuadrature "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SkyQuadrature.slang" vertexMain fragmentMain)

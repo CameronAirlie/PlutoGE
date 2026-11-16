@@ -17,8 +17,12 @@
     float4 waveShape[8], waveMotion[8];
     float4 crestFoam, detail, flow;
     float4 reflections, contact;
+    float4 ripples[32];
+    float4 rippleShape;
+    int4 rippleCount;
 };
 #include "OceanWaves.slang"
+#include "OceanRipples.slang"
 #include "OceanSceneEffects.slang"
 [shader("vertex")]
 FullscreenVertexOutput vertexMain(uint id : SV_VertexID) { return fullscreenVertex(id); }
@@ -136,6 +140,11 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float2 rippleSlope = (float2(2.8,1.7)*cos(ripplePhase.x) + float2(-1.9,3.4)*cos(ripplePhase.y)) * detail.x * rippleFade;
     dx += rippleSlope.x*sqrt(damping);
     dz += rippleSlope.y*sqrt(damping);
+    // Rings from bodies touching the water (WaterEffectsComponent); they fade before turning into subpixel noise.
+    float interactionFade = 1.0-smoothstep(60.0, 160.0, distance);
+    OceanRippleSample interaction = sampleRipples(localHit.xz);
+    dx += interaction.gradient.x*interactionFade;
+    dz += interaction.gradient.y*interactionFade;
     float3 normal = normalize(mul(float3(-dx,1,-dz), (float3x3)pass.worldToLocal));
     float thickness = max(sceneDistance - distance, 0.0);
     float factor = saturate(thickness / visibility);
@@ -190,7 +199,8 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
     float wash = .65 + .35*sin(shoreDepth*6.0 - sunDirectionTime.w*waves.z*2.0 + pattern*3.0);
     float whitecaps = smoothstep(crestFoam.x,crestFoam.x+.15,wave.crest) * crestFoam.y;
     float contactFoam = pow(wallContact,2.0)*contact.w*(.3+.7*pattern);
-    float foam = saturate(shore*wash*(.35+.65*pattern) + whitecaps*pattern*damping + contactFoam);
+    float foam = saturate(shore*wash*(.35+.65*pattern) + whitecaps*pattern*damping + contactFoam +
+                          interaction.foam*interactionFade*(.4+.6*pattern));
     color *= 1.0-wallContact*contact.z;
     color = lerp(color,foamVisibility.xyz * irradiance,saturate(foam));
     return float4(lerp(refracted,color,saturate(shallowOpacity.w)),original.a);

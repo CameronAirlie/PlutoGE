@@ -2,6 +2,7 @@
 #include <functional>
 
 #include "PlutoGE/assets/AssetType.h"
+#include "PlutoGE/assets/ParticleSystemAsset.h"
 #include "PlutoGE/render/LoadingScreenStyle.h"
 #include "PlutoGE/render/GraphicsQualityPresets.h"
 #include "PlutoGE/render/RenderingSettings.h"
@@ -139,6 +140,7 @@ namespace PlutoGE::assets
         static constexpr std::string_view kBuiltinDefaultShadedMaterialReference = "engine://builtin/material/default-shaded";
         static constexpr std::string_view kBuiltinDefaultShaderGraphReference = "engine://builtin/shadergraph/default-lit";
         static constexpr std::string_view kBuiltinDefaultUnlitShaderGraphReference = "engine://builtin/shadergraph/default-unlit";
+        static constexpr std::string_view kBuiltinWaterSplashParticlesReference = assets::kBuiltinWaterSplashParticlesReference;
 
         Project(std::filesystem::path manifestPath, ProjectManifest manifest);
 

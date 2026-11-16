@@ -15,6 +15,10 @@ namespace PlutoGE::render
         std::array<glm::vec4, 8> waveShape{}, waveMotion{};
         glm::vec4 crestFoam{}, detail{}, flow{};
         glm::vec4 reflections{}, contact{};
+        // Interaction rings (scene::water::WaterRippleField::Pack): centre x, z, radius, amplitude, in local space.
+        std::array<glm::vec4, 32> ripples{};
+        glm::vec4 rippleShape{}; // wave number, packet width, foam, unused (WaterRippleField::PackShape)
+        glm::ivec4 rippleCount{}; // x: rings in use
     };
-    static_assert(sizeof(OceanParameters) == 4768);
+    static_assert(sizeof(OceanParameters) == 5312);
 }

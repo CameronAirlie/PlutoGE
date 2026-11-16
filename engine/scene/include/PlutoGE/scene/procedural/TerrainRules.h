@@ -32,7 +32,18 @@ namespace PlutoGE::scene::procedural
         // is nearer).
         [[nodiscard]] virtual float Distance(std::string_view source, glm::vec2 world, float limit) const = 0;
         [[nodiscard]] virtual std::uint32_t Seed() const = 0;
+        // Still water surface minus `groundHeight` at a world (x, z): positive under water, negative above it, nothing
+        // where no water body covers the point (water::WaterSurfaceSnapshot::StillDepth). No water by default.
+        [[nodiscard]] virtual std::optional<float> WaterDepth(glm::vec2 world, float groundHeight) const
+        {
+            (void)world, (void)groundHeight;
+            return std::nullopt;
+        }
     };
+
+    // What the Water Depth input reads where no water covers a point: far above any water, so Band ranges over
+    // depths (0.5..3 m) exclude dry land, and an inverted one keeps it.
+    inline constexpr float NoWaterDepth = -1.0e6f;
 
     enum class RuleInput : std::uint8_t
     {
@@ -43,6 +54,7 @@ namespace PlutoGE::scene::procedural
         Noise,
         Mask,
         Distance,
+        WaterDepth, // metres of still water above the ground (negative above the water's level); NoWaterDepth on dry land
     };
 
     enum class RuleRemap : std::uint8_t

@@ -212,31 +212,12 @@ namespace PlutoGE::scene
     std::optional<WaterSurfaceSample> RiverComponent::SampleSurface(glm::vec3 worldPosition) const
     {
         const auto path = GetWorldPath();
-        const float halfWidth = GetHalfWidth();
-        if (path.size() < 2 || halfWidth <= 0.0f)
-            return std::nullopt;
-        const glm::vec2 point(worldPosition.x, worldPosition.z);
-        float nearest = std::numeric_limits<float>::max();
-        WaterSurfaceSample sample;
-        sample.kind = WaterBodyKind::River;
-        sample.body = this;
-        for (std::size_t i = 0; i + 1 < path.size(); ++i)
+        auto sample = SampleRiverPath(path, GetHalfWidth(), m_flowSpeed, worldPosition);
+        if (sample)
         {
-            const glm::vec2 a(path[i].x, path[i].z), b(path[i + 1].x, path[i + 1].z);
-            const glm::vec2 edge = b - a;
-            const float lengthSquared = glm::dot(edge, edge);
-            const float t = lengthSquared > 0.0f ? std::clamp(glm::dot(point - a, edge) / lengthSquared, 0.0f, 1.0f) : 0.0f;
-            const float distance = glm::length(point - (a + edge * t));
-            if (distance < nearest)
-            {
-                nearest = distance;
-                sample.height = path[i].y + (path[i + 1].y - path[i].y) * t;
-                const glm::vec3 direction = path[i + 1] - path[i];
-                sample.flow = glm::length(direction) > 0.0f ? glm::normalize(direction) * m_flowSpeed : glm::vec3(0.0f);
-            }
+            sample->body = this;
+            sample->entity = GetOwner() ? GetOwner()->GetID() : 0;
         }
-        if (nearest > halfWidth)
-            return std::nullopt;
         return sample;
     }
 }

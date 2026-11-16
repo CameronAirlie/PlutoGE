@@ -2,7 +2,9 @@
 
 #include <glm/glm.hpp>
 
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace PlutoGE::assets
 {
@@ -124,4 +126,14 @@ namespace PlutoGE::assets
     };
 
     ParticleSystemAsset CreateDefaultParticleSystemAsset();
+
+    // Particle systems built into the engine (no file): referenced as engine://builtin/particles/<name>, listed by
+    // Project::GetBuiltinAssetReferences and loaded by AssetManager::LoadParticleSystemAsset.
+    inline constexpr std::string_view kBuiltinParticlesPrefix = "engine://builtin/particles/";
+    // White droplets thrown up and out of the water, streaked by their motion, falling back under gravity. The default
+    // splash of every new Water Effects component (docs/WATER.md).
+    inline constexpr std::string_view kBuiltinWaterSplashParticlesReference = "engine://builtin/particles/water-splash";
+    ParticleSystemAsset CreateWaterSplashParticleSystemAsset();
+    // The built-in system a reference names, or nothing for any other reference.
+    std::optional<ParticleSystemAsset> FindBuiltinParticleSystemAsset(std::string_view reference);
 }

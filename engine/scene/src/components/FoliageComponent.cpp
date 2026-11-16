@@ -1,5 +1,6 @@
 #include "PlutoGE/render/RenderObjectIdentity.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
+#include "PlutoGE/scene/water/WaterSurfaceSnapshot.h"
 
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/core/Engine.h"
@@ -875,6 +876,9 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "SubmeshIndices", PropertyType::String, SerializeSubmeshIndices(type.asset.submeshIndices)});
             properties.push_back({prefix + "UseGeneratedLods", PropertyType::Bool, type.asset.useGeneratedLods ? "true" : "false"});
             properties.push_back({prefix + "AlignToTerrainNormal", PropertyType::Bool, type.asset.alignToTerrainNormal ? "true" : "false"});
+            properties.push_back({prefix + "WaterHabitat", PropertyType::String, std::string(WaterHabitatModeName(type.asset.waterHabitat.mode))});
+            properties.push_back({prefix + "WaterMinDepth", PropertyType::Float, std::to_string(type.asset.waterHabitat.minDepth)});
+            properties.push_back({prefix + "WaterMaxDepth", PropertyType::Float, std::to_string(type.asset.waterHabitat.maxDepth)});
             properties.push_back({prefix + "MinScale", PropertyType::Float, std::to_string(type.asset.minScale)});
             properties.push_back({prefix + "MaxScale", PropertyType::Float, std::to_string(type.asset.maxScale)});
             properties.push_back({prefix + "AssetReference", PropertyType::String, type.asset.assetReference});
@@ -995,6 +999,12 @@ namespace PlutoGE::scene
                     type.asset.useGeneratedLods = property.value == "true" || property.value == "1";
                 else if (fieldName == "AlignToTerrainNormal")
                     type.asset.alignToTerrainNormal = property.value == "true" || property.value == "1";
+                else if (fieldName == "WaterHabitat")
+                    type.asset.waterHabitat.mode = ParseWaterHabitatMode(property.value);
+                else if (fieldName == "WaterMinDepth")
+                    type.asset.waterHabitat.minDepth = ParseFloatOr(property.value, type.asset.waterHabitat.minDepth);
+                else if (fieldName == "WaterMaxDepth")
+                    type.asset.waterHabitat.maxDepth = ParseFloatOr(property.value, type.asset.waterHabitat.maxDepth);
                 else if (fieldName == "MinScale")
                 {
                     type.asset.minScale = ParseFloatOr(property.value, type.asset.minScale);
@@ -1252,6 +1262,12 @@ namespace PlutoGE::scene
         std::uniform_real_distribution<float> yawDistribution(0.0f, 360.0f);
         std::uniform_real_distribution<float> scaleDistribution(type.asset.minScale, type.asset.maxScale);
 
+        // Habitats that care about water read the scene's still water levels, once per dab.
+        std::optional<water::WaterSurfaceSnapshot> water;
+        if (type.asset.waterHabitat.NeedsWater() && owner->GetScene())
+            water = water::WaterSurfaceSnapshot::Capture(*owner->GetScene());
+        const glm::mat4 world = owner->GetWorldTransform();
+
         const auto startCount = type.instances.size();
         type.instances.reserve(type.instances.size() + static_cast<std::size_t>(brush.density));
         for (int index = 0; index < brush.density; ++index)
@@ -1267,6 +1283,12 @@ namespace PlutoGE::scene
                 !std::isfinite(surface->normal.z))
                 continue;
             localPosition.y = surface->height;
+            if (water)
+            {
+                const glm::vec3 ground = glm::vec3(world * glm::vec4(localPosition, 1.0f));
+                if (!type.asset.waterHabitat.Accepts(water->StillDepth({ground.x, ground.z}, ground.y)))
+                    continue;
+            }
             const float largestNormal = std::max({std::abs(surface->normal.x), std::abs(surface->normal.y), std::abs(surface->normal.z)});
             if (largestNormal < 0.0001f) continue;
             const glm::vec3 localSurfaceNormal = glm::normalize(surface->normal / largestNormal);

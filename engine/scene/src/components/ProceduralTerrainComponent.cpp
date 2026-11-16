@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
+#include "PlutoGE/scene/water/WaterSurfaceSnapshot.h"
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
@@ -111,6 +112,7 @@ namespace PlutoGE::scene
         input.inputs = inputs.get();
         input.layerNames = layerNames;
         input.foliageTypes = foliageTypes;
+        input.foliageHabitats = foliageHabitats;
         input.weightResolution = weightResolution;
         input.texture = texture;
         input.scatter = scatter;
@@ -255,9 +257,25 @@ namespace PlutoGE::scene
 
         for (const auto &layer : terrain->GetLayers().GetLayers())
             prepared.layerNames.push_back(layer.name);
+        bool needsWater = false;
         if (const auto *foliage = GetFoliage())
             for (std::size_t type = 0; type < foliage->GetTypeCount(); ++type)
+            {
                 prepared.foliageTypes.push_back(foliage->GetType(type)->name);
+                prepared.foliageHabitats.push_back(foliage->GetType(type)->asset.waterHabitat);
+                needsWater |= prepared.foliageHabitats.back().NeedsWater();
+            }
+        // Water levels for Water Depth rules and habitats: still surfaces, so generation stays deterministic.
+        for (const auto &biome : m_definition.biomes)
+        {
+            needsWater |= biome.weight.Uses(procedural::RuleInput::WaterDepth);
+            for (const auto &layer : biome.layers)
+                needsWater |= layer.coverage.Uses(procedural::RuleInput::WaterDepth);
+            for (const auto &scatter : biome.scatter)
+                needsWater |= scatter.density.Uses(procedural::RuleInput::WaterDepth);
+        }
+        if (const auto *scene = owner->GetScene(); scene && needsWater)
+            prepared.inputs->SetWater(std::make_shared<const water::WaterSurfaceSnapshot>(water::WaterSurfaceSnapshot::Capture(*scene)));
         prepared.weightResolution = m_weightResolution > 0 ? m_weightResolution : terrain->GetLayers().GetWeights().GetResolution();
         prepared.texture = m_texture;
         prepared.scatter = m_scatter && GetFoliage() != nullptr;

@@ -14,6 +14,11 @@
 #include <string_view>
 #include <vector>
 
+namespace PlutoGE::scene::water
+{
+    class WaterSurfaceSnapshot;
+}
+
 namespace PlutoGE::scene::procedural
 {
     // A 0..1 mask laid over a rectangle of the world (x, z). Masks for a whole world line up across every terrain tile
@@ -116,13 +121,18 @@ namespace PlutoGE::scene::procedural
         [[nodiscard]] bool HasMask(std::string_view name) const { return m_masks.find(name) != m_masks.end(); }
         PolylineDistanceSet &Distances() { return m_distances; }
         [[nodiscard]] const PolylineDistanceSet &Distances() const { return m_distances; }
+        // The water bodies Water Depth rules and foliage habitats read (a copy, safe on worker threads).
+        void SetWater(std::shared_ptr<const water::WaterSurfaceSnapshot> water) { m_water = std::move(water); }
+        [[nodiscard]] bool HasWater() const;
 
         [[nodiscard]] float Mask(std::string_view name, glm::vec2 world) const override;
         [[nodiscard]] float Distance(std::string_view source, glm::vec2 world, float limit) const override;
         [[nodiscard]] std::uint32_t Seed() const override { return m_seed; }
+        [[nodiscard]] std::optional<float> WaterDepth(glm::vec2 world, float groundHeight) const override;
 
     private:
         std::uint32_t m_seed = 0;
+        std::shared_ptr<const water::WaterSurfaceSnapshot> m_water;
         std::map<std::string, std::shared_ptr<const ProceduralMask>, std::less<>> m_masks;
         PolylineDistanceSet m_distances;
     };

@@ -27,6 +27,8 @@
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/RiverComponent.h"
+#include "PlutoGE/scene/components/WaterEffectsComponent.h"
+#include "PlutoGE/scene/components/WaterInteractorComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
@@ -139,6 +141,11 @@ namespace PlutoGE::scene
             // A river is water along the spline of its own entity.
             auto &river = registry.Register<RiverComponent>("RiverComponent", "River");
             river.canAdd = HasSibling<SplineComponent>;
+            // Ripples, splashes and sound for the water body on its own entity.
+            auto &waterEffects = registry.Register<WaterEffectsComponent>("WaterEffectsComponent", "Water Effects");
+            waterEffects.canAdd = [](const Entity &entity) { return HasSibling<OceanComponent>(entity) || HasSibling<RiverComponent>(entity); };
+            waterEffects.isAssetPathProperty = [](std::string_view name) { return WaterEffectsComponent::IsAssetPathProperty(name); };
+            registry.Register<WaterInteractorComponent>("WaterInteractorComponent", "Water Interactor");
 
             auto &foliage = registry.Register<FoliageComponent>("FoliageComponent", "Foliage Component");
             foliage.createForAuthoring = [](Entity &)
@@ -198,6 +205,7 @@ namespace PlutoGE::scene
             registry.AddMenuItem<SplineComponent>("Rendering/Road / Spline Track");
             registry.AddMenuItem<OceanComponent>("Rendering/Ocean");
             registry.AddMenuItem<RiverComponent>("Rendering/River");
+            registry.AddMenuItem<WaterEffectsComponent>("Rendering/Water Effects");
             registry.AddMenuItem<FoliageComponent>("Rendering/Foliage");
             registry.AddMenuItem<DetailGrassComponent>("Rendering/Detail Grass");
             registry.AddMenuItem<ProceduralTerrainComponent>("Rendering/Procedural Terrain");
@@ -255,6 +263,7 @@ namespace PlutoGE::scene
 
             registry.AddMenuItem<RigidbodyComponent>("Physics/Rigidbody");
             registry.AddMenuItem<ColliderComponent>("Physics/Collider");
+            registry.AddMenuItem<WaterInteractorComponent>("Physics/Water Interactor");
             registry.AddMenuItem<NavAgentComponent>("AI/Navigation Agent");
             registry.AddMenuItem<NavigationMeshComponent>("AI/Navigation Mesh");
         }

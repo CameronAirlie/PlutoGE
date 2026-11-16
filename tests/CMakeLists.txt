@@ -1050,6 +1050,10 @@ add_executable(PlutoGEWaterBodyTests WaterBodyTests.cpp)
 pluto_link_engine(PlutoGEWaterBodyTests)
 add_test(NAME PlutoGEWaterBodyTests COMMAND PlutoGEWaterBodyTests)
 
+add_executable(PlutoGEWaterEffectsTests WaterEffectsTests.cpp)
+pluto_link_engine(PlutoGEWaterEffectsTests)
+add_test(NAME PlutoGEWaterEffectsTests COMMAND PlutoGEWaterEffectsTests)
+
 add_executable(PlutoGEProceduralTerrainTests ProceduralTerrainTests.cpp)
 pluto_link_engine(PlutoGEProceduralTerrainTests)
 add_test(NAME PlutoGEProceduralTerrainTests COMMAND PlutoGEProceduralTerrainTests)

@@ -33,6 +33,7 @@ namespace PlutoGE::scene
             std::shared_ptr<procedural::ProceduralInputs> inputs;
             std::vector<std::string> layerNames;
             std::vector<std::string> foliageTypes;
+            std::vector<WaterHabitat> foliageHabitats; // by type index
             int weightResolution = 256;
             bool texture = true;
             bool scatter = true;

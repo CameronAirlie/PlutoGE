@@ -48,6 +48,7 @@ namespace PlutoGE::scene
             to.minScale = from.minScale;
             to.maxScale = from.maxScale;
             to.alignToTerrainNormal = from.alignToTerrainNormal;
+            to.waterHabitat = from.waterHabitat;
         }
     }
 
@@ -84,6 +85,7 @@ namespace PlutoGE::scene
         asset.collisionRadius = (std::max)(Finite(asset.collisionRadius, 0.35f), 0.01f);
         asset.collisionHeight = (std::max)(Finite(asset.collisionHeight, 2.0f), asset.collisionRadius * 2.0f);
         asset.wind = asset.wind.Sanitized();
+        SanitizeWaterHabitat(asset.waterHabitat);
     }
 
     std::vector<std::string_view> ChangedFoliageTypeProperties(const FoliageTypeAsset &before, const FoliageTypeAsset &after)
@@ -104,6 +106,7 @@ namespace PlutoGE::scene
         add(before.minScale != after.minScale, {"MinScale"});
         add(before.maxScale != after.maxScale, {"MaxScale"});
         add(before.alignToTerrainNormal != after.alignToTerrainNormal, {"AlignToTerrainNormal"});
+        add(before.waterHabitat != after.waterHabitat, {"WaterHabitat", "WaterMinDepth", "WaterMaxDepth"});
         add(before.cellSize != after.cellSize, {"CellSize"});
         add(before.maxDrawDistance != after.maxDrawDistance, {"MaxDrawDistance"});
         add(before.lodDistanceScale != after.lodDistanceScale, {"LodDistanceScale"});
@@ -142,6 +145,9 @@ namespace PlutoGE::scene
         output << "GENERATED_LODS\t" << (asset.useGeneratedLods ? 1 : 0) << '\n'
                << "SCALE_RANGE\t" << asset.minScale << '\t' << asset.maxScale << '\n'
                << "ALIGN_TO_NORMAL\t" << (asset.alignToTerrainNormal ? 1 : 0) << '\n'
+               // Readers that predate habitats skip the record; files without it grow anywhere.
+               << "WATER_HABITAT\t" << WaterHabitatModeName(asset.waterHabitat.mode) << '\t' << asset.waterHabitat.minDepth
+               << '\t' << asset.waterHabitat.maxDepth << '\n'
                << "CELL_SIZE\t" << asset.cellSize << '\n'
                << "MAX_DRAW_DISTANCE\t" << asset.maxDrawDistance << '\n'
                << "LOD_DISTANCE_SCALE\t" << asset.lodDistanceScale << '\n'
@@ -202,6 +208,12 @@ namespace PlutoGE::scene
             else if (key == "GENERATED_LODS") { int enabled = 0; stream >> enabled; loaded.useGeneratedLods = enabled != 0; }
             else if (key == "SCALE_RANGE") stream >> loaded.minScale >> loaded.maxScale;
             else if (key == "ALIGN_TO_NORMAL") { int enabled = 0; stream >> enabled; loaded.alignToTerrainNormal = enabled != 0; }
+            else if (key == "WATER_HABITAT")
+            {
+                std::string mode;
+                stream >> mode >> loaded.waterHabitat.minDepth >> loaded.waterHabitat.maxDepth;
+                loaded.waterHabitat.mode = ParseWaterHabitatMode(mode);
+            }
             else if (key == "CELL_SIZE") stream >> loaded.cellSize;
             else if (key == "MAX_DRAW_DISTANCE") stream >> loaded.maxDrawDistance;
             // Version 1 files written before LOD distance scales have no record and load with the default.

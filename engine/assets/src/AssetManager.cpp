@@ -2676,6 +2676,17 @@ namespace PlutoGE::assets
             return cached->second;
         }
 
+        // Built into the engine: no file to read.
+        if (auto builtin = FindBuiltinParticleSystemAsset(assetReference))
+        {
+            if (loaded)
+            {
+                *loaded = true;
+            }
+            m_particleSystemCache.emplace(assetReference, *builtin);
+            return *builtin;
+        }
+
         const std::string particlePath = ResolveAssetPath(assetReference);
         if (particlePath.empty() || std::filesystem::path(particlePath).extension() != ".plutoparticles")
         {

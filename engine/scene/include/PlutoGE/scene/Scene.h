@@ -36,6 +36,10 @@ namespace PlutoGE::scene
     {
         class BulletShapeCache;
     }
+    namespace water
+    {
+        class WaterSystem;
+    }
     class SceneStreaming;
     class NavigationSystem;
     class Entity;
@@ -174,10 +178,13 @@ namespace PlutoGE::scene
             float pitch = 1.0f;
             float minDistance = 1.0f;
             float maxDistance = 25.0f;
+            bool looping = false; // plays until StopOneShotSound (ambient beds such as water)
         };
         // Returns a handle for StopOneShotSound, or 0 when nothing will play (not running, empty or unknown clip).
         [[nodiscard]] uint64_t PlayOneShotSound(const SoundPlayback &playback);
         void StopOneShotSound(uint64_t handle);
+        // Moves a playing scene sound and changes its volume (a loop following its source). False once it has ended.
+        bool UpdateSoundPlayback(uint64_t handle, const glm::vec3 &position, float volume);
         // Sounds started with PlayOneShotSound that are still playing (or about to start).
         [[nodiscard]] std::size_t GetPlayingSoundCount() const { return m_sceneSounds.size(); }
         // The entity exists and is not about to be removed by a DestroyEntity earlier this frame (on it or an ancestor).
@@ -247,6 +254,9 @@ namespace PlutoGE::scene
         void SetParallelAnimationEnabled(bool enabled) noexcept { m_parallelAnimation = enabled; }
         UISystem &GetUISystem();
         const UISystem &GetUISystem() const;
+        // Ripples, splashes and water sound during play (docs/WATER.md).
+        water::WaterSystem &GetWaterSystem() { return *m_waterSystem; }
+        const water::WaterSystem &GetWaterSystem() const { return *m_waterSystem; }
         [[nodiscard]] bool HasNativeRuntimeUI() const;
         [[nodiscard]] bool HasRmlRuntimeUI() const;
 
@@ -511,6 +521,7 @@ namespace PlutoGE::scene
         };
         std::optional<RuntimeUIInputOverride> m_runtimeUIInputOverride;
         std::unique_ptr<UISystem> m_uiSystem;
+        std::unique_ptr<water::WaterSystem> m_waterSystem;
         void CollectEntitySubtree(Entity *entity, std::vector<Entity *> &entities) const;
         bool RemoveEntityRecursive(Entity *current, Entity *target);
         void FlushPendingDestroyEntities();

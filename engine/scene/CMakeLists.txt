@@ -29,6 +29,15 @@ add_library(PlutoGEScene
     src/procedural/ProceduralGeneration.cpp
     src/components/ProceduralTerrainComponent.cpp
     src/WaterBodies.cpp
+    src/water/WaterSurfaceSnapshot.cpp
+    src/water/WaterHabitat.cpp
+    src/water/WaterRipples.cpp
+    src/water/WaterInteraction.cpp
+    src/water/WaterEffectsProfile.cpp
+    src/water/WaterResponders.cpp
+    src/water/WaterSystem.cpp
+    src/components/WaterEffectsComponent.cpp
+    src/components/WaterInteractorComponent.cpp
     src/components/RiverComponent.cpp
     src/TerrainWorldGrid.cpp
     src/TerrainEditSurface.cpp

@@ -223,6 +223,25 @@ namespace PlutoGE::ui
             }
             ImGui::SetItemTooltip("Which way new instances grow: upright for trees, along the slope for grass and ground cover.\n"
                                   "Existing instances keep their transforms.");
+
+            int habitat = static_cast<int>(asset.waterHabitat.mode);
+            if (ImGui::Combo("Water", &habitat, "Anywhere\0Dry Land Only\0Underwater Only\0"))
+            {
+                asset.waterHabitat.mode = static_cast<scene::WaterHabitatMode>(habitat);
+                changed = true;
+            }
+            ImGui::SetItemTooltip("Where the plant grows relative to lakes, rivers and the sea (still water level).\n"
+                                  "The brush and procedural scatter skip positions it rejects. Existing instances stay.");
+            if (asset.waterHabitat.mode == scene::WaterHabitatMode::Underwater)
+            {
+                if (ImGui::DragFloatRange2("Water Depth", &asset.waterHabitat.minDepth, &asset.waterHabitat.maxDepth, 0.05f, 0.0f,
+                                           1000.0f, "%.2f m", "%.2f m", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    scene::SanitizeWaterHabitat(asset.waterHabitat);
+                    changed = true;
+                }
+                ImGui::SetItemTooltip("Metres of water above the ground where it grows: 0 - 0.6 for reeds, 1 - 20 for sea grass.");
+            }
             return changed;
         });
     }

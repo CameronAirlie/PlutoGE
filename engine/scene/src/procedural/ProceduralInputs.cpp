@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/procedural/ProceduralInputs.h"
+#include "PlutoGE/scene/water/WaterSurfaceSnapshot.h"
 
 #include <stb_image.h>
 
@@ -189,5 +190,12 @@ namespace PlutoGE::scene::procedural
     float ProceduralInputs::Distance(std::string_view source, glm::vec2 world, float limit) const
     {
         return m_distances.Distance(source, world, limit);
+    }
+
+    bool ProceduralInputs::HasWater() const { return m_water && !m_water->Empty(); }
+
+    std::optional<float> ProceduralInputs::WaterDepth(glm::vec2 world, float groundHeight) const
+    {
+        return m_water ? m_water->StillDepth(world, groundHeight) : std::nullopt;
     }
 }

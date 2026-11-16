@@ -21,6 +21,7 @@ struct DetailGrassGenerateParameters
     float4 dryColor;               // dry linear albedo, w colour jitter
     float4 surface;                // x 1 / patch size, y 1 with a ground albedo map, z clump radius (m), w 1 with a density map
     float4 lods;                   // x LOD 1 distance, y LOD 2 distance, z min altitude, w max altitude (world)
+    float4 water;                  // x 1 with water depths, y shore margin (m), z shore fade (m), w 1 to keep out of water
     uint4 lattice;                 // x rings, y top level, z seed, w first argument word of this field
     uint4 regions;                 // first instance of each LOD's region
     uint4 capacities;              // instances each LOD's region holds
@@ -79,6 +80,25 @@ float4 terrainSample(int x, int z)
 {
     const int columns = int(grass.terrainGrid.y), rows = int(grass.terrainGrid.z);
     return terrainSamples[clamp(z, 0, rows - 1) * columns + clamp(x, 0, columns - 1)];
+}
+
+// Still water above a sample (DetailGrassHeightField::waterDepths), packed four to a vec4 after the samples.
+float waterDepthSample(int x, int z)
+{
+    const int columns = int(grass.terrainGrid.y), rows = int(grass.terrainGrid.z);
+    const uint index = uint(clamp(z, 0, rows - 1) * columns + clamp(x, 0, columns - 1));
+    const float4 packed = terrainSamples[uint(columns * rows) + index / 4u];
+    const uint lane = index % 4u;
+    return lane == 0u ? packed.x : lane == 1u ? packed.y : lane == 2u ? packed.z : packed.w;
+}
+
+float sampleWaterDepth(float2 local)
+{
+    const float2 grid = local / grass.terrainGrid.x;
+    const int2 cell = int2(floor(grid));
+    const float2 t = grid - float2(cell);
+    return lerp(lerp(waterDepthSample(cell.x, cell.y), waterDepthSample(cell.x + 1, cell.y), t.x),
+                lerp(waterDepthSample(cell.x, cell.y + 1), waterDepthSample(cell.x + 1, cell.y + 1), t.x), t.y);
 }
 
 TerrainPoint sampleTerrain(float2 local)
@@ -160,6 +180,9 @@ void generateMain(uint3 id : SV_DispatchThreadID)
     // The height band (world heights), thinning out over the fade distance outside it.
     const float altitudeFade = max(grass.placement.w, 1.0e-3);
     mask *= saturate((root.y - grass.lods.z) / altitudeFade + 1.0) * saturate((grass.lods.w - root.y) / altitudeFade + 1.0);
+    // Out of the water: gone from the shore margin above the still waterline, fading in above it (DetailGrassWaterMask).
+    if (grass.water.x > 0.5 && grass.water.w > 0.5)
+        mask *= saturate((-grass.water.y - sampleWaterDepth(local)) / max(grass.water.z, 1.0e-3));
     // Bare patches: low-frequency noise at the colour patches' scale, offset from them, cut at the clustering share.
     if (grass.terrainGrid.w > 0.0)
     {

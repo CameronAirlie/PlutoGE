@@ -42,6 +42,10 @@ namespace PlutoGE::scene::water
         // Every captured body's entity, oceans first, in scene order (an entity with two bodies appears twice).
         [[nodiscard]] std::vector<std::uint32_t> BodyEntities() const;
 
+        // Changes when any body's still surface does (moved, reshaped, enabled or disabled), not as waves animate: what
+        // caches of still-water data (grass water depths) key on. 0 for no water.
+        [[nodiscard]] std::uint64_t StillSignature() const { return m_stillSignature; }
+
         [[nodiscard]] bool Empty() const { return m_oceans.empty() && m_rivers.empty(); }
         [[nodiscard]] std::size_t BodyCount() const { return m_oceans.size() + m_rivers.size(); }
 
@@ -71,5 +75,6 @@ namespace PlutoGE::scene::water
 
         std::vector<Ocean> m_oceans;
         std::vector<River> m_rivers;
+        std::uint64_t m_stillSignature = 0;
     };
 }

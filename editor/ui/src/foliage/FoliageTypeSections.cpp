@@ -1,5 +1,6 @@
 #include "PlutoGE/ui/FoliageTypeSections.h"
 
+#include "PlutoGE/asset_import/ModelImportService.h"
 #include "PlutoGE/assets/AssetType.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -137,6 +138,65 @@ namespace PlutoGE::ui
             }
         }
 
+        // Distant Cards: far instances drawn as the mesh's baked impostor (camera-facing cards from an atlas of views).
+        // The cards are baked by the model's import, so a mesh without them gets a one-click bake here.
+        bool DrawDistantCards(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context)
+        {
+            ImGui::SeparatorText("Distant Cards");
+            if (context.hasImpostor)
+            {
+                const bool changed = ImGui::DragFloat("Cards From", &asset.impostorDistanceScale, 0.01f, 0.1f, 10.0f, "x%.2f",
+                                                      ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_Logarithmic);
+                ImGui::SetItemTooltip("How far away instances turn into flat impostor cards, relative to the distance the import chose.\n"
+                                      "Below 1 swaps to cards sooner (cheaper forests); above 1 keeps the mesh further out.\n"
+                                      "Cards light, fog and take shadows like the mesh, but do not cast shadows or sway.");
+                return changed;
+            }
+            if (!context.mesh)
+                return false;
+            ImGui::TextDisabled("This mesh has no distant cards: every instance draws as a mesh at any distance.");
+            const auto &assets = core::Engine::GetInstance().GetAssetManager();
+            const std::string model = asset.modelAssetId.empty() ? std::string{} : assets.ResolveStableAssetId(asset.modelAssetId);
+            auto &shell = EditorShell::GetInstance();
+            if (model.empty() || !context.project)
+            {
+                ImGui::TextDisabled("Cards are baked when a model is imported: use a mesh imported from a model to get them.");
+                return false;
+            }
+            const bool running = shell.IsModelImportRunning();
+            ImGui::BeginDisabled(running || context.readOnly);
+            if (ImGui::Button("Bake Distant Cards"))
+            {
+                assetimport::MeshImportOptions options;
+                std::string error;
+                if (!assetimport::ModelImportService{}.ReadOptions(*context.project, model, options, &error))
+                    shell.Log(EditorShell::ConsoleSeverity::Error, "Cannot read the import settings of " + model + ": " + error);
+                else
+                {
+                    // Cards need the hand-over a LOD chain gives; trees want the vegetation chain.
+                    options.bakeImpostor = true;
+                    if (!options.generateLods)
+                    {
+                        options.generateLods = true;
+                        options.vegetationLods = true;
+                    }
+                    if (shell.BeginModelImport(model, options, &error))
+                        shell.Log(EditorShell::ConsoleSeverity::Info, "Reimporting " + model + " with distant cards.");
+                    else
+                        shell.Log(EditorShell::ConsoleSeverity::Error, "Cannot reimport " + model + ": " + error);
+                }
+            }
+            ImGui::EndDisabled();
+            ImGui::SetItemTooltip("Turns on Bake Impostor (and Vegetation LODs if the model has no LODs) in the model's import\n"
+                                  "settings and reimports it. Every scene and foliage type using the model gets the cards.");
+            if (running)
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", shell.GetModelImportProgress().c_str());
+            }
+            return false;
+        }
+
         // The body of a section: its header always responds, its controls follow `readOnly`.
         template <typename Draw>
         bool Section(const char *label, ImGuiTreeNodeFlags flags, const FoliageTypeSectionContext &context, Draw &&draw)
@@ -258,6 +318,7 @@ namespace PlutoGE::ui
                                         render::MaxLodDistanceScale, "%.2f", ImGuiSliderFlags_AlwaysClamp);
             ImGui::SetItemTooltip("Multiplies the distance of this type's LOD and impostor switches: 2 keeps detail twice as far away.\n"
                                   "Triangles grow with its square. Floors such as Min Render LOD still apply.");
+            changed |= DrawDistantCards(asset, context);
 
             int shadows = static_cast<int>(asset.shadows);
             if (ImGui::Combo("Shadows", &shadows, "Foliage Component's Setting\0Cast Shadows\0No Shadows\0"))

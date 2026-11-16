@@ -574,6 +574,26 @@ namespace PlutoGE::scene
             return std::make_shared<const render::MeshImpostor>(render::MeshImpostor{impostor->parameters, albedo, normalDepth});
         }
 
+        // The type's drawn impostor: the baked one with the switch moved by the type's Distant Cards distance (cards from
+        // `scale` times as far away means a switch at 1 / scale of the baked screen radius). The renderer reads the
+        // switch from the command's impostor for both the mesh and the card draw, so they keep meeting.
+        void SyncTypeImpostor(FoliageType &type)
+        {
+            if (!type.bakedImpostor)
+            {
+                type.impostor = nullptr;
+                return;
+            }
+            const float scale = type.asset.impostorDistanceScale > 0.0f ? type.asset.impostorDistanceScale : 1.0f;
+            const float radius = type.bakedImpostor->parameters.maxScreenRadiusPixels / scale;
+            if (type.impostor && type.impostor->albedo == type.bakedImpostor->albedo &&
+                type.impostor->parameters.maxScreenRadiusPixels == radius)
+                return;
+            auto adjusted = *type.bakedImpostor;
+            adjusted.parameters.maxScreenRadiusPixels = radius;
+            type.impostor = std::make_shared<const render::MeshImpostor>(std::move(adjusted));
+        }
+
         bool CompareRenderCommandKeys(const render::RenderCommand &a, const render::RenderCommand &b)
         {
             if (a.material != b.material)
@@ -671,8 +691,10 @@ namespace PlutoGE::scene
     void FoliageComponent::RebuildRenderCommandCache(const glm::mat4 &ownerTransform)
     {
         m_cachedRenderCommands.clear();
-        for (const auto &type : m_types)
+        for (auto &mutableType : m_types)
         {
+            SyncTypeImpostor(mutableType);
+            const auto &type = mutableType;
             if (!type.mesh || type.instances.empty())
             {
                 continue;
@@ -885,6 +907,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "CellSize", PropertyType::Float, std::to_string(type.asset.cellSize)});
             properties.push_back({prefix + "MaxDrawDistance", PropertyType::Float, std::to_string(type.asset.maxDrawDistance)});
             properties.push_back({prefix + "LodDistanceScale", PropertyType::Float, std::to_string(type.asset.lodDistanceScale)});
+            properties.push_back({prefix + "ImpostorDistanceScale", PropertyType::Float, std::to_string(type.asset.impostorDistanceScale)});
             properties.push_back({prefix + "Shadows", PropertyType::String, std::string(FoliageShadowModeName(type.asset.shadows))});
             properties.push_back({prefix + "MaxShadowDistance", PropertyType::Float, std::to_string(type.asset.maxShadowDistance)});
             properties.push_back({prefix + "CollisionEnabled", PropertyType::Bool, type.asset.collisionEnabled ? "true" : "false"});
@@ -1024,6 +1047,8 @@ namespace PlutoGE::scene
                 else if (fieldName == "LodDistanceScale")
                     type.asset.lodDistanceScale = render::SanitizeLodDistanceScale(
                         ParseFloatOr(property.value, render::DefaultLodDistanceScale));
+                else if (fieldName == "ImpostorDistanceScale")
+                    type.asset.impostorDistanceScale = std::clamp(ParseFloatOr(property.value, 1.0f), 0.1f, 10.0f);
                 else if (fieldName == "Shadows")
                     type.asset.shadows = ParseFoliageShadowMode(property.value);
                 else if (fieldName == "MaxShadowDistance")
@@ -2472,6 +2497,7 @@ namespace PlutoGE::scene
         type.materials.clear();
         type.ownedMaterials.clear();
         type.impostor = nullptr;
+        type.bakedImpostor = nullptr;
         if (type.asset.sourceMeshPath.empty())
         {
             return;
@@ -2493,7 +2519,8 @@ namespace PlutoGE::scene
                 loadedMaterials.push_back(engine.GetAssetManager().LoadMaterialAsset(std::string(assets::Project::kBuiltinDefaultShadedMaterialReference)));
             }
             AssignFoliageMaterials(type, loadedMaterials);
-            type.impostor = LoadImpostor(engine.GetAssetManager(), type.asset.sourceMeshPath);
+            type.bakedImpostor = LoadImpostor(engine.GetAssetManager(), type.asset.sourceMeshPath);
+            SyncTypeImpostor(type);
             SanitizeTypeSubmeshSelection(type);
             return;
         }

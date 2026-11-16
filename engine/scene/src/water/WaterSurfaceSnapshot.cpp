@@ -28,6 +28,20 @@ namespace PlutoGE::scene::water
                 walk(walk, root);
         }
 
+        // FNV-1a over raw values: a change detector, not a stable identifier.
+        struct SignatureHash
+        {
+            std::uint64_t value = 1469598103934665603ull;
+            void Bytes(const void *data, std::size_t size)
+            {
+                const auto *bytes = static_cast<const unsigned char *>(data);
+                for (std::size_t i = 0; i < size; ++i)
+                    value = (value ^ bytes[i]) * 1099511628211ull;
+            }
+            template <typename T>
+            void Add(const T &item) { Bytes(&item, sizeof(T)); }
+        };
+
         glm::vec2 NearestOnSegment(glm::vec2 point, glm::vec2 a, glm::vec2 b)
         {
             const glm::vec2 edge = b - a;
@@ -83,6 +97,28 @@ namespace PlutoGE::scene::water
                 snapshot.m_rivers.push_back(std::move(copy));
             }
         });
+        if (!snapshot.Empty())
+        {
+            SignatureHash hash;
+            for (const auto &ocean : snapshot.m_oceans)
+            {
+                hash.Add(ocean.entity);
+                hash.Add(ocean.localToWorld);
+                hash.Add(ocean.invertAreaMask);
+                for (const auto &area : ocean.areas)
+                {
+                    hash.Add(area.size());
+                    hash.Bytes(area.data(), area.size() * sizeof(glm::vec2));
+                }
+            }
+            for (const auto &river : snapshot.m_rivers)
+            {
+                hash.Add(river.entity);
+                hash.Add(river.halfWidth);
+                hash.Bytes(river.path.data(), river.path.size() * sizeof(glm::vec3));
+            }
+            snapshot.m_stillSignature = hash.value == 0 ? 1 : hash.value;
+        }
         return snapshot;
     }
 

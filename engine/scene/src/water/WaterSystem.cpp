@@ -235,6 +235,16 @@ namespace PlutoGE::scene::water
         m_ambientLoops = std::move(kept);
     }
 
+    const WaterSurfaceSnapshot &WaterSystem::GetFrameSnapshot(const Scene &scene) const
+    {
+        if (m_frameSnapshotSequence != scene.GetUpdateSequence())
+        {
+            m_frameSnapshot = WaterSurfaceSnapshot::Capture(scene);
+            m_frameSnapshotSequence = scene.GetUpdateSequence();
+        }
+        return m_frameSnapshot;
+    }
+
     void WaterSystem::StopAmbientLoops(Scene &scene)
     {
         for (const auto &[body, handle] : m_ambientLoops)

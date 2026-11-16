@@ -56,6 +56,10 @@ namespace PlutoGE::scene::water
         // Play started or stopped: forget every body, stop loops, drop pooled emitters and ripples.
         void Reset(Scene &scene);
 
+        // The scene's water as of this frame, in or out of play, captured at most once per scene update: for systems that
+        // read still water every frame (detail grass), so they share one walk of the scene.
+        [[nodiscard]] const WaterSurfaceSnapshot &GetFrameSnapshot(const Scene &scene) const;
+
         // What the last Update saw, for gameplay queries, debugging and tests.
         [[nodiscard]] const WaterSurfaceSnapshot &GetSnapshot() const { return m_snapshot; }
         [[nodiscard]] const std::vector<WaterProbe> &GetProbes() const { return m_probes; }
@@ -78,5 +82,7 @@ namespace PlutoGE::scene::water
         std::unordered_map<std::uint32_t, glm::vec3> m_previousCenters; // for bodies without a simulated velocity
         std::unordered_map<std::uint32_t, std::uint64_t> m_ambientLoops; // water entity -> scene sound handle
         bool m_listenerUnderwater = false;
+        mutable WaterSurfaceSnapshot m_frameSnapshot;
+        mutable std::uint64_t m_frameSnapshotSequence = ~0ull;
     };
 }

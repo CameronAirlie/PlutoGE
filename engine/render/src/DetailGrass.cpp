@@ -139,6 +139,13 @@ namespace PlutoGE::render
         return mesh;
     }
 
+    float DetailGrassWaterMask(float waterDepth, const DetailGrassLayer &layer)
+    {
+        if (layer.growUnderWater)
+            return 1.0f;
+        return std::clamp((-layer.shoreMargin - waterDepth) / DetailGrassShoreFade, 0.0f, 1.0f);
+    }
+
     DetailGrassLayer DetailGrassLayer::Sanitized() const
     {
         DetailGrassLayer result = *this;
@@ -148,6 +155,7 @@ namespace PlutoGE::render
         result.minAltitude = Clamp(minAltitude, -10000.0f, 10000.0f, -10000.0f);
         result.maxAltitude = Clamp(maxAltitude, result.minAltitude, 10000.0f, 10000.0f);
         result.altitudeFade = Clamp(altitudeFade, 0.01f, 500.0f, 4.0f);
+        result.shoreMargin = Clamp(shoreMargin, -2.0f, 10.0f, 0.05f);
         result.clustering = Clamp(clustering, 0.0f, 1.0f, 0.0f);
         result.minHeight = Clamp(minHeight, 0.01f, 5.0f, 0.35f);
         result.maxHeight = Clamp(maxHeight, result.minHeight, 5.0f, result.minHeight);

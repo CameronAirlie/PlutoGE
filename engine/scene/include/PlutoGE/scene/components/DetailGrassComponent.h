@@ -51,7 +51,9 @@ namespace PlutoGE::scene
         // The TerrainComponent on the same entity, or null.
         TerrainComponent *GetTerrain() const;
         // The terrain's drawn surface (TerrainComponent::GetSurfaceSampleHeight) and holes, rebuilt when the terrain
-        // changes and otherwise shared, so the renderer uploads it once. Null without a terrain.
+        // changes and otherwise shared, so the renderer uploads it once. When a layer keeps out of the water it also
+        // holds the still water depth over each sample, rebuilt when the water's still surface moves. Null without a
+        // terrain.
         std::shared_ptr<const render::DetailGrassHeightField> GetHeightField() const;
 
     private:
@@ -65,5 +67,7 @@ namespace PlutoGE::scene
         mutable int m_heightColumns = 0, m_heightRows = 0;
         mutable float m_heightCellSize = 0.0f, m_heightSmoothing = 0.0f;
         mutable std::uint64_t m_heightFieldRevision = 0;
+        // The water (and terrain placement) the field's water depths were measured against; 0 for none.
+        mutable std::uint64_t m_waterSignature = 0;
     };
 }

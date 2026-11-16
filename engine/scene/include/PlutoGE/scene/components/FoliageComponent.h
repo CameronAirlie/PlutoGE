@@ -78,7 +78,10 @@ namespace PlutoGE::scene
         render::Material *materialOverride = nullptr;
         std::vector<render::Material *> materials;
         std::vector<std::unique_ptr<render::Material>> ownedMaterials;
-        // The mesh asset's baked impostor, when its import made one; distant instances draw as its cards.
+        // The mesh asset's baked impostor, when its import made one, as baked.
+        std::shared_ptr<const render::MeshImpostor> bakedImpostor;
+        // What draws: the baked impostor with the type's Distant Cards distance applied. Distant instances draw as
+        // its cards.
         std::shared_ptr<const render::MeshImpostor> impostor;
         std::vector<FoliageInstance> instances;
         // All authored settings. With `asset.assetReference` set they come from that file, and the scene's copy is

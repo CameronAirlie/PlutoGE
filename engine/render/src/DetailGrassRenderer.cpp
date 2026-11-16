@@ -30,12 +30,13 @@ namespace PlutoGE::render
             glm::vec4 dryColor{0.0f};
             glm::vec4 surface{0.0f};
             glm::vec4 lods{0.0f};
+            glm::vec4 water{0.0f};
             glm::uvec4 lattice{0u};
             glm::uvec4 regions{0u};
             glm::uvec4 capacities{0u};
             std::array<glm::ivec4, DetailGrassMaxRings> rings{};
         };
-        static_assert(sizeof(GenerateParameters) == 512, "DetailGrassGenerate.slang DetailGrassGenerateParameters");
+        static_assert(sizeof(GenerateParameters) == 528, "DetailGrassGenerate.slang DetailGrassGenerateParameters");
         // DetailGrassCommon.slang's DetailGrassInstance.
         constexpr std::size_t InstanceBytes = 32;
         // Words per indirect draw (RHI DrawIndexedIndirect).
@@ -54,7 +55,8 @@ namespace PlutoGE::render
         }
 
         // The terrain samples the generation pass reads: height, cut-away cell, and the surface normal's x and z from
-        // central differences (as TerrainComponent's mesh normals are computed from the same heights).
+        // central differences (as TerrainComponent's mesh normals are computed from the same heights). When the field
+        // has water depths they follow, four to a vec4 (DetailGrassGenerate.slang waterDepthSample).
         std::vector<glm::vec4> PackSamples(const DetailGrassHeightField &field)
         {
             const auto columns = static_cast<int>(field.columns), rows = static_cast<int>(field.rows);
@@ -74,6 +76,13 @@ namespace PlutoGE::render
                     const float hole = !field.holes.empty() && field.holes[index] != 0 ? 1.0f : 0.0f;
                     samples[index] = {field.heights[index], hole, normal.x, normal.z};
                 }
+            if (!field.waterDepths.empty())
+            {
+                const std::size_t count = field.heights.size();
+                samples.resize(count + (count + 3) / 4, glm::vec4(DetailGrassNoWaterDepth));
+                for (std::size_t index = 0; index < count; ++index)
+                    samples[count + index / 4][static_cast<int>(index % 4)] = field.waterDepths[index];
+            }
             return samples;
         }
 
@@ -245,6 +254,8 @@ namespace PlutoGE::render
             parameters.surface = {1.0f / layer.patchSize, field.groundAlbedo ? 1.0f : 0.0f, clump.source.radius,
                                   field.density ? 1.0f : 0.0f};
             parameters.lods = {layer.lod1Distance, layer.lod2Distance, layer.minAltitude, layer.maxAltitude};
+            parameters.water = {field.heights->waterDepths.empty() ? 0.0f : 1.0f, layer.shoreMargin, DetailGrassShoreFade,
+                                layer.growUnderWater ? 0.0f : 1.0f};
             // A field's seed mixes its layer's with its identity, so two terrains with one layer differ.
             const auto seed = layer.seed ^ static_cast<std::uint32_t>(field.id) ^ static_cast<std::uint32_t>(field.id >> 32u);
             parameters.lattice = {lattice.rings, lattice.TopLevel(), seed, static_cast<std::uint32_t>(arguments.size())};

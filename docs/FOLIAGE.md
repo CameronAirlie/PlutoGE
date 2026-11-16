@@ -479,6 +479,13 @@ layout is shared with the renderer in `ImpostorLayout.h` and `ImpostorLayout.sla
   `FoliageComponent` loads them with the mesh (`FoliageType::impostor`). Every cluster command carries the impostor,
   and one submesh's commands own it: the first alpha-masked submesh, whose material the cards shade with.
 
+**Distant Cards** (foliage type, Rendering section): a mesh with an impostor shows **Cards From**
+(`FoliageTypeAsset::impostorDistanceScale`, `IMPOSTOR_DISTANCE_SCALE`), how far away the type swaps to cards relative to
+the baked switch: 0.5 swaps at half the distance, 2 keeps the mesh twice as far. It divides the impostor's
+`maxScreenRadiusPixels` for that type only, so the mesh and card draws keep meeting. A mesh without an impostor offers
+**Bake Distant Cards**, which turns on *Bake impostor* (and Vegetation LODs when the model has no LODs) in the model's
+import settings and reimports it.
+
 At render time (`RhiSceneRenderer`, `ImpostorDraws.h`), a mesh with an impostor hands every instance whose projected
 radius is below the impostor's threshold (40 px by default) to an impostor draw over the same instances. Both measure
 on the same bounding sphere, so each instance draws exactly once.

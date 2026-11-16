@@ -77,6 +77,10 @@ namespace PlutoGE::render
         // World heights the grass grows between (a snow line, a beach); it thins out over `altitudeFade` metres outside.
         float minAltitude = -10000.0f, maxAltitude = 10000.0f;
         float altitudeFade = 4.0f;
+        // Whether the layer grows under lakes, rivers and the sea (their still level). Off by default: grass stops
+        // `shoreMargin` metres above the waterline (negative lets it reach into the shallows), fading over 15 cm.
+        bool growUnderWater = false;
+        float shoreMargin = 0.05f;
         // Bare patches breaking up the cover: 0 grows wherever the rest allows, 1 leaves only scattered tufts. The
         // patches are the size of the colour patches (patchSize).
         float clustering = 0.0f;
@@ -117,18 +121,29 @@ namespace PlutoGE::render
     // The terrain surface a field stands on: samples on a regular grid in the terrain's local space (sample (x, z) at
     // (x * cellSize, height, z * cellSize)), each with whether the cell it starts is cut away. Immutable once shared:
     // a producer makes a new one when the terrain changes, and the renderer re-uploads by identity and revision.
+    // A water depth far enough above any water that no shore margin reaches it; kept small so samples interpolate
+    // sensibly where a shoreline crosses a cell.
+    inline constexpr float DetailGrassNoWaterDepth = -100.0f;
+    // How much of a layer survives at a still water depth (DetailGrassGenerate.slang mirrors it).
+    [[nodiscard]] float DetailGrassWaterMask(float waterDepth, const struct DetailGrassLayer &layer);
+    inline constexpr float DetailGrassShoreFade = 0.15f;
+
     struct DetailGrassHeightField
     {
         std::uint32_t columns = 0, rows = 0;
         float cellSize = 1.0f;
         std::vector<float> heights;      // columns * rows, row-major (x fastest)
         std::vector<std::uint8_t> holes; // columns * rows: 1 where the cell starting at the sample is cut away
+        // columns * rows: still water above the sample (negative above the waterline, DetailGrassNoWaterDepth where no
+        // water covers it); empty when no layer avoids water or none is near.
+        std::vector<float> waterDepths;
         std::uint64_t revision = 0;
 
         [[nodiscard]] bool Valid() const noexcept
         {
             return columns >= 2 && rows >= 2 && cellSize > 0.0f && heights.size() == std::size_t(columns) * rows &&
-                   (holes.empty() || holes.size() == heights.size());
+                   (holes.empty() || holes.size() == heights.size()) &&
+                   (waterDepths.empty() || waterDepths.size() == heights.size());
         }
     };
 

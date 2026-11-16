@@ -1295,7 +1295,7 @@ namespace PlutoGE::render
         // go with their components, asset textures stay).
         const auto prepareImpostor = [&](const MeshImpostor &source) -> std::shared_ptr<const BasicImpostor>
         {
-            auto &cached = m_impostors[source.albedo];
+            auto &cached = m_impostors[{source.albedo, source.parameters.maxScreenRadiusPixels}];
             if (!cached || cached->parameters != source.parameters)
             {
                 auto impostor = std::make_shared<BasicImpostor>();

@@ -58,6 +58,10 @@ namespace PlutoGE::scene
         float maxDrawDistance = 0.0f;
         // Moves the type's LOD and impostor switches nearer or farther (render/LodDistanceScale.h).
         float lodDistanceScale = render::DefaultLodDistanceScale;
+        // How far away instances turn into the mesh's baked impostor cards (Distant Cards), relative to where the
+        // import placed the switch: 2 keeps the mesh twice as far, 0.5 swaps to cards at half the distance. Only
+        // meshes imported with Bake Impostor have cards.
+        float impostorDistanceScale = 1.0f;
         FoliageShadowMode shadows = FoliageShadowMode::Inherit;
         // Zero inherits the owning foliage component's shadow distance. Small plants rarely need shadows far away.
         float maxShadowDistance = 0.0f;

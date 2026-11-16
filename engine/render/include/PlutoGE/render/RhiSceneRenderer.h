@@ -354,7 +354,8 @@ namespace PlutoGE::render
       std::unique_ptr<RhiSkinningExecutor> m_skinningExecutor;
       std::unique_ptr<RhiDrawPreparationCache> m_drawPreparation;
       // Producers' impostors with their atlases uploaded, by albedo atlas (cleared with the texture caches).
-      std::unordered_map<const Texture *, std::shared_ptr<const BasicImpostor>> m_impostors;
+      // By atlas and switch radius: foliage types sharing a mesh may move their cards to different distances.
+      std::map<std::pair<const Texture *, float>, std::shared_ptr<const BasicImpostor>> m_impostors;
       struct CachedMesh
       {
           std::weak_ptr<const void> lifetime;

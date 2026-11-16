@@ -716,6 +716,14 @@ namespace PlutoGE::ui
                 controls.Drag("Height Fade", grass.altitudeFade, 0.1f, 0.01f, 500.0f, "%.1f m",
                               "Over how many metres beyond the heights the grass thins out to nothing.");
             }
+            if (ImGui::Checkbox("Grow Under Water", &grass.growUnderWater))
+                controls.changed = true;
+            ImGui::SetItemTooltip("Off: no grass under lakes, rivers or the sea (their still level). On: grass grows under\n"
+                                  "water as on land, for submerged meadows.");
+            if (!grass.growUnderWater)
+                controls.Drag("Shore Margin", grass.shoreMargin, 0.01f, -2.0f, 10.0f, "%.2f m",
+                              "How far above the waterline the grass stops: higher leaves a bare, wet shore; negative lets\n"
+                              "it reach into the shallows. It fades in over 15 cm above that.");
             controls.Slider("Bare Patches", grass.clustering, 0.0f, 0.95f, "%.2f",
                             "Leave patches of bare ground: 0 covers everything the rest allows, higher values leave more\n"
                             "and larger gaps. The patches are as big as the colour patches (Colour > Patch Size).");

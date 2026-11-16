@@ -1,4 +1,8 @@
 #include "PlutoGE/scene/components/DetailGrassComponent.h"
+#include "PlutoGE/scene/Entity.h"
+#include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/water/WaterSystem.h"
+#include <algorithm>
 
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
@@ -71,6 +75,8 @@ namespace PlutoGE::scene
             visit.Float("MaxSlope", grass.maxSlopeDegrees);
             visit.Range("Altitude", grass.minAltitude, grass.maxAltitude);
             visit.Float("AltitudeFade", grass.altitudeFade);
+            visit.Bool("GrowUnderWater", grass.growUnderWater);
+            visit.Float("ShoreMargin", grass.shoreMargin);
             visit.Float("Clustering", grass.clustering);
             visit.Range("Height", grass.minHeight, grass.maxHeight);
             visit.Range("Width", grass.minWidth, grass.maxWidth);
@@ -219,10 +225,28 @@ namespace PlutoGE::scene
         const auto *terrain = GetTerrain();
         if (!terrain || terrain->GetWidth() < 2 || terrain->GetDepth() < 2)
             return nullptr;
+        // Water depths only when a layer keeps out of the water and there is water: keyed on the water's still surface
+        // and where the terrain stands, so waves never rebuild the field.
+        const auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        const bool avoidsWater = std::any_of(m_layers.begin(), m_layers.end(), [](const Layer &layer) {
+            return layer.settings.enabled && !layer.settings.growUnderWater;
+        });
+        const water::WaterSurfaceSnapshot *water = avoidsWater && scene ? &scene->GetWaterSystem().GetFrameSnapshot(*scene) : nullptr;
+        if (water && water->Empty())
+            water = nullptr;
+        const glm::mat4 terrainWorld = GetOwner()->GetWorldTransform();
+        std::uint64_t waterSignature = 0;
+        if (water)
+        {
+            waterSignature = water->StillSignature();
+            const auto *bytes = reinterpret_cast<const unsigned char *>(&terrainWorld);
+            for (std::size_t i = 0; i < sizeof(terrainWorld); ++i)
+                waterSignature = (waterSignature ^ bytes[i]) * 1099511628211ull;
+        }
         if (m_heightField && m_heightTerrain == terrain && m_heightRevision == terrain->GetHeightsRevision() &&
             m_holeRevision == terrain->GetHolesRevision() && m_heightColumns == terrain->GetWidth() &&
             m_heightRows == terrain->GetDepth() && m_heightCellSize == terrain->GetCellSize() &&
-            m_heightSmoothing == terrain->GetSurfaceSmoothing())
+            m_heightSmoothing == terrain->GetSurfaceSmoothing() && m_waterSignature == waterSignature)
             return m_heightField;
 
         auto field = std::make_shared<render::DetailGrassHeightField>();
@@ -241,6 +265,25 @@ namespace PlutoGE::scene
                 if (x + 1 < terrain->GetWidth() && z + 1 < terrain->GetDepth())
                     field->holes[index] = holes.GetCut(x, z) != TerrainHoleCut::None ? 1u : 0u;
             }
+        if (water)
+        {
+            // Still water above each sample, where the drawn surface stands in the world.
+            field->waterDepths.assign(field->heights.size(), render::DetailGrassNoWaterDepth);
+            bool any = false;
+            for (int z = 0; z < terrain->GetDepth(); ++z)
+                for (int x = 0; x < terrain->GetWidth(); ++x)
+                {
+                    const auto index = std::size_t(z) * field->columns + std::size_t(x);
+                    const glm::vec3 world = glm::vec3(terrainWorld * glm::vec4(x * field->cellSize, field->heights[index], z * field->cellSize, 1.0f));
+                    if (const auto depth = water->StillDepth({world.x, world.z}, world.y))
+                    {
+                        field->waterDepths[index] = std::clamp(*depth, render::DetailGrassNoWaterDepth, 100.0f);
+                        any = true;
+                    }
+                }
+            if (!any)
+                field->waterDepths.clear();
+        }
         field->revision = ++m_heightFieldRevision;
         m_heightField = std::move(field);
         m_heightTerrain = terrain;
@@ -250,6 +293,7 @@ namespace PlutoGE::scene
         m_heightRows = terrain->GetDepth();
         m_heightCellSize = terrain->GetCellSize();
         m_heightSmoothing = terrain->GetSurfaceSmoothing();
+        m_waterSignature = waterSignature;
         return m_heightField;
     }
 }

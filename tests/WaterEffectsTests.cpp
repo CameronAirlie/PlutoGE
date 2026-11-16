@@ -13,7 +13,10 @@
 #include "PlutoGE/scene/FoliageTypeAsset.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/WaterBodies.h"
+#include "PlutoGE/render/DetailGrass.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/DetailGrassComponent.h"
+#include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/OceanComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
@@ -324,6 +327,76 @@ namespace
                 "The habitat round trips through the component");
     }
 
+    void TestGrassAndCards()
+    {
+        // The shore mask (DetailGrassGenerate.slang mirrors it).
+        render::DetailGrassLayer layer;
+        Require(!layer.growUnderWater, "New grass layers keep out of the water");
+        Require(Near(render::DetailGrassWaterMask(render::DetailGrassNoWaterDepth, layer), 1.0f) &&
+                    Near(render::DetailGrassWaterMask(0.5f, layer), 0.0f) && Near(render::DetailGrassWaterMask(-0.05f, layer), 0.0f) &&
+                    Near(render::DetailGrassWaterMask(-0.2f, layer), 1.0f),
+                "Grass stops at the shore margin above the waterline and is full 15 cm above it");
+        const float halfway = render::DetailGrassWaterMask(-0.125f, layer);
+        Require(halfway > 0.4f && halfway < 0.6f, "Grass fades in above the margin");
+        layer.growUnderWater = true;
+        Require(Near(render::DetailGrassWaterMask(3.0f, layer), 1.0f), "Layers that grow under water ignore it");
+
+        // The component measures still water over each terrain sample: a 41 x 41 flat terrain at 0, the lake (level 1)
+        // over x in [0, 32] and a raised bank beyond it.
+        Scene scene;
+        auto *lake = AddLake(scene, 1.0f);
+        auto *ground = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Ground"}));
+        auto *terrain = ground->CreateComponent<TerrainComponent>(TerrainComponentConfig{.width = 41, .depth = 41, .cellSize = 1.0f});
+        auto *grass = ground->CreateComponent<DetailGrassComponent>();
+        auto field = grass->GetHeightField();
+        Require(field && field->Valid() && field->waterDepths.size() == field->heights.size(), "The grass field carries water depths");
+        const auto depthAt = [&](int x, int z) { return field->waterDepths[std::size_t(z) * field->columns + std::size_t(x)]; };
+        Require(Near(depthAt(10, 10), 1.0f - field->heights[10 * 41 + 10]) && Near(depthAt(36, 10), render::DetailGrassNoWaterDepth),
+                "Depths are the still water above the drawn surface, none outside the lake");
+        Require(grass->GetHeightField() == field, "An unchanged scene shares the field");
+        lake->GetComponent<OceanComponent>()->Update(2.0f);
+        scene.Update(0.016f);
+        Require(grass->GetHeightField() == field, "Waves do not rebuild the field");
+        lake->SetPosition({0.0f, 3.0f, 0.0f});
+        scene.Update(0.016f);
+        const auto raised = grass->GetHeightField();
+        Require(raised != field && Near(raised->waterDepths[10 * 41 + 10], 3.0f - raised->heights[10 * 41 + 10]),
+                "Moving the water re-measures it");
+        auto layers = grass->GetLayers();
+        for (auto &each : layers)
+            each.settings.growUnderWater = true;
+        grass->SetLayers(layers);
+        scene.Update(0.016f);
+        Require(grass->GetHeightField()->waterDepths.empty(), "No water depths when every layer grows under water");
+        DetailGrassComponent copy;
+        auto saved = grass->GetLayers();
+        saved[0].settings.growUnderWater = false;
+        saved[0].settings.shoreMargin = 0.4f;
+        grass->SetLayers(saved);
+        copy.Deserialize(grass->Serialize());
+        Require(!copy.GetLayers()[0].settings.growUnderWater && Near(copy.GetLayers()[0].settings.shoreMargin, 0.4f),
+                "Grow Under Water and Shore Margin round trip");
+        (void)terrain;
+
+        // Distant cards: the per-type distance round trips through files and components.
+        FoliageTypeAsset tree;
+        tree.impostorDistanceScale = 0.5f;
+        std::stringstream file;
+        Require(WriteFoliageTypeAsset(file, tree), "Write a foliage type");
+        FoliageTypeAsset loaded;
+        Require(ReadFoliageTypeAsset(file, loaded) && Near(loaded.impostorDistanceScale, 0.5f), "Cards From round trips through the file");
+        const auto changed = ChangedFoliageTypeProperties(FoliageTypeAsset{}, tree);
+        Require(std::find(changed.begin(), changed.end(), "ImpostorDistanceScale") != changed.end(), "Cards From edits are overrides");
+        tree.impostorDistanceScale = 1000.0f;
+        SanitizeFoliageTypeAsset(tree);
+        Require(Near(tree.impostorDistanceScale, 10.0f), "Cards From is clamped");
+        FoliageComponent foliage;
+        foliage.AddType("Pine").asset.impostorDistanceScale = 2.0f;
+        FoliageComponent restored;
+        restored.Deserialize(foliage.Serialize());
+        Require(Near(restored.GetType(0)->asset.impostorDistanceScale, 2.0f), "Cards From round trips through the component");
+    }
+
     void TestFoliageBrushHabitat()
     {
         Scene scene;
@@ -550,6 +623,7 @@ int main()
         TestProfile();
         TestFoliageAssetHabitat();
         TestFoliageBrushHabitat();
+        TestGrassAndCards();
         TestProcedural();
         TestRuntime();
         std::cout << "Water effects tests passed\n";

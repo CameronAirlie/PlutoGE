@@ -79,6 +79,7 @@ namespace PlutoGE::scene
         asset.cellSize = (std::max)(Finite(asset.cellSize, 32.0f), 1.0f);
         asset.maxDrawDistance = (std::max)(Finite(asset.maxDrawDistance, 0.0f), 0.0f);
         asset.lodDistanceScale = render::SanitizeLodDistanceScale(asset.lodDistanceScale);
+        asset.impostorDistanceScale = std::clamp(Finite(asset.impostorDistanceScale, 1.0f), 0.1f, 10.0f);
         if (asset.shadows != FoliageShadowMode::On && asset.shadows != FoliageShadowMode::Off)
             asset.shadows = FoliageShadowMode::Inherit;
         asset.maxShadowDistance = (std::max)(Finite(asset.maxShadowDistance, 0.0f), 0.0f);
@@ -110,6 +111,7 @@ namespace PlutoGE::scene
         add(before.cellSize != after.cellSize, {"CellSize"});
         add(before.maxDrawDistance != after.maxDrawDistance, {"MaxDrawDistance"});
         add(before.lodDistanceScale != after.lodDistanceScale, {"LodDistanceScale"});
+        add(before.impostorDistanceScale != after.impostorDistanceScale, {"ImpostorDistanceScale"});
         add(before.shadows != after.shadows, {"Shadows"});
         add(before.maxShadowDistance != after.maxShadowDistance, {"MaxShadowDistance"});
         add(before.collisionEnabled != after.collisionEnabled, {"CollisionEnabled"});
@@ -151,6 +153,8 @@ namespace PlutoGE::scene
                << "CELL_SIZE\t" << asset.cellSize << '\n'
                << "MAX_DRAW_DISTANCE\t" << asset.maxDrawDistance << '\n'
                << "LOD_DISTANCE_SCALE\t" << asset.lodDistanceScale << '\n'
+               // Readers that predate it skip the record; files without it switch where the import placed the cards.
+               << "IMPOSTOR_DISTANCE_SCALE\t" << asset.impostorDistanceScale << '\n'
                // Readers that predate shadows skip the record; files without it follow the component.
                << "SHADOWS\t" << FoliageShadowModeName(asset.shadows) << '\t' << asset.maxShadowDistance << '\n'
                << "COLLISION_ENABLED\t" << (asset.collisionEnabled ? 1 : 0) << '\n'
@@ -218,6 +222,7 @@ namespace PlutoGE::scene
             else if (key == "MAX_DRAW_DISTANCE") stream >> loaded.maxDrawDistance;
             // Version 1 files written before LOD distance scales have no record and load with the default.
             else if (key == "LOD_DISTANCE_SCALE") stream >> loaded.lodDistanceScale;
+            else if (key == "IMPOSTOR_DISTANCE_SCALE") stream >> loaded.impostorDistanceScale;
             else if (key == "SHADOWS")
             {
                 std::string mode;

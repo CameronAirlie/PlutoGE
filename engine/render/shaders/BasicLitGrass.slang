@@ -39,12 +39,22 @@ VertexOutput grassClumpVertex(VertexInput input, uint instanceId)
         float4(0.0, 0.0, 0.0, 1.0));
 
     const FoliageWindParameters wind = materialFoliageWind();
-    float3 world = mul(clumpModel, float4(input.position, 1.0)).xyz;
-    const float3 previousWorld = foliageWindPosition(wind, clumpModel, input.position, world, wind.timing.y);
-    world = foliageWindPosition(wind, clumpModel, input.position, world, wind.timing.x);
+    const float3 rest = mul(clumpModel, float4(input.position, 1.0)).xyz;
+    float3 world = rest, previousWorld = rest;
+    FoliageWindVertex windVertex = (FoliageWindVertex)0;
+    float3 windOffset = float3(0.0, 0.0, 0.0);
+    if (foliageWindActive(wind))
+    {
+        windVertex = foliageWindVertex(wind, clumpModel, input.position);
+        windOffset = foliageWindOffsetAt(wind, windVertex, wind.timing.x);
+        world += windOffset;
+    }
 
     VertexOutput output = (VertexOutput)0;
     output.position = mul(viewProjection, float4(world, 1.0));
+    // Clumps never move, so their previous wind shares this frame's setup, and is evaluated only where it shows.
+    if (foliageWindActive(wind))
+        previousWorld += foliageWindPreviousOffset(wind, windVertex, windOffset, output.position.w);
     output.position.xy += temporalClipOffset.xy * output.position.w;
     output.currentClip = mul(motionViewProjection, float4(world, 1.0));
     // Clumps do not move; only the wind and the camera do.

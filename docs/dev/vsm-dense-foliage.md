@@ -55,6 +55,16 @@ A page animates swaying casters only if it is within the wind's **Shadow Sway Di
   shader zeroes the wind for entries without it.
 - **Coarse levels.** Coarse levels (the directional root and spot roots) always hold the rest pose. Their pages are
   large and expensive, and they are only a fallback.
+- **Per-level reach.** Within the distance, a caster sways on a page only if its sway reach covers **Shadow Sway Min
+  Texels** of the page's level (`pageSwayThreshold`, `casterSways`; `culling.z`). Each chunk records its reach when it
+  is built (`CasterChunk::swayReach`, `WindPad` over its models; chunks rebuild when the wind changes) and packs it into
+  `still.z` as float bits, which stays zero for casters that do not sway. Pages compare their level's texel
+  (`metrics[level].x`) with it, so a sapling stops swaying on a level where a tall pine still does.
+
+  LakeDistrict (2026-11-16, RTX 4070 SUPER, 1080p, Shadow Sway Distance 30 m): the swaying pines kept about 100 pages
+  dirty and VSM at its 4M-triangle update budget every frame up to 4 texels (page rendering 0.35 ms); 8 texels left 17
+  dirty pages (2.4M triangles, 0.19 ms), 16 left 11 (1.3M, 0.11 ms). The reach is a peak-gust bound, so these values
+  freeze less visible sway than their size suggests, but they do freeze some: judge them in motion.
 
 ### Why per page
 

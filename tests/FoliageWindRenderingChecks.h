@@ -235,9 +235,10 @@ void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readP
         {
             // Pages the swaying blades dirty while the clock runs, seen from `view`.
             const auto dirtyWhileAnimating = [&](BasicLighting view, const glm::mat4 &viewProjection, float swayDistance,
-                                                 const std::shared_ptr<std::vector<glm::mat4>> &models) {
+                                                 const std::shared_ptr<std::vector<glm::mat4>> &models, float minTexels = 0.0f) {
                 view.wind = breeze;
                 view.wind.shadowSwayDistance = swayDistance;
+                view.wind.shadowSwayMinTexels = minTexels;
                 auto copy = caster;
                 copy.foliageWind = response;
                 copy.instanceModels = models;
@@ -274,6 +275,18 @@ void CheckFoliageWind(PlutoGE::render::BasicRenderer &renderer, ReadPixels readP
                       << tallNear << " within the shadow sway distance\n";
             require(tallNear > 0, "VSM: swaying casters must redraw the pages within the shadow sway distance");
             require(tallNear * 2 < tallEverywhere, "VSM: pages beyond the shadow sway distance must stay cached under tall casters");
+            // Levels whose texels the sway cannot span keep the rest pose: a minimum far beyond the blades' sway leaves
+            // no more pages dirty than swaying (almost) nowhere does, and one texel still animates the levels fine enough
+            // to show it. This view redraws a few pages each frame regardless of sway, so both compare with that floor.
+            const auto tallNowhere = dirtyWhileAnimating(top, topViewProjection, 0.001f, tallModels);
+            const auto tallNoLevel = dirtyWhileAnimating(top, topViewProjection, 0.0f, tallModels, 1000.0f);
+            const auto tallOneTexel = dirtyWhileAnimating(top, topViewProjection, 0.0f, tallModels, 1.0f);
+            std::cout << "Foliage wind VSM dirty pages for tall casters by sway texels: " << tallOneTexel << " at one texel, "
+                      << tallNoLevel << " at a thousand, " << tallNowhere << " swaying (almost) nowhere\n";
+            require(tallNoLevel <= tallNowhere + 2 && tallNoLevel * 4 < tallEverywhere,
+                    "VSM: levels too coarse for a caster's sway must keep its rest pose");
+            require(tallOneTexel > tallNoLevel && tallOneTexel <= tallEverywhere,
+                    "VSM: levels fine enough to show a caster's sway must still animate it");
         }
     }
 

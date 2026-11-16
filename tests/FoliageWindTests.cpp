@@ -151,6 +151,61 @@ namespace
                 "Geometry below the pivot should not sway");
     }
 
+    // Motion vectors skip the previous frame's sway only where it cannot show: whenever FoliageWindMotionVisible says
+    // no, the vertex really moves less than PLUTO_WIND_MOTION_MIN_PIXELS between the frame's two times at that depth.
+    // Near vertices still take it, and the frame packs its motion scale into the active flag, which stays positive.
+    void TestMotionVisibility()
+    {
+        render::FoliageWindResponse tree = render::FoliageWindPresetResponse(render::FoliageWindPreset::Tree, 18.0f);
+        const auto packed = render::PackFoliageWind(Breeze(8.0f), tree, 10.0f, 9.95f, 540.0f);
+        Require(packed.Active() && packed.shape.w == 540.0f, "The motion pixel scale should ride in the active flag");
+        Require(render::PackFoliageWind(Breeze(8.0f), tree, 10.0f, 9.95f, -3.0f).shape.w == 1.0f,
+                "An invalid motion pixel scale must keep the parameters active");
+        render::FoliageWindFrame frame{Breeze(8.0f), 10.0f, 9.95f};
+        frame.motionPixelScale = 540.0f;
+        Require(frame.Parameters(tree) == packed, "The frame should pack its motion pixel scale");
+
+        const glm::mat4 model(1.0f);
+        const glm::vec3 crown(0.5f, 16.0f, 0.3f);
+        Require(render::FoliageWindMotionVisible(packed, model, crown, 20.0f), "A near crown's sway must show in motion vectors");
+        Require(!render::FoliageWindMotionVisible(packed, model, glm::vec3(0.0f), 20.0f),
+                "Geometry at the pivot does not move");
+        Require(!render::FoliageWindMotionVisible(render::FoliageWindParameters{}, model, crown, 1.0f),
+                "Still geometry has no motion to show");
+
+        std::mt19937 random(11);
+        std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+        int skipped = 0;
+        for (int trial = 0; trial < 2000; ++trial)
+        {
+            render::FoliageWindResponse response;
+            response.enabled = true;
+            response.stiffness = unit(random);
+            response.flutter = unit(random);
+            response.bendHeight = 0.1f + unit(random) * 20.0f;
+            response.pivotHeight = unit(random) * 0.3f * response.bendHeight;
+            auto wind = Breeze(unit(random) * 20.0f);
+            wind.gustiness = unit(random);
+            const float time = unit(random) * 1000.0f, previousTime = time - 0.008f - unit(random) * 0.05f;
+            const float pixelScale = 300.0f + unit(random) * 1500.0f;
+            const auto parameters = render::PackFoliageWind(wind, response, time, previousTime, pixelScale);
+            const float scale = 0.3f + unit(random) * 3.0f;
+            const glm::mat4 instance = glm::scale(glm::translate(glm::mat4(1.0f), glm::vec3(unit(random) * 400.0f, 0.0f,
+                                                                                             unit(random) * 400.0f)),
+                                                  glm::vec3(scale));
+            const glm::vec3 local(unit(random) - 0.5f, unit(random) * response.bendHeight * 2.0f, unit(random) - 0.5f);
+            const float depth = 1.0f + unit(random) * unit(random) * 3000.0f;
+            if (render::FoliageWindMotionVisible(parameters, instance, local, depth))
+                continue;
+            ++skipped;
+            const glm::vec3 motion = render::FoliageWindOffset(parameters, instance, local, time) -
+                                     render::FoliageWindOffset(parameters, instance, local, previousTime);
+            Require(glm::length(motion) * pixelScale / depth < float(PLUTO_WIND_MOTION_MIN_PIXELS) * 1.0001f,
+                    "Motion vectors skipped sway that moved a vertex a visible fraction of a pixel");
+        }
+        Require(skipped > 100, "The motion visibility test should skip distant vertices");
+    }
+
     // Plants lean downwind on average, softer plants further; gusts stay in range and roll downwind.
     void TestResponse()
     {
@@ -212,6 +267,17 @@ namespace
         Require(Near(clamped.GetSpeed(), scene::WindComponent::MaxSpeed) && Near(clamped.GetGustiness(), 0.45f) &&
                     Near(clamped.GetGustSize(), scene::WindComponent::MinGustSize),
                 "Out-of-range and malformed values should be clamped or ignored");
+
+        // Shadow sway texels: one by default (scenes saved before it get it too), kept, clamped and handed on.
+        Require(Near(scene::WindComponent{}.GetShadowSwayMinTexels(), 1.0f), "Shadow sway should need one texel by default");
+        source.SetShadowSwayMinTexels(4.0f);
+        scene::WindComponent texels;
+        texels.Deserialize(source.Serialize());
+        Require(Near(texels.GetShadowSwayMinTexels(), 4.0f) && Near(texels.GetSettings().shadowSwayMinTexels, 4.0f),
+                "Shadow sway texels should survive serialization and reach the settings");
+        texels.SetShadowSwayMinTexels(1000.0f);
+        Require(Near(texels.GetShadowSwayMinTexels(), scene::WindComponent::MaxShadowSwayMinTexels),
+                "Shadow sway texels should be clamped");
     }
 
     // The first enabled wind on an active entity drives the scene; the cached lookup follows components added and
@@ -333,6 +399,7 @@ try
     TestStillCases();
     TestAnchoring();
     TestDisplacementBound();
+    TestMotionVisibility();
     TestResponse();
     TestWindComponent();
     TestSceneExtraction();

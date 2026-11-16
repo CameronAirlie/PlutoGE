@@ -216,7 +216,13 @@ probe visibility for leak reduction is an exact segment test. `SurfaceTolerance`
   instances share through their custom index. GPU-skinned and transparent geometry is left out, as from voxel GI, and
   so are draws whose largest instance's bounding radius (`BasicDraw::maxInstanceRadius`) is below
   **Project Settings > Rendering > Performance > Smallest ray-traced instance** (`RAY_TRACED_MIN_INSTANCE_RADIUS`,
-  default 0.5 m): grass and debris add top-level instances far out of proportion to the light they bounce. Draws
+  default 0.5 m): grass and debris add top-level instances far out of proportion to the light they bounce. Instanced
+  draws with a LOD chain (foliage, scattered rocks) trace their chain's coarsest LOD
+  (**Project Settings > Rendering > Performance > Ray-traced geometry**, `RAY_TRACED_GEOMETRY_DETAIL`, `CoarsestLod` by
+  default; `AsDrawn` traces what the camera draws; `RayTracingScene::TracedRange`): diffuse GI needs a model's mass and
+  coverage, and a canopy's full-detail alpha-tested needles made every crossing ray test many more candidates. On
+  LakeDistrict (2026-11-16, RTX 4070 SUPER, 1080p, about 111k traced pine instances) the trace went from 0.69-0.81 ms to
+  0.26-0.41 ms, and DDGI as a whole from about 1.5 ms to about 1.0 ms. Draws
   wholly beyond the probe volume's reach (the widest cascade's half diagonal, times 1.25) are left out too, around a
   centre snapped to twice that cascade's probe spacing, so the traced set changes only every few dozen metres of
   travel (`RayTracedSceneSettings` in `BasicRenderer.cpp`). The Vulkan backend reads each bottom level's device

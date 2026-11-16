@@ -85,7 +85,7 @@ A future vertex deformation (cloth on the GPU, vertex animation textures, intera
 | Pass | Where the block travels | Notes |
 | --- | --- | --- |
 | Forward, G-buffer | `MaterialParameters.foliageWind` (BasicLit.slang) | Instanced and single-object paths share `transformSurfaceVertex`. |
-| Motion vectors | the same block, at the previous frame's time | Temporal filters see the sway as motion and do not smear it. |
+| Motion vectors | the same block, at the previous frame's time | Temporal filters see the sway as motion and do not smear it. Only where the sway can move the vertex `PLUTO_WIND_MOTION_MIN_PIXELS` (half a pixel); see [Motion vectors](#motion-vectors). |
 | Depth prepass | the same block, through the standard coverage shaders | Material-free opaque depth cannot read it, so wind draws use alpha coverage. Graph draws use the full layout. |
 | Cascaded, point and spot shadows | `ShadowMaterial.foliageWind` (DirectionalShadow.slang) | Excluded from batched opaque shadows (`OpaqueShadowBatches::Eligible`). |
 | VSM | `DrawParameters` and `BatchedDraw` (VirtualShadowRaster.slang) | Page and receiver vertices both deform. |
@@ -94,6 +94,26 @@ A future vertex deformation (cloth on the GPU, vertex animation textures, intera
 | Voxel GI, and its shadow cascades | none | GI lights the rest pose, so swaying never forces a re-voxelization. |
 | Hardware ray-traced DDGI | none | BLAS geometry is static. |
 | Occlusion | none | Wind draws are occludees, never occluders. |
+
+### Motion vectors
+
+Passes that write motion vectors (`transformSurfaceVertex` in BasicLit.slang, and BasicLitGrass.slang) need each
+vertex's position at the previous frame's time as well. `FoliageWind.slang` splits the wind into a per-vertex setup
+(`foliageWindVertex`: root, phase, height above the pivot, scale) and a per-time evaluation (`foliageWindOffsetAt`), so
+both times share the setup. The previous evaluation runs only where the vertex's whole sway range (twice
+`foliageWindReach`, the CPU's `WindDisplacementBound` at its height) projects to at least `PLUTO_WIND_MOTION_MIN_PIXELS`
+at its view depth (`foliageWindMotionVisible`). Elsewhere the previous position takes this frame's offset: the motion
+vector loses less than half a pixel of sway, and distant foliage evaluates the wind once instead of twice.
+
+The view's pixels per world unit at unit depth travel in `FoliageWindParameters::shape.w`, which is also the active
+flag (always positive): `FoliageWindFrame::motionPixelScale`, half the render height times the projection's vertical
+scale, set by `BasicRenderer` each frame. Shadow passes ignore it. `FoliageWindMotionVisible` is the CPU reference,
+and `PlutoGEFoliageWindTests` checks that it never skips motion that would show.
+
+Measured on LakeDistrict (2026-11-16, RTX 4070 SUPER, 1080p, six alternating runs each) it made no measurable
+difference: the opaque pass took 2.16 ms with the previous evaluation everywhere and 2.15 ms with it skipped, and
+detail grass 0.70 and 0.69 ms. That GPU is not limited by the wind's vertex work there; vertex-bound GPUs and denser
+swaying geometry are where it can pay.
 
 ### Caches and invalidation
 
@@ -111,6 +131,11 @@ is swaying:
   measured in the light's view, because a page is the unit of cost: one tree can reach hundreds of pages. A page
   crossing the distance redraws once. Coarse levels always hold the rest pose, and cascades sway at every distance.
   See [VSM in dense foliage](dev/vsm-dense-foliage.md).
+- **Shadow sway texels.** Within that distance, a level animates a caster only if the caster's sway reach spans at
+  least **Shadow Sway Min Texels** of the level's texels (`SceneWindSettings::shadowSwayMinTexels`; `WindComponent`
+  defaults to 1, the renderer to 0, which animates every level). Coarser levels keep the rest pose and stay cached.
+  The reach is the caster chunk's `WindPad` maximum, an upper bound at peak gust, so tall trees span several texels of
+  even coarse levels: raise the setting (LakeDistrict's pines need about 8) when VSM keeps redrawing distant canopies.
 - **Shadow bounds.** VSM pads caster bounds with `FoliageWindMaxDisplacement(wind, response, localTop)`: the bound
   under the current wind's strength and gustiness, for the geometry's actual height. It is far tighter than the
   any-wind bound that culling uses (about 3 m against 30 m for Verdant's canopy at 6 m/s), and VSM rebuilds its chunk
@@ -144,8 +169,9 @@ The `WIND_RESPONSE` fields are stiffness, flutter, bend height and pivot height.
 Older scenes and assets have none of these keys and load with wind off, so they do not move until a type opts in.
 Values are sanitized on load and in `SetTypeWind`.
 
-`WindComponent` serializes `Direction`, `Speed`, `Gustiness`, `Gust Size` and `Shadow Sway Distance` (scenes saved
-before it load with 30 m). Malformed values keep their defaults,
+`WindComponent` serializes `Direction`, `Speed`, `Gustiness`, `Gust Size`, `Shadow Sway Distance` (scenes saved
+before it load with 30 m) and `Shadow Sway Min Texels` (scenes saved before it load with 1). Malformed values keep
+their defaults,
 and out-of-range values are clamped.
 
 ## Performance

@@ -118,7 +118,7 @@ namespace PlutoGE::render
     }
 
     FoliageWindParameters PackFoliageWind(const SceneWindSettings &wind, const FoliageWindResponse &response,
-                                          float time, float previousTime)
+                                          float time, float previousTime, float motionPixelScale)
     {
         if (!FoliageWindAnimates(wind, response))
             return {};
@@ -133,7 +133,9 @@ namespace PlutoGE::render
         parameters.timing = {time, previousTime, 1.0f / std::max(wind.gustSize, 1.0f), std::max(wind.speed, 0.0f)};
         parameters.response = {float(PLUTO_WIND_MAX_BEND) * softness * std::sqrt(softness), swayFrequency,
                                plant.flutter * float(PLUTO_WIND_FLUTTER_AMPLITUDE), float(PLUTO_WIND_FLUTTER_FREQUENCY)};
-        parameters.shape = {plant.pivotHeight, 1.0f / plant.bendHeight, plant.bendHeight, 1.0f};
+        // The fourth component doubles as the active flag, so it must stay positive.
+        const float motionScale = std::isfinite(motionPixelScale) && motionPixelScale > 0.0f ? motionPixelScale : 1.0f;
+        parameters.shape = {plant.pivotHeight, 1.0f / plant.bendHeight, plant.bendHeight, motionScale};
         return parameters;
     }
 
@@ -212,5 +214,23 @@ namespace PlutoGE::render
         const float horizontal = glm::length(glm::vec2(offset.x, offset.z));
         offset.y -= std::min(horizontal * horizontal / (2.0f * height), horizontal);
         return offset;
+    }
+
+    bool FoliageWindMotionVisible(const FoliageWindParameters &wind, const glm::mat4 &model, const glm::vec3 &localPosition,
+                                  float depth)
+    {
+        if (!wind.Active())
+            return false;
+        // foliageWindReach: WindDisplacementBound at the vertex's own height, in world units.
+        const float upScale = glm::length(glm::mat3(model) * glm::vec3(0.0f, 1.0f, 0.0f));
+        const float relative = std::clamp((localPosition.y - wind.shape.x) * wind.shape.y, 0.0f,
+                                          float(PLUTO_WIND_MAX_RELATIVE_HEIGHT));
+        const float strength = wind.field.z;
+        const float maxGust = 1.0f + wind.field.w;
+        const float sway = wind.response.x * strength *
+                           (maxGust * float(PLUTO_WIND_LEAN_SHARE) + float(PLUTO_WIND_OSCILLATION_SHARE)) * relative * relative;
+        const float flutter = wind.response.z * strength * maxGust * relative * 1.5f;
+        const float reach = std::sqrt(2.0f) * (sway + 2.0f * flutter) * wind.shape.z * upScale;
+        return 2.0f * reach * wind.shape.w >= float(PLUTO_WIND_MOTION_MIN_PIXELS) * std::max(depth, 1.0e-4f);
     }
 }

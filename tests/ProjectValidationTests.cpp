@@ -111,6 +111,30 @@ namespace
         input.assetPipelineVersion = 4;
         Require(Has(ValidateProject(input), "scene.header"), "Legacy project accepted linked format");
     }
+    // A terrain world's TileFiles is a pattern ({x}/{z}), not a file: each tile of its grid is checked instead.
+    void TerrainWorldValidation(const std::filesystem::path &root)
+    {
+        ProjectValidationInput input;
+        input.assetRoot = root; input.projectRoot = root;
+        input.startupScene = "project://Main.plutoscene";
+        const auto scene = [](int tilesX, const std::string &pattern) {
+            return "SCENE\t1\n" + entity + camera + "COMPONENT\t1\tTerrainWorldComponent\t1\n"
+                "PROPERTY\tTilesX\t1\t" + std::to_string(tilesX) + "\t0\nPROPERTY\tTilesZ\t1\t2\t0\n"
+                "PROPERTY\tTileFiles\t2\t" + pattern + "\t0\nEND_COMPONENT\n";
+        };
+        for (int z = 0; z < 2; ++z)
+            for (int x = 0; x < 2; ++x)
+                Write(root / ("World Tiles/tile_" + std::to_string(x) + "_" + std::to_string(z) + ".plutoheight"), "height");
+        Write(root / "Main.plutoscene", scene(2, "project://World Tiles/tile_{x}_{z}.plutoheight"));
+        Require(ValidateProject(input).diagnostics.empty(), "Complete terrain tile pattern reported missing");
+        Write(root / "Main.plutoscene", scene(3, "project://World Tiles/tile_{x}_{z}.plutoheight"));
+        auto result = ValidateProject(input);
+        Require(result.diagnostics.size() == 1 && Has(result, "asset.missing", 1) && result.diagnostics[0].message.find("tile_2_0") != std::string::npos &&
+            result.diagnostics[0].message.find("1 more of 6") != std::string::npos, "Missing terrain tiles not folded into one diagnostic");
+        Write(root / "Main.plutoscene", scene(2, "project://Elsewhere/tile_{x}_{z}.plutoheight"));
+        result = ValidateProject(input);
+        Require(result.diagnostics.size() == 1 && result.diagnostics[0].line == 8, "Missing tile folder not reported once at its property line");
+    }
 }
 int main()
 {
@@ -119,6 +143,7 @@ int main()
         Scratch scratch;
         { Scratch linked; LinkedValidation(linked.root); }
         { Scratch managed; ManagedValidation(managed.root); }
+        { Scratch terrain; TerrainWorldValidation(terrain.root); }
         ProjectValidationInput input;
         input.assetRoot = scratch.root; input.projectRoot = scratch.root;
         input.startupScene = "project://Main.plutoscene";

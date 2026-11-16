@@ -1142,8 +1142,16 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
 {
     VertexOutput output;
     const FoliageWindParameters wind = materialFoliageWind();
+    const bool swaying = foliageWindActive(wind);
+    FoliageWindVertex windVertex = (FoliageWindVertex)0;
+    float3 windOffset = float3(0.0, 0.0, 0.0);
+    if (swaying)
+    {
+        windVertex = foliageWindVertex(wind, objectModel, input.position);
+        windOffset = foliageWindOffsetAt(wind, windVertex, wind.timing.x);
+    }
     float4 worldPosition = graphWorldPosition(objectModel,input.position,input.normal,input.uv,shaderGraphFrame.x,debugParameters.y);
-    worldPosition.xyz = foliageWindPosition(wind, objectModel, input.position, worldPosition.xyz, wind.timing.x);
+    worldPosition.xyz += windOffset;
     float3 localTangent = input.tangent.xyz;
     if (dot(localTangent, localTangent) < 0.000001)
     {
@@ -1155,8 +1163,19 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
     output.currentClip = mul(motionViewProjection, worldPosition);
     const float3 previousPosition = input.previousPosition.w > 0.5 ? input.previousPosition.xyz : input.position;
     float4 previousWorld = graphWorldPosition(objectPreviousModel,previousPosition,input.normal,input.uv,shaderGraphFrame.y,debugParameters.y);
-    // Wind at the previous frame's time, so motion vectors carry the sway and temporal filters do not smear it.
-    previousWorld.xyz = foliageWindPosition(wind, objectPreviousModel, previousPosition, previousWorld.xyz, wind.timing.y);
+    // Wind at the previous frame's time, so motion vectors carry the sway and temporal filters do not smear it, where it
+    // moves the vertex a visible fraction of a pixel (foliageWindPreviousOffset). An instance that did not move shares
+    // this frame's per-vertex setup.
+    if (swaying)
+    {
+        const bool unmoved = all(objectPreviousModel[0] == objectModel[0]) && all(objectPreviousModel[1] == objectModel[1]) &&
+                             all(objectPreviousModel[2] == objectModel[2]) && all(objectPreviousModel[3] == objectModel[3]) &&
+                             all(previousPosition == input.position);
+        const FoliageWindVertex previousVertex = unmoved ? windVertex
+                                                         : foliageWindVertex(wind, objectPreviousModel, previousPosition);
+        previousWorld.xyz += unmoved ? foliageWindPreviousOffset(wind, previousVertex, windOffset, output.position.w)
+                                     : foliageWindOffsetAt(wind, previousVertex, wind.timing.y);
+    }
     output.previousClip = mul(previousViewProjection, previousWorld);
     output.objectDebug = debugParameters.x;
     output.probeDebug = debugParameters.zw;

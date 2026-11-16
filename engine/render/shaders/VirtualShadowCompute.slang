@@ -377,10 +377,25 @@ bool pageSways(VirtualShadowPage page)
     const float distance = vsm.culling.y;
     return distance <= 0 || intersects(float4(vsm.camera.xyz, distance), float4(-1, -1, -1, 0), page);
 }
+// The sway (world units) a caster must reach to animate on this page: its level's texel times the shadow sway minimum
+// texels (culling.z), so a level too coarse to show a caster's sway keeps its rest pose, and stays cached, while finer
+// ones animate it. Directional levels only, whose texels are world sized; infinite where the page does not sway.
+float pageSwayThreshold(VirtualShadowPage page)
+{
+    if (!pageSways(page)) return asfloat(0x7f800000u);
+    const uint level = page.address.z;
+    return level < PLUTO_VSM_DIRECTIONAL_LEVELS ? vsm.culling.z * vsm.metrics[level].x : 0.0;
+}
+// Whether a caster casts its swaying pose on a page of `threshold` (pageSwayThreshold): its wind animates it (still.z
+// holds its largest sway, as float bits, and is zero otherwise) and that sway reaches the threshold.
+bool casterSways(VirtualShadowCaster caster, float threshold)
+{
+    return caster.still.z != 0 && asfloat(caster.still.z) >= threshold;
+}
 // The models of `mask` that cast their swaying pose on this page.
 uint swayingMask(VirtualShadowCaster caster, VirtualShadowPage page, uint mask)
 {
-    return caster.still.z != 0 && pageSways(page) ? mask : 0;
+    return casterSways(caster, pageSwayThreshold(page)) ? mask : 0;
 }
 // A strong 32-bit mix (murmur3's finaliser), for the order-independent page signatures below.
 uint finalMix(uint value)
@@ -412,7 +427,7 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
     if (lane < 12) signatureSums[lane] = 0;
     GroupMemoryBarrierWithGroupSync();
     const PageBounds bounds = pageBounds(p);
-    const bool swaying = pageSways(p);
+    const float swayThreshold = pageSwayThreshold(p);
     uint2 hash = 0, staticHash = 0, staticCost = 0, dynamicCost = 0;
     for (uint index = lane; index < vsm.limits.x; index += VSM_SIGNATURE_LANES)
     {
@@ -436,7 +451,7 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
         const uint mask = cached.y;
         if (mask == 0) continue;
         // The page's content is the rest pose unless it sways; the masks distinguish which models it holds.
-        const uint sways = caster.still.z != 0 && swaying ? mask : 0u; // swayingMask, with the page's test hoisted
+        const uint sways = casterSways(caster, swayThreshold) ? mask : 0u; // swayingMask, with the page's test hoisted
         const uint2 identity = sways != 0 ? caster.identity.xy : caster.still.xy;
         const uint models = virtualMaskedCaster(caster) && caster.draw.z > 1 ? countbits(mask) : caster.draw.z;
         // Only content takes part, not the chunk's index: chunks shift as casters enter and leave the list, and a page

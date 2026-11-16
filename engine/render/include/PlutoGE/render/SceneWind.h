@@ -16,6 +16,10 @@ namespace PlutoGE::render
         // hold their rest pose, so they stay cached instead of being redrawn every frame. 0 sways shadows at every
         // distance.
         float shadowSwayDistance = 0.0f;
+        // A virtual shadow level animates a swaying caster only if the caster's largest sway spans at least this many of
+        // the level's texels: coarser levels, which could not show the motion, keep its rest pose and stay cached.
+        // 0 sways shadows at every level (WindComponent defaults to 1).
+        float shadowSwayMinTexels = 0.0f;
 
         bool Calm() const { return !(speed > 0.0f); }
         bool operator==(const SceneWindSettings &) const = default;

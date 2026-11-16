@@ -5268,6 +5268,13 @@ namespace PlutoGE::ui
                                 "everything.");
                             ImGui::SliderFloat("##RayTracedMinRadius", &projectRendering.rayTracedMinimumInstanceRadius,
                                                0.0f, 4.0f, "%.2f m");
+                            widgets::SettingsRow("Ray-traced geometry",
+                                "Which triangles hardware ray-traced GI traces. Coarsest LOD traces foliage and other "
+                                "instanced models at their coarsest LOD: GI is diffuse, and dense canopies at full detail "
+                                "make every ray test far more triangles. As Drawn traces what the camera draws.");
+                            int geometryDetail = static_cast<int>(projectRendering.rayTracedGeometryDetail);
+                            if (ImGui::Combo("##RayTracedGeometryDetail", &geometryDetail, "As Drawn\0Coarsest LOD\0"))
+                                projectRendering.rayTracedGeometryDetail = static_cast<render::RayTracedGeometryDetail>(geometryDetail);
                             widgets::EndSettingsTable();
                         }
                         widgets::EndCard();

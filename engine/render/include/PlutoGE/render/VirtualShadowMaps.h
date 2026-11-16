@@ -193,6 +193,10 @@ namespace PlutoGE::render
             // World sphere of each model of a masked chunk (several models, at most PLUTO_VSM_MASKED_INSTANCES), padded
             // by its wind reach. Pages plan, cost and sway these models individually.
             std::array<glm::vec4, PLUTO_VSM_MASKED_INSTANCES> instanceBounds{};
+            // How far its geometry sways at most under the wind the chunk was built for (world units, WindPad over its
+            // models); zero when it does not sway. Levels whose texels it cannot span keep its rest pose (SceneWindSettings::
+            // shadowSwayMinTexels).
+            float swayReach = 0.0f;
         };
         struct CasterPacket
         {

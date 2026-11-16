@@ -9,6 +9,7 @@ internal struct GraphicsQualityNative
     public uint ShadowResolution, ShadowCascades;
     public float ShadowDistance;
     public uint Flags;
+    public float FoliageDetail, GrassDensity, GrassDistance;
 }
 
 internal static unsafe partial class ScriptBridge

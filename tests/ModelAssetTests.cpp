@@ -122,6 +122,7 @@ int main()
     project.GetManifest().rendering.retainShadowCascades = false;
     project.GetManifest().rendering.shadowCasterMinimumTexels = 2.5f;
     project.GetManifest().rendering.rayTracedMinimumInstanceRadius = 0.75f;
+    project.GetManifest().rendering.rayTracedGeometryDetail = PlutoGE::render::RayTracedGeometryDetail::AsDrawn;
     project.GetManifest().loadingScreen = {"EMBERVAULT", {.95f, .48f, .12f}, "project://UI/loading.plutoloading"};
     assert(project.Save(&error));
     auto reloadedProject = Project::Load(projectPath, &error);

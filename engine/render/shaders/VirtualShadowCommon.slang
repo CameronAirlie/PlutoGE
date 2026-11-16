@@ -12,7 +12,7 @@ struct VirtualShadowParameters
     float4 camera;
     uint4 pool; // capacity, atlas tiles per axis, atlas pixels per axis, spot fine grid
     uint4 scheduling; // maximum preferred dirty age, allow oversized page, unused
-    float4 culling; // minimum coarse caster radius in texels, shadow sway distance (0 = everywhere), unused
+    float4 culling; // minimum coarse caster radius in texels, shadow sway distance (0 = everywhere), shadow sway minimum texels, unused
     uint4 levels; // directional root level (= active fine levels), static layer generation (0 = none), unused
     uint4 membershipEpochs[(PLUTO_VSM_LEVELS + 3) / 4];
 };
@@ -39,7 +39,7 @@ struct VirtualShadowCaster
     uint4 draw; // index count, first index, model count, original draw index
     uint4 identity; // swaying signature low/high, membership generation, levels served (one bit per level)
     float4 extents; // conservative world AABB around bounds.xyz; negative = unknown
-    uint4 still; // rest-pose signature low/high, 1 if its wind animates it, 1 if dynamic
+    uint4 still; // rest-pose signature low/high, its largest sway (world units, float bits; 0 if its wind does not animate it), 1 if dynamic
 };
 // A caster chunk draws only into pages of the levels it serves: LOD variants of one chunk split the levels between
 // them by texel size (VirtualShadowCasterLods.h). Other chunks serve PLUTO_VSM_ALL_LEVELS.

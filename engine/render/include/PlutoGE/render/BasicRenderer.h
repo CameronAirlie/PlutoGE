@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/AmbientProbeConfig.h"
+#include "PlutoGE/render/RayTracedGeometryDetail.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/GeometryDiagnostics.h"
 #include "PlutoGE/render/ShadowCasterLods.h"
@@ -1051,6 +1052,9 @@ namespace PlutoGE::render
         // Ray-traced GI leaves out draws whose largest instance's bounding radius is below this, in world units
         // (RayTracingScene). 0 traces every instance.
         float rayTracedMinimumInstanceRadius = 0.0f;
+        // Which triangles of a draw ray-traced GI traces (RayTracingScene::TracedRange); as drawn by default, while
+        // projects default to each instanced draw's coarsest LOD (RenderingSettings).
+        RayTracedGeometryDetail rayTracedGeometryDetail = RayTracedGeometryDetail::AsDrawn;
         // World length of the screen-space contact shadow rays towards the directional light; 0 disables them.
         // Contact shadows (local lights' too: BasicPointLight::contactShadowLength) need the depth prepass and
         // shadowsEnabled (ScreenSpaceContactShadows.h).

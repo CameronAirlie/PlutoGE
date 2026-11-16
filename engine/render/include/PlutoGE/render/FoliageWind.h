@@ -37,7 +37,7 @@ namespace PlutoGE::render
         glm::vec4 field{0.0f};    // wind direction XZ, normalized strength, gustiness
         glm::vec4 timing{0.0f};   // time, previous frame's time, 1 / gust size, gust travel speed (m/s)
         glm::vec4 response{0.0f}; // sway, sway frequency (Hz), flutter amplitude, flutter frequency (Hz)
-        glm::vec4 shape{0.0f};    // pivot height, 1 / bend height, bend height, 1 when active
+        glm::vec4 shape{0.0f};    // pivot height, 1 / bend height, bend height, motion pixel scale (positive when active)
 
         bool Active() const { return shape.w > 0.0f; }
         bool operator==(const FoliageWindParameters &) const = default;
@@ -47,8 +47,9 @@ namespace PlutoGE::render
     // Whether a response moves vertices in this wind (enabled, not fully stiff, and not calm).
     bool FoliageWindAnimates(const SceneWindSettings &wind, const FoliageWindResponse &response);
     // The constants for one draw; all zero unless FoliageWindAnimates.
+    // `motionPixelScale` is the view's pixels per world unit at unit depth (FoliageWindFrame::motionPixelScale).
     FoliageWindParameters PackFoliageWind(const SceneWindSettings &wind, const FoliageWindResponse &response,
-                                          float time, float previousTime);
+                                          float time, float previousTime, float motionPixelScale = 1.0f);
     // Upper bound of a vertex's displacement per world unit of the instance's vertical scale, for any wind the
     // model accepts (it clamps strength), so bounds padded with it stay valid while the wind changes.
     float FoliageWindMaxDisplacement(const FoliageWindResponse &response);
@@ -61,12 +62,16 @@ namespace PlutoGE::render
         SceneWindSettings wind{};
         float time = 0.0f;
         float previousTime = 0.0f;
+        // Pixels per world unit at unit view depth in the view whose motion vectors the frame writes (half its height
+        // times its projection's vertical scale): passes skip the previous frame's sway where it moves a vertex under
+        // PLUTO_WIND_MOTION_MIN_PIXELS (FoliageWindMotionVisible). Always positive.
+        float motionPixelScale = 1.0f;
 
         // Whether a response moves this frame. Moving draws take per-frame constants and invalidate shadow caches.
         bool Animates(const FoliageWindResponse &response) const { return FoliageWindAnimates(wind, response); }
         FoliageWindParameters Parameters(const FoliageWindResponse &response) const
         {
-            return PackFoliageWind(wind, response, time, previousTime);
+            return PackFoliageWind(wind, response, time, previousTime, motionPixelScale);
         }
         // FoliageWindMaxDisplacement under this frame's wind: how far geometry at most `localTop` high can sway.
         float MaxDisplacement(const FoliageWindResponse &response, float localTop) const
@@ -79,4 +84,9 @@ namespace PlutoGE::render
     // localPosition (mesh space) of an instance drawn with model, at the given time.
     glm::vec3 FoliageWindOffset(const FoliageWindParameters &wind, const glm::mat4 &model,
                                 const glm::vec3 &localPosition, float time);
+    // CPU reference of FoliageWind.slang's foliageWindMotionVisible: whether the wind can move the vertex
+    // PLUTO_WIND_MOTION_MIN_PIXELS on screen between frames, seen at view depth `depth`. Where it cannot, motion
+    // vectors take this frame's sway for the previous frame's.
+    bool FoliageWindMotionVisible(const FoliageWindParameters &wind, const glm::mat4 &model, const glm::vec3 &localPosition,
+                                  float depth);
 }

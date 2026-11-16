@@ -13,6 +13,12 @@ namespace PlutoGE::render
     // never enables an effect that the scene author disabled. No override by default.
     struct GraphicsQuality
     {
+        // Accepted ranges, shared by validation, the editor and the scripting bridge.
+        static constexpr std::uint32_t MinShadowResolution = 256, MaxShadowResolution = 8192;
+        static constexpr std::uint32_t MinShadowCascades = 1, MaxShadowCascades = 4;
+        static constexpr float MinShadowDistance = 1.0f, MaxShadowDistance = 10000.0f;
+        static constexpr float MinGrassDensity = 0.1f, MinGrassDistance = 0.25f;
+
         bool enabled = false;
         std::uint32_t shadowResolution = 2048;
         std::uint32_t shadowCascades = 4;
@@ -28,15 +34,23 @@ namespace PlutoGE::render
         // Foliage detail ceiling (BasicLighting::foliageDetail): below 1, instanced foliage takes coarser LODs, and
         // hands over to its impostors, from nearer.
         float foliageDetail = 1.0f;
+        // Screen-space contact shadows from the sun and local lights.
+        bool contactShadows = true;
+        // Detail grass ceilings, as shares of each layer's authored values: density scales clumps per square metre,
+        // distance scales its draw, full-density and LOD distances together.
+        float grassDensity = 1.0f;
+        float grassDistance = 1.0f;
 
         bool operator==(const GraphicsQuality &) const = default;
 
         [[nodiscard]] bool IsValid() const noexcept
         {
-            return shadowResolution >= 256 && shadowResolution <= 8192 &&
-                   shadowCascades >= 1 && shadowCascades <= 4 &&
-                   std::isfinite(shadowDistance) && shadowDistance >= 1 && shadowDistance <= 10000 &&
-                   std::isfinite(foliageDetail) && foliageDetail >= MinFoliageDetail && foliageDetail <= MaxFoliageDetail;
+            const auto within = [](float value, float low, float high) { return std::isfinite(value) && value >= low && value <= high; };
+            return shadowResolution >= MinShadowResolution && shadowResolution <= MaxShadowResolution &&
+                   shadowCascades >= MinShadowCascades && shadowCascades <= MaxShadowCascades &&
+                   within(shadowDistance, MinShadowDistance, MaxShadowDistance) &&
+                   within(foliageDetail, MinFoliageDetail, MaxFoliageDetail) &&
+                   within(grassDensity, MinGrassDensity, 1.0f) && within(grassDistance, MinGrassDistance, 1.0f);
         }
 
         [[nodiscard]] static GraphicsQuality FromPreset(GraphicsPreset preset)
@@ -51,6 +65,8 @@ namespace PlutoGE::render
                 result.ambientOcclusion = result.globalIllumination = result.reflections = false;
                 result.volumetrics = result.bloom = result.depthOfField = result.motionBlur = false;
                 result.foliageDetail = 0.6f;
+                result.contactShadows = false;
+                result.grassDensity = 0.4f; result.grassDistance = 0.5f;
                 break;
             case GraphicsPreset::Medium:
                 result.shadowResolution = 1024; result.shadowCascades = 2; result.shadowDistance = 80;
@@ -58,6 +74,7 @@ namespace PlutoGE::render
                 result.globalIllumination = result.reflections = result.volumetrics = false;
                 result.depthOfField = result.motionBlur = false;
                 result.foliageDetail = 0.75f;
+                result.grassDensity = 0.7f; result.grassDistance = 0.75f;
                 break;
             case GraphicsPreset::High:
                 result.depthOfField = result.motionBlur = false;
@@ -81,6 +98,21 @@ namespace PlutoGE::render
                 lighting.shadowCasterDistance = std::min(lighting.shadowCasterDistance, shadowDistance);
             if (cascadedShadows) lighting.shadowMethod = ShadowMethod::Cascaded;
             lighting.foliageDetail = std::min(lighting.foliageDetail, foliageDetail);
+            if (!contactShadows) lighting.contactShadowLength = 0.0f;
+        }
+
+        // Local lights carry their own contact-shadow length; scale it by this (0 or 1).
+        [[nodiscard]] bool AllowsContactShadows() const noexcept { return !enabled || contactShadows; }
+
+        // Caps a detail grass layer's density and distances; the renderer sanitizes the result.
+        void Apply(DetailGrassLayer &layer) const noexcept
+        {
+            if (!enabled) return;
+            layer.density *= grassDensity;
+            layer.fullDensityDistance *= grassDistance;
+            layer.drawDistance *= grassDistance;
+            layer.lod1Distance *= grassDistance;
+            layer.lod2Distance *= grassDistance;
         }
 
         [[nodiscard]] bool Allows(BasicPostProcessEffectType type) const noexcept

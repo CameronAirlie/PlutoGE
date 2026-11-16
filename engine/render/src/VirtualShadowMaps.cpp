@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <bit>
 #include <limits>
 #include <stdexcept>
 #include <glm/gtc/matrix_transform.hpp>
@@ -54,14 +55,29 @@ namespace PlutoGE::render
             const float reach = wind.MaxDisplacement(draw.foliageWind, top);
             return reach > 0.0f ? reach * glm::length(glm::vec3(model[1])) : 0.0f;
         }
+        // The largest wind reach of `range` under `models` (world units).
+        float MaxWindPad(const FoliageWindFrame &wind, const BasicDraw &draw, const ShadowGeometryCluster &range,
+                         std::span<const glm::mat4> models)
+        {
+            float pad = 0.0f;
+            for (const auto &model : models) pad = std::max(pad, WindPad(wind, draw, range, model));
+            return pad;
+        }
+        // The caster record's sway field (VirtualShadowCommon's still.z): the chunk's sway reach as float bits, never
+        // zero while its wind animates it (zero means still).
+        std::uint32_t PackSwayReach(const FoliageWindParameters &chunkWind, float reach)
+        {
+            if (!chunkWind.Active()) return 0u;
+            return std::bit_cast<std::uint32_t>(std::isfinite(reach) ? std::max(reach, std::numeric_limits<float>::min())
+                                                                       : std::numeric_limits<float>::max());
+        }
         // Grows known world bounds of `range` under `models` by their largest wind reach, so swaying geometry stays
         // inside them.
         void PadForWind(ShadowWorldBounds &bounds, const FoliageWindFrame &wind, const BasicDraw &draw,
                         const ShadowGeometryCluster &range, std::span<const glm::mat4> models)
         {
             if (bounds.sphere.w < 0.0f) return;
-            float pad = 0.0f;
-            for (const auto &model : models) pad = std::max(pad, WindPad(wind, draw, range, model));
+            const float pad = MaxWindPad(wind, draw, range, models);
             bounds.sphere.w += pad;
             bounds.extents += glm::vec4(pad, pad, pad, 0.0f);
         }
@@ -152,7 +168,8 @@ namespace PlutoGE::render
         result.pool = {tiles * tiles, tiles, tiles * PLUTO_VSM_PAGE_SIZE, VirtualShadowSpotGrid(lighting.virtualShadowSpotResolution)};
         result.scheduling = {std::clamp(lighting.virtualShadowMaxPageAge, 1u, 120u), lighting.virtualShadowAllowOversizedPages ? 1u : 0u, 0, 0};
         result.culling = {std::clamp(lighting.virtualShadowCoarseMinCasterTexels, 0.0f, 4.0f),
-                          std::max(lighting.wind.shadowSwayDistance, 0.0f), 0, 0};
+                          std::max(lighting.wind.shadowSwayDistance, 0.0f),
+                          std::isfinite(lighting.wind.shadowSwayMinTexels) ? std::max(lighting.wind.shadowSwayMinTexels, 0.0f) : 0.0f, 0};
         glm::vec3 direction = lighting.directionalDirection;
         if (!std::isfinite(glm::dot(direction, direction)) || glm::dot(direction, direction) < 1.e-8f)
             direction = glm::vec3(0, -1, 0);
@@ -706,7 +723,8 @@ namespace PlutoGE::render
                 const auto signature = signatures[index] ^ geometry, still = stillSignatures[index] ^ geometry;
                 inputs.push_back({part.bounds, {part.indexCount, firstIndex, part.instances, static_cast<std::uint32_t>(index)},
                     {std::uint32_t(signature), std::uint32_t(signature >> 32) ^ part.firstInstance, 0, part.levels}, part.extents,
-                    {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, chunkWind.Active() ? 1u : 0u, dynamic ? 1u : 0u}});
+                    {std::uint32_t(still), std::uint32_t(still >> 32) ^ part.firstInstance, PackSwayReach(chunkWind, part.swayReach),
+                     dynamic ? 1u : 0u}});
                 instanceBounds.push_back(part.instanceBounds);
                 ++casterCursor;
             };
@@ -930,9 +948,11 @@ namespace PlutoGE::render
                     }
                     else
                         chunk.bounds = glm::vec4(draw.shadowBoundsCenter, radius);
+                    const auto chunkModels = draw.instanceModels && !draw.instanceModels->empty()
+                        ? std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models) : std::span<const glm::mat4>(&draw.model, 1);
                     if (MaskedModels(models))
-                        chunk.instanceBounds = ModelBounds(wind, draw, subdivide ? clusters[part] : whole,
-                                                           std::span<const glm::mat4>(*draw.instanceModels).subspan(first, models));
+                        chunk.instanceBounds = ModelBounds(wind, draw, subdivide ? clusters[part] : whole, chunkModels);
+                    chunk.swayReach = MaxWindPad(wind, draw, subdivide ? clusters[part] : whole, chunkModels);
                     packet.chunks.push_back(chunk);
                 }
             }

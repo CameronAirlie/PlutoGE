@@ -51,6 +51,8 @@ namespace PlutoGE::render
             // Callers snap `center` so the traced set changes only every so often as the camera travels.
             glm::vec3 center{0.0f};
             float range = 0.0f;
+            // Which triangles of a traced draw (TracedRange).
+            RayTracedGeometryDetail detail = RayTracedGeometryDetail::AsDrawn;
             bool operator==(const Settings &) const = default;
         };
 
@@ -76,6 +78,11 @@ namespace PlutoGE::render
         [[nodiscard]] std::size_t BottomLevelCount() const noexcept { return m_bottomLevels.size(); }
         // Whether ray queries see `draw`: static opaque geometry that contributes to GI.
         [[nodiscard]] static bool Traceable(const BasicDraw &draw) noexcept;
+        // The index range (first, count; mesh-relative, as BasicDraw::firstIndex) traced for `draw` under `detail`:
+        // with CoarsestLod an instanced draw's coarsest LOD of its camera chain (BasicDraw::instanceLods), otherwise
+        // the range the geometry pass draws. Clamped to the mesh.
+        [[nodiscard]] static std::pair<std::uint32_t, std::uint32_t> TracedRange(const BasicDraw &draw,
+                                                                                 RayTracedGeometryDetail detail) noexcept;
 
     private:
         // Geometry identity: buffers (with generations), the range and the mesh revision; and whether it is opaque.

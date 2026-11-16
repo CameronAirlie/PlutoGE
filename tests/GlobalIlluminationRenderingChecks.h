@@ -2,11 +2,15 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/DdgiConfig.h"
 #include "PlutoGE/render/DdgiPacket.h"
+#include "raytracing/RayTracingScene.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <memory>
+#include <utility>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -246,7 +250,38 @@ inline void CheckRayTracedSceneReuse(PlutoGE::render::BasicRenderer &renderer, P
     scene.Look({0.05f, 1.0f, 3.5f}, {0.05f, 0.3f, 0});
     (void)scene.Render(ranged, std::span(&ddgi, 1), 1);
     Require(!renderer.GetFrameStats().rayTracedSceneRebuilt, "A small camera step rebuilt the ray-traced scene");
-    std::cout << "Ray-traced scene reuse, invalidation, size threshold and range passed\n";
+
+    // Geometry detail: an instanced draw with a LOD chain traces the chain's coarsest LOD under CoarsestLod and what
+    // it draws under AsDrawn; other draws trace what they draw either way. Changing the policy rebuilds the top level.
+    using PlutoGE::render::RayTracedGeometryDetail;
+    using PlutoGE::render::RayTracingScene;
+    auto chain = std::make_shared<BasicInstanceLodChain>();
+    chain->lods = {{0, 6, std::numeric_limits<float>::infinity()}, {0, 3, 4.0f}};
+    auto clustered = floor;
+    clustered.preparationRevision = 0x7005;
+    clustered.firstIndex = 0;
+    clustered.indexCount = 6;
+    clustered.instanceLods = chain;
+    clustered.instanceModels = std::make_shared<std::vector<glm::mat4>>(
+        std::vector<glm::mat4>{glm::mat4(1.0f), glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -8.0f))});
+    using Range = std::pair<std::uint32_t, std::uint32_t>;
+    Require(RayTracingScene::TracedRange(clustered, RayTracedGeometryDetail::CoarsestLod) == Range{0, 3},
+            "An instanced draw must trace its chain's coarsest LOD");
+    Require(RayTracingScene::TracedRange(clustered, RayTracedGeometryDetail::AsDrawn) == Range{0, 6},
+            "As drawn must trace the drawn range");
+    auto single = clustered;
+    single.instanceModels.reset();
+    Require(RayTracingScene::TracedRange(single, RayTracedGeometryDetail::CoarsestLod) == Range{0, 6},
+            "A draw that is not instanced must trace what it draws");
+    const std::array detailed{draws[0], clustered};
+    scene.lighting.rayTracedGeometryDetail = RayTracedGeometryDetail::AsDrawn;
+    (void)scene.Render(detailed, std::span(&ddgi, 1), 2);
+    Require(renderer.GetFrameStats().rayTracedInstances == 3, "The instanced draw's instances must all be traced");
+    scene.lighting.rayTracedGeometryDetail = RayTracedGeometryDetail::CoarsestLod;
+    (void)scene.Render(detailed, std::span(&ddgi, 1), 1);
+    Require(renderer.GetFrameStats().rayTracedSceneRebuilt && renderer.GetFrameStats().rayTracedInstances == 3,
+            "Changing the traced geometry detail must rebuild the top level with every instance");
+    std::cout << "Ray-traced scene reuse, invalidation, size threshold, range and geometry detail passed\n";
 }
 
 inline void CheckDdgiRendering(PlutoGE::render::BasicRenderer &renderer, PlutoGE::render::rhi::IRenderDevice &device)

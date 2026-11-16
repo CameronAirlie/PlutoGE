@@ -1663,30 +1663,37 @@ namespace PlutoGE::scripting
             uint32_t shadowResolution, shadowCascades;
             float shadowDistance;
             uint32_t flags;
+            float foliageDetail, grassDensity, grassDistance;
         };
+        static_assert(sizeof(GraphicsQualityNative) == 28);
+        // Flag bits, in GraphicsQualityNative.flags order.
+        constexpr std::array<bool render::GraphicsQuality::*, 10> GraphicsQualityFlags{
+            &render::GraphicsQuality::enabled, &render::GraphicsQuality::cascadedShadows,
+            &render::GraphicsQuality::ambientOcclusion, &render::GraphicsQuality::globalIllumination,
+            &render::GraphicsQuality::reflections, &render::GraphicsQuality::volumetrics,
+            &render::GraphicsQuality::bloom, &render::GraphicsQuality::depthOfField,
+            &render::GraphicsQuality::motionBlur, &render::GraphicsQuality::contactShadows};
         int32_t GetGraphicsQuality(int32_t preset, GraphicsQualityNative *value)
         {
             if (!value || preset < -1 || preset > 3) return 0;
             const auto q = preset == -1 ? core::Engine::GetInstance().GetRhiRenderService().GetGraphicsQuality()
                 : core::Engine::GetInstance().GetRhiRenderService().GetGraphicsPreset(static_cast<render::GraphicsPreset>(preset));
-            *value = {q.shadowResolution, q.shadowCascades, q.shadowDistance,
-                uint32_t(q.enabled) | (uint32_t(q.cascadedShadows) << 1) |
-                (uint32_t(q.ambientOcclusion) << 2) | (uint32_t(q.globalIllumination) << 3) |
-                (uint32_t(q.reflections) << 4) | (uint32_t(q.volumetrics) << 5) |
-                (uint32_t(q.bloom) << 6) | (uint32_t(q.depthOfField) << 7) | (uint32_t(q.motionBlur) << 8)};
+            uint32_t flags = 0;
+            for (std::size_t bit = 0; bit < GraphicsQualityFlags.size(); ++bit)
+                flags |= uint32_t(q.*GraphicsQualityFlags[bit]) << bit;
+            *value = {q.shadowResolution, q.shadowCascades, q.shadowDistance, flags, q.foliageDetail, q.grassDensity, q.grassDistance};
             return 1;
         }
         int32_t SetGraphicsQuality(const GraphicsQualityNative *value)
         {
-            if (!value || (value->flags & ~511u)) return 0;
+            if (!value || (value->flags >> GraphicsQualityFlags.size())) return 0;
             render::GraphicsQuality q;
             q.shadowResolution = value->shadowResolution; q.shadowCascades = value->shadowCascades;
             q.shadowDistance = value->shadowDistance;
-            q.enabled = (value->flags & 1) != 0; q.cascadedShadows = (value->flags & 2) != 0;
-            q.ambientOcclusion = (value->flags & 4) != 0; q.globalIllumination = (value->flags & 8) != 0;
-            q.reflections = (value->flags & 16) != 0; q.volumetrics = (value->flags & 32) != 0;
-            q.bloom = (value->flags & 64) != 0; q.depthOfField = (value->flags & 128) != 0;
-            q.motionBlur = (value->flags & 256) != 0;
+            for (std::size_t bit = 0; bit < GraphicsQualityFlags.size(); ++bit)
+                q.*GraphicsQualityFlags[bit] = (value->flags >> bit & 1u) != 0;
+            q.foliageDetail = value->foliageDetail;
+            q.grassDensity = value->grassDensity; q.grassDistance = value->grassDistance;
             return core::Engine::GetInstance().GetRhiRenderService().SetGraphicsQuality(q) ? 1 : 0;
         }
 

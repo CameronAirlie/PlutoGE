@@ -25,6 +25,9 @@ namespace PlutoGE::render
         // Hardware ray-traced GI leaves out draws whose largest instance is smaller than this bounding radius, in
         // world units (BasicLighting::rayTracedMinimumInstanceRadius): grass, pebbles and debris.
         float rayTracedMinimumInstanceRadius = 0.5f;
+        // Ray-traced GI traces instanced draws' coarsest LOD (BasicLighting::rayTracedGeometryDetail): GI is diffuse,
+        // and dense foliage at full detail made each ray test many more triangles.
+        RayTracedGeometryDetail rayTracedGeometryDetail = RayTracedGeometryDetail::CoarsestLod;
 
         bool operator==(const RenderingSettings &) const = default;
 
@@ -33,6 +36,7 @@ namespace PlutoGE::render
             lighting.occlusionMode = occlusionCulling;
             lighting.shadowCasterMinimumTexels = shadowCasterMinimumTexels;
             lighting.rayTracedMinimumInstanceRadius = rayTracedMinimumInstanceRadius;
+            lighting.rayTracedGeometryDetail = rayTracedGeometryDetail;
         }
     };
 

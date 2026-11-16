@@ -1699,7 +1699,7 @@ namespace PlutoGE::render
                 local.sourceRadius = light->sourceRadius;
                 local.sourceLength = light->type == scene::LightType::Point ? light->sourceLength : 0.0f;
                 local.sourceAxis = light->direction;
-                local.contactShadowLength = light->contactShadowLength;
+                local.contactShadowLength = m_graphicsQuality.AllowsContactShadows() ? light->contactShadowLength : 0.0f;
                 if (light->type == scene::LightType::Point)
                     effectiveLighting.pointLights.push_back(local);
                 else if (light->type == scene::LightType::Spot)
@@ -2465,6 +2465,8 @@ namespace PlutoGE::render
             resolvers.material = [&](const Material *material)
             { return std::make_shared<const BasicDraw>(prepareMaterial(material).draw); };
             detailGrass = CollectRhiDetailGrass(*scene, cameraData.tagFilter, resolvers);
+            for (auto &field : detailGrass)
+                m_graphicsQuality.Apply(field.layer);
         }
         // Volumetric fog's sun occlusion by terrain beyond the shadow maps' reach (FogTerrainShadow.h).
         std::shared_ptr<const FogTerrainShadow> fogTerrainShadow;

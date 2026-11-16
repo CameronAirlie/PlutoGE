@@ -143,6 +143,8 @@ no longer shade). The CPU cost is building one draw per layer.
 
 Ways to make it cheaper if a scene needs it:
 
+- per player tier, the quality tiers' **Grass density** and **Grass distance** ceilings scale every layer's authored
+  density and distances (Low: 40% / 50%, Medium: 70% / 75%; [GraphicsPresets.md](GraphicsPresets.md));
 - fewer blades per clump, or a shorter draw distance;
 - `DensityFalloff` above 2 thins the distance faster;
 - occlusion: the generation pass does not yet test the previous frame's depth hierarchy (`GpuInstanceCulling` shows

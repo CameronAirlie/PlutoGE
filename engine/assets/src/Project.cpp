@@ -772,9 +772,9 @@ namespace PlutoGE::assets
             {
                 int index = -1, enabled = -1, resolution = 0, cascades = 0;
                 float distance = 0;
-                // Fourteen fields, or fifteen with foliage detail (records written before it take the tier's
-                // engine default).
-                bool valid = tokens.size() == 14 || tokens.size() == 15;
+                // Fourteen fields, fifteen with foliage detail, or eighteen with contact shadows, grass density and
+                // grass distance. Fields a record predates take the tier's engine default.
+                bool valid = tokens.size() == 14 || tokens.size() == 15 || tokens.size() == 18;
                 if (valid)
                     valid = ParseInteger(tokens[1], index) && index >= 0 && index < 4 &&
                         ParseInteger(tokens[2], enabled) && (enabled == 0 || enabled == 1) &&
@@ -797,9 +797,21 @@ namespace PlutoGE::assets
                             valid = false;
                         *flags[flag] = value == 1;
                     }
-                    quality.foliageDetail = render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index)).foliageDetail;
-                    if (valid && tokens.size() == 15)
+                    const auto defaults = render::GraphicsQuality::FromPreset(static_cast<render::GraphicsPreset>(index));
+                    quality.foliageDetail = defaults.foliageDetail;
+                    quality.contactShadows = defaults.contactShadows;
+                    quality.grassDensity = defaults.grassDensity;
+                    quality.grassDistance = defaults.grassDistance;
+                    if (valid && tokens.size() >= 15)
                         valid = !tokens[14].empty() && ParseFloat(tokens[14], quality.foliageDetail);
+                    if (valid && tokens.size() == 18)
+                    {
+                        int contact = -1;
+                        valid = ParseInteger(tokens[15], contact) && (contact == 0 || contact == 1) &&
+                            !tokens[16].empty() && ParseFloat(tokens[16], quality.grassDensity) &&
+                            !tokens[17].empty() && ParseFloat(tokens[17], quality.grassDistance);
+                        quality.contactShadows = contact == 1;
+                    }
                 }
                 if (!valid || !quality.IsValid())
                 {
@@ -888,6 +900,13 @@ namespace PlutoGE::assets
                 ParseFloat(tokens[1], manifest.rendering.rayTracedMinimumInstanceRadius);
                 manifest.rendering.rayTracedMinimumInstanceRadius =
                     std::clamp(manifest.rendering.rayTracedMinimumInstanceRadius, 0.0f, 16.0f);
+                continue;
+            }
+
+            if (tokens[0] == "RAY_TRACED_GEOMETRY_DETAIL" && tokens.size() >= 2)
+            {
+                if (const auto detail = render::ParseRayTracedGeometryDetail(tokens[1]))
+                    manifest.rendering.rayTracedGeometryDetail = *detail;
                 continue;
             }
 
@@ -1205,7 +1224,8 @@ namespace PlutoGE::assets
                 << q.shadowResolution << '\t' << q.shadowCascades << '\t' << q.shadowDistance << '\t'
                 << q.cascadedShadows << '\t' << q.ambientOcclusion << '\t' << q.globalIllumination << '\t'
                 << q.reflections << '\t' << q.volumetrics << '\t' << q.bloom << '\t'
-                << q.depthOfField << '\t' << q.motionBlur << '\t' << q.foliageDetail << '\n';
+                << q.depthOfField << '\t' << q.motionBlur << '\t' << q.foliageDetail << '\t'
+                << q.contactShadows << '\t' << q.grassDensity << '\t' << q.grassDistance << '\n';
         }
         output.precision(previousPrecision);
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';
@@ -1227,6 +1247,8 @@ namespace PlutoGE::assets
         output << "RETAIN_SHADOW_CASCADES\t" << (m_manifest.rendering.retainShadowCascades ? "1" : "0") << '\n';
         output << "SHADOW_CASTER_MIN_TEXELS\t" << m_manifest.rendering.shadowCasterMinimumTexels << '\n';
         output << "RAY_TRACED_MIN_INSTANCE_RADIUS\t" << m_manifest.rendering.rayTracedMinimumInstanceRadius << '\n';
+        output << "RAY_TRACED_GEOMETRY_DETAIL\t"
+               << render::RayTracedGeometryDetailName(m_manifest.rendering.rayTracedGeometryDetail) << '\n';
         output << "RUNTIME_RENDER_SCALE\t" << std::clamp(m_manifest.runtimeRenderScale, 0.5f, 1.0f) << '\n';
         output << "RUNTIME_UPSCALE_SHARPNESS\t" << std::clamp(m_manifest.runtimeUpscaleSharpness, 0.0f, 1.0f) << '\n';
         if (m_manifest.runtimeDynamicResolution)

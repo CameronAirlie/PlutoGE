@@ -46,14 +46,30 @@ namespace PlutoGE::render
                     glm::vec4(transmittance, stopChance)};
         }
 
-        // The draw's index range, as the geometry pass draws it.
-        std::pair<std::uint32_t, std::uint32_t> IndexRange(const BasicDraw &draw)
+        // A mesh-relative index range clamped to the mesh; a zero count means the rest of it.
+        std::pair<std::uint32_t, std::uint32_t> ClampedRange(const BasicDraw &draw, std::uint32_t first, std::uint32_t count)
         {
             const auto total = draw.mesh->GetIndexCount();
-            const auto first = std::min(draw.firstIndex, total);
+            first = std::min(first, total);
             const auto available = total - first;
-            return {first, draw.indexCount ? std::min(draw.indexCount, available) : available};
+            return {first, count ? std::min(count, available) : available};
         }
+    }
+
+    std::pair<std::uint32_t, std::uint32_t> RayTracingScene::TracedRange(const BasicDraw &draw,
+                                                                         RayTracedGeometryDetail detail) noexcept
+    {
+        if (!draw.mesh)
+            return {0, 0};
+        const bool instanced = draw.instanceModels && draw.instanceModels->size() > 1;
+        if (detail == RayTracedGeometryDetail::CoarsestLod && instanced && draw.instanceLods && !draw.instanceLods->lods.empty())
+        {
+            // The chain runs finest to coarsest; it holds mesh LODs only (impostor cards are draws of their own).
+            const auto &coarsest = draw.instanceLods->lods.back();
+            if (coarsest.indexCount >= 3)
+                return ClampedRange(draw, coarsest.firstIndex, coarsest.indexCount);
+        }
+        return ClampedRange(draw, draw.firstIndex, draw.indexCount);
     }
 
     bool RayTracingScene::Initialize(rhi::IRenderDevice &device)
@@ -111,6 +127,7 @@ namespace PlutoGE::render
         };
         mix(std::bit_cast<std::uint32_t>(m_settings.minimumInstanceRadius));
         mix(std::bit_cast<std::uint32_t>(m_settings.range));
+        mix(static_cast<std::uint64_t>(m_settings.detail));
         for (int axis = 0; axis < 3; ++axis)
             mix(std::bit_cast<std::uint32_t>(m_settings.center[axis]));
         for (const auto &draw : draws)
@@ -162,7 +179,7 @@ namespace PlutoGE::render
                 (selection == Selection::TooSmall ? m_skippedInstanceCount : m_outOfRangeInstanceCount) += instanceCount;
                 continue;
             }
-            const auto [firstIndex, indexCount] = IndexRange(draw);
+            const auto [firstIndex, indexCount] = TracedRange(draw, m_settings.detail);
             if (indexCount < 3)
                 continue;
             const auto &mesh = *draw.mesh;

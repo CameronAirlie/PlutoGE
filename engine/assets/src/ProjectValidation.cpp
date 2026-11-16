@@ -70,6 +70,7 @@ namespace PlutoGE::assets
             bool enabled;
             std::size_t line;
             std::map<std::string, std::string> properties;
+            std::map<std::string, std::size_t> propertyLines;
             struct ScriptProperty { std::string name, value; bool isString; std::size_t line; };
             std::vector<ScriptProperty> scriptProperties;
         };
@@ -149,6 +150,50 @@ namespace PlutoGE::assets
                     if (!element.empty()) Reference(std::string(element), owner, entity, line);
                     start = end + 1;
                 }
+            }
+            // A terrain world's tile count property (TerrainWorldComponent's default when absent or unreadable).
+            static int Count(const std::map<std::string, std::string> &properties, const std::string &key)
+            {
+                constexpr int fallback = 4, limit = 1024;
+                const auto found = properties.find(key);
+                if (found == properties.end()) return fallback;
+                try
+                {
+                    std::size_t used = 0;
+                    const int value = std::stoi(found->second, &used);
+                    return used == found->second.size() && value >= 1 ? std::min(value, limit) : fallback;
+                }
+                catch (const std::exception &) { return fallback; }
+            }
+            // A terrain world's tile files: a pattern whose {x} and {z} name a tile (see scene::TerrainTileFile). Every
+            // tile of the grid is checked; failures fold into the first one's diagnostic, so a missing folder is one
+            // error rather than one per tile.
+            void TilePattern(const std::string &pattern, int tilesX, int tilesZ, const std::string &owner, std::uint32_t entity, std::size_t line)
+            {
+                if (pattern.find("{x}") == std::string::npos && pattern.find("{z}") == std::string::npos)
+                {
+                    Reference(pattern, owner, entity, line);
+                    return;
+                }
+                const auto expand = [&](int x, int z) {
+                    std::string file = pattern;
+                    for (const auto &[token, value] : {std::pair{std::string_view("{x}"), x}, std::pair{std::string_view("{z}"), z}})
+                        for (auto at = file.find(token); at != std::string::npos; at = file.find(token, at))
+                            file.replace(at, token.size(), std::to_string(value));
+                    return file;
+                };
+                const auto first = result.diagnostics.size();
+                std::size_t failed = 0;
+                for (int z = 0; z < tilesZ; ++z)
+                    for (int x = 0; x < tilesX; ++x)
+                    {
+                        const auto before = result.diagnostics.size();
+                        Reference(expand(x, z), owner, entity, line);
+                        if (result.diagnostics.size() == before) continue;
+                        if (++failed > 1) result.diagnostics.erase(result.diagnostics.begin() + static_cast<std::ptrdiff_t>(before), result.diagnostics.end());
+                    }
+                if (failed > 1)
+                    result.diagnostics[first].message += " (and " + std::to_string(failed - 1) + " more of " + std::to_string(tilesX * tilesZ) + " tiles)";
             }
             void Variant(std::istream &stream, const std::string &owner)
             {
@@ -258,6 +303,7 @@ namespace PlutoGE::assets
                         {
                             if (!component || fields.size() < 4) throw std::invalid_argument("property record");
                             component->properties[fields[1]] = fields[3];
+                            component->propertyLines[fields[1]] = number;
                             const auto binding = bindingOwners.find(component->entity);
                             if (component->type == "MeshComponent" && binding != bindingOwners.end())
                                 modelReference(fields[3], *binding->second, modelCatalogs.at(binding->second->rootEntityId), component->entity, number);
@@ -267,6 +313,7 @@ namespace PlutoGE::assets
                                     throw std::invalid_argument("managed field inventory limit");
                                 component->scriptProperties.push_back({fields[1], fields[3], fields[2] == "2", number});
                             }
+                            else if (component->type == "TerrainWorldComponent" && fields[1] == "TileFiles") {} // checked per tile below
                             else Reference(fields[3], owner, component->entity, number);
                         }
                         else if (fields[0] == "PREFAB" && fields.size() >= 3) Reference(fields[2], owner, Id(fields[1]), number);
@@ -328,6 +375,12 @@ namespace PlutoGE::assets
                         if (name.empty()) Add("script.empty", owner, c.entity, c.line, "Script component has no class assigned.", ValidationSeverity::Warning);
                         else if (!input.scriptClasses) Add("script.unverified", owner, c.entity, c.line, "Class catalogue unavailable; cannot verify " + name, ValidationSeverity::Warning);
                         else if (!input.scriptClasses->contains(name)) Add("script.missing", owner, c.entity, c.line, "Script class is not loaded: " + name);
+                    }
+                    if (c.type == "TerrainWorldComponent")
+                    {
+                        const auto pattern = c.properties.find("TileFiles");
+                        if (pattern != c.properties.end())
+                            TilePattern(pattern->second, Count(c.properties, "TilesX"), Count(c.properties, "TilesZ"), owner, c.entity, c.propertyLines[pattern->first]);
                     }
                     if (c.type != "ColliderComponent") continue;
                     const auto value = [&](const std::string &key, const std::string &fallback) { const auto it = c.properties.find(key); return it == c.properties.end() ? fallback : it->second; };

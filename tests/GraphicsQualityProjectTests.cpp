@@ -47,6 +47,9 @@ int main(int argc, char **argv)
             q.cascadedShadows = q.globalIllumination = q.volumetrics = q.depthOfField = i % 2 == 0;
             q.ambientOcclusion = q.reflections = q.bloom = q.motionBlur = i % 2 != 0;
             q.foliageDetail = 0.3f + 0.123f * static_cast<float>(i);
+            q.contactShadows = i % 2 == 0;
+            q.grassDensity = 0.15f + 0.1234567f * static_cast<float>(i);
+            q.grassDistance = 0.3f + 0.1765432f * static_cast<float>(i);
         }
         Check(project->Save(&error), "Custom preset save failed");
         auto loaded = assets::Project::Load(path, &error);
@@ -76,6 +79,10 @@ int main(int argc, char **argv)
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t2\t0\t0\t0\t0\t0\t0",
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t3",
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\tx",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t2\t0.4\t0.5",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.01\t0.5",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.4\t1.5",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.4",
             "QUALITY_PRESET\t0"})
         {
             { std::ofstream file(path); file << "PLUTOPROJECT\t3\n" << record << '\n'; }
@@ -97,6 +104,30 @@ int main(int argc, char **argv)
         lowTier.Apply(authored);
         render::GraphicsQuality{}.Apply(authored);
         Check(authored.foliageDetail == 0.4f, "A tier raised foliage detail, or a disabled tier changed it");
+        {
+            // Grass ceilings scale density and every distance together; Ultra and disabled tiers leave layers as authored.
+            const auto low = render::GraphicsQuality::FromPreset(render::GraphicsPreset::Low);
+            const auto ultra = render::GraphicsQuality::FromPreset(render::GraphicsPreset::Ultra);
+            const render::DetailGrassLayer layer;
+            auto grass = layer;
+            low.Apply(grass);
+            Check(grass.density == layer.density * low.grassDensity && grass.drawDistance == layer.drawDistance * low.grassDistance &&
+                  grass.fullDensityDistance == layer.fullDensityDistance * low.grassDistance &&
+                  grass.lod1Distance == layer.lod1Distance * low.grassDistance && grass.lod2Distance == layer.lod2Distance * low.grassDistance,
+                  "The Low tier did not scale grass density and distances");
+            grass = layer; ultra.Apply(grass);
+            Check(grass == layer, "Ultra changed authored grass");
+            grass = layer; render::GraphicsQuality{}.Apply(grass);
+            Check(grass == layer, "A disabled tier changed authored grass");
+        }
+        // Records written before contact shadows and grass ceilings take their tier's engine defaults.
+        { std::ofstream file(path); file << "PLUTOPROJECT\t3\nQUALITY_PRESET\t1\t1\t1024\t2\t80\t1\t1\t0\t0\t0\t1\t0\t0\t0.5\n"; }
+        const auto fifteenField = assets::Project::Load(path, &error);
+        const auto medium = render::GraphicsQuality::FromPreset(render::GraphicsPreset::Medium);
+        Check(fifteenField && fifteenField->GetManifest().graphicsQualityPresets.tiers[1].foliageDetail == 0.5f &&
+                  fifteenField->GetManifest().graphicsQualityPresets.tiers[1].grassDensity == medium.grassDensity &&
+                  fifteenField->GetManifest().graphicsQualityPresets.tiers[1].contactShadows == medium.contactShadows,
+              "A fifteen-field quality record did not take its tier's grass and contact-shadow defaults");
         if (argc > 1)
         {
             const auto activeProject = assets::Project::Load(argv[1], &error);

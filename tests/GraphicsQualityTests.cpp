@@ -41,4 +41,19 @@ int main()
     Check(custom.Allows(BasicPostProcessEffectType::SSR));
     lighting = source; custom.Apply(lighting);
     Check(lighting.shadowMethod == source.shadowMethod);
+
+    // Contact shadows: Low skips them (sun via lighting, local lights via AllowsContactShadows); disabled tiers keep them.
+    source.contactShadowLength = 0.3f;
+    lighting = source; low.Apply(lighting);
+    Check(lighting.contactShadowLength == 0.0f && !low.AllowsContactShadows());
+    lighting = source; custom.Apply(lighting);
+    Check(lighting.contactShadowLength == 0.3f && custom.AllowsContactShadows());
+    const auto ultra = GraphicsQuality::FromPreset(GraphicsPreset::Ultra);
+    lighting = source; ultra.Apply(lighting);
+    Check(lighting.contactShadowLength == 0.3f && ultra.AllowsContactShadows());
+
+    custom = low; custom.grassDensity = 0.05f;
+    Check(!custom.IsValid());
+    custom = low; custom.grassDistance = 1.01f;
+    Check(!custom.IsValid());
 }

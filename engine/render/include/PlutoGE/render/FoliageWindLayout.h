@@ -32,3 +32,8 @@
 // Flutter at flutter 1: amplitude as a fraction of the bend height at strength 1, and frequency (Hz).
 #define PLUTO_WIND_FLUTTER_AMPLITUDE 0.04
 #define PLUTO_WIND_FLUTTER_FREQUENCY 3.5
+
+// Passes that write motion vectors evaluate a vertex's wind again at the previous frame's time only where its sway
+// can move it at least this many pixels on screen between frames; nearer to still, the previous position takes
+// this frame's offset (FoliageWind.slang foliageWindPreviousOffset).
+#define PLUTO_WIND_MOTION_MIN_PIXELS 0.5

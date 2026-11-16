@@ -114,6 +114,8 @@ add_library(PlutoGEEditorUI
     src/postprocess/PostProcessUsageView.cpp
     src/postprocess/PostProcessPresetField.cpp
     src/panels/PostProcessEditorPanel.cpp
+    src/quality/QualityTierFields.cpp
+    src/quality/QualityTierSession.cpp
     src/panels/QualitySettingsPanel.cpp
     src/panels/LoadingScreenEditorPanel.cpp
     src/panels/ShaderGraphEditorPanel.cpp

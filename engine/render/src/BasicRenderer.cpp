@@ -732,7 +732,8 @@ namespace PlutoGE::render
             const float snap = std::max(2.0f * grid.CascadeSpacing(widest), 1.0f);
             return {.minimumInstanceRadius = std::max(lighting.rayTracedMinimumInstanceRadius, 0.0f),
                     .center = glm::round(lighting.cameraPosition / snap) * snap,
-                    .range = RayReach * 0.5f * glm::length(grid.Extent(widest)) + snap};
+                    .range = RayReach * 0.5f * glm::length(grid.Extent(widest)) + snap,
+                    .detail = lighting.rayTracedGeometryDetail};
         }
 
         std::uint64_t ShadowDrawSignature(const BasicDraw &draw)
@@ -2355,6 +2356,10 @@ namespace PlutoGE::render
         const float graphTime = ShaderGraphTimeSeconds();
         // Every pass packs its wind-animated draws' constants from this, at the shader-graph clock.
         m_foliageWind = {lighting.wind, graphTime, m_hasPreviousFrame ? m_previousGraphTime : graphTime};
+        // Motion vectors are written at the render resolution: its pixels per world unit at unit view depth.
+        if (const float scale = 0.5f * static_cast<float>(m_height) * std::abs(m_postProcessProjection[1][1]);
+            std::isfinite(scale) && scale > 0.0f)
+            m_foliageWind.motionPixelScale = scale;
         // A borrowed directional VSM replaces this view's own shadow work for
         // one frame; its atlas has no slots for this view's local lights.
         const auto reusedShadowReceivers = std::exchange(m_reusedShadowReceivers, {});

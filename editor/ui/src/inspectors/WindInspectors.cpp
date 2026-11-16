@@ -108,9 +108,20 @@ namespace PlutoGE::ui
             }
             ImGui::SetItemTooltip("Virtual shadows within this distance of the camera sway; beyond it they hold the rest pose\n"
                                   "and stay cached. Lower it if shadows update slowly under trees. 0 sways shadows everywhere.");
+            float swayTexels = wind.GetShadowSwayMinTexels();
+            if (ImGui::DragFloat("Shadow Sway Min Texels", &swayTexels, 0.05f, 0.0f, scene::WindComponent::MaxShadowSwayMinTexels,
+                                 swayTexels > 0.0f ? "%.2f texels" : "Every Level"))
+            {
+                wind.SetShadowSwayMinTexels(swayTexels);
+                Changed(context, "Shadow Sway Min Texels");
+            }
+            ImGui::SetItemTooltip("A shadow level animates a plant's sway only if the sway spans this many of its texels. Coarser\n"
+                                  "levels keep the rest pose and stay cached, which saves redrawing distant forests every frame.\n"
+                                  "0 sways shadows at every level.");
 
             std::erase_if(properties, [](const scene::Property &property) {
-                for (const std::string_view name : {"Direction", "Speed", "Gustiness", "Gust Size", "Shadow Sway Distance"})
+                for (const std::string_view name : {"Direction", "Speed", "Gustiness", "Gust Size", "Shadow Sway Distance",
+                                                      "Shadow Sway Min Texels"})
                     if (property.name == name)
                         return true;
                 return false;

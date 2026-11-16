@@ -25,4 +25,9 @@ public sealed class WindComponent : RegisteredComponent
     /// shadow keeps the rest pose, so its pages stay cached. 0 sways shadows at every distance.
     /// </summary>
     public float ShadowSwayDistance { get => GetFloat("Shadow Sway Distance"); set => SetFloat("Shadow Sway Distance", value); }
+    /// <summary>
+    /// Shadow texels a plant's sway must span for a virtual shadow level to animate it, 0 to 16; coarser levels keep the
+    /// rest pose, so their pages stay cached. 0 sways shadows at every level.
+    /// </summary>
+    public float ShadowSwayMinTexels { get => GetFloat("Shadow Sway Min Texels"); set => SetFloat("Shadow Sway Min Texels", value); }
 }

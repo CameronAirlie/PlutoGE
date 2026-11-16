@@ -425,8 +425,10 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::core::EngineConfig config{
         PlutoGE::platform::WindowConfig{
             .title = project->GetManifest().windowTitle.empty() ? project->GetManifest().name : project->GetManifest().windowTitle,
-            .width = project->GetManifest().windowWidth,
-            .height = project->GetManifest().windowHeight,
+            .width = projectBenchmark && projectBenchmark->windowSize ? int(projectBenchmark->windowSize->first)
+                                                                      : project->GetManifest().windowWidth,
+            .height = projectBenchmark && projectBenchmark->windowSize ? int(projectBenchmark->windowSize->second)
+                                                                       : project->GetManifest().windowHeight,
             .resizable = true,
             .visible = !projectBenchmarkEnabled,
             .fullscreen = false,
@@ -444,6 +446,11 @@ int RunRuntime(int argc, char **argv)
     config.enableProfiling = profilerEnabled;
     config.graphicsApi = project->GetManifest().graphicsApi;
     config.temporalUpscaler = project->GetManifest().GetTemporalUpscalerOptions();
+    if (projectBenchmark && projectBenchmark->upscaler)
+    {
+        config.temporalUpscaler.technology = projectBenchmark->upscaler->first;
+        config.temporalUpscaler.quality = projectBenchmark->upscaler->second;
+    }
     config.dynamicResolution = project->GetManifest().GetDynamicResolutionSettings();
     if (projectBenchmark && projectBenchmark->dynamicResolutionFps)
     {
@@ -855,7 +862,7 @@ int RunRuntime(int argc, char **argv)
                         static_cast<double>(render.virtualShadows.lodVariantChunks),
                         static_cast<double>(render.instanceCulling.instances), static_cast<double>(render.instanceCulling.outside),
                         static_cast<double>(render.instanceCulling.occluded), static_cast<double>(render.instanceCulling.recovered),
-                        static_cast<double>(render.instanceCulling.drawn),
+                        static_cast<double>(render.instanceCulling.drawn), static_cast<double>(render.instanceCulling.triangles),
                         render.rayTracedSceneRebuilt ? 1.0 : 0.0, static_cast<double>(render.rebuiltOpaqueBatchGroups),
                         static_cast<double>(render.rebuiltOpaqueBatchDraws), static_cast<double>(render.visibleDrawCount),
                         static_cast<double>(render.gpuBinnedDraws), static_cast<double>(render.gpuBinnedBatches), 0};

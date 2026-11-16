@@ -342,7 +342,7 @@ namespace PlutoGE::render
                     if (!stats || bytes.size() != StatCount * sizeof(std::uint32_t) || frame <= stats->frame) return;
                     std::array<std::uint32_t, StatCount> values{};
                     std::memcpy(values.data(), bytes.data(), bytes.size());
-                    *stats = {frame, true, values[0], values[1], values[2], values[3], values[4], values[5], secondPhase};
+                    *stats = {frame, true, values[0], values[1], values[2], values[3], values[4], values[5], secondPhase, values[6]};
                 });
         }
     }

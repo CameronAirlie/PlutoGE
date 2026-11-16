@@ -31,6 +31,8 @@ namespace PlutoGE::render
         // LOD crossfade.
         std::uint32_t instances = 0, outside = 0, occluded = 0, recovered = 0, drawn = 0, crossfading = 0;
         bool secondPhase = false;
+        // Triangles the binned instances drew, every phase together (crossfading instances count in both LODs).
+        std::uint32_t triangles = 0;
     };
     struct OcclusionShaders
     {

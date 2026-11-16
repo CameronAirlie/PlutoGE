@@ -151,7 +151,7 @@ namespace PlutoGE::render
         std::array<rhi::BufferHandle, PhaseCount> m_hierarchies{};
         std::uint32_t m_slots = 0; // every phase's
         // InstanceCulling.slang's StatCount counters, cleared by Prepare and read back after the last phase.
-        static constexpr std::uint32_t StatCount = 6;
+        static constexpr std::uint32_t StatCount = 7;
         rhi::Buffer m_statCounters;
         std::uint64_t m_frame = 0;
         std::shared_ptr<InstanceCullingStats> m_stats = std::make_shared<InstanceCullingStats>();

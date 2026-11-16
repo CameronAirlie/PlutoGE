@@ -71,7 +71,7 @@ struct CullIndex
 // Diagnostics read back after the frame (GpuInstanceCulling::Stats, InstanceCullingStats): instances tested, outside the
 // view or range, hidden by phase 0's hierarchy, drawn after phase 1's test, drawn, and drawn crossfading.
 static const uint StatInstances = 0, StatOutside = 1, StatOccluded = 2, StatRecovered = 3, StatDrawn = 4,
-                  StatCrossfading = 5, StatCount = 6;
+                  StatCrossfading = 5, StatTriangles = 6, StatCount = 7;
 [[vk::binding(9, 0)]] RWStructuredBuffer<uint> cullStats : register(u9);
 
 float switchRadius(CullDraw draw, uint k) { return draw.switches[k / 4][k % 4]; }
@@ -268,6 +268,8 @@ void scanMain(uint3 id : SV_GroupThreadID)
     // Each thread's exclusive prefix over the threads before it (256 adds at most).
     uint offset = cullTotals.w;
     for (uint other = 0; other < id.x; ++other) offset += scanTotals[other];
+    // Triangles this phase's slots draw (instances times the LOD's triangles), saturating rather than wrapping.
+    uint triangles = 0;
     for (uint slot = begin; slot < end; ++slot)
     {
         if (slotPhases[slot] != phase) continue;
@@ -277,7 +279,10 @@ void scanMain(uint3 id : SV_GroupThreadID)
         slotArguments[slot * 5u + 4u] = cullTotals.y != 0u ? offset : 0u;
         slotCounters[slots + slot] = 0u;
         offset += count;
+        const uint slotTriangles = count * (slotArguments[slot * 5u] / 3u);
+        triangles = slotTriangles > 0xffffffffu - triangles ? 0xffffffffu : triangles + slotTriangles;
     }
+    if (triangles != 0u) InterlockedAdd(cullStats[StatTriangles], triangles);
 }
 
 [shader("compute")]

@@ -1,6 +1,7 @@
 #pragma once
 #include "PlutoGE/render/GeometryDiagnostics.h"
 #include "PlutoGE/render/GraphicsQuality.h"
+#include "PlutoGE/render/rhi/Types.h"
 #include <charconv>
 #include <cmath>
 #include <array>
@@ -57,6 +58,11 @@ namespace PlutoGE
         bool cpuInstanceBinning = false;
         // --no-instance-batching: GPU-binned draws record one call each rather than sharing multi-draw batches.
         bool noInstanceBatching = false;
+        // --window=<width>x<height>: the window (and so the output resolution) instead of the project's window size.
+        std::optional<std::pair<std::uint32_t, std::uint32_t>> windowSize;
+        // --upscaler=<none|dlss|fsr2>[:<quality|balanced|performance|ultra-performance|dlaa>]: the temporal upscaler
+        // instead of the project's (quality defaults to Quality).
+        std::optional<std::pair<render::rhi::TemporalUpscaler, render::rhi::UpscalerQuality>> upscaler;
         // --dynamic-resolution=<target FPS>: enables automatic render resolution for the run.
         std::optional<float> dynamicResolutionFps;
         // Geometry shading diagnostic applied to every measured frame.
@@ -102,9 +108,9 @@ namespace PlutoGE
 
         static ProjectBenchmarkOptions Parse(std::span<const char *const> args)
         {
-            if (args.size() < 2 || args.size() > 15) // project, output, two counts and eleven switches
+            if (args.size() < 2 || args.size() > 17) // project, output, two counts and thirteen switches
                 throw std::invalid_argument("Usage: --benchmark-project <project> <output.csv> [frames=600] [warmup=120] [--frozen-render] "
-                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--cpu-instance-binning] [--no-instance-batching] "
+                                            "[--geometry-diagnostic=<mode>|--scalar-shadows] [--capture=<frame.png>] [--serial-render] [--cpu-instance-binning] [--no-instance-batching] [--window=<W>x<H>] [--upscaler=<none|dlss|fsr2>[:<quality>]] "
                                             "[--quality=low|medium|high|ultra] [--foliage-detail=<0.25..2>] [--camera-pan=<degrees>] [--camera-travel=<metres>] "
                                             "[--disable-effects=<Type>[,<Type>...]|all]");
             ProjectBenchmarkOptions result{args[0], args[1]};
@@ -129,12 +135,51 @@ namespace PlutoGE
                 constexpr std::string_view foliagePrefix = "--foliage-detail=";
                 constexpr std::string_view disablePrefix = "--disable-effects=";
                 constexpr std::string_view dynamicResolutionPrefix = "--dynamic-resolution=";
+                constexpr std::string_view windowPrefix = "--window=";
+                constexpr std::string_view upscalerPrefix = "--upscaler=";
                 const bool diagnosticSet = result.geometryDiagnostic != render::GeometryDiagnosticMode::None;
                 if (value == "--frozen-render" && !result.frozenRender) result.frozenRender = true;
                 else if (value == "--serial-render" && !result.serialRender) result.serialRender = true;
                 else if (value == "--cpu-instance-binning" && !result.cpuInstanceBinning) result.cpuInstanceBinning = true;
                 else if (value == "--no-instance-batching" && !result.noInstanceBatching) result.noInstanceBatching = true;
                 else if (value == "--gpu-instance-culling") {}
+                else if (value.starts_with(upscalerPrefix) && !result.upscaler)
+                {
+                    using render::rhi::TemporalUpscaler;
+                    using render::rhi::UpscalerQuality;
+                    const auto text = value.substr(upscalerPrefix.size());
+                    const auto separator = text.find(':');
+                    const auto technology = text.substr(0, separator);
+                    const auto quality = separator == std::string_view::npos ? std::string_view("quality") : text.substr(separator + 1);
+                    constexpr std::array technologies{std::pair{"none", TemporalUpscaler::None}, std::pair{"dlss", TemporalUpscaler::Dlss},
+                                                      std::pair{"fsr2", TemporalUpscaler::Fsr2}};
+                    constexpr std::array qualities{std::pair{"quality", UpscalerQuality::Quality}, std::pair{"balanced", UpscalerQuality::Balanced},
+                                                   std::pair{"performance", UpscalerQuality::Performance},
+                                                   std::pair{"ultra-performance", UpscalerQuality::UltraPerformance},
+                                                   std::pair{"dlaa", UpscalerQuality::Dlaa}};
+                    const auto foundTechnology = std::find_if(technologies.begin(), technologies.end(),
+                        [&](const auto &entry) { return technology == entry.first; });
+                    const auto foundQuality = std::find_if(qualities.begin(), qualities.end(),
+                        [&](const auto &entry) { return quality == entry.first; });
+                    if (foundTechnology == technologies.end() || foundQuality == qualities.end())
+                        throw std::invalid_argument("Unknown benchmark upscaler: " + std::string(value));
+                    result.upscaler = std::pair{foundTechnology->second, foundQuality->second};
+                }
+                else if (value.starts_with(windowPrefix) && !result.windowSize)
+                {
+                    const auto text = value.substr(windowPrefix.size());
+                    const auto separator = text.find('x');
+                    std::uint32_t width = 0, height = 0;
+                    const auto parse = [](std::string_view digits, std::uint32_t &number)
+                    {
+                        const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), number);
+                        return parsed.ec == std::errc{} && parsed.ptr == digits.data() + digits.size() && number >= 64 && number <= 8192;
+                    };
+                    if (separator == std::string_view::npos || !parse(text.substr(0, separator), width) ||
+                        !parse(text.substr(separator + 1), height))
+                        throw std::invalid_argument("Benchmark window must be <width>x<height>, each 64..8192");
+                    result.windowSize = std::pair{width, height};
+                }
                 else if (value.starts_with(capturePrefix) && result.capture.empty())
                 {
                     result.capture = std::filesystem::path(value.substr(capturePrefix.size()));
@@ -246,7 +291,7 @@ namespace PlutoGE
             "vsm_dirty_fine_triangles", "vsm_dirty_root_triangles", "vsm_fine_levels", "vsm_resolution_scale",
             "vsm_new_dirty_pages", "vsm_changed_dirty_pages", "vsm_evicted_pages", "vsm_cache_hits",
             "vsm_static_dirty_pages", "vsm_dynamic_chunks", "vsm_static_layer", "vsm_chunking", "vsm_lod_variant_chunks",
-            "gpu_cull_instances", "gpu_cull_outside", "gpu_cull_occluded", "gpu_cull_recovered", "gpu_cull_drawn",
+            "gpu_cull_instances", "gpu_cull_outside", "gpu_cull_occluded", "gpu_cull_recovered", "gpu_cull_drawn", "gpu_cull_triangles",
             "ray_traced_rebuilt", "opaque_batch_groups_rebuilt", "opaque_batch_draws_rebuilt", "visible_packets", "gpu_binned_draws", "gpu_binned_batches",
             "gpu_observation_id"};
         std::array<double, DetailNames.size()> details{};

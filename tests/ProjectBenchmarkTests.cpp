@@ -75,6 +75,25 @@ int main() try
     if (options.noInstanceBatching) throw std::runtime_error("Instance batching is off by default");
     const std::array unbatched{"game.plutoproject", "results.csv", "--serial-render", "--no-instance-batching"};
     if (!ProjectBenchmarkOptions::Parse(unbatched).noInstanceBatching) throw std::runtime_error("--no-instance-batching ignored");
+    if (options.windowSize) throw std::runtime_error("The project's window size is the default");
+    const std::array window{"game.plutoproject", "results.csv", "--window=1920x1080"};
+    if (ProjectBenchmarkOptions::Parse(window).windowSize != std::pair<std::uint32_t, std::uint32_t>{1920, 1080})
+        throw std::runtime_error("--window ignored");
+    const std::array upscaled{"game.plutoproject", "results.csv", "--upscaler=dlss:performance"};
+    const auto upscaler = ProjectBenchmarkOptions::Parse(upscaled).upscaler;
+    if (!upscaler || upscaler->first != render::rhi::TemporalUpscaler::Dlss || upscaler->second != render::rhi::UpscalerQuality::Performance)
+        throw std::runtime_error("--upscaler ignored");
+    const std::array defaultQuality{"game.plutoproject", "results.csv", "--upscaler=fsr2"};
+    if (ProjectBenchmarkOptions::Parse(defaultQuality).upscaler->second != render::rhi::UpscalerQuality::Quality)
+        throw std::runtime_error("--upscaler should default to Quality");
+    for (const auto *bad : {"--window=1920", "--window=0x1080", "--window=axb", "--window=1920x99999",
+                            "--upscaler=taa", "--upscaler=dlss:ultra"})
+    {
+        bool rejected = false;
+        try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }
+        catch (const std::invalid_argument &) { rejected = true; }
+        if (!rejected) throw std::runtime_error("Invalid window accepted");
+    }
     const std::array capture{"game.plutoproject", "results.csv", "--capture=out/frame.png"};
     if (ProjectBenchmarkOptions::Parse(capture).capture != std::filesystem::path("out/frame.png"))
         throw std::runtime_error("Capture path lost");

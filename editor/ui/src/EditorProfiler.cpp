@@ -464,7 +464,8 @@ namespace PlutoGE::ui
             report << "RHI GPU instance culling delayed frame " << culling.frame << ": " << culling.instances
                    << " instances, " << culling.outside << " outside the view or range, " << culling.occluded
                    << " hidden by the previous frame's depth, " << culling.recovered << " of them drawn by the second phase, "
-                   << culling.drawn << " drawn (" << culling.crossfading << " crossfading); second phase "
+                   << culling.drawn << " drawn (" << culling.crossfading << " crossfading, " << culling.triangles
+                   << " triangles); second phase "
                    << (culling.secondPhase ? "ran" : "off") << "\n";
         if (rhiScene.gpuBinnedDraws != 0)
             report << "RHI GPU-binned draws: " << rhiScene.gpuBinnedDraws << " in " << rhiScene.gpuBinnedBatches

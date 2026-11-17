@@ -137,10 +137,12 @@ action map.
 | Falling crate | Collider plus non-kinematic Rigidbody, positive mass, gravity enabled; forces/impulses |
 | Scripted character | Collider plus kinematic Rigidbody; collision-aware `Physics.MoveKinematic` |
 
-Use Box, Sphere, or Capsule for simple gameplay shapes. The native Inspector also
-supports Terrain and Mesh collision backed by corresponding geometry components;
-the managed `ColliderShape` enum currently exposes only the three primitive names.
-Do not replace an authored terrain shape with a guessed C# enum value.
+Use Box, Sphere, or Capsule for simple gameplay shapes. Terrain and Mesh collision
+take their triangles from the entity's terrain or mesh and are for static colliders
+only. ConvexHull wraps the entity's mesh in its convex hull and works on dynamic
+bodies, so a falling rock or a piece of debris tumbles like its shape; Shatter
+gives every piece one ([Fracture](../FRACTURE.md)). Do not replace an authored
+terrain shape with another value from C#.
 
 Mass, drag, friction, gravity, center of mass, and rotation constraints control a
 Rigidbody's response. Keep dimensions and scale valid and match collision to the

@@ -10,6 +10,8 @@
 
 #include <btBulletCollisionCommon.h>
 #include <BulletCollision/CollisionShapes/btBvhTriangleMeshShape.h>
+#include <BulletCollision/CollisionShapes/btConvexHullShape.h>
+#include <BulletCollision/CollisionShapes/btShapeHull.h>
 #include <BulletCollision/CollisionShapes/btHeightfieldTerrainShape.h>
 
 #include <algorithm>
@@ -112,6 +114,58 @@ namespace PlutoGE::scene::detail
             BulletShapeData shapeData;
             shapeData.shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
             shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
+            return shapeData;
+        }
+
+        // The convex hull of a mesh's vertices, scaled, for bodies that move. Bullet's hull is a support-mapped point
+        // cloud, so its cost per contact grows with the point count: inputs with more than kMaxHullPoints points are
+        // reduced with btShapeHull (support points in a fixed set of directions, at most a few dozen). The hull keeps
+        // the mesh's origin, which is the body's centre of mass; fracture pieces are authored centred on it.
+        BulletShapeData CreateConvexHullShape(const render::Mesh &mesh, const glm::vec3 &worldScale)
+        {
+            constexpr int kMaxHullPoints = 64;
+            const auto &vertices = mesh.GetMeshData().vertices;
+            if (vertices.size() < 4)
+                return {};
+
+            auto hull = std::make_unique<btConvexHullShape>();
+            btVector3 minimum(BT_LARGE_FLOAT, BT_LARGE_FLOAT, BT_LARGE_FLOAT);
+            btVector3 maximum(-BT_LARGE_FLOAT, -BT_LARGE_FLOAT, -BT_LARGE_FLOAT);
+            for (const auto &vertex : vertices)
+            {
+                const btVector3 point(vertex.position[0] * worldScale.x, vertex.position[1] * worldScale.y,
+                                      vertex.position[2] * worldScale.z);
+                if (!std::isfinite(point.x()) || !std::isfinite(point.y()) || !std::isfinite(point.z()))
+                    continue;
+                hull->addPoint(point, false);
+                minimum.setMin(point);
+                maximum.setMax(point);
+            }
+            const btVector3 extent = maximum - minimum;
+            const btScalar thinnest = extent[extent.minAxis()];
+            if (hull->getNumPoints() < 4 || !(thinnest > 0.0001f))
+                return {};
+
+            // Bullet inflates convex shapes by their margin (default 4 cm), which floats small debris visibly above
+            // the ground. Keep it a small fraction of the thinnest side instead.
+            const btScalar margin = std::clamp(thinnest * 0.05f, btScalar(0.001f), btScalar(0.01f));
+            if (hull->getNumPoints() > kMaxHullPoints)
+            {
+                hull->setMargin(0.0f); // btShapeHull samples support points, margin included.
+                hull->recalcLocalAabb();
+                btShapeHull reduced(hull.get());
+                if (reduced.buildHull(0.0f) && reduced.numVertices() >= 4)
+                {
+                    auto simplified = std::make_unique<btConvexHullShape>(
+                        reinterpret_cast<const btScalar *>(reduced.getVertexPointer()), reduced.numVertices(), static_cast<int>(sizeof(btVector3)));
+                    hull = std::move(simplified);
+                }
+            }
+            hull->setMargin(margin);
+            hull->recalcLocalAabb();
+
+            BulletShapeData shapeData;
+            shapeData.shape = std::move(hull);
             return shapeData;
         }
 
@@ -270,6 +324,7 @@ namespace PlutoGE::scene::detail
                 };
             }
             case ColliderShape::Mesh:
+            case ColliderShape::ConvexHull:
             {
                 const auto *mesh = FindCollisionMesh(entity);
                 auto lifetime = mesh ? mesh->GetLifetimeToken() : std::weak_ptr<const void>{};
@@ -277,7 +332,7 @@ namespace PlutoGE::scene::detail
                 if (!mesh || lifetime.expired())
                     return std::nullopt;
                 return SharedSource{
-                    .key = {.kind = Kind::Mesh,
+                    .key = {.kind = collider.GetShape() == ColliderShape::ConvexHull ? Kind::ConvexHull : Kind::Mesh,
                             .identity = reinterpret_cast<std::uintptr_t>(mesh),
                             .content = {mesh->GetContentRevision()},
                             .worldScale = worldScale},
@@ -310,6 +365,11 @@ namespace PlutoGE::scene::detail
         {
             const auto *mesh = FindCollisionMesh(entity);
             return mesh ? CreateMeshShape(*mesh, worldScale) : BulletShapeData{};
+        }
+        case ColliderShape::ConvexHull:
+        {
+            const auto *mesh = FindCollisionMesh(entity);
+            return mesh ? CreateConvexHullShape(*mesh, worldScale) : BulletShapeData{};
         }
         default:
             return CreatePrimitiveColliderShape(collider, worldScale);

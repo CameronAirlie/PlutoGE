@@ -13,6 +13,10 @@ namespace PlutoGE::scene
         Capsule,
         Terrain,
         Mesh,
+        // The convex hull of the same geometry a Mesh collider uses (simplified to at most 64 points). Unlike Mesh it
+        // can move: use it for dynamic rigidbodies such as fracture debris. Appended so saved shape numbers keep
+        // their meaning.
+        ConvexHull,
     };
 
     struct ColliderComponentConfig

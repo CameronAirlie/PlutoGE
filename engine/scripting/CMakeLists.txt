@@ -3,6 +3,7 @@ add_library(PlutoGEScripting
     src/TerrainScriptApi.cpp
     src/FoliageScriptApi.cpp
     src/UpscalerScriptApi.cpp
+    src/FractureScriptApi.cpp
     src/ComponentScriptApi.cpp
     src/ScriptEngine.cpp
     src/ScriptErrors.cpp

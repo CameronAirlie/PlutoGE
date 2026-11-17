@@ -1081,6 +1081,14 @@ add_executable(PlutoGEPhysicsSynchronizationTests PhysicsSynchronizationTests.cp
 pluto_link_engine(PlutoGEPhysicsSynchronizationTests)
 add_test(NAME PlutoGEPhysicsSynchronizationTests COMMAND PlutoGEPhysicsSynchronizationTests)
 
+add_executable(PlutoGEMeshFractureTests MeshFractureTests.cpp)
+pluto_link_engine(PlutoGEMeshFractureTests)
+add_test(NAME PlutoGEMeshFractureTests COMMAND PlutoGEMeshFractureTests)
+
+add_executable(PlutoGEShatterTests ShatterTests.cpp)
+pluto_link_engine(PlutoGEShatterTests)
+add_test(NAME PlutoGEShatterTests COMMAND PlutoGEShatterTests)
+
 add_executable(PlutoGESurfacePlacementTests
     SurfacePlacementTests.cpp
     ../editor/ui/src/SurfacePlacement.cpp
@@ -1426,6 +1434,26 @@ if (PLUTOGE_TEST_DOTNET)
         add_dependencies(PlutoGECloudScriptingTests PlutoGETestOpenAL)
     endif()
     add_test(NAME PlutoGECloudScriptingTests COMMAND PlutoGECloudScriptingTests)
+
+    # Fracture.Shatter and ColliderShape.ConvexHull across the managed bridge.
+    set(PLUTO_FRACTURE_PROBE_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/FractureProbe")
+    add_custom_command(OUTPUT "${PLUTO_FRACTURE_PROBE_OUTPUT}/PlutoGE.FractureProbe.dll"
+        COMMAND "${PLUTOGE_TEST_DOTNET}" build
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.FractureProbe/PlutoGE.FractureProbe.csproj"
+            --configuration Release --output "${PLUTO_FRACTURE_PROBE_OUTPUT}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.FractureProbe/PlutoGE.FractureProbe.csproj"
+            "${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.FractureProbe/Probe.cs" PlutoGEScriptCore
+        VERBATIM)
+    add_custom_target(PlutoGEFractureProbe DEPENDS "${PLUTO_FRACTURE_PROBE_OUTPUT}/PlutoGE.FractureProbe.dll")
+    add_executable(PlutoGEFractureScriptingTests FractureScriptingTests.cpp)
+    target_compile_definitions(PlutoGEFractureScriptingTests PRIVATE
+        PLUTOGE_FRACTURE_PROBE_ASSEMBLY="${PLUTO_FRACTURE_PROBE_OUTPUT}/PlutoGE.FractureProbe.dll")
+    pluto_link_engine(PlutoGEFractureScriptingTests)
+    add_dependencies(PlutoGEFractureScriptingTests PlutoGEFractureProbe)
+    if (TARGET PlutoGETestOpenAL)
+        add_dependencies(PlutoGEFractureScriptingTests PlutoGETestOpenAL)
+    endif()
+    add_test(NAME PlutoGEFractureScriptingTests COMMAND PlutoGEFractureScriptingTests)
 endif()
 
 add_executable(PlutoGEHeadlessServerTests HeadlessServerTests.cpp)

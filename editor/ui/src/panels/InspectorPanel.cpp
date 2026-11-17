@@ -3363,7 +3363,8 @@ namespace PlutoGE::ui
                                     continue;
                                 }
                                 if ((colliderComponent->GetShape() == scene::ColliderShape::Terrain ||
-                                     colliderComponent->GetShape() == scene::ColliderShape::Mesh) &&
+                                     colliderComponent->GetShape() == scene::ColliderShape::Mesh ||
+                                     colliderComponent->GetShape() == scene::ColliderShape::ConvexHull) &&
                                     (property.name == "Center" ||
                                      property.name == "Size" ||
                                      property.name == "Radius" ||

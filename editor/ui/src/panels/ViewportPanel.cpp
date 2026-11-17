@@ -773,6 +773,9 @@ namespace PlutoGE::ui
             const ImU32 color = colliderComponent.IsTrigger()
                                     ? IM_COL32(255, 185, 80, 230)
                                     : IM_COL32(116, 232, 255, 230);
+            // A hull follows the mesh it is built from, which is drawn already; its radius and height mean nothing.
+            if (colliderComponent.GetShape() == scene::ColliderShape::ConvexHull)
+                return;
             const glm::mat4 worldTransform = entity.GetWorldTransform();
             const glm::vec3 worldScale = entity.GetWorldScale();
             if (colliderComponent.GetShape() == scene::ColliderShape::Box)
@@ -2952,7 +2955,8 @@ namespace PlutoGE::ui
                 glm::vec3 authoredSize(1.0f);
                 if (collider && collider->IsEnabled() &&
                     collider->GetShape() != scene::ColliderShape::Terrain &&
-                    collider->GetShape() != scene::ColliderShape::Mesh)
+                    collider->GetShape() != scene::ColliderShape::Mesh &&
+                    collider->GetShape() != scene::ColliderShape::ConvexHull)
                 {
                     resizeTarget = 1;
                     localCenter = collider->GetCenter();

@@ -39,7 +39,8 @@ namespace PlutoGE::scene::water
                 break;
             }
             case ColliderShape::Terrain:
-            case ColliderShape::Mesh: return false;
+            case ColliderShape::Mesh:
+            case ColliderShape::ConvexHull: return false;
             }
             center = glm::vec3(world * glm::vec4(collider.GetCenter(), 1.0f));
             return std::isfinite(radius) && radius > 0.0f;

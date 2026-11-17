@@ -8,6 +8,12 @@ public enum ColliderShape
     Box = 0,
     Sphere = 1,
     Capsule = 2,
+    /// <summary>The entity's terrain heightfield; static only.</summary>
+    Terrain = 3,
+    /// <summary>The entity's mesh triangles; static only.</summary>
+    Mesh = 4,
+    /// <summary>The convex hull of the entity's mesh (at most 64 points); works on dynamic rigidbodies.</summary>
+    ConvexHull = 5,
 }
 
 public sealed class ColliderComponent : ComponentReference

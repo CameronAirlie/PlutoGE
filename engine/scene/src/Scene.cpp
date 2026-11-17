@@ -1234,7 +1234,19 @@ namespace PlutoGE::scene
             if (dynamic)
             {
                 body->setCcdMotionThreshold(0.0001f);
-                body->setCcdSweptSphereRadius(collider->GetCcdSweptSphereRadius(worldScale, rigidbody->GetCenterOfMass()));
+                float sweptRadius = collider->GetCcdSweptSphereRadius(worldScale, rigidbody->GetCenterOfMass());
+                // A hull's size lives in its shape, not in the collider's dimensions: sweep a sphere well inside the
+                // thinnest side of its bounds (hull bodies are centred on their centre of mass).
+                if (collider->GetShape() == ColliderShape::ConvexHull)
+                {
+                    btTransform identity;
+                    identity.setIdentity();
+                    btVector3 aabbMin, aabbMax;
+                    stepBody.colliderShape->Get()->getAabb(identity, aabbMin, aabbMax);
+                    const btVector3 halfExtent = (aabbMax - aabbMin) * 0.5f;
+                    sweptRadius = std::max(0.0f, static_cast<float>(halfExtent[halfExtent.minAxis()]) * 0.5f);
+                }
+                body->setCcdSweptSphereRadius(sweptRadius);
                 body->setSleepingThresholds(0.1f, 0.1f);
                 // Dynamic bodies must be allowed to sleep. Disabling
                 // deactivation globally keeps resting spring-driven bodies awake

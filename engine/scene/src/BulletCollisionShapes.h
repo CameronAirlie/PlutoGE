@@ -81,6 +81,7 @@ namespace PlutoGE::scene::detail
             {
                 Mesh,
                 Terrain,
+                ConvexHull,
             };
 
             Kind kind = Kind::Mesh;

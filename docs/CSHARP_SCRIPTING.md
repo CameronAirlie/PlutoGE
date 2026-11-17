@@ -464,10 +464,14 @@ void AddImpulseAtPosition(Vector3 impulse, Vector3 worldPosition)
 
 Properties: `Shape`, `Center`, `Size`, `Radius`, `Height`, `IsTrigger`, and `BlocksAudio`.
 
-`ColliderShape` values: `Box`, `Sphere`, `Capsule`.
+`ColliderShape` values: `Box` (0), `Sphere` (1), `Capsule` (2), `Terrain` (3), `Mesh` (4), `ConvexHull` (5).
 
-These are the managed enum values. The native Inspector additionally supports
-Terrain and Mesh shapes; author those with their corresponding source components.
+`Terrain` and `Mesh` take their geometry from the entity's TerrainComponent and MeshComponent (or a spline's
+generated collision mesh) and only suit static colliders. `ConvexHull` wraps the same mesh geometry in its convex
+hull (simplified to at most 64 points, centred on the entity's origin), so it works on dynamic rigidbodies:
+fracture debris, rocks and props whose shape a box describes badly. Size, Radius, Height and Center do not apply to
+them. While the mesh has no geometry yet the collider has no body. Hosts built before `ConvexHull` clamp it to
+`Capsule`; see [Fracture](FRACTURE.md).
 
 ### CameraComponent
 
@@ -614,7 +618,10 @@ mesh.SetGeometry(CollectionsMarshal.AsSpan(positions), CollectionsMarshal.AsSpan
 `SetGeometry` returns false for invalid input (an index past the vertices, a partial triangle, non-finite
 positions, normal/uv counts that differ from the positions) and on hosts built before the API;
 `MeshComponent.SupportsGeometry` reports which. Native: `MeshComponent::SetRuntimeGeometry` and
-`render::Mesh::ReplaceGeometry` (tested by `PlutoGEMeshRuntimeGeometryTests`).
+`render::Mesh::ReplaceGeometry` (tested by `PlutoGEMeshRuntimeGeometryTests`); natively it also takes submeshes,
+each index range drawing with its own material slot.
+
+To break a mesh into physics debris, use `Fracture.Shatter` ([Fracture](FRACTURE.md)).
 
 ### AnimationComponent
 

@@ -116,7 +116,7 @@ namespace PlutoGE::scene
     std::vector<Property> ColliderComponent::Serialize() const
     {
         return {
-            {"Shape", PropertyType::Enum, std::to_string(static_cast<int>(m_config.shape)), {"Box", "Sphere", "Capsule", "Terrain", "Mesh"}},
+            {"Shape", PropertyType::Enum, std::to_string(static_cast<int>(m_config.shape)), {"Box", "Sphere", "Capsule", "Terrain", "Mesh", "ConvexHull"}},
             {"Center", PropertyType::Vec3, SerializeVec3(m_config.center)},
             {"Size", PropertyType::Vec3, SerializeVec3(m_config.size)},
             {"Radius", PropertyType::Float, std::to_string(m_config.radius)},
@@ -133,7 +133,7 @@ namespace PlutoGE::scene
         {
             if (property.name == "Shape")
             {
-                const int shapeIndex = std::clamp(std::stoi(property.value), 0, 4);
+                const int shapeIndex = std::clamp(std::stoi(property.value), 0, static_cast<int>(ColliderShape::ConvexHull));
                 m_config.shape = static_cast<ColliderShape>(shapeIndex);
             }
             else if (property.name == "Center")

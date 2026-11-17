@@ -1491,7 +1491,22 @@ namespace PlutoGE::scene
 
     bool MeshComponent::SetRuntimeGeometry(render::MeshData data)
     {
-        if (!render::Mesh::IsValidTriangleList(data)) return false;
+        return SetRuntimeGeometry(std::move(data), {});
+    }
+
+    void MeshComponent::ShareMaterialOwnership(const MeshComponent &source)
+    {
+        if (&source == this)
+            return;
+        if (!m_privateResources)
+            m_privateResources = source.m_privateResources;
+        m_privateMaterials.insert(m_privateMaterials.end(), source.m_privateMaterials.begin(), source.m_privateMaterials.end());
+    }
+
+    bool MeshComponent::SetRuntimeGeometry(render::MeshData data, std::vector<render::Submesh> submeshes)
+    {
+        if (!render::Mesh::IsValidTriangleList(data) || !render::Mesh::AreValidSubmeshes(submeshes, data.indices.size()))
+            return false;
         if (!m_runtimeGeometryActive)
         {
             m_runtimeGeometrySource = m_mesh;
@@ -1508,9 +1523,10 @@ namespace PlutoGE::scene
         {
             render::MeshConfig config;
             config.data = std::move(data);
+            config.submeshes = std::move(submeshes);
             m_runtimeGeometry.reset(render::Mesh::FromConfig(config));
         }
-        else if (!m_runtimeGeometry->ReplaceGeometry(std::move(data)))
+        else if (!m_runtimeGeometry->ReplaceGeometry(std::move(data), std::move(submeshes)))
         {
             return false;
         }

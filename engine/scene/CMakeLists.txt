@@ -28,6 +28,8 @@ add_library(PlutoGEScene
     src/procedural/ProceduralInputs.cpp
     src/procedural/ProceduralTerrainDefinition.cpp
     src/procedural/ProceduralGeneration.cpp
+    src/procedural/MeshFracture.cpp
+    src/Shatter.cpp
     src/components/ProceduralTerrainComponent.cpp
     src/WaterBodies.cpp
     src/water/WaterSurfaceSnapshot.cpp

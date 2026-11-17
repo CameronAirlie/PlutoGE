@@ -75,6 +75,9 @@ namespace PlutoGE::scene
         // Later calls replace it in place; an empty triangle list draws nothing.
         // Clearing restores the mesh the component had before. Not serialized.
         bool SetRuntimeGeometry(render::MeshData data);
+        // With submeshes: each index range draws with its material slot (Mesh::ReplaceGeometry). Empty is one
+        // submesh over every index, as above.
+        bool SetRuntimeGeometry(render::MeshData data, std::vector<render::Submesh> submeshes);
         void ClearRuntimeGeometry();
         bool HasRuntimeGeometry() const { return m_runtimeGeometryActive; }
         void SetStatic(bool isStatic)
@@ -304,6 +307,10 @@ namespace PlutoGE::scene
             return submeshIndex < m_submeshMaterials.size() && m_submeshMaterials[submeshIndex] != nullptr;
         }
         render::Material *CreateUniqueMaterialForMaterialSlot(size_t materialSlotIndex);
+        // Keeps the instance materials `source` owns (inline and unique materials, and the asset reader behind their
+        // textures) alive as long as this component too, so geometry split off another mesh (fracture pieces) can
+        // keep drawing with its materials after the source is destroyed.
+        void ShareMaterialOwnership(const MeshComponent &source);
         render::Material *CreateUniqueMaterialForSubmesh(size_t submeshIndex);
         // Every material this mesh draws with (each drawn submesh's override, else its slot's material), without
         // duplicates. With makeInstanceOwned, asset-backed or missing materials are first replaced by per-instance

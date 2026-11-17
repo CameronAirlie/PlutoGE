@@ -42,6 +42,7 @@
 #include "TerrainScriptApi.h"
 #include "FoliageScriptApi.h"
 #include "UpscalerScriptApi.h"
+#include "FractureScriptApi.h"
 #include "ComponentScriptApi.h"
 
 #include <algorithm>
@@ -2497,7 +2498,8 @@ namespace PlutoGE::scripting
         {
             if (auto *component = FindCollider(entityId))
             {
-                component->SetShape(static_cast<scene::ColliderShape>(std::clamp(value, 0, 2)));
+                component->SetShape(static_cast<scene::ColliderShape>(
+                    std::clamp(value, 0, static_cast<int32_t>(scene::ColliderShape::ConvexHull))));
             }
         }
         NativeVector3 GetColliderCenter(uint32_t entityId)
@@ -4007,6 +4009,7 @@ namespace PlutoGE::scripting
         register_light_component_api_fn registerLightComponentApi = nullptr;
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_mesh_geometry_api_fn registerMeshGeometryApi = nullptr; // Optional: older ScriptCore builds lack it.
+        int(PLUTO_HOST_CALL *registerFractureApi)(void *) = nullptr;    // Optional: older ScriptCore builds lack it.
         register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
         register_mesh_camera_hidden_joints_api_fn registerMeshCameraHiddenJointsApi = nullptr; // Optional, likewise.
         register_time_api_fn registerTimeApi = nullptr;                  // Optional: older ScriptCore builds lack it.
@@ -4149,6 +4152,7 @@ namespace PlutoGE::scripting
             impl.registerLightComponentApi = nullptr;
             impl.registerMeshComponentApi = nullptr;
             impl.registerMeshGeometryApi = nullptr;
+            impl.registerFractureApi = nullptr;
             impl.registerPrefabSpawnApi = nullptr;
             impl.registerMeshCameraHiddenJointsApi = nullptr;
             impl.registerTimeApi = nullptr;
@@ -4622,6 +4626,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterMeshGeometryApi"), impl.registerMeshGeometryApi))
             {
                 impl.registerMeshGeometryApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterFractureApi"), impl.registerFractureApi))
+            {
+                impl.registerFractureApi = nullptr;
                 impl.lastError.clear();
             }
 
@@ -5232,6 +5241,12 @@ namespace PlutoGE::scripting
                 reinterpret_cast<void *>(static_cast<clear_mesh_geometry_fn>(&ClearMeshGeometry))) == 0)
         {
             setManagedBridgeFailure("RegisterMeshGeometryApi");
+            return false;
+        }
+
+        if (m_impl->registerFractureApi && m_impl->registerFractureApi(reinterpret_cast<void *>(&ShatterEntity)) == 0)
+        {
+            setManagedBridgeFailure("RegisterFractureApi");
             return false;
         }
 

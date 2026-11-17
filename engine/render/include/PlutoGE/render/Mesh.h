@@ -590,6 +590,18 @@ namespace PlutoGE::render
         // Replaces vertices and indices of a runtime mesh (one submesh, material
         // slot 0, no LODs). Renderers re-upload through the content revision.
         bool ReplaceGeometry(MeshData data);
+        // As above with the given submeshes (index ranges and material slots; bounds are recomputed, LODs and
+        // animated nodes dropped). Empty means one submesh over every index. False when a range leaves the indices.
+        bool ReplaceGeometry(MeshData data, std::vector<Submesh> submeshes);
+        // True when every submesh's index range lies inside `indexCount` indices and starts on a triangle.
+        static bool AreValidSubmeshes(const std::vector<Submesh> &submeshes, std::size_t indexCount)
+        {
+            for (const auto &submesh : submeshes)
+                if (submesh.indexOffset % 3 != 0 || submesh.indexCount % 3 != 0 ||
+                    static_cast<std::size_t>(submesh.indexOffset) + submesh.indexCount > indexCount)
+                    return false;
+            return true;
+        }
         // True for a triangle list whose indices all address its vertices.
         static bool IsValidTriangleList(const MeshData &data)
         {

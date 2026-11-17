@@ -3,6 +3,7 @@
 #include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/ShadowCasterLods.h"
 #include "PlutoGE/render/VirtualShadowConfig.h"
+#include "PlutoGE/render/VirtualShadowLightTransition.h"
 #include "PlutoGE/render/VirtualShadowStats.h"
 #include "PlutoGE/render/VirtualShadowPolicy.h"
 #include "PlutoGE/render/ShadowGeometry.h"
@@ -42,9 +43,12 @@ namespace PlutoGE::render
         // x: the directional root level, which is the number of active fine levels (VirtualShadowFineLevels).
         // y: the static layer's generation (0 without one). z: casters per page in the page-major membership records.
         glm::uvec4 levels{};
+        // The light turn (VirtualShadowLightTransition). x: 1 while the incoming clipmap renders. y: 1 in the frame it
+        // becomes the presented clipmap.
+        glm::uvec4 transition{};
         std::array<glm::uvec4, (PLUTO_VSM_LEVELS + 3) / 4> membershipEpochs{};
     };
-    static_assert(sizeof(VirtualShadowParameters) == 256 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
+    static_assert(sizeof(VirtualShadowParameters) == 272 + 96 * PLUTO_VSM_LEVELS + 16 * ((PLUTO_VSM_LEVELS + 3) / 4));
 
     // Read-only receiver bindings of one recorded VSM frame. A secondary view of
     // the same scene from the same viewpoint (a camera-stack overlay) samples
@@ -110,9 +114,17 @@ namespace PlutoGE::render
             RecordPlanning(commands, submit);
             RecordPages(commands, submit);
         }
+        // Clipmaps for the light's own direction, as presented once no transition is in progress.
         [[nodiscard]] static VirtualShadowParameters BuildClipmaps(const BasicLighting &lighting,
                                                                   const VirtualShadowParameters *previous = nullptr,
                                                                   float resolutionScale = 1.0f);
+        // Clipmaps for `turn`: the presented clipmap for turn.presented, and the incoming one for turn.incoming while
+        // the light turns. `previous` is the last frame's, whose clipmaps keep their depth centres (on promotion the
+        // presented clipmap continues the incoming one).
+        [[nodiscard]] static VirtualShadowParameters BuildClipmaps(const BasicLighting &lighting,
+                                                                  const VirtualShadowLightTurn &turn,
+                                                                  const VirtualShadowParameters *previous,
+                                                                  float resolutionScale);
         [[nodiscard]] static bool CanPrepare(std::span<const BasicDraw> receivers, std::span<const BasicDraw> casters);
         // Surfaces that sample virtual shadows: valid, non-blended and not glass.
         [[nodiscard]] static bool IsReceiver(const BasicDraw &draw) noexcept;
@@ -265,6 +277,7 @@ namespace PlutoGE::render
         bool m_cacheMembership = true;
         VirtualShadowResolutionPolicy m_resolutionPolicy;
         VirtualShadowBudgetPolicy m_budgetPolicy;
+        VirtualShadowLightTransition m_lightTransition;
         std::uint32_t m_poolTiles = 0;
         std::shared_ptr<VirtualShadowStats> m_stats = std::make_shared<VirtualShadowStats>();
     };

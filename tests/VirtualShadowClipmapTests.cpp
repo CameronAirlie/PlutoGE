@@ -189,6 +189,77 @@ int main()
         Require(SelectShadowCasterLodVariants(chain, 2, -1.0f, texels).size() == 1 &&
                 SelectShadowCasterLodVariants(chain, 9, 5.0f, texels).size() == 1,
                 "A caster without a usable radius or LOD got variants");
+        {
+            // A small light turn keeps presenting the old direction while the incoming clipmap renders, and promotes
+            // it only once a GPU frame since the turn reports it resident.
+            using Observation = VirtualShadowLightTransition::Observation;
+            const auto same = [](const glm::vec3 &a, const glm::vec3 &b) { return glm::dot(a, b) > 0.999999f; };
+            const glm::vec3 from = glm::normalize(glm::vec3(0.3f, -1.0f, 0.2f));
+            const glm::vec3 to = glm::normalize(glm::vec3(0.31f, -1.0f, 0.2f));
+            VirtualShadowLightTransition transition;
+            auto turn = transition.Advance(from, 1, false, std::nullopt);
+            Require(same(turn.presented, from) && !turn.incoming && !turn.promote, "Uncached clipmaps did not take the light at once");
+            turn = transition.Advance(from, 2, true, Observation{1, 0});
+            Require(!turn.incoming && !turn.promote, "A still light started a light turn");
+            turn = transition.Advance(to, 3, true, Observation{2, 0});
+            Require(same(turn.presented, from) && turn.incoming && same(*turn.incoming, to) && !turn.promote,
+                    "A small light turn replaced the presented clipmap before the incoming one was resident");
+            turn = transition.Advance(to, 4, true, Observation{2, 0});
+            Require(turn.incoming && !turn.promote, "An observation from before the light turn promoted the incoming clipmap");
+            turn = transition.Advance(to, 5, true, Observation{4, 7});
+            Require(turn.incoming && !turn.promote, "A partly resident incoming clipmap was promoted");
+            turn = transition.Advance(to, 6, true, Observation{5, 0});
+            Require(turn.promote && !turn.incoming && same(turn.presented, to), "A resident incoming clipmap was not promoted");
+            turn = transition.Advance(to, 7, true, Observation{6, 0});
+            Require(!turn.promote && !turn.incoming && !transition.InProgress(), "Promotion repeated");
+            // An incoming clipmap the pool cannot complete is presented anyway after the frame limit.
+            const glm::vec3 next = glm::normalize(glm::vec3(0.32f, -1.0f, 0.2f));
+            turn = transition.Advance(next, 8, true, Observation{7, 0});
+            Require(turn.incoming && !turn.promote, "A second light turn did not start");
+            for (std::uint32_t frame = 9; frame < 8 + VirtualShadowLightTransition::MaxTransitionFrames; ++frame)
+                Require(!transition.Advance(next, frame, true, Observation{frame - 1, 3}).promote, "A starved light turn promoted early");
+            turn = transition.Advance(next, 8 + VirtualShadowLightTransition::MaxTransitionFrames, true, Observation{7, 3});
+            Require(turn.promote && same(turn.presented, next), "A starved light turn never presented the new direction");
+            // Large turns cut over at once, whether or not a transition is in progress.
+            const glm::vec3 noon{0.0f, -1.0f, 0.0f};
+            turn = transition.Advance(noon, 300, true, Observation{299, 0});
+            Require(same(turn.presented, noon) && !turn.incoming && !turn.promote, "A large light jump trailed the light");
+            const glm::vec3 nudged = glm::normalize(glm::vec3(0.01f, -1.0f, 0.0f));
+            Require(transition.Advance(nudged, 301, true, Observation{300, 0}).incoming.has_value(), "A small turn did not transition");
+            turn = transition.Advance(from, 302, true, Observation{301, 5});
+            Require(same(turn.presented, from) && !turn.incoming, "A jump during a light turn finished the stale transition");
+            Require(!transition.Advance(from, 303, false, std::nullopt).incoming, "A cleared cache kept a light turn");
+
+            // The incoming clipmap is the clipmap the new direction would build; promotion carries its projections
+            // (and so its resident pages) to the presented levels, and inactive incoming levels hold no projection.
+            BasicLighting turning;
+            turning.directionalDirection = from;
+            turning.cameraPosition = {12.3f, 3.1f, -7.4f};
+            const auto settled = VirtualShadowMaps::BuildClipmaps(turning);
+            const auto during = VirtualShadowMaps::BuildClipmaps(turning, VirtualShadowLightTurn{from, to, false}, &settled, 1.0f);
+            turning.directionalDirection = to;
+            const auto target = VirtualShadowMaps::BuildClipmaps(turning);
+            const auto continued = VirtualShadowMaps::BuildClipmaps(turning, VirtualShadowLightTurn{from, to, false}, &during, 1.0f);
+            const auto promoted = VirtualShadowMaps::BuildClipmaps(turning, VirtualShadowLightTurn{to, std::nullopt, true}, &continued, 1.0f);
+            Require(settled.transition == glm::uvec4(0) && during.transition == glm::uvec4(1, 0, 0, 0) &&
+                    promoted.transition == glm::uvec4(0, 1, 0, 0), "Clipmaps reported the wrong light turn state");
+            for (std::uint32_t level = 0; level <= settled.levels.x; ++level)
+            {
+                const auto incoming = PLUTO_VSM_INCOMING_BASE + level;
+                Require(settled.origins[incoming] == glm::ivec4(0) && settled.matrices[incoming] == glm::mat4(0),
+                        "An inactive incoming level carried a projection");
+                Require(during.matrices[level] == settled.matrices[level] && during.origins[level] == settled.origins[level],
+                        "Starting a light turn changed the presented clipmap");
+                Require(during.matrices[incoming] == target.matrices[level] && during.origins[incoming] == target.origins[level] &&
+                        during.metrics[incoming] == target.metrics[level], "The incoming clipmap differs from the new direction's");
+                Require(continued.matrices[incoming] == during.matrices[incoming] && continued.origins[incoming] == during.origins[incoming],
+                        "The incoming clipmap was not stable while the light turned");
+                Require(promoted.matrices[level] == continued.matrices[incoming] && promoted.origins[level] == continued.origins[incoming],
+                        "Promotion changed the incoming clipmap's projections");
+                Require(PLUTO_VSM_LEVEL_GRID(incoming, settled.levels.x) == PLUTO_VSM_LEVEL_GRID(level, settled.levels.x),
+                        "An incoming level's grid differs from its presented counterpart's");
+            }
+        }
         std::cout << "Virtual shadow clipmap policy passed\n";
         return 0;
     }

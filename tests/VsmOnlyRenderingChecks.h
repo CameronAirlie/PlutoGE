@@ -88,6 +88,40 @@ void CheckVsmOnlyRendering(PlutoGE::render::BasicRenderer &renderer, ReadPixels 
     caster.model[3].x = 0;
     for (int frame = 0; frame < 8; ++frame) renderSurface();
     std::cout << "VSM pool resizing and oversized-page freshness passed\n";
+    // A small light turn (a day cycle stepping the sun) must keep shadows on screen while the new direction's pages
+    // render, even when they take many frames: one page a frame needs more than the coarse root alone.
+    {
+        const auto shadowedCentre = static_cast<unsigned char>(shadowed[(32 * 64 + 32) * 4]);
+        const auto turnLight = [&](const glm::vec3 &direction)
+        {
+            lighting.directionalDirection = direction;
+            int frames = 0;
+            for (bool turning = true; turning; ++frames)
+            {
+                if (frames > int(VirtualShadowLightTransition::MaxTransitionFrames))
+                    throw std::runtime_error("VSM light turn did not complete");
+                renderSurface(); assertExclusive();
+                const auto &stats = renderer.GetFrameStats().virtualShadows;
+                turning = stats.lightTurnInProgress;
+                if (frames == 0 && !turning)
+                    throw std::runtime_error("A small VSM light turn cut over instead of transitioning");
+                if (turning && stats.lightTurnFrames + 1 >= VirtualShadowLightTransition::MaxTransitionFrames)
+                    throw std::runtime_error("VSM light turn completed only by its frame limit");
+                const auto centre = static_cast<unsigned char>(readPixels(renderer.GetColorTexture())[(32 * 64 + 32) * 4]);
+                if (centre > shadowedCentre + 16)
+                    throw std::runtime_error("VSM shadows disappeared while the light turned");
+            }
+            return frames;
+        };
+        lighting.virtualShadowPageBudget = 1;
+        const int frames = turnLight(glm::normalize(glm::vec3(std::sin(glm::radians(0.5f)), 0, -std::cos(glm::radians(0.5f)))));
+        lighting.virtualShadowPageBudget = 64;
+        (void)turnLight({0, 0, -1});
+        for (int frame = 0; frame < 8; ++frame) renderSurface();
+        if (readPixels(renderer.GetColorTexture()) != shadowed)
+            throw std::runtime_error("Turning the light back did not restore the settled VSM shadows");
+        std::cout << "VSM light turn kept shadows for " << frames << " frames at one page a frame\n";
+    }
     // Opaque fragment graphs do not alter shadow depth or coverage and must
     // not force a whole-scene fallback to cascades.
     auto graph = std::make_shared<ShaderGraphProgram>();

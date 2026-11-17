@@ -160,7 +160,71 @@ namespace PlutoGE::render
         const auto present = [](const auto &code) { return !code.glsl.empty() || !code.spirv.empty(); };
         return std::all_of(compute.begin(), compute.end(), present) && std::all_of(raster.begin(), raster.end(), present);
     }
+    namespace
+    {
+        // Fills the directional clipmap at level slots [base, base + root] for light `direction`. `previous`, when
+        // given, is the clipmap last built for the same direction, at `previousBase` of its parameters; its depth
+        // centre is kept while receivers remain well inside its envelope.
+        void BuildDirectionalClipmap(VirtualShadowParameters &result, std::uint32_t base, glm::vec3 direction,
+                                     const BasicLighting &lighting, const VirtualShadowParameters *previous,
+                                     std::uint32_t previousBase, float resolutionScale)
+        {
+            if (!std::isfinite(glm::dot(direction, direction)) || glm::dot(direction, direction) < 1.e-8f)
+                direction = glm::vec3(0, -1, 0);
+            direction = glm::normalize(direction);
+            const glm::vec3 up = std::abs(direction.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
+            const glm::mat4 view = glm::lookAt(glm::vec3(0), direction, up);
+            const glm::vec3 centre = glm::vec3(view * glm::vec4(lighting.cameraPosition, 1));
+            const float distance = std::max(lighting.shadowDistance, 8.0f);
+            const float casterDistance = lighting.shadowCasterDistance > 0 ? lighting.shadowCasterDistance : distance;
+            // A fixed depth envelope and coarse Z recenter preserve cached pages
+            // during normal travel. The envelope includes receivers and upstream casters.
+            const float depthRange = std::max(4.0f * (distance + casterDistance), 64.0f);
+            const float depthStep = depthRange / 8.0f;
+            float depthCentre = std::round(centre.z / depthStep) * depthStep;
+            // The root's projection carries the depth centre (any level would; the root always exists).
+            const auto previousRoot = previous ? previousBase + previous->levels.x : 0u;
+            if (previous && previous->metrics[previousRoot].y == depthRange)
+            {
+                // A round-to-nearest centre avoids a global invalidation at world
+                // zero. Hysteresis keeps the old projection across quantisation
+                // boundaries while receivers/casters still have ample depth room.
+                const float oldCentre = (previous->matrices[previousRoot][3][2] - 0.5f) * depthRange;
+                if (std::abs(centre.z - oldCentre) < depthRange * 0.25f)
+                    depthCentre = oldCentre;
+            }
+            // Projection epochs hash float bits; -0 and +0 are the same centre.
+            if (depthCentre == 0.0f) depthCentre = 0.0f;
+            // Fine levels 0..root-1 double in span up to twice the distance; the root covers the outermost one coarsely.
+            const int root = static_cast<int>(VirtualShadowFineLevels(distance));
+            result.levels.x = static_cast<std::uint32_t>(root);
+            for (int level = 0; level <= root; ++level)
+            {
+                // Keep the resident root projection unchanged while fine coverage
+                // adapts, so refinement changes never discard the safety coverage.
+                const float scale = level == root ? 1.0f : resolutionScale;
+                const float span = std::ldexp(2.0f * distance * scale, std::min(level, root - 1) - (root - 1));
+                const int grid = PLUTO_VSM_LEVEL_GRID(level, root);
+                const float page = span / grid;
+                const glm::ivec2 origin = glm::ivec2(glm::floor(glm::vec2(centre) / page)) - grid / 2;
+                glm::mat4 projection(1);
+                projection[0][0] = projection[1][1] = 2.0f / span;
+                projection[2][2] = -1.0f / depthRange;
+                projection[3][0] = -1.0f - 2.0f * origin.x / grid;
+                projection[3][1] = -1.0f - 2.0f * origin.y / grid;
+                projection[3][2] = 0.5f + depthCentre / depthRange;
+                result.matrices[base + level] = projection * view;
+                result.origins[base + level] = glm::ivec4(origin, static_cast<int>(ProjectionEpoch(view, depthCentre, depthRange, span)), 0);
+                result.metrics[base + level] = {span / (grid * PLUTO_VSM_PAGE_SIZE), depthRange, page, span};
+            }
+        }
+    }
     VirtualShadowParameters VirtualShadowMaps::BuildClipmaps(const BasicLighting &lighting,
+                                                                  const VirtualShadowParameters *previous, float resolutionScale)
+    {
+        return BuildClipmaps(lighting, VirtualShadowLightTurn{lighting.directionalDirection}, previous, resolutionScale);
+    }
+    VirtualShadowParameters VirtualShadowMaps::BuildClipmaps(const BasicLighting &lighting, const VirtualShadowLightTurn &turn,
                                                                   const VirtualShadowParameters *previous, float resolutionScale)
     {
         VirtualShadowParameters result;
@@ -170,54 +234,16 @@ namespace PlutoGE::render
         result.culling = {std::clamp(lighting.virtualShadowCoarseMinCasterTexels, 0.0f, 4.0f),
                           std::max(lighting.wind.shadowSwayDistance, 0.0f),
                           std::isfinite(lighting.wind.shadowSwayMinTexels) ? std::max(lighting.wind.shadowSwayMinTexels, 0.0f) : 0.0f, 0};
-        glm::vec3 direction = lighting.directionalDirection;
-        if (!std::isfinite(glm::dot(direction, direction)) || glm::dot(direction, direction) < 1.e-8f)
-            direction = glm::vec3(0, -1, 0);
-        direction = glm::normalize(direction);
-        const glm::vec3 up = std::abs(direction.y) > 0.99f ? glm::vec3(0, 0, 1) : glm::vec3(0, 1, 0);
-        const glm::mat4 view = glm::lookAt(glm::vec3(0), direction, up);
-        const glm::vec3 centre = glm::vec3(view * glm::vec4(lighting.cameraPosition, 1));
-        const float distance = std::max(lighting.shadowDistance, 8.0f);
-        const float casterDistance = lighting.shadowCasterDistance > 0 ? lighting.shadowCasterDistance : distance;
-        // A fixed depth envelope and coarse Z recenter preserve cached pages
-        // during normal travel. The envelope includes receivers and upstream casters.
-        const float depthRange = std::max(4.0f * (distance + casterDistance), 64.0f);
-        const float depthStep = depthRange / 8.0f;
-        float depthCentre = std::round(centre.z / depthStep) * depthStep;
-        // The root's projection carries the depth centre (any level would; the root always exists).
-        if (previous && previous->metrics[previous->levels.x].y == depthRange)
+        // A promoted clipmap continues the incoming one: same projection, so its pages stay resident.
+        BuildDirectionalClipmap(result, 0, turn.presented, lighting, previous,
+                                turn.promote ? PLUTO_VSM_INCOMING_BASE : 0u, resolutionScale);
+        if (turn.incoming)
         {
-            // A round-to-nearest centre avoids a global invalidation at world
-            // zero. Hysteresis keeps the old projection across quantisation
-            // boundaries while receivers/casters still have ample depth room.
-            const float oldCentre = (previous->matrices[previous->levels.x][3][2] - 0.5f) * depthRange;
-            if (std::abs(centre.z - oldCentre) < depthRange * 0.25f)
-                depthCentre = oldCentre;
+            const bool continues = previous && previous->transition.x != 0 && !turn.promote;
+            BuildDirectionalClipmap(result, PLUTO_VSM_INCOMING_BASE, *turn.incoming, lighting,
+                                    continues ? previous : nullptr, PLUTO_VSM_INCOMING_BASE, resolutionScale);
         }
-        // Projection epochs hash float bits; -0 and +0 are the same centre.
-        if (depthCentre == 0.0f) depthCentre = 0.0f;
-        // Fine levels 0..root-1 double in span up to twice the distance; the root covers the outermost one coarsely.
-        const int root = static_cast<int>(VirtualShadowFineLevels(distance));
-        result.levels = {static_cast<std::uint32_t>(root), 0, 0, 0};
-        for (int level = 0; level <= root; ++level)
-        {
-            // Keep the resident root projection unchanged while fine coverage
-            // adapts, so refinement changes never discard the safety coverage.
-            const float scale = level == root ? 1.0f : resolutionScale;
-            const float span = std::ldexp(2.0f * distance * scale, std::min(level, root - 1) - (root - 1));
-            const int grid = PLUTO_VSM_LEVEL_GRID(level, root);
-            const float page = span / grid;
-            const glm::ivec2 origin = glm::ivec2(glm::floor(glm::vec2(centre) / page)) - grid / 2;
-            glm::mat4 projection(1);
-            projection[0][0] = projection[1][1] = 2.0f / span;
-            projection[2][2] = -1.0f / depthRange;
-            projection[3][0] = -1.0f - 2.0f * origin.x / grid;
-            projection[3][1] = -1.0f - 2.0f * origin.y / grid;
-            projection[3][2] = 0.5f + depthCentre / depthRange;
-            result.matrices[level] = projection * view;
-            result.origins[level] = glm::ivec4(origin, static_cast<int>(ProjectionEpoch(view, depthCentre, depthRange, span)), 0);
-            result.metrics[level] = {span / (grid * PLUTO_VSM_PAGE_SIZE), depthRange, page, span};
-        }
+        result.transition = {turn.incoming ? 1u : 0u, turn.promote ? 1u : 0u, 0, 0};
         int spotShadowCount = 0;
         for (std::size_t index = 0; index < std::min(lighting.spotLights.size(), std::size_t{16}) && spotShadowCount < PLUTO_VSM_SPOT_COUNT; ++index)
         {
@@ -413,7 +439,15 @@ namespace PlutoGE::render
                 m_stats->directionalFineRequested, m_stats->directionalFineResident,
                 // Do not create another refinement backlog while existing updates are deferred.
                 m_stats->deferred == 0 ? m_stats->directionalFineCapacity : 0u);
-        auto parameters = BuildClipmaps(lighting, m_frame != 0 ? &m_previousClipmaps : nullptr, m_resolutionPolicy.Scale());
+        // The frame being prepared, as m_frame becomes below and the GPU counters report it.
+        const std::uint32_t frame = m_frame + 1 == 0 ? 1u : m_frame + 1;
+        const bool directionalCached = m_frame != 0 && lighting.shadowsEnabled && lighting.shadowMethod == ShadowMethod::Virtual;
+        std::optional<VirtualShadowLightTransition::Observation> observation;
+        if (m_stats->gpuCountersAvailable) observation = {m_stats->gpuFrame, m_stats->incomingPending};
+        const auto turn = m_lightTransition.Advance(lighting.directionalDirection, frame, directionalCached, observation);
+        m_stats->lightTurnInProgress = m_lightTransition.InProgress();
+        m_stats->lightTurnFrames = m_lightTransition.InProgress() ? frame - m_lightTransition.StartFrame() : 0u;
+        auto parameters = BuildClipmaps(lighting, turn, m_frame != 0 ? &m_previousClipmaps : nullptr, m_resolutionPolicy.Scale());
         m_batchPages = lighting.virtualShadowBatching && device.GetImmediateContext().MaxIndexedIndirectBatchSize() > 0;
         parameters.scheduling.z = m_batchPages ? 1u : 0u;
         auto preparationProjection = parameters;
@@ -828,10 +862,12 @@ namespace PlutoGE::render
         m_preparationProjection = preparationProjection;
         for (std::size_t level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            const bool stable = m_frame != 0 && parameters.matrices[level] == m_previousClipmaps.matrices[level] &&
-                parameters.metrics[level] == m_previousClipmaps.metrics[level] && parameters.origins[level] == m_previousClipmaps.origins[level] && parameters.culling == m_previousClipmaps.culling;
+            // A promoted level continues its incoming counterpart, whose pages (and their memberships) it takes over.
+            const std::size_t source = turn.promote && level < PLUTO_VSM_INCOMING_BASE ? level + PLUTO_VSM_INCOMING_BASE : level;
+            const bool stable = m_frame != 0 && parameters.matrices[level] == m_previousClipmaps.matrices[source] &&
+                parameters.metrics[level] == m_previousClipmaps.metrics[source] && parameters.origins[level] == m_previousClipmaps.origins[source] && parameters.culling == m_previousClipmaps.culling;
             parameters.membershipEpochs[level / 4][level % 4] = stable
-                ? m_previousClipmaps.membershipEpochs[level / 4][level % 4] : m_frame + 1;
+                ? m_previousClipmaps.membershipEpochs[source / 4][source % 4] : m_frame + 1;
         }
         m_previousClipmaps = parameters;
         parameters.viewProjection = viewProjection;
@@ -1146,6 +1182,7 @@ namespace PlutoGE::render
                 stats->triangleBudgetDeferred = values[PLUTO_VSM_STATS_TRIANGLE_DEFERRED]; stats->pageBudgetDeferred = values[PLUTO_VSM_STATS_PAGE_DEFERRED];
                 stats->newDirty = values[PLUTO_VSM_STATS_NEW_DIRTY]; stats->changedDirty = values[PLUTO_VSM_STATS_CHANGED_DIRTY];
                 stats->staticDirty = values[PLUTO_VSM_STATS_STATIC_DIRTY];
+                stats->incomingPending = values[PLUTO_VSM_STATS_INCOMING_PENDING];
                 stats->gpuFrame = frame; stats->gpuCountersAvailable = true;
             }
         });

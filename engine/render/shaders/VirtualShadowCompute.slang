@@ -31,6 +31,23 @@ void addDirtyTriangleCost(uint level, uint cost)
     }
 }
 
+// Whether every page of `level` is requested each frame: the coarse roots of the directional clipmaps in use and of the
+// active spot lights, which back finer levels wherever they are not resident.
+bool rootRequested(uint level)
+{
+    if (level < PLUTO_VSM_DIRECTIONAL_LEVELS)
+        return vsm.camera.w > 0.5 && virtualDirectionalRoot(vsm, level) && virtualLevelActive(vsm, level);
+    return level >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[level].w != 0;
+}
+// A page as the frame that promotes the incoming clipmap finds it: incoming pages move to their presented levels, whose
+// projections the presented clipmap now carries, and the old presented pages (the previous direction) are released.
+VirtualShadowPage promotedPage(VirtualShadowPage p)
+{
+    const uint level = p.address.z;
+    if (virtualIncomingLevel(level)) p.address.z = int(virtualPresentedLevel(level));
+    else if (level < PLUTO_VSM_INCOMING_BASE) p = (VirtualShadowPage)0;
+    return p;
+}
 [shader("compute")][numthreads(64, 1, 1)]
 void resetMain(uint3 id : SV_DispatchThreadID)
 {
@@ -40,17 +57,20 @@ void resetMain(uint3 id : SV_DispatchThreadID)
         uint2 at = virtualPageCoordinate(index);
         const uint level = index / PLUTO_VSM_LEVEL_PAGES;
         const uint2 local = virtualPageCoordinate(index % PLUTO_VSM_LEVEL_PAGES);
-        const bool root = ((level == virtualRootLevel(vsm) && vsm.camera.w > 0.5) || (level >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[level].w != 0)) && all(local < virtualGrid(vsm, level));
+        const bool root = rootRequested(level) && all(local < virtualGrid(vsm, level));
         requestMask[at] = root ? 1u : 0u;
         pageTable[at] = 0;
         if (root)
             requests[PLUTO_VSM_LEVELS + level * PLUTO_VSM_LEVEL_PAGES + local.y * virtualGrid(vsm, level) + local.x] =
                 local.y * PLUTO_VSM_GRID + local.x;
     }
-    if (index < PLUTO_VSM_LEVELS) requests[index] = ((index == virtualRootLevel(vsm) && vsm.camera.w > 0.5) || (index >= PLUTO_VSM_SPOT_ROOT_BASE && vsm.origins[index].w != 0)) ? virtualGrid(vsm, index) * virtualGrid(vsm, index) : 0;
+    if (index < PLUTO_VSM_LEVELS) requests[index] = rootRequested(index) ? virtualGrid(vsm, index) * virtualGrid(vsm, index) : 0;
     if (index < PLUTO_VSM_COUNTER_COUNT) stats[index] = 0;
-    if (index < vsm.pool.x && vsm.settings.z > 0.5)
-        pages[index] = (VirtualShadowPage)0;
+    if (index < vsm.pool.x)
+    {
+        if (vsm.settings.z > 0.5) pages[index] = (VirtualShadowPage)0;
+        else if (virtualIncomingPromoted(vsm)) pages[index] = promotedPage(pages[index]);
+    }
 }
 float3 reconstruct(uint2 pixel, float depth)
 {
@@ -113,6 +133,15 @@ void requestMain(uint3 id : SV_DispatchThreadID, uint lane : SV_GroupIndex)
         if (virtualLevelBlend(vsm, level, world, footprint) > 0.0)
             requestFootprint(world, level + 1);
     }
+    // While the light turns, the incoming clipmap requests what the presented one will need once it takes over.
+    const int incoming = vsm.camera.w > 0.5 && virtualIncomingActive(vsm)
+        ? selectVirtualLevel(vsm, world, footprint, PLUTO_VSM_INCOMING_BASE) : -1;
+    if (incoming >= 0)
+    {
+        requestFootprint(world, incoming);
+        if (virtualLevelBlend(vsm, incoming, world, footprint, PLUTO_VSM_INCOMING_BASE) > 0.0)
+            requestFootprint(world, incoming + 1);
+    }
     for (uint spot = PLUTO_VSM_DIRECTIONAL_LEVELS; spot < PLUTO_VSM_SPOT_ROOT_BASE; ++spot)
     {
         if (vsm.origins[spot].w == 0) continue;
@@ -149,7 +178,8 @@ bool pageRetained(VirtualShadowPage p)
 {
     int level = p.address.z;
     int2 local = p.address.xy - vsm.origins[level].xy;
-    return p.state.y != 0 && p.address.w == vsm.origins[level].z && all(local >= 0) && all(local < int(virtualGrid(vsm, level)));
+    return p.state.y != 0 && virtualLevelActive(vsm, level) && p.address.w == vsm.origins[level].z &&
+        all(local >= 0) && all(local < int(virtualGrid(vsm, level)));
 }
 // Frames a page may go unrequested before it is preferred for reuse over recently requested pages.
 #define VSM_STALE_PAGE_FRAMES 32u
@@ -178,11 +208,14 @@ void allocateMain(uint lane : SV_GroupIndex)
     }
     if (lane == 0)
     {
+        // The presented clipmap and the spot lights share the pool first; the incoming clipmap takes only what they
+        // leave spare, so a light turn never costs the shadows on screen any coverage.
         uint requested[PLUTO_VSM_LEVELS];
         uint reserved = 0, fineLevels = 0;
         for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
             requested[level] = requests[level];
+            if (virtualIncomingLevel(level)) continue;
             if (virtualCoarseLevel(vsm, level)) reserved += requested[level];
             else if (requested[level] != 0) ++fineLevels;
         }
@@ -190,7 +223,8 @@ void allocateMain(uint lane : SV_GroupIndex)
         uint spare = vsm.pool.x;
         for (uint level = 0; level < PLUTO_VSM_LEVELS; ++level)
         {
-            planQuotas[level] = min(requested[level], virtualCoarseLevel(vsm, level) ? requested[level] : fineCapacity / max(1u, fineLevels));
+            planQuotas[level] = virtualIncomingLevel(level) ? 0u :
+                min(requested[level], virtualCoarseLevel(vsm, level) ? requested[level] : fineCapacity / max(1u, fineLevels));
             spare -= planQuotas[level];
         }
         // Round-robin the spare pages; stop once a round grants nothing
@@ -199,6 +233,18 @@ void allocateMain(uint lane : SV_GroupIndex)
         {
             bool granted = false;
             for (uint level = 0; level < PLUTO_VSM_LEVELS && spare > 0; ++level)
+                if (!virtualIncomingLevel(level) && planQuotas[level] < requested[level])
+                { ++planQuotas[level]; --spare; granted = true; }
+            if (!granted) break;
+        }
+        // The incoming root first, so the whole new direction has coarse coverage, then its fine levels in turn.
+        const uint incomingRoot = PLUTO_VSM_INCOMING_BASE + virtualRootLevel(vsm);
+        planQuotas[incomingRoot] = min(requested[incomingRoot], spare);
+        spare -= planQuotas[incomingRoot];
+        for (uint round = 0; round < vsm.pool.x && spare > 0; ++round)
+        {
+            bool granted = false;
+            for (uint level = PLUTO_VSM_INCOMING_BASE; level < incomingRoot && spare > 0; ++level)
                 if (planQuotas[level] < requested[level]) { ++planQuotas[level]; --spare; granted = true; }
             if (!granted) break;
         }
@@ -296,6 +342,7 @@ void allocateMain(uint lane : SV_GroupIndex)
             stats[0] += requests[level];
             stats[1] += planCounts[level];
             if (level < virtualRootLevel(vsm)) { stats[11] += requests[level]; stats[12] += planCounts[level]; }
+            else if (virtualIncomingLevel(level)) stats[PLUTO_VSM_STATS_INCOMING_PENDING] += requests[level] - planCounts[level];
             else if (!virtualCoarseLevel(vsm, level)) { stats[14] += requests[level]; localResident += planCounts[level]; }
         }
         stats[5] = stats[0] - stats[1];
@@ -324,7 +371,7 @@ PageBounds pageBounds(VirtualShadowPage page)
         float4(0,1,0,-lo.y), float4(0,-1,0,hi.y), float4(0,0,1,0), float4(0,0,-1,1)};
     for (int i = 0; i < 6; ++i)
         bounds.planes[i] = mul(clipPlanes[i], vsm.matrices[level]);
-    bounds.minimumRadius = level == virtualRootLevel(vsm) ? vsm.metrics[level].x * vsm.culling.x : -1.0;
+    bounds.minimumRadius = virtualDirectionalRoot(vsm, level) ? vsm.metrics[level].x * vsm.culling.x : -1.0;
     return bounds;
 }
 // Conservative bounds/page test. `extents` is a world AABB around sphere.xyz, or negative to test the sphere alone.
@@ -437,7 +484,7 @@ void signatureMain(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
         const uint4 casterIdentity = casters[index].identity;
         // A chunk serving other levels (a LOD variant) never reaches the page, and its membership record for the page
         // is neither read nor written: binMain applies the same test before reading one.
-        if (((casterIdentity.w >> p.address.z) & 1u) == 0) continue;
+        if (!virtualLevelInMask(casterIdentity.w, p.address.z)) continue;
         const uint at = membershipRecord(index, group.x);
         uint2 cached = membership[at];
         const bool stale = cached.x == 0 || cached.x < casterIdentity.z || cached.x < p.pending.w;
@@ -531,8 +578,13 @@ void budgetMain(uint lane : SV_GroupIndex)
                     InterlockedMax(stats[PLUTO_VSM_STATS_HISTORICAL_AGE], vsm.limits.y - p.signature.z);
                     addDirtyTriangleCost(p.address.z, p.pending.z);
                     InterlockedMax(stats[PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES], p.pending.z);
-                    uint priority = age >= vsm.scheduling.x ? 4u :
-                        (p.state.z == 0 && virtualCoarseLevel(vsm, p.address.z) ? 3u : p.state.z != 0 ? 2u : 1u);
+                    // Overdue pages first, then the presented clipmap's new coarse coverage, its changed shadows and
+                    // its new fine coverage, and last the incoming clipmap (coarse first), which nothing samples yet.
+                    // Incoming pages still age into the overdue class, so a light turn completes under any load.
+                    const bool coarse = virtualCoarseLevel(vsm, p.address.z);
+                    uint priority = age >= vsm.scheduling.x ? 6u
+                        : virtualIncomingLevel(p.address.z) ? (coarse ? 2u : 1u)
+                        : p.state.z == 0 && coarse ? 5u : p.state.z != 0 ? 4u : 3u;
                     candidate = uint4(priority, age, p.pending.z, index);
                     InterlockedAdd(stats[2], 1);
                     InterlockedAdd(stats[p.state.z != 0 ? PLUTO_VSM_STATS_CHANGED_DIRTY : PLUTO_VSM_STATS_NEW_DIRTY], 1);
@@ -642,5 +694,7 @@ void publishMain(uint3 id : SV_DispatchThreadID)
     }
     if (p.state.z != 0)
         pageTable[virtualPageCoordinate(p.state.x) + uint2(0, p.address.z * PLUTO_VSM_GRID)] = float(id.x + 1);
+    else if (virtualIncomingLevel(p.address.z))
+        InterlockedAdd(stats[PLUTO_VSM_STATS_INCOMING_PENDING], 1u);
     pages[id.x] = p;
 }

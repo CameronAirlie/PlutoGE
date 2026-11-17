@@ -2,11 +2,18 @@
 // Shared by C++ and Slang. Keep addressing and resource sizes in one place.
 // Directional clipmaps: fine levels 0..N-1, each twice the span of the last, then the coarse root at level N. N grows
 // with the shadow distance (VirtualShadowParameters::levels.x) so the finest level stays at most
-// PLUTO_VSM_MAX_FINEST_SPAN metres across; level slots above the root, up to the spot levels, are unused.
+// PLUTO_VSM_MAX_FINEST_SPAN metres across; level slots above the root, up to the next clipmap, are unused.
 #define PLUTO_VSM_MIN_FINE_LEVELS 4
 #define PLUTO_VSM_MAX_FINE_LEVELS 8
 #define PLUTO_VSM_MAX_FINEST_SPAN 64.0
-#define PLUTO_VSM_DIRECTIONAL_LEVELS (PLUTO_VSM_MAX_FINE_LEVELS + 1)
+// Level slots of one directional clipmap.
+#define PLUTO_VSM_CLIPMAP_LEVELS (PLUTO_VSM_MAX_FINE_LEVELS + 1)
+// Two directional clipmaps: the presented one (slots 0.., the only one receivers sample) and, while the light turns, the
+// incoming one (slots PLUTO_VSM_INCOMING_BASE..) for the new direction. The incoming clipmap is planned and rendered in
+// the background and becomes the presented one once resident (VirtualShadowLightTransition.h), so a turning light never
+// leaves receivers without shadows. Incoming levels mirror their presented counterparts' grids, texels and caster LODs.
+#define PLUTO_VSM_INCOMING_BASE PLUTO_VSM_CLIPMAP_LEVELS
+#define PLUTO_VSM_DIRECTIONAL_LEVELS (2 * PLUTO_VSM_CLIPMAP_LEVELS)
 #define PLUTO_VSM_SPOT_COUNT 4
 #define PLUTO_VSM_SPOT_GRID 16
 #define PLUTO_VSM_SPOT_ROOT_GRID 2
@@ -17,7 +24,7 @@
 #define PLUTO_VSM_ROOT_GRID 8
 #define PLUTO_VSM_ROOT_PAGES (PLUTO_VSM_ROOT_GRID * PLUTO_VSM_ROOT_GRID)
 // Virtual pages per axis of `level` when the directional root is level `root` (spot fine levels scale by resolution).
-#define PLUTO_VSM_LEVEL_GRID(level, root) ((level) >= PLUTO_VSM_SPOT_ROOT_BASE ? PLUTO_VSM_SPOT_ROOT_GRID : ((level) >= PLUTO_VSM_DIRECTIONAL_LEVELS ? PLUTO_VSM_SPOT_GRID : ((level) == (root) ? PLUTO_VSM_ROOT_GRID : PLUTO_VSM_GRID)))
+#define PLUTO_VSM_LEVEL_GRID(level, root) ((level) >= PLUTO_VSM_SPOT_ROOT_BASE ? PLUTO_VSM_SPOT_ROOT_GRID : ((level) >= PLUTO_VSM_DIRECTIONAL_LEVELS ? PLUTO_VSM_SPOT_GRID : (((level) % PLUTO_VSM_CLIPMAP_LEVELS) == (root) ? PLUTO_VSM_ROOT_GRID : PLUTO_VSM_GRID)))
 #define PLUTO_VSM_GRID 128
 #define PLUTO_VSM_PAGE_SIZE 128
 #define PLUTO_VSM_ATLAS_TILES 32
@@ -33,7 +40,9 @@
 #define PLUTO_VSM_STATS_CHANGED_DIRTY (PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES + 4)
 // Dirty pages whose update redraws the static casters (with a static layer; otherwise every dirty page).
 #define PLUTO_VSM_STATS_STATIC_DIRTY (PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES + 5)
-#define PLUTO_VSM_COUNTER_COUNT (((PLUTO_VSM_STATS_STATIC_DIRTY + 64) / 64) * 64)
+// Requested pages of the incoming clipmap without depth after this frame's updates: zero once it can be presented.
+#define PLUTO_VSM_STATS_INCOMING_PENDING (PLUTO_VSM_STATS_MAX_DIRTY_TRIANGLES + 6)
+#define PLUTO_VSM_COUNTER_COUNT (((PLUTO_VSM_STATS_INCOMING_PENDING + 64) / 64) * 64)
 #define PLUTO_VSM_PAGE_METADATA_BYTES 96
 #define PLUTO_VSM_CAPACITY (PLUTO_VSM_ATLAS_TILES * PLUTO_VSM_ATLAS_TILES)
 #define PLUTO_VSM_RESOLUTION (PLUTO_VSM_GRID * PLUTO_VSM_PAGE_SIZE)

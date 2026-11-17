@@ -14,8 +14,18 @@ struct VirtualShadowParameters
     uint4 scheduling; // maximum preferred dirty age, allow oversized page, unused
     float4 culling; // minimum coarse caster radius in texels, shadow sway distance (0 = everywhere), shadow sway minimum texels, unused
     uint4 levels; // directional root level (= active fine levels), static layer generation (0 = none), unused
+    uint4 transition; // incoming clipmap active, incoming clipmap promoted this frame, unused, unused
     uint4 membershipEpochs[(PLUTO_VSM_LEVELS + 3) / 4];
 };
+// The incoming clipmap (PLUTO_VSM_INCOMING_BASE): rendered for the new direction while the light turns, and presented
+// once resident. Receivers sample only the presented clipmap (levels 0..virtualRootLevel).
+bool virtualIncomingActive(VirtualShadowParameters p) { return p.transition.x != 0; }
+bool virtualIncomingPromoted(VirtualShadowParameters p) { return p.transition.y != 0; }
+bool virtualIncomingLevel(uint level) { return level >= PLUTO_VSM_INCOMING_BASE && level < PLUTO_VSM_DIRECTIONAL_LEVELS; }
+// The presented level an incoming level mirrors (its grid, texels and caster LODs); other levels are their own.
+uint virtualPresentedLevel(uint level) { return virtualIncomingLevel(level) ? level - PLUTO_VSM_INCOMING_BASE : level; }
+// Whether a caster level mask (one bit per presented or spot level) includes `level`.
+bool virtualLevelInMask(uint mask, uint level) { return ((mask >> virtualPresentedLevel(level)) & 1u) != 0; }
 struct VirtualShadowPage
 {
     int4 address; // absolute page XY, level, projection epoch
@@ -43,7 +53,7 @@ struct VirtualShadowCaster
 };
 // A caster chunk draws only into pages of the levels it serves: LOD variants of one chunk split the levels between
 // them by texel size (VirtualShadowCasterLods.h). Other chunks serve PLUTO_VSM_ALL_LEVELS.
-bool virtualCasterServesLevel(VirtualShadowCaster caster, uint level) { return ((caster.identity.w >> level) & 1u) != 0; }
+bool virtualCasterServesLevel(VirtualShadowCaster caster, uint level) { return virtualLevelInMask(caster.identity.w, level); }
 // Masked chunks list one entry per (page, instance); others one entry per page, drawn for every model.
 bool virtualMaskedCaster(VirtualShadowCaster caster) { return caster.draw.z <= PLUTO_VSM_MASKED_INSTANCES; }
 bool virtualMaskedModelCount(uint models) { return models <= PLUTO_VSM_MASKED_INSTANCES; }
@@ -64,9 +74,18 @@ uint virtualGrid(VirtualShadowParameters p, uint level)
         ? p.pool.w : PLUTO_VSM_LEVEL_GRID(level, virtualRootLevel(p));
 }
 uint virtualResolution(VirtualShadowParameters p, uint level) { return virtualGrid(p, level) * PLUTO_VSM_PAGE_SIZE; }
+bool virtualDirectionalRoot(VirtualShadowParameters p, uint level)
+{
+    return level < PLUTO_VSM_DIRECTIONAL_LEVELS && virtualPresentedLevel(level) == virtualRootLevel(p);
+}
 bool virtualCoarseLevel(VirtualShadowParameters p, uint level)
 {
-    return level == virtualRootLevel(p) || level >= PLUTO_VSM_SPOT_ROOT_BASE;
+    return virtualDirectionalRoot(p, level) || level >= PLUTO_VSM_SPOT_ROOT_BASE;
+}
+// Whether a level holds pages this frame: incoming levels only while the light turns.
+bool virtualLevelActive(VirtualShadowParameters p, uint level)
+{
+    return !virtualIncomingLevel(level) || virtualIncomingActive(p);
 }
 float3 virtualCoordinate(VirtualShadowParameters p, uint level, float3 world)
 {
@@ -85,11 +104,13 @@ float virtualReceiverFootprint(VirtualShadowParameters p, float3 world)
     return max(length((dx.xyz - world * dx.w) / (1.0 + dx.w)),
                length((dy.xyz - world * dy.w) / (1.0 + dy.w)));
 }
-int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
+// The level of the directional clipmap at `base` (the presented one, or PLUTO_VSM_INCOMING_BASE) whose texels suit a
+// receiver footprint at `world`, or -1 outside it.
+int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint, int base = 0)
 {
     footprint *= max(p.settings.w, 1.0);
-    const int root = int(virtualRootLevel(p));
-    for (int level = 0; level <= root; ++level)
+    const int root = base + int(virtualRootLevel(p));
+    for (int level = base; level <= root; ++level)
     {
         float3 uv = virtualCoordinate(p, level, world);
         float guard = 7.0 / virtualResolution(p, level);
@@ -102,10 +123,10 @@ int selectVirtualLevel(VirtualShadowParameters p, float3 world, float footprint)
 
 // Match shading and residency at clipmap/footprint transitions. Start blending
 // before the level selector advances, ending at exactly the selector boundary.
-float virtualLevelBlend(VirtualShadowParameters p, int level, float3 world, float footprint)
+float virtualLevelBlend(VirtualShadowParameters p, int level, float3 world, float footprint, int base = 0)
 {
-    const int root = int(virtualRootLevel(p));
-    if (level < 0 || level >= root) return 0.0;
+    const int root = base + int(virtualRootLevel(p));
+    if (level < base || level >= root) return 0.0;
     float3 uv = virtualCoordinate(p, level, world);
     float edge = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
     float guard = 7.0 / virtualResolution(p, level);

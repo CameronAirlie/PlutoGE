@@ -35,6 +35,10 @@ namespace PlutoGE::render
         std::uint32_t maxDirtyPageTriangles = 0, triangleBudgetDeferred = 0, pageBudgetDeferred = 0;
         // Dirty pages split by cause: new coverage without depth, and resident pages whose casters changed.
         std::uint32_t newDirty = 0, changedDirty = 0, staticDirty = 0;
+        // A light turn in progress (VirtualShadowLightTransition): the frames since it started, and the incoming
+        // clipmap's requested pages not yet resident (a GPU-frame observation).
+        bool lightTurnInProgress = false;
+        std::uint32_t lightTurnFrames = 0, incomingPending = 0;
         // Dynamic caster chunks (drawn over the static layer) of the current frame, and whether that layer exists.
         std::uint32_t dynamicCasterChunks = 0;
         bool staticLayer = false;

@@ -169,6 +169,12 @@ The `WIND_RESPONSE` fields are stiffness, flutter, bend height and pivot height.
 Older scenes and assets have none of these keys and load with wind off, so they do not move until a type opts in.
 Values are sanitized on load and in `SetTypeWind`.
 
+A `MeshComponent` can sway the same way (`MeshComponent::SetWind`; `Wind`, `Wind Stiffness`, `Wind Flutter`,
+`Wind Bend Height` and `Wind Pivot Height`, saved only when on and always shown in the inspector). Its draws carry the
+response, and their bounds grow by the sway as foliage clusters' do. A foliage proxy's meshes showing the type's mesh
+take the type's response when the instance is promoted ([Interactive foliage](FOLIAGE.md#interactive-foliage-proxies)),
+so a plant does not freeze as it becomes an entity.
+
 `WindComponent` serializes `Direction`, `Speed`, `Gustiness`, `Gust Size`, `Shadow Sway Distance` (scenes saved
 before it load with 30 m) and `Shadow Sway Min Texels` (scenes saved before it load with 1). Malformed values keep
 their defaults,

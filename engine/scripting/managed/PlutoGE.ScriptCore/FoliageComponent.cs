@@ -5,7 +5,8 @@ namespace PlutoGE.ScriptCore;
 
 /// <summary>
 /// Painted foliage: many copies of a few plants, drawn and collided with as instances rather than entities. Scripts
-/// find instances (by a ray's <see cref="RaycastHit.FoliageInstance"/>, or near a point) and promote the ones gameplay
+/// find instances (by a ray's <see cref="RaycastHit.FoliageInstance"/>, near a point here, or across the scene by
+/// interaction tag with <see cref="Foliage.FindInstances"/>) and promote the ones gameplay
 /// needs into full entities. See <see cref="FoliageInstance"/> and docs/FOLIAGE.md, "Interactive foliage".
 /// </summary>
 public sealed class FoliageComponent : ComponentReference
@@ -33,14 +34,53 @@ public sealed class FoliageComponent : ComponentReference
     }
 }
 
-/// <summary>What a foliage instance is and where it stands.</summary>
+/// <summary>
+/// Queries over all the scene's foliage at once: painted foliage, foliage in prefabs and the tiles a terrain world streams
+/// in. See docs/FOLIAGE.md, "Interactive foliage".
+/// </summary>
+public static class Foliage
+{
+    /// <summary>
+    /// The instances whose pivot is within <paramref name="radius"/> metres of <paramref name="center"/>, nearest first,
+    /// from every active foliage component. Promoted instances are not among them: their proxies are entities.
+    /// </summary>
+    /// <param name="interactionTag">
+    /// Only instances of types carrying this interaction tag (set on the type, "Gather" say); null or empty for any type.
+    /// Tags let gameplay find "what the player can pick here" without collision or promoting anything.
+    /// </param>
+    /// <param name="requireProxy">Only instances of types with a proxy prefab, which <see cref="FoliageInstance.TryPromote(out GameObject)"/> can turn into entities.</param>
+    /// <example>
+    /// <code>
+    /// foreach (var plant in Foliage.FindInstances(eye, 2.5f, "Gather"))
+    ///     if (plant.TryGetInfo(out var info)) Debug.Log($"{info.TypeName} at {info.Position}");
+    /// </code>
+    /// </example>
+    public static FoliageInstance[] FindInstances(Vector3 center, float radius, string? interactionTag = null, bool requireProxy = false)
+    {
+        if (!float.IsFinite(radius) || radius < 0.0f)
+            return [];
+        var matches = ScriptBridge.FoliageFindInScene(ScriptBridge.NativeVector3.FromManaged(center), radius, interactionTag ?? string.Empty,
+                                                      requireProxy);
+        var instances = new FoliageInstance[matches.Length];
+        for (var index = 0; index < matches.Length; index++)
+            instances[index] = new FoliageInstance(matches[index].FoliageEntity, matches[index].InstanceId);
+        return instances;
+    }
+}
+
+/// <summary>
+/// What a foliage instance is and where it stands. <see cref="BoundsMin"/> and <see cref="BoundsMax"/> are the world box
+/// round what it draws (both the pivot when the mesh is not loaded): how tall a plant is, where to aim at it.
+/// </summary>
 public readonly record struct FoliageInstanceInfo(
     int TypeIndex,
     string TypeName,
     Vector3 Position,
     Quaternion Rotation,
     Vector3 Scale,
-    bool HasProxyPrefab);
+    bool HasProxyPrefab,
+    Vector3 BoundsMin = default,
+    Vector3 BoundsMax = default);
 
 /// <summary>
 /// One placed instance of a <see cref="FoliageComponent"/>, by the ID that stays the same while other instances come
@@ -86,7 +126,8 @@ public readonly struct FoliageInstance : IEquatable<FoliageInstance>
         if (!ScriptBridge.ControlFoliage(FoliageEntityId, ScriptBridge.FoliageOperation.GetInstance, ref request) || request.Result == 0)
             return false;
         info = new FoliageInstanceInfo(request.TypeIndex, ScriptBridge.FoliageRequestName(ref request), request.Position.ToManaged(),
-                                       request.Rotation.ToManaged(), request.Scale.ToManaged(), request.HasProxyPrefab != 0);
+                                       request.Rotation.ToManaged(), request.Scale.ToManaged(), request.HasProxyPrefab != 0,
+                                       request.BoundsMin.ToManaged(), request.BoundsMax.ToManaged());
         return true;
     }
 

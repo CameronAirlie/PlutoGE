@@ -738,11 +738,15 @@ released. See [Interactive foliage](FOLIAGE.md#interactive-foliage-proxies).
 FoliageInstance GetInstance(ulong instanceId)
 FoliageInstance[] FindInstances(Vector3 center, float radius)   // pivots within radius, nearest first
 
+// Foliage (static): the whole scene's foliage at once, terrain-world tiles included
+FoliageInstance[] Foliage.FindInstances(Vector3 center, float radius, string? interactionTag = null, bool requireProxy = false)
+
 // FoliageInstance (a value type; RaycastHit.FoliageInstance on any query hit)
 ulong Id; uint FoliageEntityId; GameObject Foliage
 bool IsValid                                   // refers to an instance at all
 bool Exists                                    // still placed (false once promoted)
-bool TryGetInfo(out FoliageInstanceInfo info)  // TypeIndex, TypeName, Position, Rotation, Scale, HasProxyPrefab
+bool TryGetInfo(out FoliageInstanceInfo info)  // TypeIndex, TypeName, Position, Rotation, Scale, HasProxyPrefab,
+                                               // BoundsMin, BoundsMax (world box round what it draws)
 bool TryPromote(out GameObject proxy)
 bool TryPromote(out GameObject proxy, out string error)
 
@@ -753,6 +757,8 @@ bool Release()                                 // puts the instance back and des
 
 ```csharp
 var target = hit.FoliageInstance.TryPromote(out var tree) ? tree : hit.Entity;
+// Plants the player can gather here: types tagged "Gather" in their Interaction section.
+var nearest = Foliage.FindInstances(eye, 2.5f, "Gather", requireProxy: true).FirstOrDefault();
 ```
 
 ### Runtime UI

@@ -10,6 +10,7 @@ add_library(PlutoGEScene
     src/BuiltinComponentTypes.cpp
     src/Entity.cpp
     src/FoliageProxies.cpp
+    src/FoliageQueries.cpp
     src/FoliageTypeAsset.cpp
     src/Prefab.cpp
     src/PrefabMeshExporter.cpp

@@ -85,12 +85,24 @@ namespace PlutoGE::scene
         // Interaction: the prefab an instance is swapped for when gameplay needs a full entity there (felling a tree,
         // opening a bush). Empty leaves the type as scenery. See FoliageProxies.h.
         std::string proxyPrefabReference;
+        // Game-defined labels saying what gameplay does with the type's instances ("Gather", "Mine"). The engine gives
+        // them no meaning: scripts find instances by tag (FindFoliageInstances, FoliageQueries.h), so an interaction
+        // system can offer a bush to the player without promoting every plant or giving it collision, and can tell it
+        // apart from a tree that is only struck. Sanitized: trimmed, no separators (',' or whitespace inside a tag is
+        // dropped), no empties or duplicates, matched exactly.
+        std::vector<std::string> interactionTags;
 
         bool operator==(const FoliageTypeAsset &) const = default;
     };
 
     // Clamps every value to its valid range. Applied on load and whenever an edited asset is applied.
     void SanitizeFoliageTypeAsset(FoliageTypeAsset &asset);
+
+    // Interaction tags (FoliageTypeAsset::interactionTags) as scenes store them: comma-separated.
+    [[nodiscard]] std::string JoinFoliageInteractionTags(const std::vector<std::string> &tags);
+    // Splits on commas and whitespace and sanitizes, so "Gather, Fibre" and "Gather,Fibre" give the same tags.
+    [[nodiscard]] std::vector<std::string> ParseFoliageInteractionTags(std::string_view text);
+    [[nodiscard]] bool HasFoliageInteractionTag(const FoliageTypeAsset &asset, std::string_view tag);
 
     // The size of the clusters a type's instances draw in: its render cluster size, else its cell size.
     [[nodiscard]] inline float RenderClusterSize(const FoliageTypeAsset &asset) noexcept

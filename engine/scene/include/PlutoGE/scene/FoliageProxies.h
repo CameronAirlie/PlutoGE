@@ -23,6 +23,8 @@ namespace PlutoGE::scene
     // Swaps the instance `instanceId` of `foliage` for a new entity spawned from its type's proxy prefab. The proxy is
     // a scene root at the instance's world transform and carries a FoliageProxyComponent recording the instance. While
     // the scene runs, the proxy's scripts start before this returns, so they can find that component in OnCreate.
+    // Meshes in the proxy that show the type's own mesh and have no wind of their own take the type's wind response,
+    // so a swaying plant keeps swaying as it becomes an entity.
     // Returns null, changing nothing, when the instance does not exist, its type has no proxy prefab, or the prefab
     // cannot be spawned; `errorMessage` then says which.
     Entity *PromoteFoliageInstance(FoliageComponent &foliage, std::uint64_t instanceId, std::string *errorMessage = nullptr);

@@ -240,6 +240,7 @@ COLLISION_CAPSULE	0.4	3
 WIND_ENABLED	0
 WIND_RESPONSE	0.5	0.5	1	0
 PROXY_PREFAB	project://Nodes/Oak.plutoprefab
+INTERACTION_TAGS	Chop
 ```
 
 In version 2, an omitted record takes its default. Version 1 files hold only the rendering,
@@ -274,8 +275,11 @@ entity one of its instances becomes when gameplay needs it to behave like an obj
    instance.
 2. Open the type's **Interaction** section, in the inspector or the Foliage Editor,
    and choose the prefab under **Proxy Prefab**.
-3. Leave **Capsule Collision** on, so rays and weapons can find the instance. The
-   setup checks warn when a type has a proxy but no collision.
+3. Make the instances findable. Things that are struck (a tree an axe hits) keep
+   **Capsule Collision** on, so rays and weapons find the instance. Things the player
+   uses where they stand (a bush to pick, stones to gather) can instead carry an
+   **Interaction Tag** (below) and need no collision. The setup checks warn when a
+   type has a proxy but neither.
 
 At run time:
 
@@ -303,10 +307,38 @@ if (Physics.Raycast(origin, forward, reach, Character, out var hit))
 GameObject.GetComponent<FoliageProxyComponent>()?.Release();
 ```
 
-`FoliageComponent.FindInstances(center, radius)` lists the instances near a point,
-for interaction prompts or area effects. `FoliageInstance.TryGetInfo` gives an
-instance's type and world transform. From C++, use `PromoteFoliageInstance` and
-`ReleaseFoliageProxy` (`scene/FoliageProxies.h`).
+`FoliageComponent.FindInstances(center, radius)` lists one component's instances near a
+point. `FoliageInstance.TryGetInfo` gives an instance's type, world transform and world
+bounds (`BoundsMin`/`BoundsMax`: how tall a plant is, where to aim at it). From C++, use
+`PromoteFoliageInstance` and `ReleaseFoliageProxy` (`scene/FoliageProxies.h`).
+
+A proxy keeps swaying: when it is promoted, the meshes in it that show the type's own
+mesh (the same mesh, path or `asset://` reference) and have no wind of their own take
+the type's wind response (`MeshComponent::SetWind`, [Foliage wind](FOLIAGE_WIND.md)).
+
+### Interaction tags
+
+A type's **Interaction Tags** (`FoliageTypeAsset::interactionTags`, comma-separated in the
+inspector) are labels the game gives meaning to: `Gather`, `Mine`, `Drink`. The engine
+only stores them and searches by them. Gameplay asks what is near a point across the
+whole scene, by tag, without rays, collision or promoting anything:
+
+```csharp
+// Every active foliage component: painted foliage, prefabs, and the tiles a terrain world streams in.
+foreach (var plant in Foliage.FindInstances(eye, 2.5f, "Gather", requireProxy: true))
+    if (plant.TryGetInfo(out var info)) Offer(plant, info);   // promote the one the player picks
+```
+
+That is how an interaction system offers thousands of bushes to the player: only the
+one the player turns to is promoted, so only it is an entity, with its prompt and outline.
+Tags also keep kinds apart: trees are struck through their hit, not offered as gatherables.
+
+From C++, `FindFoliageInstances(scene, query)` (`scene/FoliageQueries.h`) takes a
+`FoliageInstanceQuery`: centre, radius, interaction tag, `requireProxy`, `maxResults`.
+New criteria belong in that struct. Each component keeps a grid of each searched type's
+instances (8 m cells, rebuilt on the first query after its instances change), so a query
+reads a few cells rather than every instance: cheap enough for every frame.
+`FoliageComponent::FindInstancesInRadius` takes the same type filter for one component.
 
 Instance IDs are stable, so a game can save what happened to its plants (felled
 trees, picked bushes) as a list of IDs and replay it after loading: promote or
@@ -711,11 +743,13 @@ Type.N.WindFlutter
 Type.N.WindBendHeight
 Type.N.WindPivotHeight
 Type.N.ProxyPrefab
+Type.N.InteractionTags
 ```
 
 The wind fields ([Foliage wind](FOLIAGE_WIND.md)) default to disabled, so older scenes keep still foliage.
 `ProxyPrefab` defaults to empty, so older scenes and `.plutofoliage` files keep their types as scenery; the
-`PROXY_PREFAB` record is written only when set, and older readers skip it.
+`PROXY_PREFAB` record is written only when set, and older readers skip it. `InteractionTags` and the
+`INTERACTION_TAGS` record (tab-separated tags) work the same way: empty by default, written only when set.
 `LodDistanceScale` defaults to 1, so older scenes keep their LOD distances. Types without a
 scale range start with the component's old `MinScale` and `MaxScale`.
 

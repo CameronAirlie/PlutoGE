@@ -610,6 +610,19 @@ namespace
         Require(ui::DiagnoseFoliagePainting(true, &empty).size() == 1, "No mesh should be reported");
         Require(ui::DiagnoseFoliagePainting(false, &empty).size() == 2, "Both should be reported");
         Require(ui::WorstFoliageIssue({}) == ui::FoliageIssueSeverity::Info, "No issues are the least severe");
+
+        // A proxy must be findable: by collision (rays and weapons) or by an interaction tag (tag queries).
+        FoliageType interactive;
+        interactive.mesh = &mesh;
+        interactive.asset.proxyPrefabReference = "project://Nodes/Bush.plutoprefab";
+        issues = ui::DiagnoseFoliageType(interactive);
+        Require(issues.size() == 1 && issues[0].severity == ui::FoliageIssueSeverity::Warning,
+                "A proxy that nothing can find should warn");
+        interactive.asset.interactionTags = {"Gather"};
+        Require(ui::DiagnoseFoliageType(interactive).empty(), "A tagged proxy is found by tag queries and needs no collision");
+        interactive.asset.interactionTags.clear();
+        interactive.asset.collisionEnabled = true;
+        Require(ui::DiagnoseFoliageType(interactive).empty(), "A colliding proxy is found by rays");
     }
 
     void TestBrushDoesNotDependOnSceneState()

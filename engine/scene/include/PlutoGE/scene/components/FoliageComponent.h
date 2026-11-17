@@ -278,6 +278,13 @@ namespace PlutoGE::scene
         [[nodiscard]] std::optional<glm::mat4> GetInstanceWorldTransform(const FoliageInstanceLocation &location) const;
         // Instances of every type whose pivot is within `radius` of `worldCenter`, nearest first.
         [[nodiscard]] std::vector<FoliageInstanceLocation> FindInstancesInRadius(const glm::vec3 &worldCenter, float radius) const;
+        // The same for the types `acceptType` accepts (every type when it is empty), keeping the nearest `maxResults`
+        // (0 keeps all). Each accepted type keeps a grid of its instances, built on the first query after its instances
+        // change, so a query reads only the few grid cells the sphere touches: cheap enough for every frame.
+        using TypeFilter = std::function<bool(const FoliageType &)>;
+        [[nodiscard]] std::vector<FoliageInstanceLocation> FindInstancesInRadius(const glm::vec3 &worldCenter, float radius,
+                                                                                const TypeFilter &acceptType,
+                                                                                std::size_t maxResults = 0) const;
         std::size_t GetTotalInstanceCount() const;
         std::size_t GetSelectedTypeInstanceCount() const;
         FoliageInstanceSnapshot CaptureInstanceSnapshot() const;
@@ -372,6 +379,16 @@ namespace PlutoGE::scene
         mutable std::uint64_t m_collisionCacheRevision = 0;
         mutable glm::mat4 m_collisionCacheOwnerTransform{0.0f};
         mutable std::vector<FoliageCollisionCell> m_cachedCollisionCells;
+        // FindInstancesInRadius's per-type grids (instance indices by query cell), each valid for the revision and
+        // instance count it was built at.
+        struct QueryGrid
+        {
+            std::uint64_t revision = 0;
+            std::size_t instanceCount = 0;
+            std::unordered_map<FoliageCellCoordinate, std::vector<std::uint32_t>, FoliageCellCoordinateHash> cells;
+        };
+        const QueryGrid &GetQueryGrid(std::size_t typeIndex) const;
+        mutable std::vector<QueryGrid> m_queryGrids;
 
         float m_maxDrawDistance = 250.0f;
         float m_maxShadowDistance = 80.0f;

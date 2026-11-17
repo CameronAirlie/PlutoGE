@@ -115,6 +115,12 @@ namespace PlutoGE::scene
             MarkRenderCommandsDirty();
         }
         int GetMinShadowLod() const { return m_minShadowLod; }
+        // How the mesh bends in the scene's wind, as a foliage type does (render/FoliageWind.h, heights in mesh units);
+        // off by default. Saved only when on. A foliage proxy's meshes take their type's response when it is promoted
+        // (FoliageProxies.h), so a swaying bush keeps swaying as it becomes an entity.
+        void SetWind(const render::FoliageWindResponse &wind);
+        std::vector<Property> SerializeForInspector() const override;
+        const render::FoliageWindResponse &GetWind() const { return m_wind; }
         // Joints of a skinned mesh hidden from cameras (each with everything below it), as JointHiding.h shrinks them:
         // cameras draw the mesh without them while its shadow stays whole (the full pose is submitted shadow-only).
         // Names resolve like bone queries (exact, then humanoid aliases such as "Head"). A first-person body hides its
@@ -383,6 +389,7 @@ namespace PlutoGE::scene
         bool m_visible = true;
         bool m_useGeneratedLods = false;
         int m_minShadowLod = 0;
+        render::FoliageWindResponse m_wind{};
         bool m_hasAnimatedNodeSubmeshes = false;
         std::uint64_t m_lastSubmittedJointPoseRevision = 0;
         bool m_hasSubmittedJointPoseRevision = false;

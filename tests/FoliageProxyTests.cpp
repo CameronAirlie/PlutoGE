@@ -1,16 +1,19 @@
 // Foliage proxies (FoliageProxies.h) and the incremental foliage physics they rely on: promoting an instance swaps it
 // for a prefab entity at the same transform, releasing puts it back, and neither disturbs the rest of the physics world.
+// Interaction tags and the radius queries (FoliageQueries.h) let gameplay find instances to promote without rays.
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/FoliageProxies.h"
+#include "PlutoGE/scene/FoliageQueries.h"
 #include "PlutoGE/scene/FoliageTypeAsset.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/FoliageProxyComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/RigidbodyComponent.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -18,8 +21,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <random>
 #include <source_location>
 #include <sstream>
 #include <stdexcept>
@@ -191,6 +196,67 @@ namespace
         Require(copies == 1, "Release duplicated an instance");
     }
 
+    bool HasProperty(const std::vector<scene::Property> &properties, std::string_view name)
+    {
+        return std::any_of(properties.begin(), properties.end(), [&](const auto &property) { return property.name == name; });
+    }
+
+    // A mesh sways like foliage when given a wind response, and a proxy's meshes showing the type's mesh inherit the
+    // type's response on promotion, so a swaying bush does not freeze as it becomes an entity.
+    void TestProxyKeepsWind()
+    {
+        constexpr const char *kBushMesh = "engine://builtin/mesh/cube";
+        render::FoliageWindResponse sway{.enabled = true, .stiffness = 0.4f, .flutter = 0.6f, .bendHeight = 0.8f, .pivotHeight = 0.1f};
+
+        // The mesh's own setting: saved only when on, always offered to the inspector, read back as written.
+        {
+            scene::MeshComponent still(scene::MeshComponentConfig{});
+            Require(!HasProperty(still.Serialize(), "Wind") && HasProperty(still.SerializeForInspector(), "Wind Stiffness"),
+                    "A still mesh saved wind, or the inspector cannot turn it on");
+            scene::MeshComponent windy(scene::MeshComponentConfig{});
+            windy.SetWind(sway);
+            scene::MeshComponent restored(scene::MeshComponentConfig{});
+            restored.Deserialize(windy.Serialize());
+            Require(restored.GetWind() == sway.Sanitized(), "A mesh's wind did not survive serialization");
+        }
+
+        Scratch scratch;
+        core::Engine::GetInstance().GetAssetManager().SetProjectContext(scratch.root.string());
+        std::string error;
+        {
+            scene::Scene authoring;
+            auto *bush = authoring.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Bush Proxy"}));
+            auto *visual = authoring.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Visual"}), bush);
+            visual->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{})->Deserialize({{"MeshAssetReference", scene::PropertyType::String, kBushMesh}});
+            auto *berries = authoring.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Berries"}), bush);
+            berries->CreateComponent<scene::MeshComponent>(scene::MeshComponentConfig{})->Deserialize(
+                {{"MeshAssetReference", scene::PropertyType::String, "engine://builtin/mesh/sphere"}});
+            Require(scene::Prefab::SaveFromEntity(*bush, scratch.root / "Assets" / "Bush.plutoprefab", &error), error);
+        }
+
+        scene::Scene scene;
+        auto *owner = scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Meadow"}));
+        auto *foliage = owner->CreateComponent<scene::FoliageComponent>();
+        auto &type = foliage->AddType("Bush");
+        type.asset.sourceMeshPath = kBushMesh;
+        type.asset.wind = sway;
+        type.asset.proxyPrefabReference = "project://Bush.plutoprefab";
+        type.instances = {scene::FoliageInstance{.id = 4, .position = {2, 0, 3}}};
+        foliage->RestoreInstanceSnapshot(foliage->CaptureInstanceSnapshot());
+
+        auto *proxy = scene::PromoteFoliageInstance(*foliage, 4, &error);
+        Require(proxy != nullptr, "Promotion failed: " + error);
+        const scene::MeshComponent *visualMesh = nullptr, *berryMesh = nullptr;
+        for (auto *child : proxy->GetChildren())
+        {
+            if (child->GetName() == "Visual") visualMesh = child->GetComponent<scene::MeshComponent>();
+            if (child->GetName() == "Berries") berryMesh = child->GetComponent<scene::MeshComponent>();
+        }
+        Require(visualMesh && berryMesh, "The proxy lost its meshes");
+        Require(visualMesh->GetWind() == sway.Sanitized(), "The proxy's copy of the plant did not take the type's wind");
+        Require(!berryMesh->GetWind().enabled, "A mesh that is not the plant's took the type's wind");
+    }
+
     // A body sliding along the ground past a tree. Removing the tree (promotion does this) must not reset the
     // simulation: the body keeps its motion, and stops colliding with the tree that is gone.
     float SlidePast(bool removeTree, bool removeDistantTree)
@@ -225,6 +291,158 @@ namespace
         return travelled;
     }
 
+    void TestInteractionTags()
+    {
+        Require(scene::ParseFoliageInteractionTags(" Gather, Fibre,,Gather\tMine ") ==
+                    std::vector<std::string>{"Gather", "Fibre", "Mine"},
+                "Tags were not split on commas and whitespace, trimmed and deduplicated");
+        Require(scene::JoinFoliageInteractionTags({"Gather", "Fibre"}) == "Gather,Fibre", "Tags did not join with commas");
+
+        scene::FoliageTypeAsset asset;
+        asset.interactionTags = {"Gather", "Fibre"};
+        std::stringstream file;
+        Require(scene::WriteFoliageTypeAsset(file, asset), "Writing a foliage type asset failed");
+        Require(file.str().find("INTERACTION_TAGS\tGather\tFibre") != std::string::npos, "No tag record written");
+        scene::FoliageTypeAsset loaded;
+        std::string error;
+        Require(scene::ReadFoliageTypeAsset(file, loaded, &error), error);
+        Require(loaded.interactionTags == asset.interactionTags, "The tags did not survive the asset file");
+        Require(scene::HasFoliageInteractionTag(loaded, "Fibre") && !scene::HasFoliageInteractionTag(loaded, "fibre") &&
+                    !scene::HasFoliageInteractionTag(loaded, ""),
+                "Tags must match exactly, and an empty tag matches nothing");
+
+        std::stringstream untagged;
+        Require(scene::WriteFoliageTypeAsset(untagged, {}) && untagged.str().find("INTERACTION_TAGS") == std::string::npos,
+                "An untagged type wrote a tag record");
+        std::stringstream old("PLUTOFOLIAGE\t2\nCELL_SIZE\t16\n");
+        Require(scene::ReadFoliageTypeAsset(old, loaded, &error) && loaded.interactionTags.empty(), "An old asset gained tags");
+
+        const auto changed = scene::ChangedFoliageTypeProperties({}, asset);
+        Require(std::find(changed.begin(), changed.end(), "InteractionTags") != changed.end(),
+                "A tag change was not reported as an override");
+
+        scene::Scene scene;
+        auto &foliage = AddForest(scene, {});
+        foliage.GetType(0)->asset.interactionTags = asset.interactionTags;
+        scene::FoliageComponent restored;
+        restored.Deserialize(foliage.Serialize());
+        Require(restored.GetType(0) && restored.GetType(0)->asset.interactionTags == asset.interactionTags,
+                "The tags did not survive scene serialization");
+    }
+
+    // Two types scattered over a transformed owner: "Pine" (tagged Chop) and "Bush" (tagged Gather).
+    scene::FoliageComponent &AddMixedFoliage(scene::Scene &scene, const std::string &name, const glm::vec3 &offset, unsigned seed)
+    {
+        auto &foliage = AddForest(scene, "project://Pine.plutoprefab");
+        foliage.GetOwner()->SetName(name);
+        foliage.GetOwner()->SetLocalTransform(scene::Transform{.position = offset, .rotation = {0.0f, 30.0f, 0.0f}, .scale = glm::vec3(1.5f)});
+        foliage.GetType(0)->asset.interactionTags = {"Chop"};
+        auto &bush = foliage.AddType("Bush");
+        bush.asset.interactionTags = {"Gather"};
+        std::mt19937 random(seed);
+        std::uniform_real_distribution<float> spread(-40.0f, 40.0f);
+        std::uint64_t id = seed * 1000u;
+        for (auto *type : {foliage.GetType(0), foliage.GetType(1)})
+            for (int index = 0; index < 400; ++index)
+                type->instances.push_back({.id = ++id, .position = {spread(random), 0.0f, spread(random)}});
+        foliage.RestoreInstanceSnapshot(foliage.CaptureInstanceSnapshot());
+        return foliage;
+    }
+
+    std::vector<std::uint64_t> BruteForce(const scene::FoliageComponent &foliage, const glm::vec3 &center, float radius,
+                                          const std::string &tag)
+    {
+        std::vector<std::pair<float, std::uint64_t>> found;
+        for (std::size_t typeIndex = 0; typeIndex < foliage.GetTypeCount(); ++typeIndex)
+        {
+            const auto &type = *foliage.GetType(typeIndex);
+            if (!tag.empty() && !scene::HasFoliageInteractionTag(type.asset, tag)) continue;
+            for (std::size_t index = 0; index < type.instances.size(); ++index)
+            {
+                const auto transform = foliage.GetInstanceWorldTransform({typeIndex, index});
+                const float distance = glm::length(glm::vec3((*transform)[3]) - center);
+                if (distance <= radius) found.emplace_back(distance, type.instances[index].id);
+            }
+        }
+        std::sort(found.begin(), found.end());
+        std::vector<std::uint64_t> ids;
+        for (const auto &[distance, id] : found) ids.push_back(id);
+        return ids;
+    }
+
+    std::vector<std::uint64_t> Ids(const scene::FoliageComponent &foliage, const std::vector<scene::FoliageInstanceLocation> &locations)
+    {
+        std::vector<std::uint64_t> ids;
+        for (const auto &location : locations) ids.push_back(foliage.GetInstance(location)->id);
+        return ids;
+    }
+
+    void TestRadiusQueries()
+    {
+        scene::Scene scene;
+        auto &foliage = AddMixedFoliage(scene, "Wood", {100.0f, 2.0f, -30.0f}, 7);
+        const auto gather = [](const scene::FoliageType &type) { return scene::HasFoliageInteractionTag(type.asset, "Gather"); };
+        // Centres straddling grid cells, radii from under a cell to several, on a scaled and offset owner.
+        for (const glm::vec3 center : {glm::vec3(100.0f, 2.0f, -30.0f), glm::vec3(112.3f, 2.5f, -17.9f), glm::vec3(76.0f, 2.0f, -71.0f)})
+        {
+            for (const float radius : {0.5f, 3.0f, 12.0f, 30.0f})
+            {
+                Require(Ids(foliage, foliage.FindInstancesInRadius(center, radius)) == BruteForce(foliage, center, radius, {}),
+                        "The grid query disagreed with a full scan at radius " + std::to_string(radius));
+                Require(Ids(foliage, foliage.FindInstancesInRadius(center, radius, gather)) == BruteForce(foliage, center, radius, "Gather"),
+                        "The filtered query disagreed with a filtered scan at radius " + std::to_string(radius));
+            }
+        }
+        const glm::vec3 center(100.0f, 2.0f, -30.0f);
+        const auto all = BruteForce(foliage, center, 30.0f, "Gather");
+        const auto nearest = Ids(foliage, foliage.FindInstancesInRadius(center, 30.0f, gather, 5));
+        Require(all.size() > 5 && nearest == std::vector<std::uint64_t>(all.begin(), all.begin() + 5), "maxResults did not keep the nearest");
+
+        // The grid follows instance changes: a removed instance is gone, a restored one is back.
+        const std::array removedId{all.front()};
+        const auto removed = foliage.RemoveInstances(removedId);
+        Require(Ids(foliage, foliage.FindInstancesInRadius(center, 30.0f, gather)).front() == all[1], "A removed instance was still found");
+        foliage.RestoreInstances(removed);
+        Require(Ids(foliage, foliage.FindInstancesInRadius(center, 30.0f, gather)) == all, "A restored instance was not found again");
+    }
+
+    void TestSceneQuery()
+    {
+        scene::Scene scene;
+        auto &near = AddMixedFoliage(scene, "Near", {0.0f, 0.0f, 0.0f}, 3);
+        auto &far = AddMixedFoliage(scene, "Far", {50.0f, 0.0f, 0.0f}, 5);
+        auto &hidden = AddMixedFoliage(scene, "Hidden", {0.0f, 0.0f, 0.0f}, 9);
+        hidden.GetOwner()->SetActive(false);
+
+        const glm::vec3 center(25.0f, 0.0f, 0.0f);
+        const auto matches = scene::FindFoliageInstances(scene, {.center = center, .radius = 20.0f, .interactionTag = "Gather"});
+        Require(!matches.empty(), "The scene query found nothing");
+        bool sawNear = false, sawFar = false;
+        for (std::size_t index = 0; index < matches.size(); ++index)
+        {
+            const auto &match = matches[index];
+            Require(match.foliageEntity != hidden.GetOwner()->GetID(), "An inactive entity's foliage was found");
+            Require(match.distance <= 20.0f && (index == 0 || matches[index - 1].distance <= match.distance), "Matches not nearest first");
+            const auto *foliage = match.foliageEntity == near.GetOwner()->GetID() ? &near : &far;
+            Require(scene::HasFoliageInteractionTag(foliage->GetType(match.typeIndex)->asset, "Gather"), "An untagged type was found");
+            sawNear |= foliage == &near;
+            sawFar |= foliage == &far;
+        }
+        Require(sawNear && sawFar, "The scene query did not search every active foliage component");
+        Require(matches.size() == BruteForce(near, center, 20.0f, "Gather").size() + BruteForce(far, center, 20.0f, "Gather").size(),
+                "The scene query missed instances");
+
+        const auto three = scene::FindFoliageInstances(scene, {.center = center, .radius = 20.0f, .interactionTag = "Gather", .maxResults = 3});
+        Require(three.size() == 3 && three[0].instanceId == matches[0].instanceId && three[2].instanceId == matches[2].instanceId,
+                "maxResults did not keep the scene's nearest");
+        // Only the trees have a proxy; the bushes are gathered through a proxy too once their type names one.
+        Require(scene::FindFoliageInstances(scene, {.center = center, .radius = 20.0f, .interactionTag = "Gather", .requireProxy = true}).empty(),
+                "requireProxy accepted a type without a proxy prefab");
+        Require(!scene::FindFoliageInstances(scene, {.center = center, .radius = 20.0f, .requireProxy = true}).empty(),
+                "requireProxy rejected the trees");
+        Require(scene::FindFoliageInstances(scene, {.center = center, .radius = std::nanf("")}).empty(), "A NaN radius found instances");
+    }
+
     void TestRuntimePhysicsContinuity()
     {
         const float blocked = SlidePast(false, false);
@@ -242,8 +460,12 @@ int main()
     try
     {
         TestAssetAndSceneRoundTrip();
+        TestInteractionTags();
+        TestRadiusQueries();
+        TestSceneQuery();
         TestCellSignatures();
         TestPromoteAndRelease();
+        TestProxyKeepsWind();
         TestRuntimePhysicsContinuity();
     }
     catch (const std::exception &exception)

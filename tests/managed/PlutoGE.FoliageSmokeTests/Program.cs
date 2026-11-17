@@ -8,7 +8,8 @@ using PlutoGE.ScriptCore;
 // The managed foliage API (FoliageComponent, FoliageInstance, FoliageProxyComponent) against a fake native
 // ControlFoliage: the request layout, registration, the unregistered fallbacks, and that each call routes its
 // operation and reads its results. The fake holds one foliage entity (42) with instances 7 and 8; promoting 7 spawns
-// proxy entity 99.
+// proxy entity 99. Its scene-wide query answers 20 matches for the tag "Gather" (more than the first buffer holds) and
+// one proxy-only match otherwise.
 unsafe class Program
 {
     [StructLayout(LayoutKind.Sequential)]
@@ -28,6 +29,19 @@ unsafe class Program
         public int HasProxyPrefab;
         public ulong* Ids;
         public fixed byte Name[256];
+        public Match* Matches;
+        public Vector3 BoundsMin;
+        public Vector3 BoundsMax;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct Match
+    {
+        public uint FoliageEntity;
+        public int TypeIndex;
+        public ulong InstanceId;
+        public float Distance;
+        public uint Reserved;
     }
 
     const uint Foliage = 42, Proxy = 99;
@@ -53,6 +67,8 @@ unsafe class Program
                 request->Rotation = Quaternion.CreateFromYawPitchRoll(0.5f, 0, 0);
                 request->Scale = new Vector3(1.5f);
                 request->HasProxyPrefab = request->InstanceId == 7 ? 1 : 0;
+                request->BoundsMin = new Vector3(0, 2, 2);
+                request->BoundsMax = new Vector3(2, 6, 4);
                 WriteName(request, request->InstanceId == 7 ? "Pine ñ" : "Grass");
             }
             return 1;
@@ -80,6 +96,17 @@ unsafe class Program
                 request->Ids[index] = (ulong)(index + 1);
             request->Result = 40;
             return 1;
+        case 5: // FindInScene: no entity; the tag arrives in Name and the proxy filter in HasProxyPrefab
+        {
+            if (request->Entity != 0) return 0;
+            var tag = Marshal.PtrToStringUTF8((nint)request->Name) ?? "";
+            var count = tag == "Gather" ? 20 : request->HasProxyPrefab != 0 ? 1 : 0;
+            for (var index = 0; index < Math.Min(count, request->Capacity); index++)
+                request->Matches[index] = new Match { FoliageEntity = Foliage + (uint)(index % 2), TypeIndex = 1, InstanceId = (ulong)(100 + index),
+                                                      Distance = index * 0.5f };
+            request->Result = count;
+            return 1;
+        }
         case 4: // GetProxyLink
             if (request->Entity == Proxy && promoted)
             {
@@ -109,17 +136,29 @@ unsafe class Program
         var bridge = typeof(FoliageComponent).Assembly.GetType("PlutoGE.ScriptCore.Native.ScriptBridge")!;
         var register = (delegate* unmanaged[Cdecl]<nint, int>)bridge.GetMethod("RegisterFoliageApi", BindingFlags.Public | BindingFlags.Static)!
             .MethodHandle.GetFunctionPointer();
-        Require(sizeof(Request) == 344 && register(0) == 0, "ABI layout / null registration");
+        Require(sizeof(Request) == 376 && sizeof(Match) == 24 && register(0) == 0, "ABI layout / null registration");
+        Require(PlutoGE.ScriptCore.Foliage.FindInstances(Vector3.Zero, 5, "Gather").Length == 0, "Unregistered scene query");
         Require(register((nint)(delegate* unmanaged[Cdecl]<Request*, int>)&Control) == 1, "Registration");
 
         Require(tree.TryGetInfo(out var info) && last.Operation == 0 && last.Entity == Foliage && last.InstanceId == 7, "Info routing");
         Require(info is { TypeIndex: 0, TypeName: "Pine ñ", HasProxyPrefab: true } && info.Position == new Vector3(1, 2, 3) &&
-                info.Scale == new Vector3(1.5f) && info.Rotation == Quaternion.CreateFromYawPitchRoll(0.5f, 0, 0), "Instance info");
+                info.Scale == new Vector3(1.5f) && info.Rotation == Quaternion.CreateFromYawPitchRoll(0.5f, 0, 0) &&
+                info.BoundsMin == new Vector3(0, 2, 2) && info.BoundsMax == new Vector3(2, 6, 4), "Instance info");
 
         var found = foliage.FindInstances(new Vector3(1, 0, 1), 10);
         Require(found.Length == 40 && found[0].Id == 1 && found[39].Id == 40 && found[0].FoliageEntityId == Foliage &&
                 last.Radius == 10 && last.Position == new Vector3(1, 0, 1), "Radius query grows its buffer");
         Require(foliage.FindInstances(Vector3.Zero, float.NaN).Length == 0, "A NaN radius finds nothing");
+
+        var gather = PlutoGE.ScriptCore.Foliage.FindInstances(new Vector3(4, 0, 2), 3, "Gather");
+        Require(last.Operation == 5 && last.Entity == 0 && last.Radius == 3 && last.Position == new Vector3(4, 0, 2) && last.HasProxyPrefab == 0,
+                "Scene query routing");
+        Require(gather.Length == 20 && gather[0].FoliageEntityId == Foliage && gather[0].Id == 100 && gather[19].FoliageEntityId == Foliage + 1 && gather[19].Id == 119,
+                "Scene query grows its buffer and keeps each match's foliage entity");
+        Require(PlutoGE.ScriptCore.Foliage.FindInstances(Vector3.Zero, 3, requireProxy: true).Length == 1 && last.HasProxyPrefab == 1,
+                "Scene query proxy filter");
+        Require(PlutoGE.ScriptCore.Foliage.FindInstances(Vector3.Zero, 3, "Mine").Length == 0, "Scene query tag");
+        Require(PlutoGE.ScriptCore.Foliage.FindInstances(Vector3.Zero, -1, "Gather").Length == 0, "A negative radius finds nothing");
 
         Require(!foliage.GetInstance(8).TryPromote(out _, out var error) && error.Contains("no proxy prefab"), "Promotion failure reason");
         Require(tree.TryPromote(out var proxy) && proxy.EntityId == Proxy && last.Operation == 1, "Promotion");

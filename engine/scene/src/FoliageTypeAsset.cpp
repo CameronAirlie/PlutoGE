@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/FoliageTypeAsset.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <ostream>
@@ -89,6 +90,41 @@ namespace PlutoGE::scene
         asset.collisionHeight = (std::max)(Finite(asset.collisionHeight, 2.0f), asset.collisionRadius * 2.0f);
         asset.wind = asset.wind.Sanitized();
         SanitizeWaterHabitat(asset.waterHabitat);
+        asset.interactionTags = ParseFoliageInteractionTags(JoinFoliageInteractionTags(asset.interactionTags));
+    }
+
+    std::string JoinFoliageInteractionTags(const std::vector<std::string> &tags)
+    {
+        std::string text;
+        for (const auto &tag : tags)
+        {
+            if (!text.empty()) text += ',';
+            text += tag;
+        }
+        return text;
+    }
+
+    std::vector<std::string> ParseFoliageInteractionTags(std::string_view text)
+    {
+        std::vector<std::string> tags;
+        std::string tag;
+        const auto flush = [&]
+        {
+            if (!tag.empty() && std::find(tags.begin(), tags.end(), tag) == tags.end()) tags.push_back(tag);
+            tag.clear();
+        };
+        for (const char character : text)
+        {
+            if (character == ',' || std::isspace(static_cast<unsigned char>(character))) flush();
+            else tag += character;
+        }
+        flush();
+        return tags;
+    }
+
+    bool HasFoliageInteractionTag(const FoliageTypeAsset &asset, std::string_view tag)
+    {
+        return !tag.empty() && std::find(asset.interactionTags.begin(), asset.interactionTags.end(), tag) != asset.interactionTags.end();
     }
 
     std::vector<std::string_view> ChangedFoliageTypeProperties(const FoliageTypeAsset &before, const FoliageTypeAsset &after)
@@ -127,6 +163,7 @@ namespace PlutoGE::scene
         add(before.wind.bendHeight != after.wind.bendHeight, {"WindBendHeight"});
         add(before.wind.pivotHeight != after.wind.pivotHeight, {"WindPivotHeight"});
         add(before.proxyPrefabReference != after.proxyPrefabReference, {"ProxyPrefab"});
+        add(before.interactionTags != after.interactionTags, {"InteractionTags"});
         return changed;
     }
 
@@ -170,6 +207,13 @@ namespace PlutoGE::scene
                << asset.wind.bendHeight << '\t' << asset.wind.pivotHeight << '\n';
         // Readers that predate proxies skip the record, so it needs no new version.
         if (!asset.proxyPrefabReference.empty()) output << "PROXY_PREFAB\t" << asset.proxyPrefabReference << '\n';
+        // Likewise for tags: older readers skip the record and the type is found only by rays.
+        if (!asset.interactionTags.empty())
+        {
+            output << "INTERACTION_TAGS";
+            for (const auto &tag : asset.interactionTags) output << '\t' << tag;
+            output << '\n';
+        }
         return output.good();
     }
 
@@ -243,6 +287,7 @@ namespace PlutoGE::scene
             else if (key == "WIND_RESPONSE")
                 stream >> loaded.wind.stiffness >> loaded.wind.flutter >> loaded.wind.bendHeight >> loaded.wind.pivotHeight;
             else if (key == "PROXY_PREFAB") loaded.proxyPrefabReference = RestOfLine(stream);
+            else if (key == "INTERACTION_TAGS") loaded.interactionTags = ParseFoliageInteractionTags(RestOfLine(stream));
         }
         loaded.assetReference = asset.assetReference;
         SanitizeFoliageTypeAsset(loaded);

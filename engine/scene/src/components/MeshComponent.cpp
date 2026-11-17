@@ -19,6 +19,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <charconv>
 #include <iostream>
 #include <map>
@@ -31,6 +32,37 @@ namespace PlutoGE::scene
 {
     namespace
     {
+        // The wind response as properties ("Wind", "Wind Stiffness", ...), in the order the inspector shows them.
+        void AppendWindProperties(std::vector<Property> &properties, const render::FoliageWindResponse &wind)
+        {
+            properties.push_back({"Wind", PropertyType::Bool, wind.enabled ? "true" : "false"});
+            properties.push_back({"Wind Stiffness", PropertyType::Float, std::to_string(wind.stiffness)});
+            properties.push_back({"Wind Flutter", PropertyType::Float, std::to_string(wind.flutter)});
+            properties.push_back({"Wind Bend Height", PropertyType::Float, std::to_string(wind.bendHeight)});
+            properties.push_back({"Wind Pivot Height", PropertyType::Float, std::to_string(wind.pivotHeight)});
+        }
+
+        // Reads one of AppendWindProperties' properties into `wind`; false for another name or an unreadable value.
+        bool ReadWindProperty(const Property &property, render::FoliageWindResponse &wind)
+        {
+            if (property.name == "Wind")
+            {
+                wind.enabled = property.value == "true" || property.value == "1";
+                return true;
+            }
+            float *field = property.name == "Wind Stiffness"      ? &wind.stiffness
+                           : property.name == "Wind Flutter"      ? &wind.flutter
+                           : property.name == "Wind Bend Height"  ? &wind.bendHeight
+                           : property.name == "Wind Pivot Height" ? &wind.pivotHeight
+                                                                  : nullptr;
+            if (!field) return false;
+            char *end = nullptr;
+            const float value = std::strtof(property.value.c_str(), &end);
+            if (end == property.value.c_str() || !std::isfinite(value)) return false;
+            *field = value;
+            return true;
+        }
+
         constexpr const char *kMaterialSlotPrefix = "MaterialSlots.";
         constexpr const char *kSubmeshOverridePrefix = "SubmeshOverrides.";
         constexpr const char *kSubmeshTransformPrefix = "SubmeshTransforms.";
@@ -676,6 +708,14 @@ namespace PlutoGE::scene
         }
     }
 
+    void MeshComponent::SetWind(const render::FoliageWindResponse &wind)
+    {
+        const auto sanitized = wind.Sanitized();
+        if (sanitized == m_wind) return;
+        m_wind = sanitized;
+        MarkRenderCommandsDirty();
+    }
+
     void MeshComponent::MarkRenderCommandsDirty()
     {
         if (auto *owner = GetOwner(); owner && owner->GetScene()) owner->GetScene()->QueueMeshRenderUpdate(this);
@@ -1040,6 +1080,15 @@ namespace PlutoGE::scene
         return false;
     }
 
+    std::vector<Property> MeshComponent::SerializeForInspector() const
+    {
+        // The wind settings show even while off, so the inspector can turn them on.
+        auto properties = Serialize();
+        if (!m_wind.enabled)
+            AppendWindProperties(properties, m_wind);
+        return properties;
+    }
+
     std::vector<Property> MeshComponent::Serialize() const
     {
         std::vector<Property> properties{
@@ -1061,6 +1110,8 @@ namespace PlutoGE::scene
             properties.push_back({"Camera Hidden Joints", PropertyType::String, CameraTagFilter::FormatTagList(m_cameraHiddenJoints)});
         if (m_followParentSkeleton)
             properties.push_back({"Follow Parent Skeleton", PropertyType::Bool, "true"});
+        if (m_wind.enabled)
+            AppendWindProperties(properties, m_wind);
 
         const auto *assetMaterialReferences = m_sourceMeshPath.empty()
                                                   ? nullptr
@@ -1174,6 +1225,11 @@ namespace PlutoGE::scene
             else if (property.name == "Follow Parent Skeleton")
             {
                 SetFollowParentSkeleton(property.value == "true" || property.value == "1");
+            }
+            else if (property.name.starts_with("Wind"))
+            {
+                auto wind = m_wind;
+                if (ReadWindProperty(property, wind)) SetWind(wind);
             }
             else if (property.name == "SubmeshIndex")
             {
@@ -1919,6 +1975,13 @@ namespace PlutoGE::scene
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.minShadowLodIndex = static_cast<uint32_t>(m_minShadowLod);
                 command.isStatic = m_isStatic;
+                command.foliageWind = m_wind;
+                // Swaying geometry reaches beyond its rest bounds; grow them so culling stays conservative.
+                if (const float sway = render::FoliageWindMaxDisplacement(m_wind); sway > 0.0f)
+                {
+                    command.worldBounds.radius += sway * glm::length(glm::vec3(command.model[1]));
+                    command.previousWorldBounds.radius += sway * glm::length(glm::vec3(command.previousModel[1]));
+                }
 
                 if (cameraPalette)
                 {

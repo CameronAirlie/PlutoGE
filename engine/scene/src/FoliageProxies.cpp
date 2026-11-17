@@ -1,10 +1,12 @@
 #include "PlutoGE/scene/FoliageProxies.h"
 
+#include "PlutoGE/assets/AssetReference.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Prefab.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/FoliageProxyComponent.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/ScriptComponent.h"
 
 #include <array>
@@ -16,6 +18,31 @@ namespace PlutoGE::scene
         void SetError(std::string *errorMessage, std::string message)
         {
             if (errorMessage) *errorMessage = std::move(message);
+        }
+
+        // Whether `mesh` shows the type's own mesh: the same loaded mesh, or the same mesh by reference. Prefabs usually
+        // name a model's mesh by its stable asset reference (asset://model#object), types by path and model object.
+        bool ShowsTypeMesh(const MeshComponent &mesh, const FoliageType &type)
+        {
+            if (type.mesh && mesh.GetMesh() == type.mesh) return true;
+            const auto &reference = mesh.GetSourceMeshPath();
+            if (reference.empty()) return false;
+            if (reference == type.asset.sourceMeshPath) return true;
+            assets::AssetReference parsed;
+            return !type.asset.modelAssetId.empty() && assets::ParseAssetReference(reference, parsed) &&
+                   parsed == assets::AssetReference{type.asset.modelAssetId, type.asset.modelObjectId};
+        }
+
+        // The proxy draws the plant as its instance did, swaying included: meshes in it showing the type's mesh, with
+        // no wind of their own, take the type's response.
+        void InheritWind(Entity &entity, const FoliageType &type)
+        {
+            if (!type.asset.wind.enabled) return;
+            for (auto *mesh : entity.GetComponents<MeshComponent>())
+                if (mesh && !mesh->GetWind().enabled && ShowsTypeMesh(*mesh, type))
+                    mesh->SetWind(type.asset.wind);
+            for (auto *child : entity.GetChildren())
+                if (child) InheritWind(*child, type);
         }
     }
 
@@ -51,6 +78,7 @@ namespace PlutoGE::scene
         }
         // A proxy is a scene root, so its local transform is its world transform.
         if (worldTransform) proxy->SetLocalTransformMatrix(*worldTransform);
+        InheritWind(*proxy, *type);
 
         const std::array ids{instanceId};
         const auto removed = foliage.RemoveInstances(ids);

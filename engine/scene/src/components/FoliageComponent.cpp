@@ -922,6 +922,7 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "WindBendHeight", PropertyType::Float, std::to_string(type.asset.wind.bendHeight)});
             properties.push_back({prefix + "WindPivotHeight", PropertyType::Float, std::to_string(type.asset.wind.pivotHeight)});
             properties.push_back({prefix + "ProxyPrefab", PropertyType::String, type.asset.proxyPrefabReference});
+            properties.push_back({prefix + "InteractionTags", PropertyType::String, JoinFoliageInteractionTags(type.asset.interactionTags)});
             if (detail == HeavyDetail::Shared)
             {
                 Property instances{prefix + "Instances", PropertyType::String};
@@ -1083,6 +1084,8 @@ namespace PlutoGE::scene
                     type.asset.wind.pivotHeight = ParseFloatOr(property.value, type.asset.wind.pivotHeight);
                 else if (fieldName == "ProxyPrefab")
                     type.asset.proxyPrefabReference = property.value;
+                else if (fieldName == "InteractionTags")
+                    type.asset.interactionTags = ParseFoliageInteractionTags(property.value);
                 else if (fieldName == "Instances")
                 {
                     type.instances = DeserializeInstances(property.Text());
@@ -1844,33 +1847,94 @@ namespace PlutoGE::scene
         return ComposeInstanceTransform(owner->GetWorldTransform(), *instance);
     }
 
+    namespace
+    {
+        // The query grid's cell, in the component's local units. Interaction and area queries reach a few metres, so
+        // small cells keep the instances a query reads close to the ones it returns.
+        constexpr float kQueryCellSize = 8.0f;
+
+        FoliageCellCoordinate QueryCell(float x, float z)
+        {
+            return {static_cast<int>(std::floor(x / kQueryCellSize)), static_cast<int>(std::floor(z / kQueryCellSize))};
+        }
+    }
+
+    const FoliageComponent::QueryGrid &FoliageComponent::GetQueryGrid(std::size_t typeIndex) const
+    {
+        if (m_queryGrids.size() != m_types.size()) m_queryGrids.assign(m_types.size(), {});
+        auto &grid = m_queryGrids[typeIndex];
+        const auto &instances = m_types[typeIndex].instances;
+        if (grid.revision == m_revision && grid.instanceCount == instances.size()) return grid;
+        grid.cells.clear();
+        for (std::size_t index = 0; index < instances.size(); ++index)
+            grid.cells[QueryCell(instances[index].position.x, instances[index].position.z)].push_back(static_cast<std::uint32_t>(index));
+        grid.revision = m_revision;
+        grid.instanceCount = instances.size();
+        return grid;
+    }
+
     std::vector<FoliageInstanceLocation> FoliageComponent::FindInstancesInRadius(const glm::vec3 &worldCenter, float radius) const
     {
-        std::vector<FoliageInstanceLocation> found;
+        return FindInstancesInRadius(worldCenter, radius, {});
+    }
+
+    std::vector<FoliageInstanceLocation> FoliageComponent::FindInstancesInRadius(const glm::vec3 &worldCenter, float radius,
+                                                                                 const TypeFilter &acceptType,
+                                                                                 std::size_t maxResults) const
+    {
+        struct Found
+        {
+            FoliageInstanceLocation location;
+            float distanceSquared = 0.0f;
+        };
+        std::vector<Found> found;
         const auto *owner = GetOwner();
-        if (!owner || !(radius >= 0.0f)) return found;
+        if (!owner || !(radius >= 0.0f) || !std::isfinite(radius)) return {};
         const glm::mat4 ownerTransform = owner->GetWorldTransform();
+        // The grid is in local units: the sphere's centre goes into local space, and its radius grows by the owner's
+        // smallest scale so the cells read cover it whatever the transform. Distances are then measured in the world.
+        const float smallestScale = (std::min)({glm::length(glm::vec3(ownerTransform[0])), glm::length(glm::vec3(ownerTransform[1])),
+                                                glm::length(glm::vec3(ownerTransform[2]))});
+        if (!(smallestScale > 1e-6f)) return {};
+        const glm::vec3 localCenter = glm::vec3(glm::inverse(ownerTransform) * glm::vec4(worldCenter, 1.0f));
+        const float localRadius = radius / smallestScale;
+        const auto low = QueryCell(localCenter.x - localRadius, localCenter.z - localRadius);
+        const auto high = QueryCell(localCenter.x + localRadius, localCenter.z + localRadius);
         const float radiusSquared = radius * radius;
-        std::vector<float> distances;
         for (std::size_t typeIndex = 0; typeIndex < m_types.size(); ++typeIndex)
         {
-            const auto &instances = m_types[typeIndex].instances;
-            for (std::size_t instanceIndex = 0; instanceIndex < instances.size(); ++instanceIndex)
+            const auto &type = m_types[typeIndex];
+            if (type.instances.empty() || (acceptType && !acceptType(type))) continue;
+            const auto &grid = GetQueryGrid(typeIndex);
+            for (int z = low.z; z <= high.z; ++z)
             {
-                const glm::vec3 pivot = glm::vec3(ownerTransform * glm::vec4(instances[instanceIndex].position, 1.0f));
-                const float distanceSquared = glm::length2(pivot - worldCenter);
-                if (distanceSquared > radiusSquared) continue;
-                found.push_back({typeIndex, instanceIndex});
-                distances.push_back(distanceSquared);
+                for (int x = low.x; x <= high.x; ++x)
+                {
+                    const auto cell = grid.cells.find({x, z});
+                    if (cell == grid.cells.end()) continue;
+                    for (const auto instanceIndex : cell->second)
+                    {
+                        const glm::vec3 pivot = glm::vec3(ownerTransform * glm::vec4(type.instances[instanceIndex].position, 1.0f));
+                        const float distanceSquared = glm::length2(pivot - worldCenter);
+                        if (distanceSquared <= radiusSquared) found.push_back({{typeIndex, instanceIndex}, distanceSquared});
+                    }
+                }
             }
         }
-        std::vector<std::size_t> order(found.size());
-        for (std::size_t index = 0; index < order.size(); ++index) order[index] = index;
-        std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return distances[a] < distances[b]; });
-        std::vector<FoliageInstanceLocation> sorted;
-        sorted.reserve(found.size());
-        for (const auto index : order) sorted.push_back(found[index]);
-        return sorted;
+        const auto nearer = [](const Found &a, const Found &b) { return a.distanceSquared < b.distanceSquared; };
+        if (maxResults > 0 && found.size() > maxResults)
+        {
+            std::partial_sort(found.begin(), found.begin() + static_cast<std::ptrdiff_t>(maxResults), found.end(), nearer);
+            found.resize(maxResults);
+        }
+        else
+        {
+            std::sort(found.begin(), found.end(), nearer);
+        }
+        std::vector<FoliageInstanceLocation> locations;
+        locations.reserve(found.size());
+        for (const auto &entry : found) locations.push_back(entry.location);
+        return locations;
     }
 
     std::size_t FoliageComponent::GetTotalInstanceCount() const

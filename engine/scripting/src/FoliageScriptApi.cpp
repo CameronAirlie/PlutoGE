@@ -3,6 +3,7 @@
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/FoliageProxies.h"
+#include "PlutoGE/scene/FoliageQueries.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/FoliageProxyComponent.h"
@@ -11,6 +12,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <limits>
+#include <optional>
 #include <string_view>
 
 namespace PlutoGE::scripting
@@ -49,6 +52,33 @@ namespace PlutoGE::scripting
             request.position[2] = transform[3].z;
         }
 
+        // The world-space box round what the instance draws (its mesh's box carried through the instance's transform);
+        // just the pivot when that is unknown.
+        void WriteBounds(NativeFoliageRequest &request, const std::optional<scene::FoliageInstanceBounds> &bounds,
+                         const glm::mat4 &transform)
+        {
+            glm::vec3 low(transform[3]), high(transform[3]);
+            if (bounds)
+            {
+                low = glm::vec3(std::numeric_limits<float>::max());
+                high = glm::vec3(-std::numeric_limits<float>::max());
+                for (int corner = 0; corner < 8; ++corner)
+                {
+                    const glm::vec3 local((corner & 1) ? bounds->localMax.x : bounds->localMin.x,
+                                          (corner & 2) ? bounds->localMax.y : bounds->localMin.y,
+                                          (corner & 4) ? bounds->localMax.z : bounds->localMin.z);
+                    const glm::vec3 world(bounds->model * glm::vec4(local, 1.0f));
+                    low = glm::min(low, world);
+                    high = glm::max(high, world);
+                }
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                request.boundsMin[axis] = low[axis];
+                request.boundsMax[axis] = high[axis];
+            }
+        }
+
         std::int32_t GetInstance(scene::FoliageComponent &foliage, NativeFoliageRequest &request)
         {
             const auto location = foliage.FindInstance(request.instanceId);
@@ -58,6 +88,7 @@ namespace PlutoGE::scripting
             request.typeIndex = static_cast<std::int32_t>(location->typeIndex);
             request.hasProxyPrefab = type.asset.proxyPrefabReference.empty() ? 0 : 1;
             WriteTransform(request, *transform);
+            WriteBounds(request, foliage.GetInstanceBounds(*location), *transform);
             CopyName(request, type.name);
             request.result = 1;
             return 1;
@@ -74,6 +105,28 @@ namespace PlutoGE::scripting
             request.result = count;
             return 1;
         }
+
+        std::int32_t FindInScene(NativeFoliageRequest &request)
+        {
+            if (request.capacity < 0 || (request.capacity > 0 && !request.matches)) return 0;
+            const auto *scene = core::Engine::GetInstance().GetScene();
+            if (!scene) return 0;
+            request.name[sizeof(request.name) - 1] = '\0';
+            const auto matches = scene::FindFoliageInstances(*scene, {
+                .center = {request.position[0], request.position[1], request.position[2]},
+                .radius = request.radius,
+                .interactionTag = request.name,
+                .requireProxy = request.hasProxyPrefab != 0,
+            });
+            const auto count = static_cast<std::int32_t>(matches.size());
+            for (std::int32_t index = 0; index < (std::min)(count, request.capacity); ++index)
+            {
+                const auto &match = matches[static_cast<std::size_t>(index)];
+                request.matches[index] = {match.foliageEntity, static_cast<std::int32_t>(match.typeIndex), match.instanceId, match.distance};
+            }
+            request.result = count;
+            return 1;
+        }
     }
 
     std::int32_t PLUTO_FOLIAGE_API_CALL ControlFoliage(NativeFoliageRequest *request)
@@ -83,6 +136,8 @@ namespace PlutoGE::scripting
         try
         {
             request->result = 0;
+            if (static_cast<FoliageScriptOperation>(request->operation) == FoliageScriptOperation::FindInScene)
+                return FindInScene(*request);
             auto *entity = FindEntity(request->entity);
             if (!entity)
                 return 0;
@@ -115,6 +170,8 @@ namespace PlutoGE::scripting
                     return 0;
                 request->result = scene::ReleaseFoliageProxy(*entity) ? 1 : 0;
                 return 1;
+            case FoliageScriptOperation::FindInScene:
+                return 0; // handled above, without an entity
             case FoliageScriptOperation::GetProxyLink:
                 if (link)
                 {

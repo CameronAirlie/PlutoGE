@@ -11,6 +11,7 @@
 #include "PlutoGE/ui/WindInspectors.h"
 
 #include <imgui.h>
+#include <misc/cpp/imgui_stdlib.h>
 
 #include <algorithm>
 #include <array>
@@ -373,16 +374,29 @@ namespace PlutoGE::ui
 
     bool DrawFoliageInteractionSection(scene::FoliageTypeAsset &asset, const FoliageTypeSectionContext &context)
     {
-        const ImGuiTreeNodeFlags flags = asset.proxyPrefabReference.empty() ? ImGuiTreeNodeFlags_None : ImGuiTreeNodeFlags_DefaultOpen;
+        const bool interactive = !asset.proxyPrefabReference.empty() || !asset.interactionTags.empty();
+        const ImGuiTreeNodeFlags flags = interactive ? ImGuiTreeNodeFlags_DefaultOpen : ImGuiTreeNodeFlags_None;
         return Section("Interaction", flags, context, [&]
         {
-            const bool changed = RenderProjectAssetPicker("Proxy Prefab", context.project, assets::ProjectAssetType::Prefab,
-                                                          asset.proxyPrefabReference, {.noneLabel = "None (Scenery)"});
+            bool changed = RenderProjectAssetPicker("Proxy Prefab", context.project, assets::ProjectAssetType::Prefab,
+                                                    asset.proxyPrefabReference, {.noneLabel = "None (Scenery)"});
             ImGui::SetItemTooltip("The entity an instance becomes when gameplay promotes it (an axe strikes a tree).\n"
                                   "It spawns at the instance's position, rotation and scale with its scripts running,\n"
                                   "and releasing it puts the instance back. Other instances stay cheap foliage.");
+            // ImGui keeps its own copy of the text while the field is typed in, so separators typed mid-edit stay.
+            std::string tags = scene::JoinFoliageInteractionTags(asset.interactionTags);
+            if (ImGui::InputTextWithHint("Interaction Tags", "e.g. Gather", &tags))
+            {
+                asset.interactionTags = scene::ParseFoliageInteractionTags(tags);
+                changed = true;
+            }
+            ImGui::SetItemTooltip("Labels your game gives meaning to, separated by commas (\"Gather\", \"Mine\").\n"
+                                  "Scripts find instances near a point by tag (Foliage.FindInstances), so a bush can be\n"
+                                  "offered to the player without collision, and told apart from a tree that is only struck.");
             if (!asset.proxyPrefabReference.empty())
-                ImGui::TextDisabled("Scripts promote instances with RaycastHit.FoliageInstance.TryPromote.");
+                ImGui::TextDisabled(asset.interactionTags.empty()
+                                        ? "Scripts promote instances with RaycastHit.FoliageInstance.TryPromote."
+                                        : "Scripts find instances by tag and promote them with FoliageInstance.TryPromote.");
             return changed;
         });
     }

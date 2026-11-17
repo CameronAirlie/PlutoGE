@@ -15,13 +15,15 @@ namespace PlutoGE::render
             glm::mat4 projection{1.0f};
             glm::mat4 previousViewProjection{1.0f};
             glm::mat4 worldToLocal{1.0f};
+            glm::mat4 inverseViewProjection{1.0f};
             glm::vec4 cameraPosition{0.0f};
             glm::vec4 settings{0.0f};   // history valid, current weight, flip Y
             glm::vec4 resolution{0.0f}; // 1 / width, 1 / height, width, height
             glm::vec4 interleave{0.0f}; // interleaved, phase x, phase y
+            glm::vec4 depthSettings{0.0f}; // zero-to-one depth, reciprocal distance, full width, full height
         };
 
-        constexpr std::uint32_t ParametersSlot = 0, TraceSlot = 1, HistorySlot = 2;
+        constexpr std::uint32_t ParametersSlot = 0, TraceSlot = 1, HistorySlot = 2, DepthSlot = 3;
         constexpr auto HistoryFormat = rhi::Format::R16G16B16A16Float;
     }
 
@@ -41,7 +43,8 @@ namespace PlutoGE::render
         descriptor.resourceBindings = {
             {ParametersSlot, 0, ParametersSlot, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
             {TraceSlot, 0, TraceSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-            {HistorySlot, 0, HistorySlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
+            {HistorySlot, 0, HistorySlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+            {DepthSlot, 0, DepthSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment}};
         descriptor.debugName = "Cloud temporal reconstruction";
         m_pipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(descriptor));
         if (!m_pipeline)
@@ -125,9 +128,10 @@ namespace PlutoGE::render
     rhi::TextureHandle CloudTemporalFilter::Resolve(rhi::ICommandContext &commands, std::size_t volume,
                                                     rhi::TextureHandle trace, const TracePlan &plan,
                                                     rhi::SamplerHandle sampler, std::uint32_t width,
-                                                    std::uint32_t height, const glm::mat4 &worldToLocal)
+                                                    std::uint32_t height, const glm::mat4 &worldToLocal,
+                                                    const Depth &depth)
     {
-        if (!Available() || !trace || width == 0 || height == 0)
+        if (!Available() || !trace || !depth.texture || width == 0 || height == 0)
             return trace;
         if (m_histories.size() <= volume)
             m_histories.resize(volume + 1);
@@ -155,9 +159,13 @@ namespace PlutoGE::render
         parameters.projection = m_camera.projection;
         parameters.previousViewProjection = m_camera.previousViewProjection;
         parameters.worldToLocal = worldToLocal;
+        parameters.inverseViewProjection = m_camera.inverseViewProjection;
         parameters.cameraPosition = glm::vec4(m_camera.position, 1.0f);
         parameters.settings = {reproject ? 1.0f : 0.0f, weight, m_camera.flipY ? 1.0f : 0.0f, 0.0f};
         parameters.interleave = {interleaved ? 1.0f : 0.0f, static_cast<float>(plan.phase.x), static_cast<float>(plan.phase.y), 0.0f};
+        parameters.depthSettings = {m_camera.zeroToOneDepth ? 1.0f : 0.0f, depth.reciprocalDistance ? 1.0f : 0.0f,
+                                    static_cast<float>(std::max(m_camera.width, 1u)),
+                                    static_cast<float>(std::max(m_camera.height, 1u))};
         parameters.resolution = {1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height),
                                  static_cast<float>(width), static_cast<float>(height)};
         std::byte bytes[sizeof(parameters)];
@@ -177,6 +185,7 @@ namespace PlutoGE::render
         commands.BindTexture(TraceSlot, trace, sampler);
         // Without a valid history the shader returns the trace unchanged; bind it in the history slot too.
         commands.BindTexture(HistorySlot, reproject ? history.targets[previous].Get() : trace, sampler);
+        commands.BindTexture(DepthSlot, depth.texture, depth.sampler);
         commands.Draw(3);
         commands.EndRendering();
         history.current = next;

@@ -86,6 +86,13 @@ then formed a shell through the clouds, and those shells showed as thin slices.
    disocclusions cannot ghost.
 4. It blends in 10% of the new trace.
 
+The resolve also reads the depth the trace clipped against. A pixel whose opaque surface is in front of the
+volume (a leaf, branch or roof against the sky) resolves to no cloud without touching the history, and is stored
+as an "occluded" marker (transmittance 2, which the composite reads as no cloud). Neighbourhood clipping uses only
+unoccluded pixels, and reprojection skips occluded history texels. When a pixel is newly uncovered, the resolve
+fills it from nearby unoccluded history. Without this, history reprojected at cloud distance smeared cloud
+radiance over swaying foliage and left blurred holes in the clouds between leaves.
+
 With history, a 12-step trace comes about 10× closer to a 128-step reference than a single frame does. The first
 frame of a volume, a resize or a camera cut traces with the shared offsets, so one-off renders such as thumbnails
 stay free of grain. Each volume keeps its own history at its trace resolution, which costs 16 bytes per

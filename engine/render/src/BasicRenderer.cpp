@@ -5264,7 +5264,8 @@ namespace PlutoGE::render
         if (m_cloudTemporal)
             m_cloudTemporal->BeginFrame({m_postProcessView, m_postProcessProjection, m_previousMotionViewProjection,
                                          glm::vec3(m_postProcessCameraPosition),
-                                         m_device->GetApi() == rhi::GraphicsApi::Vulkan},
+                                         m_device->GetApi() == rhi::GraphicsApi::Vulkan, m_inverseViewProjection,
+                                         m_device->UsesZeroToOneClipDepth(), m_postProcessWidth, m_postProcessHeight},
                                         m_hasPreviousFrame);
         for (std::size_t effectCursor = 0; effectCursor < postProcessEffects.size(); ++effectCursor)
         {
@@ -5559,7 +5560,9 @@ namespace PlutoGE::render
             if (writeOceanDepth) oceanVolumeDepth = depthDestination;
             const auto volumeResult = reducedVolume && cloudTemporal
                 ? m_cloudTemporal->Resolve(commands, cloudVolume, colorDestination, cloudTrace, m_screenSampler.Get(),
-                                           passWidth, passHeight, effect.worldToLocal)
+                                           passWidth, passHeight, effect.worldToLocal,
+                                           {volumeDepth ? volumeDepth : m_depthTarget.Get(), m_shadowSampler.Get(),
+                                            static_cast<bool>(volumeDepth)})
                 : colorDestination;
             m_outputColor = reducedVolume
                 ? CompositeVolumetric(m_outputColor, volumeResult, passWidth, passHeight, commands, targetIndex, volumeDepth)

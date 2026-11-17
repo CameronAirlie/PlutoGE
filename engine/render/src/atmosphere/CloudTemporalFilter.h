@@ -48,6 +48,10 @@ namespace PlutoGE::render
             glm::mat4 previousViewProjection{1.0f};
             glm::vec3 position{0.0f};
             bool flipY = false;
+            // Reconstructs the depth the trace clipped against, at the full resolution it read it.
+            glm::mat4 inverseViewProjection{1.0f};
+            bool zeroToOneDepth = true;
+            std::uint32_t width = 0, height = 0;
         };
 
         // Weight of the current trace in the accumulated result. Lower is
@@ -97,12 +101,20 @@ namespace PlutoGE::render
         // How volume traces this frame for a width x height history (the volumetric pass's resolution).
         [[nodiscard]] TracePlan PlanTrace(std::size_t volume, std::uint32_t width, std::uint32_t height,
                                           std::uint32_t frame) const;
+        // The depth the trace clipped against (bound at its full resolution, sampled nearest). A pixel whose surface
+        // is in front of the volume resolves to no cloud without history, and only unoccluded pixels clip the history.
+        struct Depth
+        {
+            rhi::TextureHandle texture;
+            rhi::SamplerHandle sampler;
+            bool reciprocalDistance = false; // the ocean volume depth: 1 / (1 + distance along the ray)
+        };
         // Accumulates the trace (rgb radiance, a transmittance), traced as `plan`, into volume's width x height
         // history and returns the result, valid until the same volume's next Resolve. Call outside rendering.
         [[nodiscard]] rhi::TextureHandle Resolve(rhi::ICommandContext &commands, std::size_t volume,
                                                  rhi::TextureHandle trace, const TracePlan &plan,
                                                  rhi::SamplerHandle sampler, std::uint32_t width, std::uint32_t height,
-                                                 const glm::mat4 &worldToLocal);
+                                                 const glm::mat4 &worldToLocal, const Depth &depth);
         // volumes is the number of cloud volumes resolved this frame; histories beyond it are released.
         void EndFrame(std::size_t volumes);
 

@@ -84,7 +84,10 @@ float4 fragmentMain(FullscreenVertexOutput input) : SV_Target
                 predictedDepth <= 0.0 ? 1e20 :
                 abs(viewDistance(sourceUv, sampleDepth) - viewDistance(sourceUv, predictedDepth)) /
                     max(distance * 0.02, 0.05);
-            const float4 volume = volumeTexture.Sample(sampleUv);
+            // A cloud history marks a pixel whose surface hides the volume with a transmittance of 2
+            // (CloudTemporal.slang OccludedHistory): no cloud.
+            float4 volume = volumeTexture.Sample(sampleUv);
+            if (volume.a > 1.5) volume = float4(0, 0, 0, 1);
             if (error < bestError) { bestError = error; closest = volume; }
             const float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) *
                                  (y == 0 ? 1.0 - fraction.y : fraction.y) * exp(-error);

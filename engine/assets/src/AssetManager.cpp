@@ -2399,6 +2399,10 @@ namespace PlutoGE::assets
                     {
                         config.twoSided = value == "true" || value == "1";
                     }
+                    else if (key == "SeeThrough")
+                    {
+                        config.seeThrough = value == "true" || value == "1";
+                    }
                     else if (key == "UvScale")
                     {
                         ParseVec2(value, config.uvScale);

@@ -56,6 +56,7 @@ namespace PlutoGE::ui
         float m_alphaCutoff = 0.5f;
         bool m_castsShadow = true;
         bool m_twoSided = false;
+        bool m_seeThrough = false;
         std::array<std::string, render::MaterialTextureSlotCount> m_texturePaths;
         std::array<render::TextureChannel, render::MaterialTextureSlotCount> m_textureChannels{};
         float m_metallic = 0.0f;

@@ -774,6 +774,8 @@ namespace PlutoGE::render
         glm::vec3 attenuationColor{1.0f};
         float attenuationDistance = 1.0f;
         bool twoSided = false;
+        // A Blend draw tested against no depth: it shows through everything in front of it (MaterialConfig::seeThrough).
+        bool seeThrough = false;
         float outlineWidth = 0.0f;
         glm::vec2 probeDebug{0};
         glm::vec3 outlineColor{0.0f};
@@ -1618,6 +1620,8 @@ namespace PlutoGE::render
         rhi::IRenderDevice *m_device = nullptr;
         rhi::GraphicsPipeline m_transparentPipeline;
         rhi::GraphicsPipeline m_transparentTwoSidedPipeline;
+        rhi::GraphicsPipeline m_seeThroughPipeline;          // Blend draws with MaterialConfig::seeThrough
+        rhi::GraphicsPipeline m_seeThroughTwoSidedPipeline;
         rhi::GraphicsPipeline m_glassSceneCopyPipeline;
         rhi::GraphicsPipeline m_glassColorCopyPipeline, m_glassDepthCopyPipeline;
         rhi::GraphicsPipeline m_skyQuadraturePipeline;

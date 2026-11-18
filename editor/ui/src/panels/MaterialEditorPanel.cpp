@@ -252,6 +252,7 @@ namespace PlutoGE::ui
             m_alphaCutoff = 0.5f;
             m_castsShadow = true;
             m_twoSided = false;
+            m_seeThrough = false;
             m_texturePaths = {};
             m_textureChannels = {};
             m_metallic = 0.0f;
@@ -304,6 +305,7 @@ namespace PlutoGE::ui
         m_alphaCutoff = config.alphaCutoff;
         m_castsShadow = config.castsShadow;
         m_twoSided = config.twoSided;
+        m_seeThrough = config.seeThrough;
         for (const auto &slot : render::MaterialTextureSlots())
         {
             TexturePath(slot.slot) = textureReference(config.*slot.texture);
@@ -377,6 +379,7 @@ namespace PlutoGE::ui
         config.alphaCutoff = (std::clamp)(m_alphaCutoff, 0.0f, 1.0f);
         config.castsShadow = m_castsShadow;
         config.twoSided = m_twoSided;
+        config.seeThrough = m_seeThrough;
         config.metallic = (std::clamp)(m_metallic, 0.0f, 1.0f);
         config.roughness = (std::clamp)(m_roughness, 0.04f, 1.0f);
         config.occlusionStrength = (std::clamp)(m_occlusionStrength, 0.0f, 1.0f);
@@ -448,6 +451,7 @@ namespace PlutoGE::ui
         previewConfig.surfaceType = m_surfaceType;
         previewConfig.alphaMode = m_alphaMode;
         previewConfig.twoSided = m_twoSided;
+        previewConfig.seeThrough = m_seeThrough;
         previewConfig.metallic = m_metallic;
         previewConfig.roughness = m_roughness;
         previewConfig.occlusionStrength = m_occlusionStrength;
@@ -494,6 +498,7 @@ namespace PlutoGE::ui
             for (int i=0;i<4;++i) HashPreviewValue(previewRevision, channel[i]);
         HashPreviewValue(previewRevision, m_flipNormalY);
         HashPreviewValue(previewRevision, m_twoSided);
+        HashPreviewValue(previewRevision, m_seeThrough);
         if (previewConfig.shaderGraphProgram)
         {
             HashPreviewValue(previewRevision, previewConfig.shaderGraphProgram->hash);
@@ -623,6 +628,13 @@ namespace PlutoGE::ui
         {
             m_dirty = true;
         }
+        // Only Blend materials use it: drawn without a depth test, through whatever is in front (gameplay gizmos).
+        if (ImGui::Checkbox("See Through", &m_seeThrough))
+        {
+            m_dirty = true;
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Blend materials only: drawn on top of everything in front of them, like a gizmo.");
 
         ImGui::SeparatorText("Textures");
         if (RenderTextureReferenceControl("Albedo", TexturePath(render::MaterialTextureSlot::Albedo)))

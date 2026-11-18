@@ -252,6 +252,7 @@ namespace PlutoGE::scene
             std::optional<float> alphaCutoff;
             std::optional<bool> castsShadow;
             std::optional<bool> twoSided;
+            std::optional<bool> seeThrough;
             std::optional<glm::vec2> uvScale;
             std::optional<float> metallic;
             std::optional<float> roughness;
@@ -343,6 +344,8 @@ namespace PlutoGE::scene
             properties.push_back({prefix + "AlphaCutoff", PropertyType::Float, std::to_string(config.alphaCutoff)});
             properties.push_back({prefix + "CastsShadow", PropertyType::Bool, config.castsShadow ? "true" : "false"});
             properties.push_back({prefix + "TwoSided", PropertyType::Bool, config.twoSided ? "true" : "false"});
+            if (config.seeThrough)
+                properties.push_back({prefix + "SeeThrough", PropertyType::Bool, "true"});
             properties.push_back({prefix + "UvScale", PropertyType::String, SerializeVec2(config.uvScale)});
             properties.push_back({prefix + "Metallic", PropertyType::Float, std::to_string(config.metallic)});
             properties.push_back({prefix + "Roughness", PropertyType::Float, std::to_string(config.roughness)});
@@ -454,6 +457,10 @@ namespace PlutoGE::scene
             else if (fieldName == "TwoSided")
             {
                 serializedMaterial.twoSided = (value == "true" || value == "1");
+            }
+            else if (fieldName == "SeeThrough")
+            {
+                serializedMaterial.seeThrough = (value == "true" || value == "1");
             }
             else if (fieldName == "UvScale")
             {
@@ -588,6 +595,10 @@ namespace PlutoGE::scene
             if (serializedMaterial.twoSided.has_value())
             {
                 material.SetTwoSided(*serializedMaterial.twoSided);
+            }
+            if (serializedMaterial.seeThrough.has_value())
+            {
+                material.SetSeeThrough(*serializedMaterial.seeThrough);
             }
             if (serializedMaterial.uvScale.has_value())
             {

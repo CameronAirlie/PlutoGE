@@ -26,6 +26,21 @@ reduces roughness. Existing values remain editable and retain their file format.
 - Two Sided supports thin planes viewed from either side. Closed meshes generally
   work best with it disabled to avoid shading both walls of a slab twice.
 
+## See-through translucency
+
+**See Through** (`SeeThrough=true` in the `.plutomaterial`, `MaterialConfig::seeThrough`) draws a Standard
+`AlphaMode=Blend` material without a depth test, so the whole surface shows through whatever is in front of it,
+including terrain and characters. It is meant for gameplay gizmos: a preview of the ground a tool will dig, a
+placement volume, an objective marker. Glass, opaque and masked materials ignore it.
+
+- Keep it translucent (a low base colour alpha) and back-face culled (Two Sided off) on closed shapes, or the far
+  wall shades over the near one.
+- It casts no shadows and writes no depth, like every Blend draw. It is sorted with the other transparent draws, so
+  a see-through draw can still be overdrawn by a nearer translucent surface.
+- The file only gains the line when it is set, so existing materials are unchanged. Inline mesh material slots carry
+  it as `MaterialSlots.N.SeeThrough`.
+- Checked by `PlutoGEVulkanSeeThroughTests` / `PlutoGEOpenGLSeeThroughTests` (`--see-through-only`).
+
 The visual reference is Unreal's raster translucent glass workflow, including
 [IOR refraction](https://dev.epicgames.com/documentation/unreal-engine/using-refraction-in-unreal-engine)
 and its [Thin Translucent material model](https://dev.epicgames.com/documentation/unreal-engine/unreal-engine-material-properties).

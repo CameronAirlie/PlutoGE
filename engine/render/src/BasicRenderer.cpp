@@ -984,6 +984,16 @@ namespace PlutoGE::render
                 m_transparentPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
                 transparentDescriptor.cullMode = rhi::CullMode::None;
                 m_transparentTwoSidedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(transparentDescriptor));
+                // See-through translucency (MaterialConfig::seeThrough): the same shading, tested against no depth.
+                {
+                    auto seeThrough = transparentDescriptor;
+                    seeThrough.depthTest = false;
+                    seeThrough.debugName = "RHI see-through translucency (two sided)";
+                    m_seeThroughTwoSidedPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(seeThrough));
+                    seeThrough.cullMode = rhi::CullMode::Back;
+                    seeThrough.debugName = "RHI see-through translucency";
+                    m_seeThroughPipeline = rhi::GraphicsPipeline(device, device.CreateGraphicsPipeline(seeThrough));
+                }
                 if (!shaders.particleBoundaryFragment.glsl.empty() || !shaders.particleBoundaryFragment.spirv.empty())
                 {
                     auto boundary = transparentDescriptor;
@@ -1894,6 +1904,8 @@ namespace PlutoGE::render
         m_outlineLayers = {};
         m_transparentPipeline.Reset();
         m_transparentTwoSidedPipeline.Reset();
+        m_seeThroughPipeline.Reset();
+        m_seeThroughTwoSidedPipeline.Reset();
         m_glassSceneCopyPipeline.Reset();
         m_glassColorCopyPipeline.Reset();
         m_glassDepthCopyPipeline.Reset();
@@ -3940,7 +3952,9 @@ namespace PlutoGE::render
             const auto pipeline = transparent
                 ? (recordingParticleBoundary
                     ? (draw.twoSided ? m_particleBoundaryTwoSidedPipeline.Get() : m_particleBoundaryPipeline.Get())
-                    : (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()))
+                    : draw.seeThrough && m_seeThroughPipeline
+                        ? (draw.twoSided ? m_seeThroughTwoSidedPipeline.Get() : m_seeThroughPipeline.Get())
+                        : (draw.twoSided ? m_transparentTwoSidedPipeline.Get() : m_transparentPipeline.Get()))
                 : GeometryPipeline(draw, instancedInput, geometryLayout, recordingDepth,
                     depthPrepassActive && prepassEligible(draw) && !recordingDepth);
             if (boundDrawPipeline != pipeline)

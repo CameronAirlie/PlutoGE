@@ -42,6 +42,7 @@
 #include "ParticlePointRenderingChecks.h"
 #include "ParticleScatteringRenderingChecks.h"
 #include "DecalRenderingChecks.h"
+#include "SeeThroughRenderingChecks.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "PlutoGE/render/rhi/vulkan/VulkanDevice.h"
 #include "PlutoGE/scene/components/LightComponent.h"
@@ -546,6 +547,11 @@ int main(int argc, char **argv)
         {
             CheckLargeBufferUploads(device);
             CheckBatchedBufferUploads(device);
+            return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--see-through-only")
+        {
+            CheckSeeThroughRendering(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
             return 0;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--decals-only")

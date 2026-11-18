@@ -32,6 +32,8 @@ namespace PlutoGE::assets
         output << "AlphaCutoff=" << config.alphaCutoff << "\n";
         output << "CastsShadow=" << (config.castsShadow ? "true" : "false") << "\n";
         output << "TwoSided=" << (config.twoSided ? "true" : "false") << "\n";
+        // Written only when set, so existing material files keep their exact text.
+        if (config.seeThrough) output << "SeeThrough=true\n";
         output << "UvScale=" << config.uvScale.x << "," << config.uvScale.y << "\n";
         output << "Metallic=" << config.metallic << "\n";
         output << "Roughness=" << config.roughness << "\n";

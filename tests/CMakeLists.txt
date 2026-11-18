@@ -722,6 +722,8 @@ add_test(NAME PlutoGEVulkanParticleScatteringTests COMMAND PlutoGEVulkanRhiTests
 add_test(NAME PlutoGEOpenGLParticleScatteringTests COMMAND PlutoGEOpenGLRhiTests --particle-scattering)
 add_test(NAME PlutoGEVulkanDecalTests COMMAND PlutoGEVulkanRhiTests --decals-only)
 add_test(NAME PlutoGEOpenGLDecalTests COMMAND PlutoGEOpenGLRhiTests --decals-only)
+add_test(NAME PlutoGEVulkanSeeThroughTests COMMAND PlutoGEVulkanRhiTests --see-through-only)
+add_test(NAME PlutoGEOpenGLSeeThroughTests COMMAND PlutoGEOpenGLRhiTests --see-through-only)
 
 add_test(NAME PlutoGEVulkanTemporalMotionTests COMMAND PlutoGEVulkanRhiTests --temporal-motion)
 add_test(NAME PlutoGEOpenGLTemporalMotionTests COMMAND PlutoGEOpenGLRhiTests --temporal-motion)

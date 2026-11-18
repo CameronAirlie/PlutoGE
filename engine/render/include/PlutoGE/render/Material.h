@@ -49,6 +49,9 @@ namespace PlutoGE::render
         float alphaCutoff = 0.5f;
         bool castsShadow = true;
         bool twoSided = false;                 // Render both front and back faces
+        // Blend materials only: drawn without a depth test, so the whole surface shows through whatever is in
+        // front of it (gameplay gizmos such as a dig preview volume). Ignored by opaque, masked and glass materials.
+        bool seeThrough = false;
 
         Texture *normalTexture = nullptr; // Pointer to a normal map texture (if any)
         bool flipNormalY = false;         // Flip green channel for DirectX-style normal maps
@@ -151,6 +154,7 @@ namespace PlutoGE::render
         void SetAlphaCutoff(float alphaCutoff) { if (m_config.alphaCutoff != (alphaCutoff)) { m_config.alphaCutoff = alphaCutoff; Touch(); } }
         void SetCastsShadow(bool castsShadow) { if (m_config.castsShadow != (castsShadow)) { m_config.castsShadow = castsShadow; Touch(); } }
         void SetTwoSided(bool twoSided) { if (m_config.twoSided != (twoSided)) { m_config.twoSided = twoSided; Touch(); } }
+        void SetSeeThrough(bool seeThrough) { if (m_config.seeThrough != (seeThrough)) { m_config.seeThrough = seeThrough; Touch(); } }
         void SetNormalTexture(Texture *texture) { if (m_config.normalTexture != (texture)) { m_config.normalTexture = texture; Touch(); } }
         void SetFlipNormalY(bool flipNormalY) { if (m_config.flipNormalY != (flipNormalY)) { m_config.flipNormalY = flipNormalY; Touch(); } }
         void SetMetallic(float metallic) { if (m_config.metallic != (metallic)) { m_config.metallic = metallic; Touch(); } }

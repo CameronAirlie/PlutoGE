@@ -220,6 +220,60 @@ public sealed class UIInputFieldComponent : UISelectableComponent
     }
 }
 
+/// <summary>
+/// Makes an element draggable. Events carry the pointer (<see cref="UIEventData.Position"/>, canvas units from the
+/// canvas's bottom-left); <see cref="EndDrag"/>'s <see cref="UIEventData.Related"/> is the drop target that
+/// accepted the drag, or null. Presses and clicks pass through to a button on the same element.
+/// </summary>
+[NativeComponent("UIDragSourceComponent")]
+public sealed class UIDragSourceComponent : RegisteredComponent
+{
+    internal UIDragSourceComponent(uint entityId) : base(entityId)
+    {
+    }
+
+    public bool Interactable { get => GetBool("Interactable"); set => SetBool("Interactable", value); }
+
+    public event Action<UIEventData>? BeginDrag
+    {
+        add => UI.Subscribe(EntityId, UIEventType.BeginDrag, value, value!);
+        remove => UI.Unsubscribe(EntityId, UIEventType.BeginDrag, value);
+    }
+
+    /// <summary>Raised for each pointer move while dragging.</summary>
+    public event Action<UIEventData>? Drag
+    {
+        add => UI.Subscribe(EntityId, UIEventType.Drag, value, value!);
+        remove => UI.Unsubscribe(EntityId, UIEventType.Drag, value);
+    }
+
+    public event Action<UIEventData>? EndDrag
+    {
+        add => UI.Subscribe(EntityId, UIEventType.EndDrag, value, value!);
+        remove => UI.Unsubscribe(EntityId, UIEventType.EndDrag, value);
+    }
+}
+
+/// <summary>
+/// Accepts drags released over the element or its descendants. <see cref="Dropped"/>'s
+/// <see cref="UIEventData.Related"/> is the drag source.
+/// </summary>
+[NativeComponent("UIDropTargetComponent")]
+public sealed class UIDropTargetComponent : RegisteredComponent
+{
+    internal UIDropTargetComponent(uint entityId) : base(entityId)
+    {
+    }
+
+    public bool Interactable { get => GetBool("Interactable"); set => SetBool("Interactable", value); }
+
+    public event Action<UIEventData>? Dropped
+    {
+        add => UI.Subscribe(EntityId, UIEventType.Drop, value, value!);
+        remove => UI.Unsubscribe(EntityId, UIEventType.Drop, value);
+    }
+}
+
 [NativeComponent("UIDropdownComponent")]
 public sealed class UIDropdownComponent : UISelectableComponent
 {

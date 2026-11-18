@@ -46,6 +46,7 @@ namespace PlutoGE::scene
         glm::vec2 delta{0.0f};         // pointer movement since the last event
         glm::vec2 scroll{0.0f};        // wheel steps, y positive away from the user
         glm::ivec2 direction{0};       // Move: one of the four directions (y-up)
+        UIEntityID related = 0;        // Drop: the drag source; EndDrag: the element that took the drop (0 if none)
         int clickCount = 1;
         bool consumed = false;
 
@@ -65,6 +66,10 @@ namespace PlutoGE::scene
         [[nodiscard]] virtual UIEntityID GetSelected() const = 0;
         // Records a semantic event (ValueChanged, Click, ...) for scripts.
         virtual void Emit(UIEventType type, UIEntityID source) = 0;
+        // As above, with the pointer (target pixels, y-up) and a related
+        // element (drag source / drop target). Records convert the pointer to
+        // canvas units from the bottom-left of the source's canvas.
+        virtual void Emit(UIEventType type, UIEntityID source, glm::vec2 pointerPixels, UIEntityID related) = 0;
         [[nodiscard]] virtual float GetDeltaTime() const = 0;
         // Routes pointer and navigation input to the owner's IUIPopup until it closes.
         virtual void OpenPopup(UIEntityID owner) = 0;

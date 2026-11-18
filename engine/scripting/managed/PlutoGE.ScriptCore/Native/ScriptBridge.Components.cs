@@ -31,6 +31,9 @@ internal static unsafe partial class ScriptBridge
     {
         public int Type;
         public uint Entity;
+        public float X;       // canvas units from the canvas's bottom-left, y up
+        public float Y;
+        public uint Related;  // Drop: drag source; EndDrag: accepting drop target
     }
 
     internal enum ComponentOperation
@@ -56,7 +59,7 @@ internal static unsafe partial class ScriptBridge
     [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)], EntryPoint = "RegisterComponentPropertyApi")]
     public static int RegisterComponentPropertyApi(delegate* unmanaged[Cdecl]<NativeComponentRequest*, void> control)
     {
-        if (control == null || sizeof(NativeComponentRequest) != 96 || sizeof(NativeUIEventRecord) != 8) return 0;
+        if (control == null || sizeof(NativeComponentRequest) != 96 || sizeof(NativeUIEventRecord) != 20) return 0;
         _controlComponents = control;
         return 1;
     }

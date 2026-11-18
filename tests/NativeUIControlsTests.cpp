@@ -2,6 +2,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/scene/components/UIComponent.h"
+#include "PlutoGE/scene/components/UIDragDropComponents.h"
 #include "PlutoGE/scene/components/UIDropdownComponent.h"
 #include "PlutoGE/scene/components/UIInputFieldComponent.h"
 #include "PlutoGE/scene/components/UILayoutComponents.h"
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -90,6 +92,38 @@ namespace
             input.text = std::move(text);
             input.keys = std::move(keys);
             Run(input);
+        }
+
+        // Presses at `from`, moves to `to` in steps (past the drag threshold), releases at `to`.
+        // Returns the events of every frame, in order.
+        std::vector<UIEventRecord> Drag(glm::vec2 from, glm::vec2 to, int steps = 3)
+        {
+            std::vector<UIEventRecord> events;
+            const auto collect = [&]
+            {
+                const auto &frame = UI().GetFrameEvents();
+                events.insert(events.end(), frame.begin(), frame.end());
+            };
+            auto down = Frame(from);
+            down.pointerDown = down.pointerPressed = true;
+            Run(down);
+            collect();
+            glm::vec2 previous = from;
+            for (int step = 1; step <= steps; ++step)
+            {
+                const glm::vec2 at = glm::mix(from, to, static_cast<float>(step) / static_cast<float>(steps));
+                auto move = Frame(at);
+                move.pointerDown = true;
+                move.pointerDelta = at - previous;
+                previous = at;
+                Run(move);
+                collect();
+            }
+            auto up = Frame(to);
+            up.pointerReleased = true;
+            Run(up);
+            collect();
+            return events;
         }
 
         bool Emitted(UIEventType type, const Entity *entity) const
@@ -311,6 +345,130 @@ namespace
         h.Run(h.Frame({250, 50}));
         Require(h.UI().IsPointerOverUI(), "Interactive controls capture the pointer");
     }
+
+    std::optional<UIEventRecord> Find(const std::vector<UIEventRecord> &events, UIEventType type, const Entity *entity)
+    {
+        for (const auto &record : events)
+            if (record.type == type && record.entity == entity->GetID())
+                return record;
+        return std::nullopt;
+    }
+
+    std::ptrdiff_t IndexOf(const std::vector<UIEventRecord> &events, UIEventType type)
+    {
+        for (std::size_t index = 0; index < events.size(); ++index)
+            if (events[index].type == type)
+                return static_cast<std::ptrdiff_t>(index);
+        return -1;
+    }
+
+    bool NearVec(glm::vec2 a, glm::vec2 b, float epsilon = 0.01f) { return Near(a.x, b.x, epsilon) && Near(a.y, b.y, epsilon); }
+
+    std::string Text(glm::vec2 value) { return "(" + std::to_string(value.x) + ", " + std::to_string(value.y) + ")"; }
+
+    void TestDragAndDrop()
+    {
+        Harness h;
+        // Canvas units are 2 pixels: an 800x600 target against a 400x300 reference.
+        auto *canvas = h.canvas->GetComponent<CanvasComponent>();
+        canvas->SetScaleMode(CanvasScaleMode::ScaleWithScreenSize);
+        canvas->SetReferenceResolution({400.0f, 300.0f});
+        auto *source = h.Element("Source", {10, 10}, {50, 50});        // pixels (20,20)-(120,120)
+        auto *target = h.Element("Target", {200, 100}, {50, 50});      // pixels (400,200)-(500,300)
+        source->CreateComponent<UIDragSourceComponent>();
+        target->CreateComponent<UIDropTargetComponent>();
+        h.Run(h.Frame());
+        Require(Near(h.UI().GetCanvases().front().scale, 2.0f), "The test canvas scales by 2");
+
+        const auto events = h.Drag({70, 70}, {450, 250});
+        const auto begin = Find(events, UIEventType::BeginDrag, source);
+        const auto drag = Find(events, UIEventType::Drag, source);
+        const auto drop = Find(events, UIEventType::Drop, target);
+        const auto end = Find(events, UIEventType::EndDrag, source);
+        Require(begin && drag && drop && end, "A drag onto a target records BeginDrag, Drag, Drop and EndDrag");
+        // BeginDrag fires on the first move, at pixel (70,70) + (380,180)/3.
+        const glm::vec2 firstMove = glm::vec2(70, 70) + glm::vec2(380, 180) / 3.0f;
+        Require(NearVec(begin->position, firstMove * 0.5f), "BeginDrag is in canvas units: " + Text(begin->position));
+        Require(NearVec(drop->position, {225, 125}) && NearVec(end->position, {225, 125}),
+                "Drop and EndDrag carry the release position in canvas units: " + Text(drop->position));
+        Require(drop->related == source->GetID(), "Drop's related element is the drag source");
+        Require(end->related == target->GetID(), "EndDrag's related element is the accepting target");
+        Require(begin->related == 0 && drag->related == 0, "Begin/Drag have no related element");
+        Require(IndexOf(events, UIEventType::Drop) < IndexOf(events, UIEventType::EndDrag), "Drop is recorded before EndDrag");
+        std::size_t drags = 0;
+        for (const auto &record : events)
+            drags += record.type == UIEventType::Drag ? 1 : 0;
+        Require(drags == 3, "Every pointer move while dragging records Drag: " + std::to_string(drags));
+
+        // The contract: a bottom-left anchored element under a full-canvas parent, placed at the
+        // recorded position, has its pivot under the pointer.
+        auto *overlay = h.Element("Overlay", {0, 0}, {0, 0}, nullptr, false);
+        auto *overlayRect = overlay->GetComponent<RectTransformComponent>();
+        overlayRect->SetAnchorMin({0, 0});
+        overlayRect->SetAnchorMax({1, 1});
+        auto *ghost = h.Element("Ghost", drop->position, {20, 20}, overlay, false);
+        ghost->GetComponent<RectTransformComponent>()->SetPivot({0.5f, 0.5f});
+        h.Run(h.Frame());
+        const auto *placed = h.UI().FindElement(ghost->GetID());
+        Require(placed, "The ghost is laid out");
+        const glm::vec2 centre = (placed->rect.min + placed->rect.max) * 0.5f;
+        Require(NearVec(centre, {450, 250}), "A ghost placed at the position sits under the pointer: " + Text(centre));
+
+        // Released over nothing: EndDrag with no related element, and no Drop.
+        const auto missed = h.Drag({70, 70}, {700, 500});
+        const auto missedEnd = Find(missed, UIEventType::EndDrag, source);
+        Require(missedEnd && missedEnd->related == 0, "A drag released outside any target ends with related 0");
+        Require(IndexOf(missed, UIEventType::Drop) < 0, "No Drop is recorded without a target");
+        Require(NearVec(missedEnd->position, {350, 250}), "EndDrag carries the release position: " + Text(missedEnd->position));
+
+        // A non-interactable target refuses the drop.
+        target->GetComponent<UIDropTargetComponent>()->SetInteractable(false);
+        const auto refused = h.Drag({70, 70}, {450, 250});
+        const auto refusedEnd = Find(refused, UIEventType::EndDrag, source);
+        Require(IndexOf(refused, UIEventType::Drop) < 0 && refusedEnd && refusedEnd->related == 0,
+                "A non-interactable drop target does not accept drops");
+        target->GetComponent<UIDropTargetComponent>()->SetInteractable(true);
+
+        // A graphic that is not a raycast target, lying over the drop target, does not block it.
+        auto *cover = h.Element("Cover", {190, 90}, {80, 80});
+        cover->GetComponent<RectTransformComponent>()->SetRaycastTarget(false);
+        const auto covered = h.Drag({70, 70}, {450, 250});
+        const auto coveredDrop = Find(covered, UIEventType::Drop, target);
+        Require(coveredDrop && coveredDrop->related == source->GetID(), "A non-raycast element does not block the drop");
+
+        // A non-interactable source does not start drags.
+        source->GetComponent<UIDragSourceComponent>()->SetInteractable(false);
+        const auto still = h.Drag({70, 70}, {450, 250});
+        Require(IndexOf(still, UIEventType::BeginDrag) < 0 && IndexOf(still, UIEventType::EndDrag) < 0,
+                "A non-interactable source records no drag");
+    }
+
+    void TestDragSourceButton()
+    {
+        Harness h;
+        auto *tile = h.Element("Tile", {0, 0}, {100, 100});
+        auto *button = tile->CreateComponent<UIButtonComponent>();
+        tile->CreateComponent<UIDragSourceComponent>();
+
+        auto down = h.Frame({50, 50});
+        down.pointerDown = down.pointerPressed = true;
+        h.Run(down);
+        auto nudge = h.Frame({53, 52}); // within the drag threshold
+        nudge.pointerDown = true;
+        nudge.pointerDelta = {3, 2};
+        h.Run(nudge);
+        Require(!h.Emitted(UIEventType::BeginDrag, tile), "A press within the threshold does not drag");
+        auto up = h.Frame({53, 52});
+        up.pointerReleased = true;
+        h.Run(up);
+        Require(button->WasClicked() && h.Emitted(UIEventType::Click, tile), "A short press on a draggable button clicks");
+        Require(!h.Emitted(UIEventType::EndDrag, tile), "A click ends no drag");
+
+        const auto events = h.Drag({50, 50}, {300, 300});
+        Require(Find(events, UIEventType::BeginDrag, tile) && Find(events, UIEventType::EndDrag, tile),
+                "The button's element drags");
+        Require(IndexOf(events, UIEventType::Click) < 0 && !button->WasClicked(), "A drag does not click");
+    }
 }
 
 int main()
@@ -325,6 +483,8 @@ int main()
         TestNavigation();
         TestFocusWhileHidden();
         TestPointerCapture();
+        TestDragAndDrop();
+        TestDragSourceButton();
     }
     catch (const std::exception &error)
     {

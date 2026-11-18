@@ -3,6 +3,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/UILayoutComponents.h"
+#include "PlutoGE/scene/components/UIDragDropComponents.h"
 #include "PlutoGE/scene/components/UIDropdownComponent.h"
 #include "PlutoGE/scene/components/UIInputFieldComponent.h"
 #include "PlutoGE/scene/components/UIScrollViewComponent.h"
@@ -38,6 +39,8 @@ namespace PlutoGE::scene
         registry.Register<UIScrollViewComponent>("UIScrollViewComponent", "UI Scroll View Component");
         registry.Register<UIInputFieldComponent>("UIInputFieldComponent", "UI Input Field Component");
         registry.Register<UIDropdownComponent>("UIDropdownComponent", "UI Dropdown Component");
+        registry.Register<UIDragSourceComponent>("UIDragSourceComponent", "UI Drag Source Component");
+        registry.Register<UIDropTargetComponent>("UIDropTargetComponent", "UI Drop Target Component");
         // Serialized under its original name; scenes written before themes still load.
         registry.Register<UIThemeComponent>("UIStyleSheetComponent", "UI Theme Component").isAssetPathProperty =
             [](std::string_view name) { return name == "Theme"; };
@@ -58,6 +61,8 @@ namespace PlutoGE::scene
         registry.AddMenuItem<UIScrollViewComponent>("UI/Controls/Scroll View");
         registry.AddMenuItem<UIInputFieldComponent>("UI/Controls/Input Field");
         registry.AddMenuItem<UIDropdownComponent>("UI/Controls/Dropdown");
+        registry.AddMenuItem<UIDragSourceComponent>("UI/Controls/Drag Source");
+        registry.AddMenuItem<UIDropTargetComponent>("UI/Controls/Drop Target");
         registry.AddMenuItem<UILayoutComponent>("UI/Layout/Layout Group");
         registry.AddMenuItem<UILayoutItemComponent>("UI/Layout/Layout Item");
         registry.AddMenuItem<UIThemeComponent>("UI/Style/Theme");

@@ -50,6 +50,7 @@ public sealed class MainMenu : ScriptBehaviour
 | `UIScrollViewComponent` | Scrolls a content element with the wheel or by dragging; inertia; elastic, clamped or unrestricted. |
 | `UIInputFieldComponent` | Text entry: selection, clipboard, filters (integer, decimal, alphanumeric, password), character limit, multiline, placeholder. |
 | `UIDropdownComponent` | Picks from a list in a popup. |
+| `UIDragSourceComponent`, `UIDropTargetComponent` | Drag and drop for scripts: a source reports its drag, a target accepts drops (see below). |
 | `UIThemeComponent`, `UIStyleComponent` | Themes and styles: shared, inheritable looks (see below). |
 
 Rich text tags: `<b> <i> <u> <s> <color=#RRGGBB[AA]> <size=N> <font=ref> <br>`.
@@ -83,6 +84,20 @@ wheel, drag, keyboard and gamepad:
 - **Gameplay input**: while interactive UI has the pointer, or a text field is
   being edited, script pointer/keyboard queries ignore it. Static HUD graphics
   do not capture the pointer.
+- **Drag and drop**: a press becomes a drag once the pointer moves 6 pixels.
+  The element that takes the drag (bubbling from the pressed element: a drag
+  source, slider, scroll view or input field) receives Drag on every pointer
+  move. On release, Drop bubbles first from the element under the pointer, with
+  the drag source as its related element, and then the drag source receives
+  EndDrag with the element that accepted the drop (none when the release is
+  over no drop target). A `UIDragSourceComponent` records BeginDrag, Drag and
+  EndDrag for scripts; a `UIDropTargetComponent` records Drop. A drag source
+  does not take presses or clicks, so a button on the same element still clicks
+  when the pointer does not pass the threshold, and a drag never clicks. Drops
+  find targets by hit testing, so a drag ghost should have *Raycast Target*
+  off (or no graphic), and so should any decoration covering a target. Keep
+  the source element active until the drag ends; a source that disappears
+  mid-drag gets no EndDrag.
 
 ### Styles and themes
 
@@ -183,9 +198,48 @@ Native UI components are C# classes in `PlutoGE.ScriptCore`. Get them with
 | `UIInputFieldComponent` | `Text`, `ContentType`, `ValueChanged(string)`, `EndEdit(string)`, `IsEditing` |
 | `UIDropdownComponent` | `Options`, `Value`, `SelectedOption`, `ValueChanged(int)` |
 | `UIScrollViewComponent` | `ScrollPosition`, `NormalizedPosition`, `ScrollToTop/Bottom()` |
+| `UIDragSourceComponent` | `BeginDrag`, `Drag`, `EndDrag` (each `Action<UIEventData>`), `Interactable` |
+| `UIDropTargetComponent` | `Dropped(UIEventData)`, `Interactable` |
 | `UIShapeComponent`, `UILayoutComponent`, `UILayoutItemComponent` | Their properties |
 | `UIThemeComponent`, `UIStyleComponent` | `Theme` (assign a `UIThemeAsset` to switch themes), `LocalStyles`; `Styles`, `SetStyle`, `AddStyle`, `RemoveStyle`, `ToggleStyle`, `Overrides` |
-| `UI` | `Focused`, `IsPointerOverUI`, `IsKeyboardCaptured`, `EventRaised` |
+| `UI` | `Focused`, `IsPointerOverUI`, `IsKeyboardCaptured`, `EventRaised`, `Subscribe`/`Unsubscribe` |
+| `UIEventData` | `Type`, `Element`, `Position`, `Related`: the details of one event |
+
+`UIEventData.Position` is the pointer in canvas units measured from the
+bottom-left of the element's canvas, y up (zero for events without a pointer,
+such as value changes). An element anchored bottom-left
+(`AnchorMin = AnchorMax = (0, 0)`) under a full-canvas parent, given
+`AnchoredPosition = Position`, has its pivot under the pointer whatever the
+canvas scale. `Related` is the drag source for a drop and the accepting drop
+target for `EndDrag` (null when the drag ended over no target).
+`UI.Subscribe(entity, type, handler, Action<UIEventData>)` subscribes to any
+recorded event with these details.
+
+An inventory where tiles are dragged between slots, with a ghost following the
+pointer:
+
+```csharp
+public sealed class Inventory : ScriptBehaviour
+{
+    [SerializedField] private GameObject? Overlay; // full-canvas, raycast target off
+    [SerializedField] private GameObject? Ghost;   // under Overlay; anchors (0,0), pivot (0.5,0.5), raycast target off
+
+    public void Wire(GameObject tile, GameObject slot)
+    {
+        var drag = tile.GetComponent<UIDragSourceComponent>()!;
+        drag.BeginDrag += e => { Ghost!.Active = true; MoveGhost(e); };
+        drag.Drag += MoveGhost;
+        drag.EndDrag += e => Ghost!.Active = false; // e.Related: the slot that took it, or null
+
+        slot.GetComponent<UIDropTargetComponent>()!.Dropped += e => MoveItem(from: e.Related!, to: e.Element);
+    }
+
+    private void MoveGhost(UIEventData e) =>
+        Ghost!.GetComponent<RectTransformComponent>()!.AnchoredPosition = e.Position;
+
+    private void MoveItem(GameObject from, GameObject to) { /* swap the items */ }
+}
+```
 
 Data binding keeps controls and values in step:
 
@@ -306,7 +360,7 @@ post-processing, below RmlUi.
 | `PlutoGENativeUISceneTests` | Hierarchy layout, legacy layout groups, transforms, clipping, canvas order, buttons, property animation, themes and styles on elements |
 | `PlutoGENativeUIThemeTests` | Theme model edits, text format, inheritance, variables, layering, error reporting, style catalog |
 | `PlutoGEUIThemeEditorTests` | Theme documents (undo, saving, routed edits) and the editor views in a hidden window; pass a path prefix to capture images |
-| `PlutoGENativeUIControlsTests` | Toggles, sliders, scroll views, input fields, dropdowns, navigation, pointer capture |
-| `PlutoGENativeUIScriptingTests` | C# components, properties, events and bindings through the managed runtime; building a hierarchy from script |
+| `PlutoGENativeUIControlsTests` | Toggles, sliders, scroll views, input fields, dropdowns, navigation, pointer capture, drag and drop (event order, related elements, canvas-unit positions on a scaled canvas) |
+| `PlutoGENativeUIScriptingTests` | C# components, properties, events and bindings through the managed runtime; building a hierarchy from script; drag and drop events with `UIEventData` |
 | `PlutoGENativeUIEditorTests` | Widget presets and inspector registration |
 | `PlutoGEComponentRegistryTests` | Component registration, creation and authoring rules |

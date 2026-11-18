@@ -73,6 +73,12 @@ namespace PlutoGE::scene
     {
         UIEventType type = UIEventType::Click;
         UIEntityID entity = 0;
+        // Pointer in canvas units from the bottom-left of the entity's canvas
+        // root rect (y-up); zero for events without a pointer. An element
+        // anchored bottom-left under a full-canvas parent and given this as
+        // its anchored position has its pivot under the pointer.
+        glm::vec2 position{0.0f};
+        UIEntityID related = 0;       // Drop: drag source; EndDrag: accepting drop target
     };
 
     // Retained runtime state shared by layout, input, scripts, editor
@@ -131,6 +137,9 @@ namespace PlutoGE::scene
         void SetSelected(UIEntityID entity) override;
         [[nodiscard]] UIEntityID GetSelected() const override { return m_selected; }
         void Emit(UIEventType type, UIEntityID source) override;
+        void Emit(UIEventType type, UIEntityID source, glm::vec2 pointerPixels, UIEntityID related) override;
+        // Target pixels to canvas units from the bottom-left of the element's canvas root rect.
+        [[nodiscard]] glm::vec2 PixelToCanvas(UIEntityID entity, glm::vec2 pixel) const;
         [[nodiscard]] float GetDeltaTime() const override { return m_deltaTime; }
         void OpenPopup(UIEntityID owner) override { m_openPopup = owner; }
         [[nodiscard]] std::string GetClipboardText() const override;

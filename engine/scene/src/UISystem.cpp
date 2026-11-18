@@ -473,7 +473,22 @@ namespace PlutoGE::scene
 
     void UISystem::Emit(UIEventType type, UIEntityID source)
     {
-        m_frameEvents.push_back({type, source});
+        m_frameEvents.push_back({.type = type, .entity = source});
+    }
+
+    void UISystem::Emit(UIEventType type, UIEntityID source, glm::vec2 pointerPixels, UIEntityID related)
+    {
+        m_frameEvents.push_back(
+            {.type = type, .entity = source, .position = PixelToCanvas(source, pointerPixels), .related = related});
+    }
+
+    glm::vec2 UISystem::PixelToCanvas(UIEntityID entity, glm::vec2 pixel) const
+    {
+        const auto *element = FindElement(entity);
+        if (!element || m_collecting || element->canvas >= m_canvases.size())
+            return pixel;
+        const glm::vec2 canvasUnits = m_canvases[element->canvas].toPixels.Inverse().Apply(pixel);
+        return canvasUnits - m_canvasLayouts[element->canvas].rootRect.min;
     }
 
     // ---- Input routing ------------------------------------------------------
@@ -661,15 +676,19 @@ namespace PlutoGE::scene
             }
             if (m_dragging)
             {
+                // Drop first, so the drag source learns at EndDrag who took it.
+                UIEvent drop = base;
+                drop.type = UIEventType::Drop;
+                drop.related = m_dragHandler != 0 ? m_dragHandler : m_pressTarget;
+                const UIEntityID accepted = Bubble(target, drop);
                 if (m_dragHandler != 0)
                 {
                     UIEvent event = base;
                     event.type = UIEventType::EndDrag;
+                    event.target = m_dragHandler;
+                    event.related = accepted;
                     DispatchTo(IndexOf(m_dragHandler), event);
                 }
-                UIEvent drop = base;
-                drop.type = UIEventType::Drop;
-                Bubble(target, drop);
             }
             else
             {

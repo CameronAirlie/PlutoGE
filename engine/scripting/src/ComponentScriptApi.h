@@ -37,6 +37,9 @@ namespace PlutoGE::scripting
     {
         std::int32_t type = 0; // scene::UIEventType
         std::uint32_t entity = 0;
+        float x = 0.0f;        // pointer, canvas units from the canvas's bottom-left (y-up); 0 without a pointer
+        float y = 0.0f;
+        std::uint32_t related = 0; // Drop: drag source; EndDrag: accepting drop target
     };
 
     struct NativeComponentRequest
@@ -58,7 +61,7 @@ namespace PlutoGE::scripting
         std::int32_t argument = 0;
     };
     static_assert(sizeof(NativeComponentRequest) == 96, "Keep in step with ScriptBridge.Components.cs");
-    static_assert(sizeof(NativeUIEventRecord) == 8, "Keep in step with ScriptBridge.Components.cs");
+    static_assert(sizeof(NativeUIEventRecord) == 20, "Keep in step with ScriptBridge.Components.cs");
 
     void PLUTO_COMPONENT_API_CALL ControlComponents(NativeComponentRequest *request);
 }

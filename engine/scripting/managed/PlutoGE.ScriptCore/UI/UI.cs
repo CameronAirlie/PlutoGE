@@ -1,3 +1,4 @@
+using System.Numerics;
 using PlutoGE.ScriptCore.Native;
 
 namespace PlutoGE.ScriptCore;
@@ -25,13 +26,25 @@ public enum UIEventType
     PointerMove,
 }
 
+/// <summary>One native UI event, as passed to <see cref="UI.Subscribe(uint, UIEventType, Delegate?, Action{UIEventData})"/>.</summary>
+/// <param name="Type">What happened.</param>
+/// <param name="Element">The element that raised it.</param>
+/// <param name="Position">
+/// The pointer in canvas units from the bottom-left of the element's canvas, y up; zero for events without a
+/// pointer (clicks, value changes). An element anchored bottom-left (AnchorMin = AnchorMax = (0, 0)) under a
+/// full-canvas parent and given this as its <c>AnchoredPosition</c> has its pivot under the pointer.
+/// </param>
+/// <param name="Related">For Drop, the drag source; for EndDrag, the drop target that accepted it (null when
+/// the drag ended over no target).</param>
+public readonly record struct UIEventData(UIEventType Type, GameObject Element, Vector2 Position, GameObject? Related);
+
 /// <summary>
 /// The native (RectTransform) UI: focus, input capture and the events controls raise. Control wrappers
-/// such as <see cref="UISliderComponent"/> expose typed events built on <see cref="Subscribe"/>.
+/// such as <see cref="UISliderComponent"/> expose typed events built on <see cref="Subscribe(uint, UIEventType, Delegate?, Action{UIEventData})"/>.
 /// </summary>
 public static class UI
 {
-    private sealed record Subscription(Delegate Handler, Action Invoke);
+    private sealed record Subscription(Delegate Handler, Action<UIEventData> Invoke);
 
     private static readonly object Gate = new();
     private static readonly Dictionary<(uint Entity, UIEventType Type), List<Subscription>> Subscriptions = new();
@@ -64,7 +77,18 @@ public static class UI
     /// </summary>
     public static void Subscribe(uint entity, UIEventType type, Delegate? handler, Action invoke)
     {
-        if (handler is null || entity == 0) return;
+        if (invoke is null) return;
+        Subscribe(entity, type, handler, _ => invoke());
+    }
+
+    /// <summary>
+    /// Calls <paramref name="invoke"/> with the event's details (pointer position, related element) whenever
+    /// <paramref name="entity"/> raises <paramref name="type"/>. <paramref name="handler"/> identifies the
+    /// subscription for <see cref="Unsubscribe"/>.
+    /// </summary>
+    public static void Subscribe(uint entity, UIEventType type, Delegate? handler, Action<UIEventData> invoke)
+    {
+        if (handler is null || invoke is null || entity == 0) return;
         lock (Gate)
         {
             if (!Subscriptions.TryGetValue((entity, type), out var list))
@@ -101,12 +125,15 @@ public static class UI
             {
                 targets = Subscriptions.TryGetValue((record.Entity, type), out var list) ? list.ToArray() : [];
             }
+            if (targets.Length == 0 && EventRaised is null) continue;
+            var data = new UIEventData(type, new GameObject(record.Entity), new Vector2(record.X, record.Y),
+                                       record.Related == 0 ? null : new GameObject(record.Related));
             foreach (var subscription in targets)
             {
-                try { subscription.Invoke(); }
+                try { subscription.Invoke(data); }
                 catch (Exception exception) { Debug.LogError($"UI {type} handler failed: {exception}"); }
             }
-            try { EventRaised?.Invoke(new GameObject(record.Entity), type); }
+            try { EventRaised?.Invoke(data.Element, type); }
             catch (Exception exception) { Debug.LogError($"UI event handler failed: {exception}"); }
         }
     }

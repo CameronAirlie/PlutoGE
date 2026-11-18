@@ -12,6 +12,13 @@ public sealed class UIProbe : ScriptBehaviour
     [SerializedField] public int ObservedEvents;
     [SerializedField] public bool HierarchyWorks;
     [SerializedField] public string Failure = string.Empty;
+    [SerializedField] public bool DragBegan;
+    [SerializedField] public int DragEvents;
+    [SerializedField] public bool DragEndedOnSlot;
+    [SerializedField] public bool DroppedFromTile;
+    [SerializedField] public float DropX = -1.0f;
+    [SerializedField] public float DropY = -1.0f;
+    [SerializedField] public int UnsubscribedCalls;
 
     private readonly ObservableValue<float> _volume = new(0.0f);
     private IDisposable? _binding;
@@ -44,12 +51,34 @@ public sealed class UIProbe : ScriptBehaviour
                 && sliderObject.GetComponent<UIToggleComponent>() is null
                 && GameObject.Find("Slider")!.GetComponent<UIShapeComponent>()?.Exists == true;
 
+            SetUpDragAndDrop();
             HierarchyWorks = BuildFromCode(GameObject.Find("Canvas") ?? throw new InvalidOperationException("No canvas entity"));
         }
         catch (Exception exception)
         {
             Failure = exception.ToString();
         }
+    }
+
+    private void SetUpDragAndDrop()
+    {
+        var tile = GameObject.Find("Tile") ?? throw new InvalidOperationException("No tile entity");
+        var slot = GameObject.Find("Slot") ?? throw new InvalidOperationException("No slot entity");
+        var source = tile.AddComponent<UIDragSourceComponent>() ?? throw new InvalidOperationException("No drag source");
+        var target = slot.GetComponent<UIDropTargetComponent>() ?? throw new InvalidOperationException("No drop target");
+        if (!source.Interactable || !target.Interactable) throw new InvalidOperationException("Interactable should default to true");
+        source.BeginDrag += data => DragBegan = data.Element.EntityId == tile.EntityId && data.Type == UIEventType.BeginDrag;
+        source.Drag += _ => DragEvents++;
+        source.EndDrag += data => DragEndedOnSlot = data.Related?.EntityId == slot.EntityId;
+        target.Dropped += data =>
+        {
+            DroppedFromTile = data.Related?.EntityId == tile.EntityId;
+            DropX = data.Position.X;
+            DropY = data.Position.Y;
+        };
+        Action<UIEventData> removed = _ => UnsubscribedCalls++;
+        UI.Subscribe(slot.EntityId, UIEventType.Drop, removed, removed);
+        UI.Unsubscribe(slot.EntityId, UIEventType.Drop, removed);
     }
 
     // Creates a panel with two labels under the canvas, reorders and reparents them, and reads the tree back.

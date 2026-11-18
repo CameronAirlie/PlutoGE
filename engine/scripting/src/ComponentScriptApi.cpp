@@ -105,7 +105,14 @@ namespace PlutoGE::scripting
                 const auto &events = ui.GetFrameEvents();
                 const auto count = std::min<std::size_t>(events.size(), static_cast<std::size_t>(std::max(request.eventCapacity, 0)));
                 for (std::size_t index = 0; index < count && request.events; ++index)
-                    request.events[index] = {static_cast<std::int32_t>(events[index].type), events[index].entity};
+                {
+                    const auto &event = events[index];
+                    request.events[index] = {.type = static_cast<std::int32_t>(event.type),
+                                             .entity = event.entity,
+                                             .x = event.position.x,
+                                             .y = event.position.y,
+                                             .related = event.related};
+                }
                 request.result = static_cast<std::int32_t>(count);
                 request.sequence = ui.GetUpdateSequence();
                 return;

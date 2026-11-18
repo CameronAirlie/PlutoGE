@@ -110,6 +110,7 @@ add_library(PlutoGEScene
     src/components/UIScrollViewComponent.cpp
     src/components/UIInputFieldComponent.cpp
     src/components/UIDropdownComponent.cpp
+    src/components/UIDragDropComponents.cpp
     src/components/UIStyleComponents.cpp
     src/ui/UITheme.cpp
     src/ui/UIThemeFormat.cpp

@@ -2,6 +2,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <array>
 #include <cstdlib>
+#include <iostream>
 #include <stdexcept>
 #include <vector>
 
@@ -135,6 +136,32 @@ void CheckTerrainLayers(PlutoGE::render::BasicRenderer &renderer, PlutoGE::rende
         volumeDraw.mesh = &occludedMesh;
         const auto dark = sampleVolume(0.5f);
         require(dark[0] + dark[1] + dark[2] <= mixed[0] + mixed[1] + mixed[2], "Vertex occlusion brightened the surface");
+
+        // Vertex occlusion is how much sky a point sees (cave depth): it darkens ambient light, but a light inside the
+        // cave still lights the wall in full. Deep cave rock (0.15, as Buried Openness) under a grazing point light
+        // (n.l about 0.3) must match open rock; micro-shadowing would remove that light entirely.
+        auto deep = blended;
+        for (auto &vertex : deep)
+            vertex.uv2[1] = 0.15f;
+        auto deepMesh = renderer.CreateMesh({deep, indices});
+        const auto brightness = [&](auto &mesh) {
+            volumeDraw.mesh = &mesh;
+            const auto colour = sampleVolume(0.5f);
+            return colour[0] + colour[1] + colour[2];
+        };
+        const auto saved = lighting;
+        lighting.directionalIntensity = 0.0f;
+        lighting.ambientIntensity = 0.6f;
+        const int ambientOpen = brightness(blendedMesh), ambientDeep = brightness(deepMesh);
+        lighting.ambientIntensity = 0.0f;
+        lighting.pointLights = {BasicPointLight{.position = {1.5f, 0.0f, 1.0f}, .range = 20.0f, .color = glm::vec3(1.0f), .intensity = 6.0f}};
+        const int torchOpen = brightness(blendedMesh), torchDeep = brightness(deepMesh);
+        lighting = saved;
+        std::cout << "Vertex occlusion 0.15: ambient " << ambientDeep << " of " << ambientOpen << ", grazing point light "
+                  << torchDeep << " of " << torchOpen << '\n';
+        require(ambientOpen > 40 && torchOpen > 40, "Vertex occlusion scene has too little light to measure");
+        require(ambientDeep * 2 < ambientOpen, "Deep vertex occlusion did not darken ambient light");
+        require(std::abs(torchDeep - torchOpen) <= 3, "Vertex occlusion micro-shadowed a point light inside the cave");
     }
 
     // Region updates patch textures in place (IRenderDevice::UpdateTexture): the left weight texel now belongs to

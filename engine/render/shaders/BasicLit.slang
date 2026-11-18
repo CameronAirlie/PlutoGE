@@ -1565,6 +1565,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
 #ifdef PLUTO_DETAIL_GRASS
     materialOcclusion *= input.grassTint.a;
 #endif
+    // Large-scale occlusion: the share of the sky a point sees (cave depth, wide crevices). Unlike material occlusion it
+    // darkens ambient light and reflections only, never micro-shadows direct light: a light inside the hollow lights it.
+    float skyOcclusion = 1.0;
     // Clear coat and sheen layers (SurfaceLayers.slang), each map scaling its factor. Glass has neither.
     float layerClearCoat = glass || !kSurfaceLayers ? 0.0 : clearCoatParameters.x;
     float layerClearCoatRoughness = clearCoatParameters.y;
@@ -1597,8 +1600,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         normal = normalize(lerp(normal, terrain.normal, terrainDetail));
         materialMetallic = lerp(materialMetallic, terrain.metallic, terrainDetail);
         materialRoughness = lerp(materialRoughness, terrain.roughness, terrainDetail);
-        // Vertex layers carry occlusion (crevices, cave depth): it darkens ambient light like an occlusion map.
-        materialOcclusion *= terrain.occlusion;
+        // Vertex layers carry occlusion (crevices, cave depth): how much sky a point sees, so it darkens ambient light
+        // only. A torch inside a cave lights its walls in full.
+        skyOcclusion = terrain.occlusion;
     }
 #endif
     // Material emission illuminates the albedo texture. An explicit graph
@@ -1906,8 +1910,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         ambient += farAmbient;
     }
 #endif
-    ambient *= multiBounceOcclusion(materialOcclusion, sampledColor.rgb);
-    environmentSpecular *= specularOcclusion(materialOcclusion, ndotv, materialRoughness);
+    const float ambientOcclusion = materialOcclusion * skyOcclusion;
+    ambient *= multiBounceOcclusion(ambientOcclusion, sampledColor.rgb);
+    environmentSpecular *= specularOcclusion(ambientOcclusion, ndotv, materialRoughness);
     ambient += environmentSpecular;
     float3 directionalLighting=unshadowedDirectionalLighting * shadowVisibility;
     directionalLighting += transmittedSun * farSunVisibility * cloudLighting.sun;

@@ -135,7 +135,8 @@ Without a Material Asset, chunks draw with the terrain's layers through the terr
 - Maps are projected along the three axes, so walls and overhangs do not smear.
 - There is no macro albedo in the distance.
 - Crevices and ground deep under the surface are darker: each vertex's openness, and Burial Depth / Buried Openness,
-  multiply its ambient light.
+  multiply its ambient light. It stands for how much sky the point sees, so it never dims direct light: a torch or
+  lamp inside a cave lights the walls in full (unlike a material's occlusion map, which also micro-shadows).
 - Fog inside a cave is still lit as outside, unless an Ambient Light Volume is baked there.
 
 ## Far away

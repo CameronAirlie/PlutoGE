@@ -44,7 +44,7 @@ struct TerrainSurface
     float3 normal; // world space
     float roughness;
     float metallic;
-    float occlusion; // multiplies the material's ambient occlusion (vertex layers carry one; otherwise 1)
+    float occlusion; // sky visibility: darkens ambient light only, not direct light (vertex layers carry one; otherwise 1)
 };
 
 // Below this weight a layer is skipped: it cannot change an 8-bit result.

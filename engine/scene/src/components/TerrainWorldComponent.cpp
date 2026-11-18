@@ -11,6 +11,8 @@
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
+#include "PlutoGE/scene/volume/VolumeFile.h"
 
 #include <filesystem>
 #include <fstream>
@@ -394,6 +396,11 @@ namespace PlutoGE::scene
         return TileSidecarFile(tile, std::string("_holes").append(TerrainHoleFile::Extension));
     }
 
+    std::string TerrainWorldComponent::TileVolumeFile(TerrainTileCoord tile) const
+    {
+        return TileSidecarFile(tile, std::string("_volume").append(volume::VolumeFile::Extension));
+    }
+
     bool TerrainWorldComponent::SaveTileHoles(TerrainTileCoord tile)
     {
         const auto *terrain = GetTileTerrain(tile);
@@ -614,7 +621,8 @@ namespace PlutoGE::scene
         // Resolved here: asset lookups belong to the main thread; the worker only reads and decodes.
         const auto path = ResolvePath(TerrainTileFile(m_tileFiles, coord));
         const auto holePath = ResolvePath(TileHoleFile(coord));
-        tile.load = std::async(std::launch::async, [path, holePath]() -> std::optional<TileFiles> {
+        const auto volumePath = ResolvePath(TileVolumeFile(coord));
+        tile.load = std::async(std::launch::async, [path, holePath, volumePath]() -> std::optional<TileFiles> {
             std::string error;
             auto heights = ReadHeightFile(path, &error);
             if (!heights)
@@ -629,6 +637,9 @@ namespace PlutoGE::scene
                 if (!files.holes)
                     files.error = holePath + ": " + error;
             }
+            // Read whether or not the tile has a volume: few tiles have a file, and its absence is cheap to learn here.
+            if (std::vector<std::uint8_t> volumeBytes; ReadFileBytes(volumePath, volumeBytes))
+                files.volume = std::move(volumeBytes);
             return files;
         });
         tile.state = TerrainTileState::Loading;
@@ -676,6 +687,12 @@ namespace PlutoGE::scene
         terrain->SetHeightDataPath(TerrainTileFile(m_tileFiles, coord));
         // The tile's own holes: none without a hole file, whatever the tile source carried.
         terrain->SetHoles(tile.data->holes ? std::move(*tile.data->holes) : TerrainHoleMask{});
+        // A tile with a volume (its source has a TerrainVolumeComponent) keeps its stored chunks in its own file.
+        if (auto *terrainVolume = entity->GetComponent<TerrainVolumeComponent>())
+        {
+            terrainVolume->SetVolumeFile(TileVolumeFile(coord));
+            terrainVolume->ProvideFileContents(std::move(tile.data->volume));
+        }
         tile.data.reset();
         tile.paintedWeights = false;
         if (!terrain->GetLayers().Empty())
@@ -843,15 +860,7 @@ namespace PlutoGE::scene
         const glm::vec2 origin = m_grid.TileOrigin(coord);
         const glm::vec3 a = glm::vec3(world * glm::vec4(origin.x, 0.0f, origin.y, 1.0f));
         const glm::vec3 b = glm::vec3(world * glm::vec4(origin.x + m_grid.TileSize(), m_grid.heightScale, origin.y + m_grid.TileSize(), 1.0f));
-        const auto walk = [&](auto &&self, Entity *entity) -> void {
-            for (auto *navigation : entity->GetComponents<NavigationMeshComponent>())
-                if (navigation->IsEnabled())
-                    navigation->InvalidateRegion(glm::min(a, b), glm::max(a, b));
-            for (auto *child : entity->GetChildren())
-                self(self, child);
-        };
-        for (auto *root : scene->GetRootEntities())
-            walk(walk, root);
+        InvalidateNavigationRegion(*scene, glm::min(a, b), glm::max(a, b));
     }
 
     void TerrainWorldComponent::ReportError(std::string message)

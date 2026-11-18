@@ -65,6 +65,14 @@ cells across from them) loses the triangle at that corner, and a whole cut cell 
 adjacent sides (and cut cells across from them) keeps the triangle at their corner. Straight edges and single-cell
 features are left alone.
 
+## Derived holes
+
+Other systems can cut a terrain without touching its authored holes: `SetDerivedHoles(source, mask)` keeps one mask per
+source (an empty mask removes it). A [Terrain Volume](TERRAIN_VOLUMES.md) uses this for the cells its dug ground takes
+over. Rendering, collision, detail grass and surface queries use `GetEffectiveHoles()`, the authored holes united with
+every derived mask (`TerrainHoleMask::Unite`: two different half cuts of a cell make a full cut). The hole brush,
+`GetHoles()`, hole files and the saved `HoleMask` hold the authored holes only.
+
 ## Hole files
 
 `TerrainHoleFile::Encode` / `Decode` (in `TerrainHoleMask.h`): a header line `PLUTOHOLES <version>` (version 1),

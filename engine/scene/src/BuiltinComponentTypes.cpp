@@ -29,6 +29,7 @@
 #include "PlutoGE/scene/components/RiverComponent.h"
 #include "PlutoGE/scene/components/WaterEffectsComponent.h"
 #include "PlutoGE/scene/components/WaterInteractorComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
@@ -124,6 +125,11 @@ namespace PlutoGE::scene
                 return name == "TilePrefab" || name == "TileMaterial" || name == "OverviewFile" || name == "OverviewMaterial";
             };
 
+            // Caves and dug ground on the terrain beside it (docs/dev/TERRAIN_VOLUMES_PLAN.md).
+            auto &terrainVolume = registry.Register<TerrainVolumeComponent>("TerrainVolumeComponent", "Terrain Volume");
+            terrainVolume.canAdd = HasSibling<TerrainComponent>;
+            terrainVolume.isAssetPathProperty = [](std::string_view name) { return name == "MaterialAsset" || name == "VolumeFile"; };
+
             auto &spline = registry.Register<SplineComponent>("SplineComponent", "Spline Track Component");
             spline.create = [] { return std::unique_ptr<Component>(std::make_unique<SplineComponent>(SplineComponentConfig{})); };
             spline.createForAuthoring = [](Entity &)
@@ -202,6 +208,7 @@ namespace PlutoGE::scene
             registry.AddMenuItem<DecalComponent>("Rendering/Decal");
             registry.AddMenuItem<TerrainComponent>("Rendering/Terrain");
             registry.AddMenuItem<TerrainWorldComponent>("Rendering/Terrain World");
+            registry.AddMenuItem<TerrainVolumeComponent>("Rendering/Terrain Volume");
             registry.AddMenuItem<SplineComponent>("Rendering/Road / Spline Track");
             registry.AddMenuItem<OceanComponent>("Rendering/Ocean");
             registry.AddMenuItem<RiverComponent>("Rendering/River");

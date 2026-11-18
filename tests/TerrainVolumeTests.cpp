@@ -2,19 +2,27 @@
 // sparse edits and their dirty chunks, the volume file, and the surface nets mesher (closed, consistently wound and
 // seamless across chunks).
 #include "PlutoGE/scene/volume/TerrainVolume.h"
+#include "PlutoGE/scene/volume/TerrainVolumeCoupling.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 #include "PlutoGE/scene/volume/VolumeMesher.h"
+#include "PlutoGE/scene/volume/VolumeMeshQueue.h"
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
 #include <iostream>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <algorithm>
 #include <tuple>
 
 using namespace PlutoGE;
 using namespace PlutoGE::scene::volume;
+using PlutoGE::scene::TerrainHoleCut;
+using PlutoGE::scene::TerrainHoleMask;
 
 namespace
 {
@@ -369,6 +377,166 @@ namespace
             Require(count == 1, "No edge is used twice in one direction across chunk seams");
         Require(volume.Sample(grid.SampleFloor({4.0f, 9.0f, 4.0f})).distance > 0.0f, "The pit is open");
     }
+    // A terrain of 33 x 33 samples, 1 m apart, gently sloping, as the volume's base.
+    std::shared_ptr<const TerrainSurface> SlopedSurface()
+    {
+        constexpr int samples = 33;
+        std::vector<float> heights(samples * samples);
+        for (int z = 0; z < samples; ++z)
+            for (int x = 0; x < samples; ++x)
+                heights[static_cast<std::size_t>(z) * samples + x] = 6.0f + 0.05f * x + 0.02f * z;
+        return std::make_shared<const TerrainSurface>(samples, samples, 1.0f, std::move(heights));
+    }
+
+    void SurfaceSnapshot()
+    {
+        // Two cells with distinct corners: the surface follows the terrain's triangles, not a bilinear patch.
+        const TerrainSurface surface(2, 2, 2.0f, {0.0f, 4.0f, 2.0f, 0.0f});
+        Require(Near(*surface.Height(1.0f, 0.0f), 2.0f, 1e-5f) && Near(*surface.Height(0.0f, 1.0f), 1.0f, 1e-5f),
+                "Heights interpolate along the cell's edges");
+        // The centre lies on the (1, 0) - (0, 1) diagonal: the mean of those two corners, not of all four.
+        Require(Near(*surface.Height(1.0f, 1.0f), 3.0f, 1e-5f), "Cells split along the terrain's diagonal");
+        // (0.75, 0.75) across: h11 + (h01 - h11) * 0.25 + (h10 - h11) * 0.25 = 0 + 0.5 + 1.
+        Require(Near(*surface.Height(1.5f, 1.5f), 1.5f, 1e-5f), "The far triangle uses the far corner");
+        Require(surface.Height(2.0f, 2.0f) && !surface.Height(-0.1f, 0.0f) && !surface.Height(0.0f, 2.1f), "Only the terrain has a surface");
+        Require(surface.CellHeightRange(0, 0) == glm::vec2(0.0f, 4.0f), "A cell's height range spans its corners");
+        Require(!TerrainSurface(1, 5, 1.0f, {0, 0, 0, 0, 0}).Valid(), "A terrain needs at least one cell");
+
+        const auto density = MakeTerrainDensity(std::make_shared<const TerrainSurface>(surface), 4);
+        const auto sample = density->Sample({1.0f, 5.0f, 1.0f});
+        Require(Near(sample.distance, 2.0f, 1e-5f) && sample.material == 4, "The terrain density is height above its surface");
+    }
+
+    void CouplingHoles()
+    {
+        const auto surface = SlopedSurface();
+        const TerrainCouplingSettings settings;
+        TerrainVolume volume(SmallGrid(), MakeTerrainDensity(surface, 1));
+        Require(ComputeVolumeHoles(volume, *surface, settings).Empty(), "An unedited volume cuts nothing");
+
+        // A cave well under the ground: stored chunks, but the surface is untouched.
+        volume.Apply(CapsuleShape({4.0f, 2.0f, 4.0f}, {12.0f, 2.0f, 4.0f}, 1.0f), {VolumeEditMode::Subtract});
+        Require(volume.GetStoredChunkCount() > 0 && ComputeVolumeHoles(volume, *surface, settings).Empty(),
+                "A cave below the surface does not cut the terrain");
+
+        // A pit through the surface cuts the cells it opens, and only those near it.
+        const glm::vec3 pit(20.0f, *surface->Height(20.0f, 20.0f), 20.0f);
+        volume.Apply(SphereShape(pit, 1.6f), {VolumeEditMode::Subtract});
+        const auto holes = ComputeVolumeHoles(volume, *surface, settings);
+        Require(holes.GetCellsX() == 32 && holes.GetCellsZ() == 32, "Holes cover the surface's cells");
+        Require(holes.IsHole(19, 19) && holes.IsHole(20, 20) && holes.IsHole(19, 20), "The pit's cells are cut");
+        Require(!holes.IsHole(24, 20) && !holes.IsHole(20, 15) && !holes.IsHole(8, 4), "Cells away from the pit are not");
+        // So is a mound built on the ground.
+        volume.Apply(SphereShape({8.0f, *surface->Height(8.0f, 26.0f), 26.0f}, 1.2f), {VolumeEditMode::Add, 2});
+        Require(ComputeVolumeHoles(volume, *surface, settings).IsHole(8, 26), "A mound cuts the cells it covers");
+        Require(ChangedCells(holes, ComputeVolumeHoles(volume, *surface, settings)).size() > 0 &&
+                    ChangedCells(holes, holes).empty(),
+                "Changed cells are where two masks differ");
+    }
+
+    // Every triangle of a fitted mesh, in the terrain's space, with how far its corners sit from the surface.
+    void CouplingFit()
+    {
+        const auto surface = SlopedSurface();
+        const TerrainCouplingSettings settings;
+        const auto grid = SmallGrid();
+        TerrainVolume volume(grid, MakeTerrainDensity(surface, 1));
+        const SurfaceNetsMesher mesher;
+        const VolumeChunkCoord ground = grid.ChunkAt({20.0f, *surface->Height(20.0f, 20.0f), 20.0f});
+
+        // Unedited ground is the heightfield's to draw: a fitted chunk over it is empty.
+        auto plain = MeshVolumeChunk(volume, ground, mesher);
+        Require(!plain.Empty(), "The chunk holds the surface before fitting");
+        FitVolumeMeshToTerrain(plain, grid.ChunkOrigin(ground), *surface, TerrainHoleMask(32, 32), settings, grid.voxelSize);
+        Require(plain.Empty() && plain.mesh.vertices.empty() && plain.materials.empty(), "Fitting drops ground the heightfield draws");
+
+        const glm::vec3 pit(20.0f, *surface->Height(20.0f, 20.0f), 20.0f);
+        volume.Apply(SphereShape(pit, 1.6f), {VolumeEditMode::Subtract});
+        const auto holes = ComputeVolumeHoles(volume, *surface, settings);
+        auto mesh = MeshVolumeChunk(volume, ground, mesher);
+        const auto unfitted = mesh.mesh.indices.size();
+        FitVolumeMeshToTerrain(mesh, grid.ChunkOrigin(ground), *surface, holes, settings, grid.voxelSize);
+        Require(!mesh.Empty() && mesh.mesh.indices.size() < unfitted && mesh.materials.size() == mesh.mesh.vertices.size(),
+                "A pit's chunk keeps part of its mesh");
+
+        bool ring = false, pitFloor = false;
+        const auto origin = grid.ChunkOrigin(ground);
+        for (const auto &vertex : mesh.mesh.vertices)
+        {
+            const glm::vec3 point = Position(vertex) + origin;
+            const int cellX = static_cast<int>(std::floor(point.x)), cellZ = static_cast<int>(std::floor(point.z));
+            const float height = *surface->Height(point.x, point.z);
+            Require(std::abs(cellX - 20) <= 4 && std::abs(cellZ - 20) <= 4, "Nothing far from the pit survives fitting");
+            if (holes.GetCut(cellX, cellZ) == TerrainHoleCut::None)
+            {
+                // Over uncut cells only the ring is left, at or below the terrain, never more than the sink below it.
+                ring = true;
+                Require(point.y <= height + settings.surfaceTolerance * grid.voxelSize, "The ring never rises above the terrain");
+            }
+            pitFloor = pitFloor || point.y < height - 1.0f;
+        }
+        Require(ring && pitFloor, "The fitted mesh has the pit and the overlap ring around it");
+        // With no ring, nothing over uncut cells stays on the surface.
+        auto noRing = MeshVolumeChunk(volume, ground, mesher);
+        auto ringless = settings;
+        ringless.overlapCells = 0;
+        FitVolumeMeshToTerrain(noRing, grid.ChunkOrigin(ground), *surface, holes, ringless, grid.voxelSize);
+        Require(noRing.mesh.indices.size() < mesh.mesh.indices.size(), "The ring adds triangles around the cut");
+
+        // A cave under the ground keeps its whole interior though nothing is cut.
+        TerrainVolume caves(grid, MakeTerrainDensity(surface, 1));
+        caves.Apply(SphereShape({6.0f, 2.0f, 6.0f}, 1.5f), {VolumeEditMode::Subtract});
+        const auto caveChunk = grid.ChunkAt({6.0f, 2.0f, 6.0f});
+        auto cave = MeshVolumeChunk(caves, caveChunk, mesher);
+        const auto caveTriangles = cave.mesh.indices.size();
+        FitVolumeMeshToTerrain(cave, grid.ChunkOrigin(caveChunk), *surface, TerrainHoleMask(32, 32), settings, grid.voxelSize);
+        Require(caveTriangles > 0 && cave.mesh.indices.size() == caveTriangles, "A cave's interior is never left to the heightfield");
+
+        // The chunks along a cell's surface: the one holding the ground there, and its ring.
+        const auto along = ChunksAlongSurface(grid, *surface, {{20, 20}}, settings);
+        Require(std::find(along.begin(), along.end(), ground) != along.end(), "Chunks along the surface include the ground's");
+        for (const auto &chunk : along)
+            Require(std::abs(chunk.y - ground.y) <= 1, "Chunks along the surface stay near it");
+    }
+
+    void MeshQueue()
+    {
+        const auto grid = SmallGrid();
+        TerrainVolume volume(grid, ConstantDensity::Air());
+        volume.Apply(SphereShape({2.0f, 2.0f, 2.0f}, 1.0f), {VolumeEditMode::Add});
+        VolumeMeshQueue queue(std::make_shared<SurfaceNetsMesher>());
+        std::atomic<int> finished = 0;
+        const auto count = [&finished](VolumeChunkCoord, VolumeMesh &) { ++finished; };
+        queue.Enqueue(volume, {0, 0, 0}, count);
+        // An edit before the first mesh is collected: only the newer mesh comes out.
+        volume.Apply(SphereShape({2.0f, 2.0f, 2.0f}, 1.5f), {VolumeEditMode::Add});
+        queue.Enqueue(volume, {0, 0, 0}, count);
+        queue.Enqueue(volume, {5, 5, 5}, count);
+        Require(queue.GetPendingCount() == 3, "Jobs are pending until collected");
+        const auto results = queue.Collect(0, true);
+        Require(queue.Idle() && finished == 3, "Waiting finishes every job, and each runs its finishing step");
+        Require(results.size() == 2 && results[0].chunk == VolumeChunkCoord{0, 0, 0} && results[1].chunk == VolumeChunkCoord{5, 5, 5},
+                "A superseded mesh is dropped");
+        const auto fresh = MeshVolumeChunk(volume, {0, 0, 0}, queue.GetMesher());
+        Require(results[0].mesh.mesh.indices == fresh.mesh.indices && results[1].mesh.Empty(), "The kept mesh is the newer one");
+
+        queue.Enqueue(volume, {0, 0, 0});
+        queue.Clear();
+        Require(queue.Idle() && queue.Collect(10, true).empty(), "Clearing drops pending jobs");
+    }
+
+    void TransformedShapes()
+    {
+        // A terrain at (100, 0, 50), scaled 2x: a world-space sphere seen from the terrain's space.
+        const glm::mat4 terrainToWorld = glm::scale(glm::translate(glm::mat4(1.0f), {100.0f, 0.0f, 50.0f}), glm::vec3(2.0f));
+        const SphereShape worldSphere({110.0f, 4.0f, 60.0f}, 2.0f);
+        const TransformedShape local(worldSphere, terrainToWorld);
+        Require(Near(local.Distance({5.0f, 2.0f, 5.0f}), -1.0f, 1e-4f), "Distances shrink into the scaled space (2 m world = 1 m local)");
+        Require(Near(local.Distance({5.0f, 4.0f, 5.0f}), 1.0f, 1e-4f), "Outside the sphere is positive");
+        Require(glm::all(glm::lessThan(glm::abs(local.BoundsMin() - glm::vec3(4.0f, 1.0f, 4.0f)), glm::vec3(1e-4f))) &&
+                    glm::all(glm::lessThan(glm::abs(local.BoundsMax() - glm::vec3(6.0f, 3.0f, 6.0f)), glm::vec3(1e-4f))),
+                "Bounds come back into the local space");
+    }
 }
 
 int main()
@@ -381,6 +549,11 @@ int main()
         Files();
         MeshSphere();
         MeshGround();
+        SurfaceSnapshot();
+        CouplingHoles();
+        CouplingFit();
+        MeshQueue();
+        TransformedShapes();
     }
     catch (const std::exception &error)
     {

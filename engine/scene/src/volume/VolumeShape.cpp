@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/volume/VolumeShape.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace PlutoGE::scene::volume
 {
@@ -17,6 +18,31 @@ namespace PlutoGE::scene::volume
         const glm::vec3 local = m_inverseRotation * (position - m_centre);
         const glm::vec3 q = glm::abs(local) - m_halfExtents;
         return glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
+    }
+
+    TransformedShape::TransformedShape(const VolumeShape &shape, const glm::mat4 &toShape) : m_shape(shape), m_toShape(toShape)
+    {
+        // A shape-space metre is 1 / (axis scale) metres here; the largest axis scale gives the safe (smallest) ratio.
+        const float largestScale = std::max({glm::length(glm::vec3(toShape[0])), glm::length(glm::vec3(toShape[1])),
+                                             glm::length(glm::vec3(toShape[2]))});
+        m_distanceScale = largestScale > 0.0f ? 1.0f / largestScale : 1.0f;
+        // The inner bounds' corners carried back into this space.
+        const glm::mat4 fromShape = glm::inverse(toShape);
+        const glm::vec3 low = shape.BoundsMin(), high = shape.BoundsMax();
+        m_boundsMin = glm::vec3(std::numeric_limits<float>::max());
+        m_boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
+        for (int corner = 0; corner < 8; ++corner)
+        {
+            const glm::vec3 point((corner & 1) ? high.x : low.x, (corner & 2) ? high.y : low.y, (corner & 4) ? high.z : low.z);
+            const glm::vec3 mapped = glm::vec3(fromShape * glm::vec4(point, 1.0f));
+            m_boundsMin = glm::min(m_boundsMin, mapped);
+            m_boundsMax = glm::max(m_boundsMax, mapped);
+        }
+    }
+
+    float TransformedShape::Distance(const glm::vec3 &position) const
+    {
+        return m_shape.Distance(glm::vec3(m_toShape * glm::vec4(position, 1.0f))) * m_distanceScale;
     }
 
     float CapsuleShape::Distance(const glm::vec3 &position) const

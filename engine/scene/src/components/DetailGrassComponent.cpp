@@ -255,7 +255,7 @@ namespace PlutoGE::scene
         field->cellSize = terrain->GetCellSize();
         field->heights.resize(std::size_t(field->columns) * field->rows);
         field->holes.assign(field->heights.size(), 0u);
-        const auto &holes = terrain->GetHoles();
+        const auto &holes = terrain->GetEffectiveHoles();
         for (int z = 0; z < terrain->GetDepth(); ++z)
             for (int x = 0; x < terrain->GetWidth(); ++x)
             {

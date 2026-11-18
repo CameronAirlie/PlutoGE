@@ -94,6 +94,26 @@ namespace
                 "Malformed text is rejected");
     }
 
+    void Uniting()
+    {
+        TerrainHoleMask a(4, 4), b(4, 4);
+        a.Set(0, 0, true);
+        a.SetCut(1, 1, TerrainHoleCut::CornerLowXLowZ);
+        a.SetCut(2, 2, TerrainHoleCut::CornerLowXLowZ);
+        b.Set(3, 3, true);
+        b.SetCut(1, 1, TerrainHoleCut::CornerLowXLowZ);
+        b.SetCut(2, 2, TerrainHoleCut::CornerHighXHighZ);
+        Require(a.Unite(b), "Uniting new cuts changes the mask");
+        Require(a.IsHole(0, 0) && a.IsHole(3, 3) && a.GetCut(1, 1) == TerrainHoleCut::CornerLowXLowZ && a.IsHole(2, 2) &&
+                    a.GetHoleCount() == 4,
+                "A union keeps both masks' cuts; the same half stays a half, two different halves make a full cut");
+        Require(!a.Unite(b), "Uniting again changes nothing");
+        TerrainHoleMask small(2, 2);
+        small.Set(1, 1, true);
+        TerrainHoleMask big(5, 5);
+        Require(big.Unite(small) && big.IsHole(1, 1) && big.GetHoleCount() == 1, "Masks of different sizes unite over the cells they share");
+    }
+
     void HoleFiles()
     {
         TerrainHoleMask mask(5, 4);
@@ -379,6 +399,7 @@ int main()
         MaskEditing();
         MaskEncoding();
         HoleFiles();
+        Uniting();
         ComponentPersistence();
         SurfaceQueries();
         RenderMesh();

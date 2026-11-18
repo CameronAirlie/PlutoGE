@@ -46,6 +46,8 @@ namespace PlutoGE::scene
                    property == "SkirtDepth" || property == "Static" || property == "HeightMap" || property == "HeightData" ||
                    property == "HeightSamples" || property == "HoleMask" || property == "WeightResolution" ||
                    property.starts_with("WeightMap");
+        if (componentType == "TerrainVolumeComponent")
+            return property == "VolumeFile";
         if (componentType == "ProceduralTerrainComponent")
             return property == "GenerateOnLoad" || property == "Texture";
         if (componentType == "FoliageComponent")

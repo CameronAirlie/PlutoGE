@@ -36,6 +36,9 @@ add_library(PlutoGEScene
     src/volume/TerrainVolume.cpp
     src/volume/VolumeFile.cpp
     src/volume/SurfaceNetsMesher.cpp
+    src/volume/TerrainVolumeCoupling.cpp
+    src/volume/VolumeMeshQueue.cpp
+    src/components/TerrainVolumeComponent.cpp
     src/Shatter.cpp
     src/components/ProceduralTerrainComponent.cpp
     src/WaterBodies.cpp

@@ -65,6 +65,9 @@ namespace PlutoGE::scene::volume
 
         [[nodiscard]] const VolumeGrid &GetGrid() const { return m_grid; }
         [[nodiscard]] const VolumeDensitySource &GetBase() const { return *m_base; }
+        // Replaces the base (the terrain was sculpted). Stored chunks keep their samples; unstored ones read the new
+        // base. Dirties the stored chunks' meshes; the caller knows which other meshes it holds.
+        void SetBase(std::shared_ptr<const VolumeDensitySource> base);
         [[nodiscard]] int GetMeshApron() const { return m_meshApron; }
         void SetMeshApron(int samples) { m_meshApron = samples < 0 ? 0 : samples; }
 

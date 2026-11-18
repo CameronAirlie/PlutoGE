@@ -78,6 +78,9 @@ namespace PlutoGE::scene
         // keeps the triangle at their corner. Decided from the mask as it was, so the result does not depend on the
         // order cells are visited. Returns whether any cell changed.
         bool SmoothEdges();
+        // Cuts every cell the other mask cuts as well (a cell cut in two different halves becomes a full cut). Masks of
+        // different sizes unite over the cells they share. Returns whether any cell changed.
+        bool Unite(const TerrainHoleMask &other);
 
         // Compact text for scene files. With whole cells only: "<cellsX>x<cellsZ>:<runs>", alternating run lengths of
         // solid and cut cells in row order (z, then x), starting with solid. With half cuts:

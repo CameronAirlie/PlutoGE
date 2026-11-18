@@ -177,7 +177,7 @@ namespace PlutoGE::scene::detail
             const int width = terrain.GetWidth();
             const int depth = terrain.GetDepth();
             const auto &heights = terrain.GetHeightSamples();
-            const auto &holes = terrain.GetHoles();
+            const auto &holes = terrain.GetEffectiveHoles();
             const float scaleX = std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f);
             const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
             const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
@@ -226,7 +226,7 @@ namespace PlutoGE::scene::detail
             const std::size_t expectedHeightCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(depth);
             if (width < 2 || depth < 2 || heightSamples.size() != expectedHeightCount)
                 return shapeData;
-            if (!terrain.GetHoles().Empty())
+            if (!terrain.GetEffectiveHoles().Empty())
                 return CreateHoledTerrainShape(terrain, worldScale);
 
             shapeData.ownedHeightfieldData = heightSamples;

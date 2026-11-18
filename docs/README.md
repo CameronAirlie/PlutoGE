@@ -51,6 +51,7 @@ Inspector. Other code blocks are explicitly identified as fragments.
 | Contact sounds and effects | [Surface responses](SURFACE_RESPONSES.md) |
 | Breaking meshes into physics debris; convex hull colliders | [Fracture](FRACTURE.md) |
 | Large worlds: 16-bit heightmap import, height files, biomes, lakes and rivers, streamed terrain tiles, distant terrain | [Terrain worlds](TERRAIN_WORLDS.md) |
+| Caves, pits and dug ground on a terrain (3D ground over the heightfield) | [Terrain volumes](TERRAIN_VOLUMES.md) |
 | Instanced vegetation and collision | [Foliage](FOLIAGE.md) |
 | Dense grass generated on the GPU over a terrain | [Detail grass](DETAIL_GRASS.md) |
 | Wind and swaying vegetation | [Foliage wind](FOLIAGE_WIND.md) |

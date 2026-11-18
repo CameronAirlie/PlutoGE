@@ -59,4 +59,8 @@ namespace PlutoGE::scene
         struct Region { glm::vec3 min; glm::vec3 max; };
         std::vector<Region> m_dirtyRegions;
     };
+
+    // Re-samples a world-space box in every enabled navigation mesh of the scene: ground that streamed in or out, or
+    // was dug or built.
+    void InvalidateNavigationRegion(Scene &scene, const glm::vec3 &boundsMin, const glm::vec3 &boundsMax);
 }

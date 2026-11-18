@@ -687,8 +687,7 @@ namespace PlutoGE::scene
         {
             m_width = width;
             m_depth = depth;
-            m_holes.Resize(m_width - 1, m_depth - 1);
-            ++m_holesRevision;
+            ResizeHoleMasks();
         }
         m_heights = std::move(heights);
         m_border = border.size() == TerrainHeightBorder::Size(m_width, m_depth) ? std::move(border) : std::vector<float>{};
@@ -966,7 +965,7 @@ namespace PlutoGE::scene
         float previousDelta = heightDelta(previousDistance);
         float selectedDistance = std::numeric_limits<float>::max();
         if (std::abs(previousDelta) <= kRayEpsilon &&
-            !m_holes.IsHoleAt((localOrigin.x + localDirection.x * previousDistance) / m_cellSize,
+            !GetEffectiveHoles().IsHoleAt((localOrigin.x + localDirection.x * previousDistance) / m_cellSize,
                               (localOrigin.z + localDirection.z * previousDistance) / m_cellSize))
             selectedDistance = previousDistance;
 
@@ -992,7 +991,7 @@ namespace PlutoGE::scene
                 const float crossing = (low + high) * 0.5f;
                 const glm::vec3 point = localOrigin + localDirection * crossing;
                 // A crossing inside a hole is not a surface: the ray passes through and may meet the terrain beyond.
-                if (!m_holes.IsHoleAt(point.x / m_cellSize, point.z / m_cellSize))
+                if (!GetEffectiveHoles().IsHoleAt(point.x / m_cellSize, point.z / m_cellSize))
                 {
                     selectedDistance = crossing;
                     break;
@@ -1032,8 +1031,7 @@ namespace PlutoGE::scene
         ++m_heightsRevision;
         if (m_holes.GetCellsX() != m_width - 1 || m_holes.GetCellsZ() != m_depth - 1)
         {
-            m_holes.Resize(m_width - 1, m_depth - 1);
-            ++m_holesRevision;
+            ResizeHoleMasks();
         }
         MarkMeshDirty();
     }
@@ -1050,7 +1048,7 @@ namespace PlutoGE::scene
         if (!std::isfinite(x) || !std::isfinite(z) || !std::isfinite(m_cellSize) || m_cellSize <= 0 ||
             x < 0 || z < 0 || x > maxX || z > maxZ)
             return false;
-        if (m_holes.IsHoleAt(x / m_cellSize, z / m_cellSize))
+        if (GetEffectiveHoles().IsHoleAt(x / m_cellSize, z / m_cellSize))
             return false;
 
         height = GetHeightAtLocalPosition(x, z);
@@ -1266,8 +1264,7 @@ namespace PlutoGE::scene
     {
         if (m_holes.GetCellsX() != m_width - 1 || m_holes.GetCellsZ() != m_depth - 1)
         {
-            m_holes.Resize(m_width - 1, m_depth - 1);
-            ++m_holesRevision;
+            ResizeHoleMasks();
         }
 
         const std::size_t targetSize = static_cast<std::size_t>(m_width * m_depth);
@@ -1307,20 +1304,67 @@ namespace PlutoGE::scene
 
     bool TerrainComponent::IsHoleAtLocalPosition(float x, float z) const
     {
-        return m_holes.IsHoleAt(x / m_cellSize, z / m_cellSize);
+        return GetEffectiveHoles().IsHoleAt(x / m_cellSize, z / m_cellSize);
     }
 
     bool TerrainComponent::IsHoleAtWorldPosition(const glm::vec3 &worldPosition) const
     {
         const auto *entity = GetOwner();
-        if (!entity || m_holes.Empty())
+        if (!entity || GetEffectiveHoles().Empty())
             return false;
         const glm::vec3 local = glm::vec3(glm::inverse(entity->GetWorldTransform()) * glm::vec4(worldPosition, 1.0f));
         return IsHoleAtLocalPosition(local.x, local.z);
     }
 
+    void TerrainComponent::SetDerivedHoles(std::string_view source, TerrainHoleMask holes)
+    {
+        const auto found = m_derivedHoles.find(source);
+        if (holes.Empty())
+        {
+            if (found == m_derivedHoles.end())
+                return;
+            m_derivedHoles.erase(found);
+        }
+        else
+        {
+            holes.Resize(m_width - 1, m_depth - 1);
+            if (found != m_derivedHoles.end() && found->second == holes)
+                return;
+            m_derivedHoles.insert_or_assign(std::string(source), std::move(holes));
+        }
+        HolesChanged();
+    }
+
+    const TerrainHoleMask *TerrainComponent::FindDerivedHoles(std::string_view source) const
+    {
+        const auto found = m_derivedHoles.find(source);
+        return found == m_derivedHoles.end() ? nullptr : &found->second;
+    }
+
+    void TerrainComponent::ResizeHoleMasks()
+    {
+        m_holes.Resize(m_width - 1, m_depth - 1);
+        for (auto &[source, mask] : m_derivedHoles)
+            mask.Resize(m_width - 1, m_depth - 1);
+        RebuildEffectiveHoles();
+        ++m_holesRevision;
+    }
+
+    void TerrainComponent::RebuildEffectiveHoles()
+    {
+        if (m_derivedHoles.empty())
+        {
+            m_effectiveHoles = TerrainHoleMask{};
+            return;
+        }
+        m_effectiveHoles = m_holes;
+        for (const auto &[source, mask] : m_derivedHoles)
+            m_effectiveHoles.Unite(mask);
+    }
+
     void TerrainComponent::HolesChanged()
     {
+        RebuildEffectiveHoles();
         ++m_holesRevision;
         MarkMeshDirty();
         if (auto *owner = GetOwner())
@@ -1406,7 +1450,7 @@ namespace PlutoGE::scene
             }
             // Holes stay exact at every LOD: a coarse quad over a hole is replaced by the full-detail quads of its solid
             // cells. Their vertices geomorph onto the coarse surface like the rest of the LOD, so no cracks open.
-            const bool cut = m_holes.AnyInRect(x, z, x1, z1);
+            const bool cut = GetEffectiveHoles().AnyInRect(x, z, x1, z1);
             if (cut && step > 1)
             {
                 for (int fineZ = z; fineZ < z1; ++fineZ)
@@ -1419,7 +1463,7 @@ namespace PlutoGE::scene
             const unsigned int i1 = static_cast<unsigned int>(z * m_width + x1);
             const unsigned int i2 = static_cast<unsigned int>(z1 * m_width + x);
             const unsigned int i3 = static_cast<unsigned int>(z1 * m_width + x1);
-            for (const auto &triangle : TerrainCellTriangles(cut ? m_holes.GetCut(x, z) : TerrainHoleCut::None))
+            for (const auto &triangle : TerrainCellTriangles(cut ? GetEffectiveHoles().GetCut(x, z) : TerrainHoleCut::None))
             {
                 const unsigned int corners[4] = {i0, i1, i2, i3};
                 config.data.indices.push_back(corners[triangle[0]]);

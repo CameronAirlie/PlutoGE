@@ -50,6 +50,19 @@ namespace PlutoGE::scene
         m_rebuildPending = false;
         return baked;
     }
+    void InvalidateNavigationRegion(Scene &scene, const glm::vec3 &boundsMin, const glm::vec3 &boundsMax)
+    {
+        const auto walk = [&](auto &&self, Entity *entity) -> void {
+            for (auto *navigation : entity->GetComponents<NavigationMeshComponent>())
+                if (navigation->IsEnabled())
+                    navigation->InvalidateRegion(boundsMin, boundsMax);
+            for (auto *child : entity->GetChildren())
+                self(self, child);
+        };
+        for (auto *root : scene.GetRootEntities())
+            walk(walk, root);
+    }
+
     void NavigationMeshComponent::InvalidateRegion(const glm::vec3 &boundsMin, const glm::vec3 &boundsMax)
     {
         Region region{glm::min(boundsMin, boundsMax), glm::max(boundsMin, boundsMax)};

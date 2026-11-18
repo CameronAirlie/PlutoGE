@@ -131,6 +131,9 @@ namespace PlutoGE::scene
         // Gives a tile these holes: the loaded terrain (then saved), or the tile's file when it is not loaded (undo
         // after the tile streamed out). False when neither is possible.
         bool StoreTileHoles(TerrainTileCoord tile, const TerrainHoleMask &holes);
+        // A tile's volume file (beside its height file; volume::VolumeFile): the stored chunks of the tile's
+        // TerrainVolumeComponent, when its source has one. Tiles nothing was dug in have none.
+        [[nodiscard]] std::string TileVolumeFile(TerrainTileCoord tile) const;
 
         // Writes a world's files: one .plutoheight per tile (with border rings) and the overview. `heights` is the whole
         // world in world units (WorldSamplesX x WorldSamplesZ; other sizes are resampled). Paths are file paths, the
@@ -151,6 +154,7 @@ namespace PlutoGE::scene
         {
             TerrainHeightData heights;
             std::optional<TerrainHoleMask> holes;
+            std::optional<std::vector<std::uint8_t>> volume; // the volume file's bytes, when there is one
             std::string error; // a file that was there but could not be used (the tile still loads)
         };
         struct Tile

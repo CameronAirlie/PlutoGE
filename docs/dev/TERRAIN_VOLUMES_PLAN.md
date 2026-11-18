@@ -1,9 +1,11 @@
 # Terrain volumes: caves and destructible ground
 
-Written 2026-11-18. Status (2026-11-18): phases 0-2 are built. Tile holes are saved (`TerrainHoleFile`,
-`TerrainWorldComponent::SaveTileHoles` / `StoreTileHoles`, the Holes brush on worlds). The volume core and surface nets
-mesher live in `engine/scene/volume` and are tested by `PlutoGETerrainVolumeTests`. Nothing uses the volume in a scene
-yet: phase 3 is next. Later phases are design only.
+Written 2026-11-18. Status (2026-11-18): phases 0-3 are built. Tile holes are saved (`TerrainHoleFile`,
+`TerrainWorldComponent::SaveTileHoles` / `StoreTileHoles`, the Holes brush on worlds). The volume core, surface nets
+mesher, coupling rules and meshing queue live in `engine/scene/volume` (`PlutoGETerrainVolumeTests`).
+`TerrainVolumeComponent` puts a volume on a terrain or world tile (`PlutoGETerrainVolumeComponentTests`; user guide:
+[Terrain volumes](../TERRAIN_VOLUMES.md)). There is no editor brush or script API yet: edits come from C++ (phases 5
+and 7). Phase 4 (rendering) is next. Later phases are design only.
 
 ## Goal
 
@@ -34,11 +36,16 @@ engine/scene/volume/            pure data and algorithms, no scene/renderer depe
   VolumeFile                    compact stored-chunk files for tile files and save games
   VolumeMesher                  interface; SurfaceNetsMesher implementation
                                 (input: a padded DensityBlock; output: render::MeshData + materials)
+  TerrainVolumeCoupling         TerrainSurface (the drawn heightfield, an immutable snapshot), ComputeVolumeHoles,
+                                FitVolumeMeshToTerrain, ChunksAlongSurface: the rules joining a volume to its terrain
+  VolumeMeshQueue               gathers on the caller's thread, meshes + finishes on workers, drops superseded results
+  TransformedShape              (in VolumeShape) a shape seen from another space: world-space edits on a local volume
 
 engine/scene/components/
-  TerrainVolumeComponent        (phase 3) owns a TerrainVolume beside a TerrainComponent or a world tile; meshes dirty
-                                chunks on workers; makes chunk entities (mesh + mesh collider); derives the terrain's
-                                holes from the edited footprint
+  TerrainVolumeComponent        owns a TerrainVolume beside a TerrainComponent or a world tile; glue only: snapshots,
+                                scheduling, chunk entities (mesh + mesh collider), derived holes, files, navigation
+  TerrainComponent              derived hole layers (SetDerivedHoles by source; GetEffectiveHoles is what draws,
+                                collides and answers queries; GetHoles and the saved HoleMask stay authored)
 ```
 
 Principles that keep it open to change:
@@ -55,17 +62,30 @@ Principles that keep it open to change:
 ### Density convention
 
 Signed distance in metres, **negative inside rock**, positive in air. Stored as int8 in units of
-`voxelSize / 64`, clamped to ±2 voxels: precise near the surface, which is all the mesher needs. The heightfield base
-is `y - height(x, z)` (vertical distance, clamped).
+`voxelSize / 32`, clamped to about ±4 voxels: precise near the surface, which is all the mesher needs. The heightfield
+base is `y - height(x, z)` (vertical distance, clamped), where height is the terrain's drawn surface: smoothed samples,
+each cell split along its (x + 1, z) - (x, z + 1) diagonal.
 
-### Coupling to the heightfield (phase 3)
+### Coupling to the heightfield (phase 3, as built)
 
-1. A chunk's base density comes from the terrain's own height sampler, so an unedited chunk's surface is the terrain's.
-2. Each edit marks the **terrain columns it changed** (dilated by one cell). Those cells become holes in the tile.
-3. The chunk mesh keeps only triangles over cut columns plus a one-cell overlap ring. The ring's vertices are snapped to
-   the heightfield and dropped a few centimetres (as terrain skirts are), so the terrain wins the depth test where both
-   exist and the volume fills the cracks a cell grid and a voxel surface would otherwise leave.
-4. Volume chunks are tile-owned files (`tile_x_z_volume.plutovolume`) beside the height, weight and hole files.
+1. The volume lives in the terrain's local space (sample (0, 0, 0) at the terrain's origin) and its base is a
+   `TerrainSurface` snapshot of the drawn surface, so an unedited chunk's surface is the terrain's. Sculpting the
+   terrain replaces the base (`TerrainVolume::SetBase`); stored chunks keep their samples.
+2. **Holes**: a sample column of a stored chunk is *breached* when one of the three samples around the surface moved
+   more than `breachTolerance` (a quarter voxel) from the base. Every cell holding a breached column is cut. A cave under
+   the ground changes no sample near the surface (subtracting only raises distances that were already lower), so it cuts
+   nothing.
+3. **Fitting** (`FitVolumeMeshToTerrain`, on the meshing worker): a triangle stays when it is off the terrain, over a cut
+   cell, not on the surface (any corner further than `surfaceTolerance`, half a voxel, from it: caves, overhangs, pit
+   walls), or over the `overlapCells` ring around cut cells. Ring vertices on the surface sink by up to `overlapSink`
+   (5 cm), ramping in over a voxel from the cut, so the terrain wins the depth test where both draw.
+4. **Ordering**: new holes go onto the terrain only once every mesh queued for them has landed, so no frame shows an
+   empty hole. When holes change, the chunks along the changed cells' surface (`ChunksAlongSurface`, ring included) mesh
+   again, edited or not.
+5. Holes reach the terrain as a **derived layer** (`TerrainComponent::SetDerivedHoles("TerrainVolume", mask)`), never
+   mixed into the authored, saved `HoleMask`.
+6. Stored chunks persist in the component's `VolumeFile`; a world gives each tile `tile_x_z_volume.plutovolume` beside
+   its height, weight and hole files, read on the streaming worker with the heights.
 
 ### What each engine system needs
 
@@ -106,6 +126,18 @@ useful.
 8. **Surface quality**: dual contouring mesher, material blending at seams, cave interior fog and ambient occlusion
    (the crag cave follow-ups).
 9. **Distance**: coarse volume LOD (Transvoxel or skirts) so cave mouths keep their shape far away.
+
+## Phase 3 limits and follow-ups
+
+- Holes are recomputed over every stored chunk's columns after each change: fine for occasional edits; continuous
+  digging over many chunks wants an incremental pass over the changed box.
+- A lone terrain reads its volume file on the main thread when the volume is first made; tiles read on the worker.
+- Chunk meshes draw with the component's material, else the terrain's (with zero UVs): phase 4 gives them a triplanar
+  material from the terrain layers.
+- Foliage and detail grass still grow over cut cells' old surface (phase 5).
+- Chunk meshes are static: whether their shadow pages and GI follow a remesh is checked by eye in phase 4.
+- Stored chunks do not follow later sculpting of the terrain under them.
+- `ProvideFileContents` / `SetVolumeFile` / grid changes rebuild the volume from its file: unsaved edits go.
 
 ## Open questions
 

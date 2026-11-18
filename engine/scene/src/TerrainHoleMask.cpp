@@ -280,6 +280,24 @@ namespace PlutoGE::scene
         return mask;
     }
 
+    bool TerrainHoleMask::Unite(const TerrainHoleMask &other)
+    {
+        bool changed = false;
+        const int cellsX = std::min(m_cellsX, other.m_cellsX);
+        const int cellsZ = std::min(m_cellsZ, other.m_cellsZ);
+        for (int z = 0; z < cellsZ; ++z)
+            for (int x = 0; x < cellsX; ++x)
+            {
+                const auto theirs = other.GetCut(x, z);
+                const auto mine = GetCut(x, z);
+                if (theirs == TerrainHoleCut::None || theirs == mine || mine == TerrainHoleCut::Full)
+                    continue;
+                // None takes theirs; two different halves (or a half and a full cut) make a full cut.
+                changed |= SetCut(x, z, mine == TerrainHoleCut::None ? theirs : TerrainHoleCut::Full);
+            }
+        return changed;
+    }
+
     namespace TerrainHoleFile
     {
         namespace

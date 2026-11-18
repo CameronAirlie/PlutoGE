@@ -10,9 +10,11 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace PlutoGE::render
@@ -158,9 +160,18 @@ namespace PlutoGE::scene
         bool SetHole(int cellX, int cellZ, bool hole);
         // Turns the holes' stepped rims into diagonal ones (TerrainHoleMask::SmoothEdges). Returns whether it changed.
         bool SmoothHoleEdges();
+        // Derived holes: masks other systems keep on the terrain (a TerrainVolumeComponent cuts the cells its dug ground
+        // replaces). They are not saved and not edited by the hole brush; GetHoles and the HoleMask property stay the
+        // authored holes alone. Each source owns one mask; an empty mask removes it.
+        void SetDerivedHoles(std::string_view source, TerrainHoleMask holes);
+        [[nodiscard]] const TerrainHoleMask *FindDerivedHoles(std::string_view source) const;
+        // What the terrain draws, collides with and answers queries about: the authored holes united with every
+        // derived mask. The same object as GetHoles when there are no derived holes.
+        const TerrainHoleMask &GetEffectiveHoles() const { return m_derivedHoles.empty() ? m_holes : m_effectiveHoles; }
+        // Whether the effective holes cut the point.
         bool IsHoleAtLocalPosition(float x, float z) const;
         bool IsHoleAtWorldPosition(const glm::vec3 &worldPosition) const;
-        // Bumped by every change to the holes (physics and other caches rebuild on it).
+        // Bumped by every change to the holes, authored or derived (physics and other caches rebuild on it).
         std::uint64_t GetHolesRevision() const { return m_holesRevision; }
 
         void SetMaterial(render::Material *material);
@@ -215,6 +226,9 @@ namespace PlutoGE::scene
         glm::vec3 ComputeNormal(int x, int z) const;
         void EnsureHeightStorage();
         void HolesChanged();
+        // Fits the authored and derived masks to the grid's cells and rebuilds the effective mask.
+        void ResizeHoleMasks();
+        void RebuildEffectiveHoles();
         void MarkMeshDirty();
         void RebuildMesh();
         void RebuildMaterialFromReference();
@@ -235,7 +249,9 @@ namespace PlutoGE::scene
         std::string m_heightDataPath;
         std::uint64_t m_heightsRevision = 0;
         HeavyPropertyCache m_heightsText;
-        TerrainHoleMask m_holes;
+        TerrainHoleMask m_holes;                                       // authored, saved
+        std::map<std::string, TerrainHoleMask, std::less<>> m_derivedHoles; // by source, not saved
+        TerrainHoleMask m_effectiveHoles;                              // m_holes united with m_derivedHoles
         std::uint64_t m_holesRevision = 0;
         HeavyPropertyCache m_holesText;
 

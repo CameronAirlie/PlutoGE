@@ -62,4 +62,24 @@ namespace PlutoGE::scene::volume
         glm::vec3 m_b;
         float m_radius;
     };
+
+    // Another shape seen from a different space: a world-space edit applied to a volume in a terrain's local space.
+    // `toShape` maps this space's positions into the inner shape's space. Distances stay exact under rotation and
+    // uniform scale; under non-uniform scale they are divided by the largest axis scale, an under-estimate (allowed).
+    // Holds a reference: the inner shape must outlive it.
+    class TransformedShape final : public VolumeShape
+    {
+    public:
+        TransformedShape(const VolumeShape &shape, const glm::mat4 &toShape);
+        [[nodiscard]] float Distance(const glm::vec3 &position) const override;
+        [[nodiscard]] glm::vec3 BoundsMin() const override { return m_boundsMin; }
+        [[nodiscard]] glm::vec3 BoundsMax() const override { return m_boundsMax; }
+
+    private:
+        const VolumeShape &m_shape;
+        glm::mat4 m_toShape;
+        float m_distanceScale; // this space's metres per shape-space metre
+        glm::vec3 m_boundsMin;
+        glm::vec3 m_boundsMax;
+    };
 }

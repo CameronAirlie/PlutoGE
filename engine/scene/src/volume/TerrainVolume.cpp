@@ -29,6 +29,14 @@ namespace PlutoGE::scene::volume
     {
     }
 
+    void TerrainVolume::SetBase(std::shared_ptr<const VolumeDensitySource> base)
+    {
+        m_base = base ? std::move(base) : ConstantDensity::Air();
+        for (const auto &[coord, chunk] : m_chunks)
+            MarkDirty(m_grid.ChunkSamples(coord));
+        ++m_revision;
+    }
+
     VolumeSample TerrainVolume::Sample(glm::ivec3 sample) const
     {
         const auto coord = m_grid.ChunkOfSample(sample);

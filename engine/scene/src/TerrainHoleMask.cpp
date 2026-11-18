@@ -279,4 +279,46 @@ namespace PlutoGE::scene
             return std::nullopt;
         return mask;
     }
+
+    namespace TerrainHoleFile
+    {
+        namespace
+        {
+            constexpr std::string_view Magic = "PLUTOHOLES ";
+        }
+
+        std::string Encode(const TerrainHoleMask &mask)
+        {
+            return std::string(Magic) + std::to_string(Version) + "\n" + mask.Encode() + "\n";
+        }
+
+        std::optional<TerrainHoleMask> Decode(std::string_view text, int cellsX, int cellsZ, std::string *error)
+        {
+            const auto fail = [error](const char *reason) -> std::optional<TerrainHoleMask> {
+                if (error)
+                    *error = reason;
+                return std::nullopt;
+            };
+            const auto newline = text.find('\n');
+            auto header = text.substr(0, newline);
+            if (header.ends_with('\r')) // a file checked out with Windows line endings
+                header.remove_suffix(1);
+            if (!header.starts_with(Magic))
+                return fail("Not a hole file.");
+            int version = 0;
+            const auto digits = header.substr(Magic.size());
+            const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), version);
+            if (parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() || version < 1)
+                return fail("The hole file's version is malformed.");
+            if (version > Version)
+                return fail("The hole file is from a newer engine.");
+            auto body = newline == std::string_view::npos ? std::string_view{} : text.substr(newline + 1);
+            while (!body.empty() && (body.back() == '\n' || body.back() == '\r'))
+                body.remove_suffix(1);
+            auto mask = TerrainHoleMask::Decode(body, cellsX, cellsZ);
+            if (!mask)
+                return fail("The hole file's mask is malformed or another size than the terrain.");
+            return mask;
+        }
+    }
 }

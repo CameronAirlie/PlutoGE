@@ -19,6 +19,12 @@ centre is under the brush is cut, and a brush smaller than a cell cuts the cell 
 restores cells. The toolbar shows how many cells are cut. Strokes are ordinary scene edits, so undo works. Holes are
 saved with the scene and kept when the terrain is resized (cells outside the new size are dropped).
 
+**Terrain worlds.** Select the world (or one of its tiles) and use the same brush: a stroke cuts every loaded tile
+under it. Tiles are not saved with the scene, so each keeps its holes in its own file beside its height file,
+`tile_x_z_holes.plutoholes`, written when the stroke ends; a tile without holes has no file. Undo restores the tiles'
+holes, writing straight to the file of a tile that has since streamed out. The file loads on the streaming worker with
+the tile's heights; a damaged one is reported in the world's streaming errors and the tile loads without holes.
+
 ## What a hole changes
 
 | System | Behaviour |
@@ -58,6 +64,12 @@ scene::TerrainCellTriangles(cut);     // the triangles a cell keeps (the render 
 cells across from them) loses the triangle at that corner, and a whole cut cell with uncut cells on exactly two
 adjacent sides (and cut cells across from them) keeps the triangle at their corner. Straight edges and single-cell
 features are left alone.
+
+## Hole files
+
+`TerrainHoleFile::Encode` / `Decode` (in `TerrainHoleMask.h`): a header line `PLUTOHOLES <version>` (version 1),
+then the mask's text as below. Windows line endings are accepted. From code, `TerrainWorldComponent::TileHoleFile`,
+`SaveTileHoles` (a loaded tile's holes to its file) and `StoreTileHoles` (a tile's holes, loaded or not).
 
 ## Scene format
 

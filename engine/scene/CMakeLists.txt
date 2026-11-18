@@ -29,6 +29,13 @@ add_library(PlutoGEScene
     src/procedural/ProceduralTerrainDefinition.cpp
     src/procedural/ProceduralGeneration.cpp
     src/procedural/MeshFracture.cpp
+    src/volume/VolumeGrid.cpp
+    src/volume/VolumeChunk.cpp
+    src/volume/VolumeDensitySource.cpp
+    src/volume/VolumeShape.cpp
+    src/volume/TerrainVolume.cpp
+    src/volume/VolumeFile.cpp
+    src/volume/SurfaceNetsMesher.cpp
     src/Shatter.cpp
     src/components/ProceduralTerrainComponent.cpp
     src/WaterBodies.cpp

@@ -14,6 +14,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -284,6 +285,80 @@ namespace
     }
 }
 
+namespace
+{
+    // Holes in a world's tiles live in tile_x_z_holes.plutoholes beside the height file: saved from a loaded tile,
+    // written straight to the file for one that is not loaded, read back when the tile streams in, and removed when a
+    // tile has no holes left.
+    void TileHoles()
+    {
+        const auto directory = TempDirectory();
+        const auto grid = SmallGrid();
+        const std::string pattern = (directory / "tile_{x}_{z}.plutoheight").string();
+        Require(TerrainWorldComponent::WriteWorldFiles(WorldField(grid), grid, pattern, {}, 4).Ok(), "Writing the world");
+
+        Scene scene;
+        auto *worldEntity = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "World"}));
+        auto *world = worldEntity->CreateComponent<TerrainWorldComponent>();
+        world->SetGrid(grid);
+        world->SetTileFiles(pattern);
+        TerrainStreamingSettings settings;
+        settings.loadRadius = 10.0f;
+        settings.unloadRadius = 20.0f;
+        world->SetStreaming(settings);
+        const glm::vec3 nearOrigin(5.0f, 0.0f, 5.0f);
+        Require(world->LoadAround(nearOrigin, std::chrono::seconds(10)), "Loading tile (0,0)");
+
+        const auto holeFile = directory / "tile_0_0_holes.plutoholes";
+        Require(world->TileHoleFile({0, 0}) == (directory / "tile_0_0_holes.plutoholes").string(), "The hole file sits beside the height file");
+        auto *tile = world->GetTileTerrain({0, 0});
+        Require(tile && tile->GetHoles().Empty() && !std::filesystem::exists(holeFile), "A tile without a hole file has no holes");
+
+        tile->SetHole(3, 4, true);
+        tile->SetHole(4, 4, true);
+        Require(world->SaveTileHoles({0, 0}) && std::filesystem::exists(holeFile), "Saving a loaded tile's holes writes its file");
+        Require(!world->SaveTileHoles({2, 1}), "A tile that is not loaded has nothing to save");
+        const auto saved = tile->GetHoles();
+
+        // Unloaded tiles take holes into their file, and both come back when the tiles stream in again.
+        TerrainHoleMask far(grid.tileSamples - 1, grid.tileSamples - 1);
+        far.SetCut(7, 7, TerrainHoleCut::CornerLowXHighZ);
+        Require(world->GetTileState({2, 1}) == TerrainTileState::Unloaded && world->StoreTileHoles({2, 1}, far) &&
+                    std::filesystem::exists(directory / "tile_2_1_holes.plutoholes"),
+                "Storing holes for an unloaded tile writes its file");
+        Require(!world->StoreTileHoles({5, 5}, far), "A tile off the grid cannot take holes");
+
+        world->UnloadAll();
+        Require(world->LoadAround(nearOrigin, std::chrono::seconds(10)), "Reloading tile (0,0)");
+        tile = world->GetTileTerrain({0, 0});
+        Require(tile && tile->GetHoles() == saved && tile->IsHoleAtLocalPosition(3.5f * grid.cellSize, 4.5f * grid.cellSize),
+                "A reloaded tile has its saved holes");
+        const glm::vec3 farCorner(90.0f, 0.0f, 60.0f);
+        Require(world->LoadAround(farCorner, std::chrono::seconds(10)) && world->GetTileTerrain({2, 1}) &&
+                    world->GetTileTerrain({2, 1})->GetHoles() == far,
+                "An unloaded tile's stored holes load with it");
+
+        // Filling the last hole removes the file.
+        Require(world->StoreTileHoles({2, 1}, TerrainHoleMask{}) && world->GetTileTerrain({2, 1})->GetHoles().Empty() &&
+                    !std::filesystem::exists(directory / "tile_2_1_holes.plutoholes"),
+                "A tile left without holes has no hole file");
+
+        // A damaged hole file is reported, and the tile still loads (without holes).
+        world->UnloadAll();
+        {
+            std::ofstream damaged(holeFile, std::ios::trunc);
+            damaged << "PLUTOHOLES 1\n3x3:0,9\n";
+        }
+        Require(world->LoadAround(nearOrigin, std::chrono::seconds(10)) && world->GetTileTerrain({0, 0}) &&
+                    world->GetTileTerrain({0, 0})->GetHoles().Empty(),
+                "A tile with a damaged hole file loads without holes");
+        bool reported = false;
+        for (const auto &message : world->GetStreamingErrors())
+            reported = reported || message.find("tile_0_0_holes") != std::string::npos;
+        Require(reported, "A damaged hole file is reported");
+    }
+}
+
 int main()
 {
     try
@@ -293,6 +368,7 @@ int main()
         StreamingPlan();
         Skirts();
         Streaming();
+        TileHoles();
     }
     catch (const std::exception &error)
     {

@@ -28,7 +28,8 @@ template (all of which edit the world).
   a bar at the bottom of the viewport holds the brush. Drag on the ground; Shift swaps raise and lower (and cut and
   fill), `[` `]` resize, Ctrl+click picks the Flatten height, Esc stops. Each stroke is one undo step. On a world, a
   stroke reaches every loaded tile under the brush and the tiles' shared edges and borders are kept matched, so
-  sculpting across tile edges leaves no seams. Holes are for single terrains (tile holes are not saved yet).
+  sculpting across tile edges leaves no seams. Holes work on worlds too: each tile keeps its own in a hole file beside
+  its heights (below).
 - **Biomes**: *Add Biomes* (a starter biome: grass, rock on slopes), then the biome rules; *Generate* on a terrain,
   or nothing on a world: its loaded tiles regenerate when the rules change. Under the rules, **Plant Shadows** sets
   whether the plants cast shadows (the Foliage component's default and shadow distance) and lists each plant's own
@@ -184,7 +185,8 @@ frame (each builds its mesh and collision). The viewer is the editor camera whil
 
 **Tiles** are transient child entities, never saved, made by a tile source (`TerrainTileSource.h`): the world's Tile
 Template (above), else a **Tile Prefab**, else a plain terrain with the Tile Material and a terrain collider. Each tile
-keeps its height file, so sculpting a tile in the editor saves into it; `SyncTileEdges` keeps neighbours' shared
+keeps its height file, so sculpting a tile in the editor saves into it (and its hole file,
+`tile_x_z_holes.plutoholes`, holds its holes: [Terrain holes](TERRAIN_HOLES.md)); `SyncTileEdges` keeps neighbours' shared
 edges and border rings in step (loaded tiles in memory, unloaded ones in their files).
 Navigation meshes are invalidated over a tile when it appears or goes.
 

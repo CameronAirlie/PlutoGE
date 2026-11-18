@@ -101,4 +101,16 @@ namespace PlutoGE::scene
         std::vector<std::uint8_t> m_cells;
         std::size_t m_holeCount = 0;
     };
+
+    // Holes kept in their own file, as a terrain world's tiles keep theirs beside their height file
+    // (tile_x_z_holes.plutoholes, docs/TERRAIN_WORLDS.md): a header line naming the format and its version, then
+    // TerrainHoleMask::Encode's text.
+    namespace TerrainHoleFile
+    {
+        inline constexpr std::string_view Extension = ".plutoholes";
+        inline constexpr int Version = 1;
+        [[nodiscard]] std::string Encode(const TerrainHoleMask &mask);
+        // nullopt (with a reason) when the header or the mask is malformed, or the mask is not cellsX x cellsZ.
+        [[nodiscard]] std::optional<TerrainHoleMask> Decode(std::string_view text, int cellsX, int cellsZ, std::string *error = nullptr);
+    }
 }

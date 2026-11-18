@@ -88,9 +88,7 @@ namespace PlutoGE::ui
                terrain && !terrain->GetLayers().Empty() ? "Paint material layers onto the ground."
                                                         : "Add material layers first (Terrain Editor > Paint).");
         ImGui::SameLine();
-        button("Holes", TerrainToolMode::Holes, target.kind == TerrainEditTarget::Kind::Terrain,
-               target.kind == TerrainEditTarget::Kind::Terrain ? "Cut cave mouths and shafts into the ground. Shift fills."
-                                                               : "Holes in terrain world tiles are not saved yet.");
+        button("Holes", TerrainToolMode::Holes, true, "Cut cave mouths and shafts into the ground. Shift fills.");
     }
 
     void DrawTerrainBrushSettings(TerrainEditTool &tool, const TerrainEditTarget &target, bool compact)
@@ -321,9 +319,9 @@ namespace PlutoGE::ui
             if (mode == TerrainToolMode::Sculpt && target.kind == TerrainEditTarget::Kind::Terrain)
                 if (auto *terrain = target.Terrain(); terrain && terrain->GetHeightDataPath().empty())
                     m_sceneEditStroke = !StoreTerrainHeightsInFile(shell, *target.root, *terrain);
-            // Holes are scene data, and so are heights without a project to keep a height file in: the stroke is an
-            // ordinary scene edit.
-            if (mode == TerrainToolMode::Holes)
+            // A lone terrain's holes are scene data, and so are heights without a project to keep a height file in:
+            // the stroke is an ordinary scene edit. A world's tiles keep their holes in files, like their weights.
+            if (mode == TerrainToolMode::Holes && target.kind == TerrainEditTarget::Kind::Terrain)
                 m_sceneEditStroke = true;
             if (m_sceneEditStroke)
                 shell.BeginSceneEdit(mode == TerrainToolMode::Holes ? "Paint Terrain Holes" : "Sculpt Terrain");
@@ -366,7 +364,8 @@ namespace PlutoGE::ui
         {
             auto brush = tool.holes;
             brush.cut = brush.cut != invert;
-            if (!surface.PaintHoles(hit->position, brush).empty())
+            touchNear(hit->position, brush.radius);
+            if (!surface.PaintHoles(hit->position, brush).empty() && target.kind == TerrainEditTarget::Kind::Terrain)
             {
                 for (auto *terrain : surface.TerrainsNear(hit->position, brush.radius))
                     if (auto *owner = terrain->GetOwner())
@@ -504,6 +503,45 @@ namespace PlutoGE::ui
                 return true;
             };
             shell.PushSceneEditCommand("Paint Terrain Layer", [apply] { return apply(true); }, [apply] { return apply(false); }, bytes);
+            return;
+        }
+
+        if (m_strokeMode == TerrainToolMode::Holes)
+        {
+            // Only world tiles get here (a lone terrain's hole strokes are scene edits): each touched tile's mask before
+            // and after, saved to its hole file.
+            struct Edit
+            {
+                TerrainRef ref;
+                scene::TerrainHoleMask before, after;
+            };
+            auto edits = std::make_shared<std::vector<Edit>>();
+            std::size_t bytes = 0;
+            for (auto &entry : touched)
+            {
+                if (!entry.terrain || !entry.holesBefore || !entry.ref.world || entry.terrain->GetHoles() == *entry.holesBefore)
+                    continue;
+                auto *terrainWorld = FindWorld(entry.ref.world);
+                if (!terrainWorld)
+                    continue;
+                if (!terrainWorld->SaveTileHoles(entry.ref.tile))
+                    shell.Log(EditorShell::ConsoleSeverity::Warning, "Could not save a terrain tile's holes.");
+                Edit edit{entry.ref, std::move(*entry.holesBefore), entry.terrain->GetHoles()};
+                bytes += static_cast<std::size_t>(edit.before.GetCellsX()) * edit.before.GetCellsZ() * 2;
+                edits->push_back(std::move(edit));
+            }
+            if (edits->empty())
+                return;
+            const auto apply = [edits](bool undo) {
+                for (const auto &edit : *edits)
+                {
+                    auto *terrainWorld = FindWorld(edit.ref.world);
+                    if (!terrainWorld || !terrainWorld->StoreTileHoles(edit.ref.tile, undo ? edit.before : edit.after))
+                        return false;
+                }
+                return true;
+            };
+            shell.PushSceneEditCommand("Paint Terrain World Holes", [apply] { return apply(true); }, [apply] { return apply(false); }, bytes);
         }
     }
 }

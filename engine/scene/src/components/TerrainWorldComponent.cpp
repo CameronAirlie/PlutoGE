@@ -32,31 +32,33 @@ namespace PlutoGE::scene
             return resolved.empty() ? reference : resolved;
         }
 
-        // Reads and decodes a height file: what a worker thread runs.
-        std::optional<TerrainHeightData> ReadHeightFile(const std::string &path, std::string *error)
+        // A file's bytes, from a mounted content pack or the disk. False when it cannot be read (or is not there).
+        bool ReadFileBytes(const std::string &path, std::vector<std::uint8_t> &bytes)
         {
-            std::vector<std::uint8_t> bytes;
             if (content::IsMounted(path))
             {
                 std::string packed;
                 if (!content::ReadFile(path, packed))
-                {
-                    if (error)
-                        *error = "Could not read " + path + ".";
-                    return std::nullopt;
-                }
+                    return false;
                 bytes.assign(packed.begin(), packed.end());
+                return true;
             }
-            else
+            std::ifstream input(path, std::ios::binary);
+            if (!input)
+                return false;
+            bytes.assign(std::istreambuf_iterator<char>(input), {});
+            return true;
+        }
+
+        // Reads and decodes a height file: what a worker thread runs.
+        std::optional<TerrainHeightData> ReadHeightFile(const std::string &path, std::string *error)
+        {
+            std::vector<std::uint8_t> bytes;
+            if (!ReadFileBytes(path, bytes))
             {
-                std::ifstream input(path, std::ios::binary);
-                if (!input)
-                {
-                    if (error)
-                        *error = "Could not read " + path + ".";
-                    return std::nullopt;
-                }
-                bytes.assign(std::istreambuf_iterator<char>(input), {});
+                if (error)
+                    *error = "Could not read " + path + ".";
+                return std::nullopt;
             }
             return TerrainHeightFile::Decode(bytes, error);
         }
@@ -69,6 +71,19 @@ namespace PlutoGE::scene
             std::ofstream output(path, std::ios::binary | std::ios::trunc);
             output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
             return static_cast<bool>(output);
+        }
+
+        // Writes a hole file, or removes it when there are no holes (tiles without holes have no file).
+        bool WriteHoleFile(const std::filesystem::path &path, const TerrainHoleMask &holes)
+        {
+            std::error_code ignored;
+            if (holes.Empty())
+            {
+                std::filesystem::remove(path, ignored);
+                return !std::filesystem::exists(path, ignored);
+            }
+            const auto text = TerrainHoleFile::Encode(holes);
+            return WriteFile(path, std::vector<std::uint8_t>(text.begin(), text.end()));
         }
 
         template <typename Future>
@@ -360,13 +375,39 @@ namespace PlutoGE::scene
         return terrain.GetOwner() ? FindTile(*terrain.GetOwner()) : std::nullopt;
     }
 
-    std::string TerrainWorldComponent::TileWeightFile(TerrainTileCoord tile, std::size_t plane) const
+    std::string TerrainWorldComponent::TileSidecarFile(TerrainTileCoord tile, std::string_view suffix) const
     {
         auto file = TerrainTileFile(m_tileFiles, tile);
         constexpr std::string_view extension = TerrainHeightFile::Extension;
         if (file.size() >= extension.size() && file.compare(file.size() - extension.size(), extension.size(), extension) == 0)
             file.resize(file.size() - extension.size());
-        return file + "_weights" + std::to_string(plane) + ".png";
+        return file.append(suffix);
+    }
+
+    std::string TerrainWorldComponent::TileWeightFile(TerrainTileCoord tile, std::size_t plane) const
+    {
+        return TileSidecarFile(tile, "_weights" + std::to_string(plane) + ".png");
+    }
+
+    std::string TerrainWorldComponent::TileHoleFile(TerrainTileCoord tile) const
+    {
+        return TileSidecarFile(tile, std::string("_holes").append(TerrainHoleFile::Extension));
+    }
+
+    bool TerrainWorldComponent::SaveTileHoles(TerrainTileCoord tile)
+    {
+        const auto *terrain = GetTileTerrain(tile);
+        return terrain && WriteHoleFile(ResolvePath(TileHoleFile(tile)), terrain->GetHoles());
+    }
+
+    bool TerrainWorldComponent::StoreTileHoles(TerrainTileCoord tile, const TerrainHoleMask &holes)
+    {
+        if (auto *terrain = GetTileTerrain(tile))
+        {
+            terrain->SetHoles(holes);
+            return SaveTileHoles(tile);
+        }
+        return m_grid.Contains(tile) && WriteHoleFile(ResolvePath(TileHoleFile(tile)), holes);
     }
 
     bool TerrainWorldComponent::PatchTileHeights(TerrainTileCoord coord, const TerrainHeightRegion &region, TerrainComponent **loaded)
@@ -523,6 +564,8 @@ namespace PlutoGE::scene
             if (tile.state == TerrainTileState::Loading && IsDone(tile.load))
             {
                 tile.data = tile.load.get();
+                if (tile.data && !tile.data->error.empty())
+                    ReportError(tile.data->error);
                 if (tile.data)
                     tile.state = TerrainTileState::Ready;
                 else
@@ -570,9 +613,23 @@ namespace PlutoGE::scene
     {
         // Resolved here: asset lookups belong to the main thread; the worker only reads and decodes.
         const auto path = ResolvePath(TerrainTileFile(m_tileFiles, coord));
-        tile.load = std::async(std::launch::async, [path] {
+        const auto holePath = ResolvePath(TileHoleFile(coord));
+        tile.load = std::async(std::launch::async, [path, holePath]() -> std::optional<TileFiles> {
             std::string error;
-            return ReadHeightFile(path, &error);
+            auto heights = ReadHeightFile(path, &error);
+            if (!heights)
+                return std::nullopt;
+            TileFiles files{.heights = std::move(*heights)};
+            // Most tiles have no hole file. One that is there but unusable is reported, and the tile loads without it.
+            std::vector<std::uint8_t> bytes;
+            if (ReadFileBytes(holePath, bytes))
+            {
+                const std::string_view text(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+                files.holes = TerrainHoleFile::Decode(text, files.heights.field.width - 1, files.heights.field.depth - 1, &error);
+                if (!files.holes)
+                    files.error = holePath + ": " + error;
+            }
+            return files;
         });
         tile.state = TerrainTileState::Loading;
     }
@@ -615,8 +672,10 @@ namespace PlutoGE::scene
             {"SkirtDepth", PropertyType::Float, std::to_string(m_tileSkirtDepth)},
             {"Static", PropertyType::Bool, "true"},
         });
-        terrain->SetHeightData(std::move(*tile.data));
+        terrain->SetHeightData(std::move(tile.data->heights));
         terrain->SetHeightDataPath(TerrainTileFile(m_tileFiles, coord));
+        // The tile's own holes: none without a hole file, whatever the tile source carried.
+        terrain->SetHoles(tile.data->holes ? std::move(*tile.data->holes) : TerrainHoleMask{});
         tile.data.reset();
         tile.paintedWeights = false;
         if (!terrain->GetLayers().Empty())

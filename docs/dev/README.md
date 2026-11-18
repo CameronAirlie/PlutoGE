@@ -17,6 +17,7 @@ PlutoGE, use the [manual](../README.md) instead.
 | [Editor scene edit performance plan](editor-scene-edit-performance-plan-2026-11-06.md) | Undo and scene edit costs |
 | [Project workflow performance](PROJECT_WORKFLOW_PERFORMANCE.md) | Project open, save and import times |
 | [Jungle scene plan](JUNGLE_SCENE_PLAN.md), [handover](jungle-scene-handover.md) | Showcase scene |
+| [Terrain volumes plan](TERRAIN_VOLUMES_PLAN.md) | Caves, overhangs and destructible ground over the heightfield terrain |
 
 ## Renderer architecture
 

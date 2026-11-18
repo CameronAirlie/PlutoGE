@@ -1053,6 +1053,10 @@ add_executable(PlutoGETerrainHoleTests TerrainHoleTests.cpp)
 pluto_link_engine(PlutoGETerrainHoleTests)
 add_test(NAME PlutoGETerrainHoleTests COMMAND PlutoGETerrainHoleTests)
 
+add_executable(PlutoGETerrainVolumeTests TerrainVolumeTests.cpp)
+pluto_link_engine(PlutoGETerrainVolumeTests)
+add_test(NAME PlutoGETerrainVolumeTests COMMAND PlutoGETerrainVolumeTests)
+
 add_executable(PlutoGETerrainHeightDataTests TerrainHeightDataTests.cpp)
 pluto_link_engine(PlutoGETerrainHeightDataTests)
 add_test(NAME PlutoGETerrainHeightDataTests COMMAND PlutoGETerrainHeightDataTests)

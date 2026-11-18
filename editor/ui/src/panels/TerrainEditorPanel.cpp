@@ -393,9 +393,7 @@ namespace PlutoGE::ui
         {
             const auto mode = static_cast<TerrainToolMode>(current);
             const auto *terrain = target.Terrain();
-            if (mode == TerrainToolMode::Holes && world)
-                shell.Log(EditorShell::ConsoleSeverity::Warning, "Holes cannot be cut in terrain world tiles yet.");
-            else if (mode == TerrainToolMode::Paint && (!terrain || terrain->GetLayers().Empty()))
+            if (mode == TerrainToolMode::Paint && (!terrain || terrain->GetLayers().Empty()))
                 m_section = Section::Paint; // the Paint section explains adding layers
             else
             {
@@ -506,21 +504,20 @@ namespace PlutoGE::ui
         }
 
         ImGui::Spacing();
-        widgets::SectionHeading("Holes", world ? "Holes cannot be cut in world tiles yet." : "Cut cave mouths and shafts. Shift fills cut cells back.");
-        if (!world)
+        widgets::SectionHeading("Holes", world ? "Cut cave mouths and shafts. Shift fills cut cells back. Each tile keeps its holes in a "
+                                                 "file beside its heights."
+                                               : "Cut cave mouths and shafts. Shift fills cut cells back.");
+        ToolButton(shell, target, TerrainToolMode::Holes, "Cut Holes", "Stop Cutting");
+        if (widgets::BeginSettingsTable("##HoleBrush"))
         {
-            ToolButton(shell, target, TerrainToolMode::Holes, "Cut Holes", "Stop Cutting");
-            if (widgets::BeginSettingsTable("##HoleBrush"))
-            {
-                widgets::SettingsRow("Brush");
-                int cut = tool.holes.cut ? 0 : 1;
-                static constexpr std::array<const char *, 2> HoleModes{"Cut", "Fill"};
-                if (widgets::SegmentedControl("##HoleMode", &cut, HoleModes))
-                    tool.holes.cut = cut == 0;
-                widgets::SettingsRow("Radius");
-                ImGui::DragFloat("##HoleRadius", &tool.holes.radius, 0.05f, 0.1f, 1024.0f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
-                widgets::EndSettingsTable();
-            }
+            widgets::SettingsRow("Brush");
+            int cut = tool.holes.cut ? 0 : 1;
+            static constexpr std::array<const char *, 2> HoleModes{"Cut", "Fill"};
+            if (widgets::SegmentedControl("##HoleMode", &cut, HoleModes))
+                tool.holes.cut = cut == 0;
+            widgets::SettingsRow("Radius");
+            ImGui::DragFloat("##HoleRadius", &tool.holes.radius, 0.05f, 0.1f, 1024.0f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
+            widgets::EndSettingsTable();
         }
     }
 

@@ -94,6 +94,26 @@ namespace
                 "Malformed text is rejected");
     }
 
+    void HoleFiles()
+    {
+        TerrainHoleMask mask(5, 4);
+        mask.Set(1, 1, true);
+        mask.SetCut(2, 3, TerrainHoleCut::CornerHighXLowZ);
+        const auto text = TerrainHoleFile::Encode(mask);
+        Require(text.starts_with("PLUTOHOLES 1\n"), "A hole file starts with its header line");
+        const auto decoded = TerrainHoleFile::Decode(text, 5, 4);
+        Require(decoded && *decoded == mask, "A hole file round-trips, half cuts included");
+        const auto empty = TerrainHoleFile::Decode(TerrainHoleFile::Encode(TerrainHoleMask(5, 4)), 5, 4);
+        Require(empty && empty->Empty(), "An empty mask's file decodes as no holes");
+        const auto crlf = TerrainHoleFile::Decode("PLUTOHOLES 1\r\n" + mask.Encode() + "\r\n", 5, 4);
+        Require(crlf && *crlf == mask, "A file with Windows line endings decodes");
+        std::string error;
+        Require(!TerrainHoleFile::Decode(text, 6, 4, &error) && !error.empty(), "A file for another terrain size is rejected with a reason");
+        Require(!TerrainHoleFile::Decode(mask.Encode(), 5, 4), "Text without the header is rejected");
+        Require(!TerrainHoleFile::Decode("PLUTOHOLES 2\n" + mask.Encode(), 5, 4, &error) && error.find("newer") != std::string::npos,
+                "A newer version is rejected as newer");
+    }
+
     void ComponentPersistence()
     {
         TerrainComponent terrain(TerrainComponentConfig{.width = 9, .depth = 9});
@@ -358,6 +378,7 @@ int main()
     {
         MaskEditing();
         MaskEncoding();
+        HoleFiles();
         ComponentPersistence();
         SurfaceQueries();
         RenderMesh();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/TerrainEditSurface.h"
+#include "PlutoGE/scene/TerrainHoleMask.h"
 #include "PlutoGE/scene/TerrainTileSource.h"
 #include "PlutoGE/scene/TerrainWorldGrid.h"
 #include "PlutoGE/scene/components/Component.h"
@@ -122,6 +123,14 @@ namespace PlutoGE::scene
         // A tile's layer weight file (beside its height file): painted tiles keep their weights, and biomes then only
         // plant them.
         [[nodiscard]] std::string TileWeightFile(TerrainTileCoord tile, std::size_t plane) const;
+        // A tile's hole file (beside its height file; TerrainHoleFile). Tiles without holes have none.
+        [[nodiscard]] std::string TileHoleFile(TerrainTileCoord tile) const;
+        // Writes a loaded tile's holes to its hole file, or removes the file when the tile has none. False when the tile
+        // is not loaded or the file cannot be written.
+        bool SaveTileHoles(TerrainTileCoord tile);
+        // Gives a tile these holes: the loaded terrain (then saved), or the tile's file when it is not loaded (undo
+        // after the tile streamed out). False when neither is possible.
+        bool StoreTileHoles(TerrainTileCoord tile, const TerrainHoleMask &holes);
 
         // Writes a world's files: one .plutoheight per tile (with border rings) and the overview. `heights` is the whole
         // world in world units (WorldSamplesX x WorldSamplesZ; other sizes are resampled). Paths are file paths, the
@@ -137,11 +146,18 @@ namespace PlutoGE::scene
                                            TerrainHeightEncoding encoding = TerrainHeightEncoding::Float32);
 
     private:
+        // What a worker reads for a tile: its heights and, when it has a hole file, its holes.
+        struct TileFiles
+        {
+            TerrainHeightData heights;
+            std::optional<TerrainHoleMask> holes;
+            std::string error; // a file that was there but could not be used (the tile still loads)
+        };
         struct Tile
         {
             TerrainTileState state = TerrainTileState::Unloaded;
-            std::future<std::optional<TerrainHeightData>> load;
-            std::optional<TerrainHeightData> data;
+            std::future<std::optional<TileFiles>> load;
+            std::optional<TileFiles> data;
             std::uint32_t entity = 0;
             std::future<procedural::ProceduralGenerationResult> generation;
             bool generating = false;
@@ -158,6 +174,8 @@ namespace PlutoGE::scene
         void ClearOverview();
         void ValidateEntities();
         void InvalidateNavigation(TerrainTileCoord tile) const;
+        // The path of a file beside a tile's height file: tile_x_z<suffix>.
+        [[nodiscard]] std::string TileSidecarFile(TerrainTileCoord tile, std::string_view suffix) const;
         void ReportError(std::string message);
         void Abandon(Tile &state);
         void StartGeneration(Tile &state, Entity &tile);
@@ -177,7 +195,7 @@ namespace PlutoGE::scene
 
         std::map<TerrainTileCoord, Tile> m_tiles;
         // Work whose result is no longer wanted; kept until it finishes (a future from std::async blocks when dropped).
-        std::vector<std::future<std::optional<TerrainHeightData>>> m_abandonedLoads;
+        std::vector<std::future<std::optional<TileFiles>>> m_abandonedLoads;
         std::vector<std::future<procedural::ProceduralGenerationResult>> m_abandonedGenerations;
 
         std::optional<TerrainHeightField> m_overview;

@@ -115,4 +115,15 @@ namespace PlutoGE::render
         bool m_rebuilt = false;
         std::uint64_t m_frame = 0; // top-level builds
     };
+
+    // How passes bind a RayTracingScene for RayTracedScene.slang: the top-level structure at set 0 binding 5 and the
+    // instance records at 6 (command slots equal to the bindings).
+    struct RayTracedSceneBinding
+    {
+        static constexpr std::uint32_t SceneSlot = 5, InstancesSlot = 6;
+
+        // Adds the scene's bindings to a compute pipeline; `instances` when the shader reads the records.
+        static void Describe(rhi::ComputePipelineDescriptor &descriptor, bool instances = true);
+        static void Bind(rhi::ICommandContext &commands, const RayTracingScene &scene, bool instances = true);
+    };
 }

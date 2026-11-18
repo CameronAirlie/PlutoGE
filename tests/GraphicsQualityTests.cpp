@@ -28,6 +28,9 @@ int main()
     Check(low.Allows(BasicPostProcessEffectType::ToneMapping) && low.Allows(BasicPostProcessEffectType::TAA));
     for (auto preset : {GraphicsPreset::Low, GraphicsPreset::Medium, GraphicsPreset::High, GraphicsPreset::Ultra})
         Check(GraphicsQuality::FromPreset(preset).IsValid());
+    // Traced shadows: off on Low, allowed above it and whenever no tier is active.
+    Check(!low.AllowsTracedShadows() && GraphicsQuality::FromPreset(GraphicsPreset::Medium).AllowsTracedShadows());
+    Check(authored.AllowsTracedShadows());
     auto custom = low;
     custom.reflections = true;
     Check(custom.Allows(BasicPostProcessEffectType::SSR));

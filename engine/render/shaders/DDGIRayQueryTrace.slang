@@ -37,16 +37,8 @@
     float4 localDirectionType[PLUTO_RT_MAX_LOCAL_LIGHTS];   // xyz direction, w 0 point, 1 spot, 2 one-sided rectangle
     float4 localCone[PLUTO_RT_MAX_LOCAL_LIGHTS];            // spot inner, outer cone cosines
 };
-[[vk::binding(5, 0)]] RaytracingAccelerationStructure scene : register(t5, space0);
-
-// Mirrors RayTracedInstance (RayTracingScene.h), indexed by the instance's custom index.
-struct RayTracedInstance
-{
-    float4 albedo;   // rgb diffuse reflectance
-    float4 emission; // rgb emitted radiance
-    float4 foliage;  // rgb diffuse transmittance, a chance a ray stops at a triangle (1 for solid instances)
-};
-[[vk::binding(6, 0)]] StructuredBuffer<RayTracedInstance> instances : register(t6, space0);
+// The traced scene (bindings 5 and 6) and its occlusion queries.
+#include "RayTracedScene.slang"
 
 static const float RayOffset = 0.001;
 
@@ -64,63 +56,6 @@ float escapeDistance(float3 direction, float travelled)
     return direction.y >= 0.0 ? PLUTO_DDGI_MISS_DISTANCE : travelled;
 }
 
-bool occluded(float3 origin, float3 direction, float distance)
-{
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = direction;
-    ray.TMin = 0.0;
-    ray.TMax = distance;
-    RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, PLUTO_RT_MASK_SOLID, ray);
-    query.Proceed();
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
-}
-
-// A uniform value in [0, 1) for a ray meeting a triangle at `t`. A probe's rays turn at every update, so this varies
-// over updates and the blend averages it.
-float foliageRandom(float3 origin, float3 direction, float t)
-{
-    uint state = asuint(direction.x) ^ (asuint(direction.y) * 3u) ^ (asuint(direction.z) * 5u) ^ (asuint(origin.x + origin.z) * 7u) ^
-                 (asuint(t) * 11u);
-    state = state * 747796405u + 2891336453u;
-    state = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    state = (state >> 22u) ^ state;
-    return float(state >> 8u) * (1.0 / 16777216.0);
-}
-
-// Whether a ray reaches `distance`, stopped by solid surfaces and by leaves with their chance.
-bool occludedThroughFoliage(float3 origin, float3 direction, float distance)
-{
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = direction;
-    ray.TMin = 0.0;
-    ray.TMax = distance;
-    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, 0xFF, ray);
-    while (query.Proceed())
-    {
-        if (query.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE &&
-            foliageRandom(origin, direction, query.CandidateTriangleRayT()) < instances[query.CandidateInstanceID()].foliage.a)
-            query.CommitNonOpaqueTriangleHit();
-    }
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT;
-}
-
-// The nearest solid surface along a ray, or a negative value.
-float solidSurfaceDistance(float3 origin, float3 direction, float reach)
-{
-    RayDesc ray;
-    ray.Origin = origin;
-    ray.Direction = direction;
-    ray.TMin = 0.0;
-    ray.TMax = reach;
-    RayQuery<RAY_FLAG_FORCE_OPAQUE> query;
-    query.TraceRayInline(scene, RAY_FLAG_NONE, PLUTO_RT_MASK_SOLID, ray);
-    while (query.Proceed()) {}
-    return query.CommittedStatus() == COMMITTED_TRIANGLE_HIT ? query.CommittedRayT() : -1.0;
-}
 
 // Direct light reaching a surface at `position` with `normal`, per unit of diffuse reflectance (times 1 / pi).
 float3 directLight(float3 position, float3 normal)

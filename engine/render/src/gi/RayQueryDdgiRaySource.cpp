@@ -9,10 +9,9 @@ namespace PlutoGE::render
 {
     namespace
     {
-        // DDGIRayQueryTrace.slang bindings.
+        // DDGIRayQueryTrace.slang bindings; the traced scene's are RayTracedSceneBinding's (5 and 6).
         constexpr std::uint32_t VolumeParametersSlot = 0, ProbeListSlot = 1, RaySlot = 2, ProbeStateSlot = 3,
-                                LightingSlot = 4, SceneSlot = 5, InstancesSlot = 6, IrradianceSlot = 14,
-                                DistanceSlot = 15, OcclusionSlot = 16;
+                                LightingSlot = 4, IrradianceSlot = 14, DistanceSlot = 15, OcclusionSlot = 16;
 
         // Mirrors RayTracedLighting in DDGIRayQueryTrace.slang.
         struct alignas(16) RayTracedLighting
@@ -69,14 +68,14 @@ namespace PlutoGE::render
             bind(VolumeParametersSlot, rhi::ResourceBindingType::UniformBuffer);
             bind(ProbeListSlot, rhi::ResourceBindingType::StorageBuffer);
             bind(ProbeStateSlot, rhi::ResourceBindingType::SampledTexture);
-            bind(SceneSlot, rhi::ResourceBindingType::AccelerationStructure);
+            RayTracedSceneBinding::Describe(descriptor, false);
             bind(OcclusionSlot, rhi::ResourceBindingType::StorageBuffer);
             return descriptor;
         };
         auto traceDescriptor = describe(trace, "DDGI ray query trace");
         for (const auto &[slot, type] : {std::pair{RaySlot, rhi::ResourceBindingType::StorageImage},
                                          std::pair{LightingSlot, rhi::ResourceBindingType::UniformBuffer},
-                                         std::pair{InstancesSlot, rhi::ResourceBindingType::StorageBuffer},
+                                         std::pair{RayTracedSceneBinding::InstancesSlot, rhi::ResourceBindingType::StorageBuffer},
                                          std::pair{IrradianceSlot, rhi::ResourceBindingType::SampledTexture},
                                          std::pair{DistanceSlot, rhi::ResourceBindingType::SampledTexture}})
             traceDescriptor.resourceBindings.push_back({slot, 0, slot, type, rhi::ShaderStageMask::Compute});
@@ -97,7 +96,7 @@ namespace PlutoGE::render
 
     void RayQueryDdgiRaySource::BindScene(rhi::ICommandContext &commands)
     {
-        commands.BindAccelerationStructure(SceneSlot, m_scene->TopLevel());
+        RayTracedSceneBinding::Bind(commands, *m_scene, false);
     }
 
     void RayQueryDdgiRaySource::Trace(rhi::ICommandContext &commands, const DdgiTraceInputs &inputs)
@@ -109,7 +108,7 @@ namespace PlutoGE::render
         commands.BindUniformBuffer(VolumeParametersSlot, inputs.volumeParameters);
         commands.BindUniformBuffer(LightingSlot, m_lighting);
         commands.BindStorageBuffer(ProbeListSlot, inputs.probeList);
-        commands.BindStorageBuffer(InstancesSlot, m_scene->Instances());
+        commands.BindStorageBuffer(RayTracedSceneBinding::InstancesSlot, m_scene->Instances());
         commands.BindStorageImage(RaySlot, inputs.rays);
         commands.BindTexture(ProbeStateSlot, inputs.probeStates, inputs.pointSampler);
         commands.BindTexture(IrradianceSlot, inputs.irradiance, inputs.linearSampler);

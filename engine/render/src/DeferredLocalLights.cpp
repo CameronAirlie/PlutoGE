@@ -19,7 +19,7 @@ namespace PlutoGE::render
 
         // What the local-light loop reads of the geometry layout: frame and virtual shadow parameters (uniform slots 0
         // and 1), light cluster masks, cascades (13 to 16, bound with the shadow maps), the virtual shadow atlas and
-        // page table (19, 20, spot shadows), the point shadow atlas (21), contact shadows and the LTC table.
+        // page table (19, 20, spot shadows), the point shadow atlas (21), the light visibility mask and the LTC table.
         bool PassReads(const rhi::GraphicsPipelineDescriptor::ResourceBinding &binding)
         {
             switch (binding.type)
@@ -30,7 +30,7 @@ namespace PlutoGE::render
                 return binding.slot == LightClusterGrid::MasksSlot;
             case rhi::ResourceBindingType::SampledTexture:
                 return (binding.slot >= 13 && binding.slot <= 16) || binding.slot == 19 || binding.slot == 20 ||
-                       binding.slot == 21 || binding.slot == BasicRenderer::ContactShadowSlot ||
+                       binding.slot == 21 || binding.slot == BasicRenderer::LightVisibilitySlot ||
                        binding.slot == BasicRenderer::LtcTableSlot;
             default:
                 return false;

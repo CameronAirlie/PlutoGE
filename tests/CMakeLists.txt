@@ -1484,6 +1484,13 @@ add_test(NAME PlutoGEOpenGLSsgiTests COMMAND PlutoGEOpenGLRhiTests --ssgi-only)
 add_test(NAME PlutoGEVulkanDdgiTests COMMAND PlutoGEVulkanRhiTests --ddgi-only)
 add_test(NAME PlutoGEVulkanRayTracedSceneTests COMMAND PlutoGEVulkanRhiTests --ray-traced-scene)
 add_test(NAME PlutoGEOpenGLDdgiTests COMMAND PlutoGEOpenGLRhiTests --ddgi-only)
+add_test(NAME PlutoGEVulkanTracedShadowTests COMMAND PlutoGEVulkanRhiTests --traced-shadows)
+add_test(NAME PlutoGEOpenGLTracedShadowTests COMMAND PlutoGEOpenGLRhiTests --traced-shadows)
+
+add_executable(PlutoGELightVisibilityTests LightVisibilityTests.cpp)
+target_include_directories(PlutoGELightVisibilityTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
+target_link_libraries(PlutoGELightVisibilityTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGELightVisibilityTests COMMAND PlutoGELightVisibilityTests)
 
 add_executable(PlutoGEGraphicsQualityProjectTests GraphicsQualityProjectTests.cpp)
 pluto_link_engine(PlutoGEGraphicsQualityProjectTests)

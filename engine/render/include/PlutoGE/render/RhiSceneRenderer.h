@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/LocalLightSelection.h"
 #include "PlutoGE/render/RhiTerrainLayerCache.h"
 #include "PlutoGE/render/GraphicsQuality.h"
 #include "PlutoGE/render/RenderingSettings.h"
@@ -343,6 +344,8 @@ namespace PlutoGE::render
 
     private:
         GraphicsQuality m_graphicsQuality;
+        // Which scene lights each frame shades and gives shadow maps (by importance, with hysteresis).
+        LocalLightSelector m_localLightSelector;
         RenderingSettings m_renderingSettings;
       bool m_immediateTextureUploads = false;
       bool m_sceneEffectsEnabled = true;

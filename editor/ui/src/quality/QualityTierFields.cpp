@@ -35,6 +35,9 @@ namespace PlutoGE::ui
                 Shadows, &Q::cascadedShadows, QualityCost::FallsWithValue),
             Allow("contactShadows", "Contact shadows",
                 "Allows screen-space contact shadows from the sun and local lights.", Shadows, &Q::contactShadows),
+            Allow("tracedShadows", "Traced shadows",
+                "Allows local lights without a shadow map to be traced against the world, so their light stops at walls, "
+                "floors and terrain.", Shadows, &Q::tracedShadows),
             Allow("ambientOcclusion", "Ambient occlusion", "Allows SSAO.", Lighting, &Q::ambientOcclusion),
             Allow("globalIllumination", "Global illumination",
                 "Allows SSGI, DDGI probes and voxel cone tracing GI. Baked ambient volumes stay on.", Lighting,

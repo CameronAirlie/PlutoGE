@@ -65,7 +65,11 @@ namespace PlutoGE::render
     class ScreenSpaceAmbientOcclusion;
     class ScreenSpaceReflections;
     class ScreenSpaceGlobalIllumination;
-    class ScreenSpaceContactShadows;
+    class LightVisibilityMask;
+    class ILightOcclusionSource;
+    class VoxelLightOcclusionSource;
+    class RayQueryLightOcclusionSource;
+    struct DdgiVoxelScene;
     class DirectionalShadowMask;
     class DeferredLocalLights;
     class OutlinePass;
@@ -413,8 +417,13 @@ namespace PlutoGE::render
         // full-resolution upsample and composite.
         std::array<BasicPostProcessShaderPackage, 3> ssao;
         BasicPostProcessShaderPackage ssaoDenoise, ssaoUpsample;
-        // Directional contact shadows traced after the depth prepass (ContactShadows.slang).
-        BasicPostProcessShaderPackage contactShadows;
+        // The light visibility mask after the depth prepass (src/lighting/LightVisibilityMask.h): contact shadows only
+        // (LightVisibility.slang), with world occlusion through the voxel scene (LightVisibilityVoxel.slang), and
+        // through hardware ray queries (LightVisibilityRayQuery.slang, SPIR-V only). The world variants are optional.
+        struct LightVisibilityShaders
+        {
+            rhi::ComputePipelineDescriptor::ShaderCode contact, voxel, rayQuery;
+        } lightVisibility;
         // The directional shadow mask (DirectionalShadowMask.slang, Vulkan); without it surfaces filter in place.
         BasicPostProcessShaderPackage directionalShadowMask;
         // Deferred local lights (DeferredLocalLights.slang, Vulkan); without it surfaces light local lights in place.
@@ -919,9 +928,13 @@ namespace PlutoGE::render
         float sourceRadius = 0.0f;
         float sourceLength = 0.0f;
         glm::vec3 sourceAxis{0.0f, -1.0f, 0.0f};
-        // World length of screen-space contact shadows towards the light (ScreenSpaceContactShadows); 0 disables
-        // them. Lights compete for the pass's slots (BasicRenderer::ContactShadowLights).
+        // World length of screen-space contact shadows towards the light (the light visibility mask); 0 disables
+        // them. Lights compete for the mask's slots (SelectLightVisibilitySlots).
         float contactShadowLength = 0.0f;
+        // Lights without a shadow map are tested against the world (walls, floors, terrain) when the frame has a world
+        // representation and a traced shadow budget (BasicLighting::tracedShadowLights). Off lets the light through
+        // geometry, as lights without shadows always did.
+        bool tracedShadows = true;
     };
 
     // A one-sided rectangle emitting along `direction` (Lambertian), shaded with linearly transformed cosines
@@ -1062,8 +1075,12 @@ namespace PlutoGE::render
         RayTracedGeometryDetail rayTracedGeometryDetail = RayTracedGeometryDetail::AsDrawn;
         // World length of the screen-space contact shadow rays towards the directional light; 0 disables them.
         // Contact shadows (local lights' too: BasicPointLight::contactShadowLength) need the depth prepass and
-        // shadowsEnabled (ScreenSpaceContactShadows.h).
+        // shadowsEnabled (src/lighting/LightVisibilityMask.h).
         float contactShadowLength = 0.0f;
+        // Local lights without a shadow map that may be tested against the world each frame, brightest at the camera
+        // first (traced shadows: docs/LIGHT_OCCLUSION.md). They need the depth prepass, shadowsEnabled and a world
+        // representation: the ray-traced scene or the voxel scene DDGI keeps. 0 turns them off.
+        std::uint32_t tracedShadowLights = 0;
     };
 
     struct BasicPostProcessEffect
@@ -1122,6 +1139,10 @@ namespace PlutoGE::render
         bool ddgiHardwareRays = false;
         std::size_t rayTracedInstances = 0, rayTracedSkippedInstances = 0, rayTracedOutOfRangeInstances = 0;
         bool rayTracedSceneRebuilt = false;
+        // Lights the light visibility mask held this frame, those of them tested against the world, and the world
+        // representation that tested them ("Hardware", "Voxels", or empty).
+        std::size_t lightVisibilitySlots = 0, tracedShadowLights = 0;
+        const char *lightOcclusionSource = "";
         std::size_t geometryDepthDraws = 0;
         std::uint32_t geometryColorOutputs = 0;
         std::size_t geometryParameterCreates = 0, geometryParameterReuses = 0;
@@ -1223,10 +1244,9 @@ namespace PlutoGE::render
         // texture slots from TerrainTextureSlot, the layer parameters in a uniform slot.
         static constexpr std::uint32_t TerrainTextureSlot = 3;
         static constexpr std::uint32_t TerrainParameterSlot = 4;
-        // The contact shadow mask (BasicLit.slang contactShadowMask, set 0 binding 7).
-        static constexpr std::uint32_t ContactShadowSlot = 7;
-        // contactShadowParameters' light id for the directional light (BasicLit.slang ContactShadowDirectional).
-        static constexpr float ContactShadowDirectional = 32.0f;
+        // The light visibility mask (BasicLit.slang lightVisibilityMask, set 0 binding 7): contact shadows and traced
+        // world occlusion.
+        static constexpr std::uint32_t LightVisibilitySlot = 7;
         // The first optional surface texture (BasicSurfaceTexture); each further one takes the next slot. On OpenGL
         // these are the texture units after the glass reflection's 32 (NormalizeOpenGLShader.cmake).
         static constexpr std::uint32_t SurfaceTextureSlot = 33;
@@ -1511,6 +1531,12 @@ namespace PlutoGE::render
                                                             rhi::ICommandContext &commands, std::size_t &targetIndex);
         // Screen-space state for this frame's camera and G-buffer (see ScreenSpacePass.h).
         [[nodiscard]] ScreenSpaceView MakeScreenSpaceView(std::uint32_t width, std::uint32_t height) const;
+        // Chooses this frame's light visibility slots and prepares the mask; `shadowMaps` flags the packed local lights
+        // that have a shadow map. False when the mask has nothing to do.
+        bool PrepareLightVisibility(const BasicLighting &lighting, std::span<const bool> shadowMaps);
+        // The world representation traced shadows test against this frame: the scene DDGI traced last frame (hardware
+        // rays first, then voxels), or null when it kept none.
+        [[nodiscard]] ILightOcclusionSource *SelectLightOcclusionSource();
         [[nodiscard]] rhi::TextureHandle RenderSsao(rhi::TextureHandle source,
                                                     const BasicPostProcessEffect &effect,
                                                     rhi::ICommandContext &commands);
@@ -1579,7 +1605,13 @@ namespace PlutoGE::render
         std::unique_ptr<ScreenSpaceAmbientOcclusion> m_ambientOcclusion;
         std::unique_ptr<ScreenSpaceReflections> m_reflections;
         std::unique_ptr<ScreenSpaceGlobalIllumination> m_globalIllumination;
-        std::unique_ptr<ScreenSpaceContactShadows> m_contactShadows;
+        std::unique_ptr<LightVisibilityMask> m_lightVisibility;
+        // World representations the light visibility mask tests traced shadows against: the ray-traced and voxel scenes
+        // DDGI kept last frame (traced before shading, so a frame's tests see the previous frame's scene).
+        std::unique_ptr<RayQueryLightOcclusionSource> m_rayQueryLightOcclusion;
+        std::unique_ptr<VoxelLightOcclusionSource> m_voxelLightOcclusion;
+        std::unique_ptr<DdgiVoxelScene> m_lastVoxelScene;
+        std::uint64_t m_lastVoxelSceneFrame = 0, m_lastRayTracingSceneFrame = 0;
         std::unique_ptr<DirectionalShadowMask> m_shadowMask;
         std::unique_ptr<DeferredLocalLights> m_deferredLocalLights;
         DeferredLocalLightPolicy m_deferredLocalLightPolicy;

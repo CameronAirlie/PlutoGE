@@ -202,6 +202,10 @@ writing each listed probe's visibility from the sub-cells around it into the pro
 (`DdgiVisibilityInputs` documents the layout). The voxel and hardware sources (above) are the two implementations;
 scheduling, blending, relocation, classification, sampling and the editor are shared.
 
+The scene each source traces is also what traced shadows for local lights test against the next frame
+([Light occlusion](LIGHT_OCCLUSION.md#world-representations)). Its sampling is shared: `VoxelSceneSampling.slang` with
+`VoxelSceneBinding` for the voxel scene, and `RayTracedScene.slang` with `RayTracedSceneBinding` for the triangle scene.
+
 ## Hardware ray tracing
 
 `RayQueryDdgiRaySource` traces probe rays against triangles with inline ray queries (`DDGIRayQueryTrace.slang`),

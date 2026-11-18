@@ -140,6 +140,11 @@ namespace PlutoGE::scene
         m_config.contactShadowLength = std::isfinite(length) ? std::clamp(length, 0.0f, 2.0f) : 0.0f;
     }
 
+    void LightComponent::SetTracedShadows(bool tracedShadows)
+    {
+        m_config.tracedShadows = tracedShadows;
+    }
+
     void LightComponent::SetDirectionalShadowSettings(const DirectionalShadowSettings &settings)
     {
         m_config.directionalShadowSettings = settings;
@@ -186,7 +191,10 @@ namespace PlutoGE::scene
             properties.push_back({"Source Height", PropertyType::Float, std::to_string(m_config.sourceHeight)});
         }
         if (m_config.type != LightType::Directional)
+        {
             properties.push_back({"Contact Shadow Length (0 = Off)", PropertyType::Float, std::to_string(m_config.contactShadowLength)});
+            properties.push_back({"Traced Shadows", PropertyType::Bool, m_config.tracedShadows ? "true" : "false"});
+        }
         if (m_config.type == LightType::Point)
             properties.push_back({"Source Length", PropertyType::Float, std::to_string(m_config.sourceLength)});
         if (m_config.type == LightType::Directional)
@@ -258,6 +266,10 @@ namespace PlutoGE::scene
             else if (property.name == "CastsShadows")
             {
                 m_config.castsShadows = (property.value == "true");
+            }
+            else if (property.name == "Traced Shadows")
+            {
+                m_config.tracedShadows = (property.value == "true");
             }
             else if (property.name == "Direction")
             {

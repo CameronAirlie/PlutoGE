@@ -1670,12 +1670,13 @@ namespace PlutoGE::scripting
         };
         static_assert(sizeof(GraphicsQualityNative) == 28);
         // Flag bits, in GraphicsQualityNative.flags order.
-        constexpr std::array<bool render::GraphicsQuality::*, 10> GraphicsQualityFlags{
+        constexpr std::array<bool render::GraphicsQuality::*, 11> GraphicsQualityFlags{
             &render::GraphicsQuality::enabled, &render::GraphicsQuality::cascadedShadows,
             &render::GraphicsQuality::ambientOcclusion, &render::GraphicsQuality::globalIllumination,
             &render::GraphicsQuality::reflections, &render::GraphicsQuality::volumetrics,
             &render::GraphicsQuality::bloom, &render::GraphicsQuality::depthOfField,
-            &render::GraphicsQuality::motionBlur, &render::GraphicsQuality::contactShadows};
+            &render::GraphicsQuality::motionBlur, &render::GraphicsQuality::contactShadows,
+            &render::GraphicsQuality::tracedShadows};
         int32_t GetGraphicsQuality(int32_t preset, GraphicsQualityNative *value)
         {
             if (!value || preset < -1 || preset > 3) return 0;

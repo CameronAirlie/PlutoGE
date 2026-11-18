@@ -70,6 +70,7 @@
 #include "PrepassedCoverageChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "GlobalIlluminationRenderingChecks.h"
+#include "LightOcclusionRenderingChecks.h"
 #include "VctPublicationChecks.h"
 #include "VirtualShadowPerformanceChecks.h"
 #include "VirtualShadowStaticLayerChecks.h"
@@ -233,8 +234,9 @@ int main(int argc, char **argv)
         shaders.ssaoDenoise.fragment.spirv=ReadSpirv("SSAODenoise.fragment.spv");
         shaders.ssaoUpsample.vertex.spirv=ReadSpirv("SSAOUpsample.vertex.spv");
         shaders.ssaoUpsample.fragment.spirv=ReadSpirv("SSAOUpsample.fragment.spv");
-        shaders.contactShadows.vertex.spirv=ReadSpirv("ContactShadows.vertex.spv");
-        shaders.contactShadows.fragment.spirv=ReadSpirv("ContactShadows.fragment.spv");
+        shaders.lightVisibility = {.contact = {.spirv = ReadSpirv("LightVisibility.compute.spv")},
+                                   .voxel = {.spirv = ReadSpirv("LightVisibilityVoxel.compute.spv")},
+                                   .rayQuery = {.spirv = ReadSpirv("LightVisibilityRayQuery.compute.spv")}};
         shaders.screenSpaceGuide.spirv = ReadSpirv("ScreenSpaceGuide.compute.spv");
         shaders.screenSpaceGuideHierarchy.spirv = ReadSpirv("ScreenSpaceGuideHierarchy.compute.spv");
         constexpr std::array<const char *, 3> ssaoModules{
@@ -378,6 +380,12 @@ int main(int argc, char **argv)
         {
             CheckRayTracedSceneReuse(renderer, device);
             return 0;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--traced-shadows")
+        {
+            // Hardware rays where the device has them, and voxels everywhere.
+            (void)CheckTracedLightShadows(renderer, device, DdgiRaySource::Hardware);
+            return CheckTracedLightShadows(renderer, device, DdgiRaySource::Voxels) ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")
         {

@@ -81,6 +81,9 @@ namespace PlutoGE::scene
         // Point, spot and rect lights: world length of screen-space contact shadows towards the light; 0 disables
         // them. Directional lights use directionalShadowSettings.contactShadowLength.
         float contactShadowLength = 0.0f;
+        // Point, spot and rect lights without a shadow map: whether the renderer may test them against the world
+        // (traced shadows), so their light stops at walls, floors and terrain. Off lets the light pass through them.
+        bool tracedShadows = true;
         DirectionalShadowSettings directionalShadowSettings{};
         bool castsShadows = false;   // Whether the light casts shadows
         bool isStatic = false;       // Static lights only refresh shadow data when dirty
@@ -103,6 +106,7 @@ namespace PlutoGE::scene
         void SetSourceShape(float radius, float length);
         void SetRectSize(float width, float height);
         void SetContactShadowLength(float length);
+        void SetTracedShadows(bool tracedShadows);
         void SetDirectionalShadowSettings(const DirectionalShadowSettings &settings);
         void MarkDirty();
         void ClearDirty();

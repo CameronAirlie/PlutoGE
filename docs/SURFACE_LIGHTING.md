@@ -14,7 +14,7 @@ its own:
 | Clear coat and sheen layers | `shaders/SurfaceLayers.slang` | Material > **Clear Coat**, **Sheen** |
 | Specular occlusion | `shaders/SSAOUpsample.slang`, `ScreenSpaceAmbientOcclusion` | SSAO > **Specular Occlusion** |
 | Rectangle lights | `shaders/LtcAreaLights.slang` | Light > **Light Type** Rect, **Source Width**, **Source Height** |
-| Contact shadows | `shaders/ContactShadows.slang`, `ScreenSpaceContactShadows` | Light > **Contact Shadow Length** |
+| Contact shadows | `shaders/LightVisibilityCommon.slang`, `LightVisibilityMask` | Light > **Contact Shadow Length** |
 | Tone mapping curves | `shaders/ColorOperations.slang` `toneMapCurve` | Tone Mapping > **Curve** |
 
 They work on both the Vulkan and OpenGL renderers.
@@ -157,22 +157,24 @@ It needs material roughness and the environment reflection from the geometry pas
 ## Contact shadows
 
 Shadow maps cannot resolve occluders within a few texels of their receivers, so feet, props and creases look
-detached and small objects cast nothing. After the depth prepass, `ScreenSpaceContactShadows` marches a short ray
-from every pixel towards each of up to three lights through the coverage depth (12 steps each, dithered per pixel
-and frame for TAA to average) and writes a mask of their visibilities (RGB) with the device depth they were traced
-for (A). Surfaces multiply a light's visibility by its channel only where their own depth matches, so a draw the
-prepass did not include (blended, outlines, graphs that read scene textures) keeps its own shadowing rather than one
-traced for whatever lay behind it.
+detached and small objects cast nothing. After the depth prepass, the light visibility mask
+(`src/lighting/LightVisibilityMask`, [Light occlusion](LIGHT_OCCLUSION.md)) marches a short ray from every pixel towards
+each light that has a contact length, through the coverage depth (12 steps each, dithered per pixel and frame for TAA
+to average), and stores the light's visibility in the light's slot of the mask with the device depth it was traced for.
+Surfaces multiply a light's visibility by its slot only where their own depth matches, so a draw the prepass did not
+include (blended, outlines, graphs that read scene textures) keeps its own shadowing rather than one traced for whatever
+lay behind it.
 
 **Contact Shadow Length** (every light type; 0 to 2 m) is how far the rays reach: 0.25 m by default for the
 directional light, 0 (off) for point, spot and rectangle lights. Longer rays catch larger occluders but show
 screen-space limits more: occluders off screen or behind other surfaces cast nothing, and an occluder is assumed to
 be half the ray length thick behind its depth. Rays towards a local light stop at it.
 
-The directional light takes a channel first; local lights with a length that reach the camera take the rest,
-brightest there (intensity over squared distance) first, so at most three lights have contact shadows in a frame.
-`contactShadowParameters.xyz` records which light each channel holds. Contact shadows need the depth prepass (on by
-default) and shadows enabled. They are the only shadows rectangle lights cast.
+The directional light takes a slot first; local lights with a length that reach the camera take the rest of the
+contact budget, brightest there (intensity over squared distance) first, so at most three lights have contact
+shadows in a frame (`SelectLightVisibilitySlots`). The same mask holds traced shadows (local lights tested against
+the world), and a light with both has one slot. Contact shadows need the depth prepass (on by default) and shadows
+enabled. With traced shadows off they are the only shadows rectangle lights cast.
 
 ## Tone mapping curves
 

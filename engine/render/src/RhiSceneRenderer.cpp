@@ -1696,15 +1696,33 @@ namespace PlutoGE::render
             effectiveLighting.pointLights.clear();
             effectiveLighting.spotLights.clear();
             effectiveLighting.rectLights.clear();
+            // The renderer shades a limited number of local lights and gives a few of them shadow maps, in list order:
+            // list the most important first rather than in scene order.
+            std::vector<const scene::Light *> localSceneLights;
+            std::vector<LocalLightCandidate> candidates;
             for (const auto *light : sceneLights)
             {
-                if (!light || light->intensity <= 0 || light->GetRange() <= 0) continue;
+                if (!light || light->intensity <= 0 || light->GetRange() <= 0 || light->type == scene::LightType::Directional)
+                    continue;
+                const auto type = light->type == scene::LightType::Point ? LocalLightCandidate::Type::Point
+                                : light->type == scene::LightType::Spot ? LocalLightCandidate::Type::Spot
+                                                                       : LocalLightCandidate::Type::Rect;
+                localSceneLights.push_back(light);
+                candidates.push_back({reinterpret_cast<std::uintptr_t>(light), type, light->position, light->GetRange(),
+                                      light->intensity, light->castsShadows && type != LocalLightCandidate::Type::Rect});
+            }
+            const auto lightOrder = m_localLightSelector.Order(candidates, glm::vec3(glm::inverse(cameraData.view)[3]),
+                                                               cameraData.projection * cameraData.view);
+            for (const auto index : lightOrder)
+            {
+                const auto *light = localSceneLights[index];
                 BasicPointLight local{light->position, light->GetRange(), light->color,
                                       light->intensity, light->castsShadows};
                 local.sourceRadius = light->sourceRadius;
                 local.sourceLength = light->type == scene::LightType::Point ? light->sourceLength : 0.0f;
                 local.sourceAxis = light->direction;
                 local.contactShadowLength = m_graphicsQuality.AllowsContactShadows() ? light->contactShadowLength : 0.0f;
+                local.tracedShadows = light->tracedShadows && m_graphicsQuality.AllowsTracedShadows();
                 if (light->type == scene::LightType::Point)
                     effectiveLighting.pointLights.push_back(local);
                 else if (light->type == scene::LightType::Spot)

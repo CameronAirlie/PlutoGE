@@ -36,6 +36,9 @@ namespace PlutoGE::render
         float foliageDetail = 1.0f;
         // Screen-space contact shadows from the sun and local lights.
         bool contactShadows = true;
+        // Traced shadows: local lights without a shadow map tested against the world (walls, floors, terrain) so their
+        // light stops there (BasicPointLight::tracedShadows, RenderingSettings::tracedShadowLights).
+        bool tracedShadows = true;
         // Detail grass ceilings, as shares of each layer's authored values: density scales clumps per square metre,
         // distance scales its draw, full-density and LOD distances together.
         float grassDensity = 1.0f;
@@ -66,6 +69,7 @@ namespace PlutoGE::render
                 result.volumetrics = result.bloom = result.depthOfField = result.motionBlur = false;
                 result.foliageDetail = 0.6f;
                 result.contactShadows = false;
+                result.tracedShadows = false;
                 result.grassDensity = 0.4f; result.grassDistance = 0.5f;
                 break;
             case GraphicsPreset::Medium:
@@ -103,6 +107,8 @@ namespace PlutoGE::render
 
         // Local lights carry their own contact-shadow length; scale it by this (0 or 1).
         [[nodiscard]] bool AllowsContactShadows() const noexcept { return !enabled || contactShadows; }
+        // Local lights carry their own traced-shadow flag; clear it unless this allows them.
+        [[nodiscard]] bool AllowsTracedShadows() const noexcept { return !enabled || tracedShadows; }
 
         // Caps a detail grass layer's density and distances; the renderer sanitizes the result.
         void Apply(DetailGrassLayer &layer) const noexcept

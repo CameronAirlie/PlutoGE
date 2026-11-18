@@ -62,6 +62,7 @@
 #include "VirtualShadowStaticLayerChecks.h"
 #include "VctWorldCacheRenderingChecks.h"
 #include "GlobalIlluminationRenderingChecks.h"
+#include "LightOcclusionRenderingChecks.h"
 #include "VctPublicationChecks.h"
 
 #include <array>
@@ -307,8 +308,8 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         shaders.ssaoDenoise.fragment.glsl=ReadText("SSAODenoise.fragment.glsl");
         shaders.ssaoUpsample.vertex.glsl=ReadText("SSAOUpsample.vertex.glsl");
         shaders.ssaoUpsample.fragment.glsl=ReadText("SSAOUpsample.fragment.glsl");
-        shaders.contactShadows.vertex.glsl=ReadText("ContactShadows.vertex.glsl");
-        shaders.contactShadows.fragment.glsl=ReadText("ContactShadows.fragment.glsl");
+        shaders.lightVisibility = {.contact = {.glsl = ReadText("LightVisibility.compute.glsl")},
+                                   .voxel = {.glsl = ReadText("LightVisibilityVoxel.compute.glsl")}};
         shaders.screenSpaceGuide.glsl = ReadText("ScreenSpaceGuide.compute.glsl");
         shaders.screenSpaceGuideHierarchy.glsl = ReadText("ScreenSpaceGuideHierarchy.compute.glsl");
         constexpr std::array<const char *,3> ssaoModules{"SSAO","SSAOResolve","SSAOHorizon"};
@@ -398,6 +399,12 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
         {
             CheckFoliageDirectTransmission(basicRenderer, device);
             CheckFoliageCanopyGi(basicRenderer, device, PlutoGE::render::DdgiRaySource::Voxels);
+            return glGetError() == GL_NO_ERROR ? 0 : 1;
+        }
+        if (argc > 1 && std::string_view(argv[1]) == "--traced-shadows")
+        {
+            if (!CheckTracedLightShadows(basicRenderer, device, PlutoGE::render::DdgiRaySource::Voxels))
+                return 1;
             return glGetError() == GL_NO_ERROR ? 0 : 1;
         }
         if (argc > 1 && std::string_view(argv[1]) == "--ddgi-only")

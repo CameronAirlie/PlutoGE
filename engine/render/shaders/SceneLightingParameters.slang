@@ -6,6 +6,7 @@
 
 #include "../include/PlutoGE/render/AmbientProbeConfig.h"
 #include "../include/PlutoGE/render/PhysicalSkyLayout.h"
+#include "../include/PlutoGE/render/LightVisibilityConfig.h"
 #include "CloudOcclusion.slang"
 struct AmbientProbeVolumeParameters
 {
@@ -60,14 +61,16 @@ cbuffer CameraParameters : register(b0, space0)
     // Local light emitter shapes. Points and spots (SurfaceBrdf.slang brdfAreaLight): sphere radius, tube axis times
     // length. Rectangles (LtcAreaLights.slang): half-height, right axis times half-width.
     float4 pointShape[32];
-    // Contact shadows (BasicLit.slang contactShadowVisibility): xyz the light each mask channel was traced for
-    // (-1 none, ContactShadowDirectional, or a local light index); w the mask is present.
-    float4 contactShadowParameters;
+    // The light visibility mask (BasicLit.slang lightVisibility): x 1 when it is present this frame.
+    float4 lightVisibilityParameters;
     // Live sky irradiance for ambient volumes baked with a live sky (SkyIrradiance.h): cosine-convolved L2 SH of
     // mean radiance, in AmbientProbeSampling's coefficient order. [0].w is 1 when a physical sky supplied it.
     float4 skyIrradiance[9];
     // Weather on surfaces (SurfaceWetness.slang): x wetness 0..1; yzw reserved.
     float4 surfaceWeather;
+    // The light visibility mask's slot for each light id ([id / 4][id % 4]): 0 for none, else the slot plus one
+    // (LightVisibilityConfig.h; local lights by index, the directional light PLUTO_LIGHT_VISIBILITY_DIRECTIONAL).
+    uint4 lightVisibilitySlots[PLUTO_LIGHT_VISIBILITY_ID_ROWS];
 };
 
 // Local light types, as BasicRenderer packs them into pointDirectionSpot.w: points, then spots, then rectangles.

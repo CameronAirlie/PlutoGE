@@ -257,4 +257,20 @@ namespace PlutoGE::render
         commands.BuildTopLevelAccelerationStructure(m_topLevel.Get(), m_instances);
         return true;
     }
+
+    void RayTracedSceneBinding::Describe(rhi::ComputePipelineDescriptor &descriptor, bool instances)
+    {
+        descriptor.resourceBindings.push_back(
+            {SceneSlot, 0, SceneSlot, rhi::ResourceBindingType::AccelerationStructure, rhi::ShaderStageMask::Compute});
+        if (instances)
+            descriptor.resourceBindings.push_back(
+                {InstancesSlot, 0, InstancesSlot, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Compute});
+    }
+
+    void RayTracedSceneBinding::Bind(rhi::ICommandContext &commands, const RayTracingScene &scene, bool instances)
+    {
+        commands.BindAccelerationStructure(SceneSlot, scene.TopLevel());
+        if (instances)
+            commands.BindStorageBuffer(InstancesSlot, scene.Instances());
+    }
 }

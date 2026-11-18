@@ -30,27 +30,36 @@ cbuffer VirtualShadowData : register(b1, space0) { VirtualShadowParameters vsm; 
 #include "LightClusters.slang"
 
 #ifndef PLUTO_GLASS
-// Contact shadows (ContactShadows.slang): up to three lights' visibilities and the device depth they were traced for.
-[[vk::binding(7, 0)]] Sampler2D contactShadowMask : register(t7, space0);
+// The light visibility mask (LightVisibilityCommon.slang): contact shadows and traced world occlusion for up to
+// PLUTO_LIGHT_VISIBILITY_SLOTS lights, packed, and the device depth they were traced for.
+[[vk::binding(7, 0)]] Sampler2D lightVisibilityMask : register(t7, space0);
 // The directional shadow at each pixel's coverage depth (DirectionalShadowMask.slang), which prepassed shading
 // pipelines read instead of filtering (kSurfaceShadowMask; BasicRenderer DirectionalShadowMaskSlot).
 [[vk::binding(5, 0)]] Sampler2D directionalShadowMask : register(t5, space0);
 #endif
 
-// contactShadowParameters' id for the directional light (local lights use their index).
-static const float ContactShadowDirectional = 32.0;
+// The light visibility mask's id for the directional light (local lights use their index).
+static const uint LightVisibilityDirectional = PLUTO_LIGHT_VISIBILITY_DIRECTIONAL;
 
-// The contact shadow of light `lightId` at this fragment: its mask channel where the mask was traced for this
-// surface, else 1 (lights without a channel, draws absent from the coverage depth, transparent surfaces, no mask).
-float contactShadowVisibility(float4 fragmentPosition, bool transparentPass, float lightId)
+// How much of light `lightId` reaches this fragment past contact occluders and, for traced lights, the world: its mask
+// slot where the mask was traced for this surface, else 1 (lights without a slot, draws absent from the coverage depth,
+// transparent surfaces, no mask).
+float lightVisibility(float4 fragmentPosition, bool transparentPass, uint lightId)
 {
 #ifdef PLUTO_GLASS
     return 1.0;
 #else
-    if (transparentPass || contactShadowParameters.w < 0.5 || all(contactShadowParameters.xyz != lightId)) return 1.0;
-    const float4 mask = contactShadowMask.Load(int3(int2(fragmentPosition.xy), 0));
+    if (transparentPass || lightVisibilityParameters.x < 0.5 || lightId >= uint(PLUTO_LIGHT_VISIBILITY_IDS)) return 1.0;
+    const uint slot = lightVisibilitySlots[lightId / 4u][lightId % 4u];
+    if (slot == 0u) return 1.0;
+    const float4 mask = lightVisibilityMask.Load(int3(int2(fragmentPosition.xy), 0));
     if (abs(mask.a - fragmentPosition.z) > 0.0001 * fragmentPosition.z + 1.e-7) return 1.0;
-    return contactShadowParameters.x == lightId ? mask.r : contactShadowParameters.y == lightId ? mask.g : mask.b;
+    // Slot s is level (s % 4) of channel s / 4: an exact integer of PLUTO_LIGHT_VISIBILITY_BITS-bit fields.
+    const uint index = slot - 1u;
+    const uint channel = index / uint(PLUTO_LIGHT_VISIBILITY_SLOTS_PER_CHANNEL);
+    const uint packed = uint(channel == 0u ? mask.r : channel == 1u ? mask.g : mask.b);
+    const uint shift = (index % uint(PLUTO_LIGHT_VISIBILITY_SLOTS_PER_CHANNEL)) * uint(PLUTO_LIGHT_VISIBILITY_BITS);
+    return float((packed >> shift) & uint(PLUTO_LIGHT_VISIBILITY_LEVELS)) / float(PLUTO_LIGHT_VISIBILITY_LEVELS);
 #endif
 }
 
@@ -1419,7 +1428,7 @@ struct LocalLightReceiver
     float3 normal;               // shading normal
     float3 planeNormal;          // receiver plane (shadow lookups' bias): normalised cross of the screen derivatives
     float3 worldDx, worldDy;     // world-position steps to the next pixel
-    float4 screenPosition;       // SV_Position (contact shadows)
+    float4 screenPosition;       // SV_Position (the light visibility mask)
     float occlusion;             // material occlusion (micro-shadowing)
     float3 diffuseTransmittance; // light leaving the far side (zero for ordinary surfaces)
 };
@@ -1456,7 +1465,7 @@ void accumulateLocalLights(LocalLightReceiver receiver, BrdfSurface brdf, Surfac
             const float window = 1.0 - smoothstep(range * 0.9, range, distance);
             const float3 toCentre = offset / max(distance, 0.0001);
             const float rectVisibility = microShadowing(receiver.occlusion, dot(receiver.normal, toCentre)) *
-                                         contactShadowVisibility(receiver.screenPosition, transparentPass, float(light));
+                                         lightVisibility(receiver.screenPosition, transparentPass, light);
             const float3 intensity = pointColorIntensity[light].rgb * pointColorIntensity[light].w;
             const float3 rectRadiance = intensity / area * window * rectVisibility;
             if (customLighting)
@@ -1505,7 +1514,7 @@ void accumulateLocalLights(LocalLightReceiver receiver, BrdfSurface brdf, Surfac
             lighting += receiver.diffuseTransmittance / PI * farNdotL * pointColorIntensity[light].rgb *
                              pointColorIntensity[light].w * attenuation * visibility;
         visibility *= microShadowing(receiver.occlusion, nl) *
-                      contactShadowVisibility(receiver.screenPosition, transparentPass, float(light));
+                      lightVisibility(receiver.screenPosition, transparentPass, light);
         const float3 pointRadiance = pointColorIntensity[light].rgb * pointColorIntensity[light].w * attenuation * visibility;
         if(customLighting)
             lighting += evaluateShaderGraphLighting(shaderGraph,graphState,l,
@@ -1776,10 +1785,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             normalizedCascade = directional.level;
         }
     }
-    // Contact shadows and micro-shadowing concern the near side, and do not apply to light from the far side.
+    // Contact shadows (the light visibility mask) and micro-shadowing concern the near side, and do not apply to light
+    // from the far side.
     const float farSunVisibility = shadowVisibility;
     if (shadowsEnabled != 0 && needsDirectionalShadow)
-        shadowVisibility *= contactShadowVisibility(input.position, transparentPass, ContactShadowDirectional);
+        shadowVisibility *= lightVisibility(input.position, transparentPass, LightVisibilityDirectional);
     shadowVisibility *= microShadowing(materialOcclusion, dot(normal, lightDirection));
     // Clouds shade the directional light in moving patches (the cloud shadow map) and, as coverage grows, replace
     // the clear sky with their base: a full deck leaves only soft overcast light. rawShadowVisibility stays the

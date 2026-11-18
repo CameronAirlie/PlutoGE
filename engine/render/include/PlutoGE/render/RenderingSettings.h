@@ -1,7 +1,9 @@
 #pragma once
 
 #include "PlutoGE/render/BasicRenderer.h"
+#include "PlutoGE/render/LightVisibilityConfig.h"
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <string_view>
@@ -28,6 +30,11 @@ namespace PlutoGE::render
         // Ray-traced GI traces instanced draws' coarsest LOD (BasicLighting::rayTracedGeometryDetail): GI is diffuse,
         // and dense foliage at full detail made each ray test many more triangles.
         RayTracedGeometryDetail rayTracedGeometryDetail = RayTracedGeometryDetail::CoarsestLod;
+        // Local lights without a shadow map tested against the world each frame (traced shadows,
+        // BasicLighting::tracedShadowLights): each costs a ray or voxel march per pixel it lights. 0 turns them off,
+        // letting such lights through walls as before.
+        static constexpr std::uint32_t MaxTracedShadowLights = PLUTO_LIGHT_VISIBILITY_SLOTS;
+        std::uint32_t tracedShadowLights = 8;
 
         bool operator==(const RenderingSettings &) const = default;
 
@@ -37,6 +44,7 @@ namespace PlutoGE::render
             lighting.shadowCasterMinimumTexels = shadowCasterMinimumTexels;
             lighting.rayTracedMinimumInstanceRadius = rayTracedMinimumInstanceRadius;
             lighting.rayTracedGeometryDetail = rayTracedGeometryDetail;
+            lighting.tracedShadowLights = std::min(tracedShadowLights, MaxTracedShadowLights);
         }
     };
 

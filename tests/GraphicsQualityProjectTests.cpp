@@ -48,6 +48,7 @@ int main(int argc, char **argv)
             q.ambientOcclusion = q.reflections = q.bloom = q.motionBlur = i % 2 != 0;
             q.foliageDetail = 0.3f + 0.123f * static_cast<float>(i);
             q.contactShadows = i % 2 == 0;
+            q.tracedShadows = i % 2 != 0;
             q.grassDensity = 0.15f + 0.1234567f * static_cast<float>(i);
             q.grassDistance = 0.3f + 0.1765432f * static_cast<float>(i);
         }
@@ -83,6 +84,7 @@ int main(int argc, char **argv)
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.01\t0.5",
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.4\t1.5",
             "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.4",
+            "QUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t0\t0.4\t0.5\t2",
             "QUALITY_PRESET\t0"})
         {
             { std::ofstream file(path); file << "PLUTOPROJECT\t3\n" << record << '\n'; }
@@ -128,6 +130,13 @@ int main(int argc, char **argv)
                   fifteenField->GetManifest().graphicsQualityPresets.tiers[1].grassDensity == medium.grassDensity &&
                   fifteenField->GetManifest().graphicsQualityPresets.tiers[1].contactShadows == medium.contactShadows,
               "A fifteen-field quality record did not take its tier's grass and contact-shadow defaults");
+        // Records written before traced shadows take their tier's default: off on Low, on above it.
+        { std::ofstream file(path); file << "PLUTOPROJECT\t3\nQUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t1\t0.4\t0.5\n"
+                                             "QUALITY_PRESET\t2\t1\t2048\t4\t150\t0\t1\t1\t1\t1\t1\t0\t0\t1\t1\t1\t1\n"; }
+        const auto eighteenField = assets::Project::Load(path, &error);
+        Check(eighteenField && !eighteenField->GetManifest().graphicsQualityPresets.tiers[0].tracedShadows &&
+                  eighteenField->GetManifest().graphicsQualityPresets.tiers[2].tracedShadows,
+              "An eighteen-field quality record did not take its tier's traced-shadow default");
         if (argc > 1)
         {
             const auto activeProject = assets::Project::Load(argv[1], &error);

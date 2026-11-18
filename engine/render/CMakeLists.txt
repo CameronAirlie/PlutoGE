@@ -31,11 +31,15 @@ add_library(PlutoGERender
     src/screenspace/ScreenSpaceAmbientOcclusion.cpp
     src/screenspace/ScreenSpaceReflections.cpp
     src/screenspace/ScreenSpaceGlobalIllumination.cpp
-    src/screenspace/ScreenSpaceContactShadows.cpp
+    src/lighting/LightVisibilityMask.cpp
+    src/lighting/LightVisibilitySlots.cpp
+    src/lighting/LocalLightSelection.cpp
+    src/lighting/WorldLightOcclusionSources.cpp
     src/gi/DdgiProbeGrid.cpp
     src/gi/DdgiSettings.cpp
     src/gi/DdgiVolume.cpp
     src/gi/VoxelDdgiRaySource.cpp
+    src/gi/VoxelSceneBinding.cpp
     src/CloudNoiseVolume.cpp
     src/CloudOcclusion.cpp
     src/CloudShadowMap.cpp
@@ -140,7 +144,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang")
         endif()
         if (MODULE MATCHES "^DDGI")
-            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIReflection.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
+            list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VoxelSceneSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIReflection.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
         endif()
         if (MODULE MATCHES "^SSAO")
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAO.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOHorizonSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang")
@@ -150,7 +154,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BakedEnvironment.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
-                "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightVisibilityConfig.h")
         endif()
         if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
@@ -160,6 +164,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightClusters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BindlessMaterials.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightClusterConfig.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightVisibilityConfig.h"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BakedEnvironment.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
@@ -204,7 +209,10 @@ if (PLUTO_SLANGC_EXECUTABLE)
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSRCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang")
         endif()
         if (MODULE MATCHES "^DDGI")
-            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIReflection.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGICommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VoxelSceneSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIReflection.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentBRDF.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyEnvironment.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/EnvironmentSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h")
+        endif()
+        if (MODULE MATCHES "^LightVisibility")
+            list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibilityCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibilityPass.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VoxelSceneSampling.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightVisibilityConfig.h")
         endif()
         if (MODULE MATCHES "^DetailGrass")
             list(APPEND vct_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DetailGrassCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DetailGrassLayout.h")
@@ -394,7 +402,8 @@ if (PLUTO_SLANGC_EXECUTABLE)
     pluto_add_slang_graphics_shader(AutoExposureApply "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AutoExposure.slang" vertexMain applyMain)
     pluto_add_slang_graphics_shader(SSAODenoise "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOResolve.slang" vertexMain denoiseMain)
     pluto_add_slang_graphics_shader(SSAOUpsample "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SSAOUpsample.slang" vertexMain fragmentMain)
-    pluto_add_slang_graphics_shader(ContactShadows "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ContactShadows.slang" vertexMain fragmentMain)
+    pluto_add_slang_compute_shader(LightVisibility "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibility.slang" computeMain)
+    pluto_add_slang_compute_shader(LightVisibilityVoxel "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibilityVoxel.slang" computeMain)
     pluto_add_slang_graphics_shader(DirectionalShadowMask "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DirectionalShadowMask.slang" shadowMaskVertex shadowMaskFragment
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang")
     pluto_add_slang_graphics_shader(DeferredLocalLights "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DeferredLocalLights.slang"
@@ -422,11 +431,16 @@ if (PLUTO_SLANGC_EXECUTABLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PhysicalSkyCelestial.slang" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/DdgiConfig.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/SkyEnvironmentConfig.h"
         "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/PhysicalSkyLayout.h"
-        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/RayTracingConfig.h")
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/RayTracingConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/RayTracedScene.slang")
     pluto_add_slang_ray_query_shader(DDGIRayQueryTrace "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIRayQueryTrace.slang" traceMain
         ${pluto_ddgi_ray_query_dependencies})
     pluto_add_slang_ray_query_shader(DDGIRayQueryVisibility "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIRayQueryTrace.slang" visibilityMain
         ${pluto_ddgi_ray_query_dependencies})
+    pluto_add_slang_ray_query_shader(LightVisibilityRayQuery "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibilityRayQuery.slang" computeMain
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/RayTracedScene.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibilityCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightVisibilityPass.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/ScreenSpaceGuideCommon.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/PostProcessParameters.slang"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightVisibilityConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/RayTracingConfig.h"
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/PostProcessLayout.h")
     pluto_add_slang_ray_query_shader(RayQueryProbe "${CMAKE_CURRENT_SOURCE_DIR}/shaders/RayQueryProbe.slang" main)
     pluto_add_slang_compute_shader(DDGIProbeReset "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIProbeUpdate.slang" resetMain)
     pluto_add_slang_compute_shader(DDGIProbeState "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DDGIProbeUpdate.slang" stateMain)

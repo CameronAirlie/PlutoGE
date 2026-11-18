@@ -5280,6 +5280,14 @@ namespace PlutoGE::ui
                             int geometryDetail = static_cast<int>(projectRendering.rayTracedGeometryDetail);
                             if (ImGui::Combo("##RayTracedGeometryDetail", &geometryDetail, "As Drawn\0Coarsest LOD\0"))
                                 projectRendering.rayTracedGeometryDetail = static_cast<render::RayTracedGeometryDetail>(geometryDetail);
+                            widgets::SettingsRow("Traced shadow lights",
+                                "Local lights without a shadow map that are traced against the world each frame, so their "
+                                "light stops at walls, floors and terrain. Uses the ray-traced or voxel scene DDGI keeps; "
+                                "each light costs a ray per pixel it lights. 0 turns traced shadows off.");
+                            int tracedShadowLights = static_cast<int>(projectRendering.tracedShadowLights);
+                            if (ImGui::SliderInt("##TracedShadowLights", &tracedShadowLights, 0,
+                                                 static_cast<int>(render::RenderingSettings::MaxTracedShadowLights)))
+                                projectRendering.tracedShadowLights = static_cast<std::uint32_t>(tracedShadowLights);
                             widgets::EndSettingsTable();
                         }
                         widgets::EndCard();

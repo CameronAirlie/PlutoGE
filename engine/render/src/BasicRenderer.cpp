@@ -40,10 +40,12 @@
 #include "TemporalSampling.h"
 #include "screenspace/ScreenSpaceAmbientOcclusion.h"
 #include "screenspace/ScreenSpaceGlobalIllumination.h"
-#include "screenspace/ScreenSpaceContactShadows.h"
 #include "screenspace/ScreenSpaceReflections.h"
 #include "gi/DdgiVolume.h"
 #include "gi/VoxelDdgiRaySource.h"
+#include "lighting/LightVisibilityMask.h"
+#include "lighting/LocalLightPacking.h"
+#include "lighting/WorldLightOcclusionSources.h"
 #include "PlutoGE/render/DdgiPacket.h"
 #include "CloudNoiseVolume.h"
 #include "PlutoGE/render/CloudOcclusion.h"
@@ -278,13 +280,16 @@ namespace PlutoGE::render
             glm::mat4 lightClusterProjection{1.0f}; // LightClusterShading
             glm::vec4 lightClusterDepth{0.0f};
             std::array<glm::vec4, 32> pointShape{}; // source radius, tube axis times length
-            glm::vec4 contactShadowParameters{0.0f}; // each channel's light id, mask present
+            glm::vec4 lightVisibilityParameters{0.0f}; // x the light visibility mask is present
             // Live sky for ambient volumes (SkyIrradiance.h): rgb SH coefficients, [0].w 1 when present.
             std::array<glm::vec4, 9> skyIrradiance{};
             // Weather on surfaces (SurfaceWetness.slang): x wetness 0..1; yzw reserved.
             glm::vec4 surfaceWeather{0.0f};
+            // Light visibility mask slot per light id (MakeLightVisibilitySlotTable; 0 none, else slot + 1).
+            LightVisibilitySlotTable lightVisibilitySlots{};
         };
-        static_assert(sizeof(BasicFrameParameters) == 6784 + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+        static_assert(sizeof(BasicFrameParameters) ==
+                      6784 + 16 * PLUTO_LIGHT_VISIBILITY_ID_ROWS + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         // The SurfaceFeature bits whose BasicLit paths this frame's parameters can reach (SurfaceFeatures.slang states
@@ -525,54 +530,6 @@ namespace PlutoGE::render
             const float axisLength = glm::length(light.sourceAxis);
             const float length = std::isfinite(axisLength) && axisLength > 1.e-6f ? finite(light.sourceLength) : 0.0f;
             return {finite(light.sourceRadius), length > 0.0f ? light.sourceAxis / axisLength * length : glm::vec3(0.0f)};
-        }
-
-        // How many of each local light type the frame packs, in order: points, spots, then rectangles in the slots
-        // left (SceneLightingParameters.slang). A packed light's index is its shader light id.
-        struct PackedLocalLightCounts { std::size_t points, spots, rects; };
-        PackedLocalLightCounts PackLocalLightCounts(const BasicLighting &lighting)
-        {
-            const auto points = std::min<std::size_t>(lighting.pointLights.size(), 16);
-            const auto spots = std::min<std::size_t>(lighting.spotLights.size(), 16);
-            return {points, spots, std::min<std::size_t>(lighting.rectLights.size(), PLUTO_MAX_LOCAL_LIGHTS - points - spots)};
-        }
-
-        // The lights contact shadows trace this frame, at most ScreenSpaceContactShadows::SlotCount of them: the
-        // directional light, then the local lights with a contact shadow length that reach the camera, brightest
-        // there first. Each carries the id surfaces look its mask channel up by.
-        struct ContactShadowLight { ScreenSpaceContactShadows::Light light; float id = -1.0f; };
-        std::vector<ContactShadowLight> ContactShadowLights(const BasicLighting &lighting)
-        {
-            using Kind = ScreenSpaceContactShadows::Light::Kind;
-            std::vector<ContactShadowLight> lights;
-            if (!lighting.shadowsEnabled)
-                return lights;
-            if (lighting.directionalIntensity > 0.0f && lighting.contactShadowLength > 0.0f)
-                lights.push_back({{Kind::Directional, -lighting.directionalDirection, lighting.contactShadowLength},
-                                  BasicRenderer::ContactShadowDirectional});
-            struct Candidate { float score; std::size_t index; const BasicPointLight *light; };
-            std::vector<Candidate> candidates;
-            const auto consider = [&](const BasicPointLight &light, std::size_t index)
-            {
-                const float distance = glm::length(light.position - lighting.cameraPosition);
-                if (light.contactShadowLength > 0.0f && light.intensity > 0.0f && distance < light.range)
-                    candidates.push_back({light.intensity / (1.0f + distance * distance), index, &light});
-            };
-            const auto counts = PackLocalLightCounts(lighting);
-            for (std::size_t i = 0; i < counts.points; ++i) consider(lighting.pointLights[i], i);
-            for (std::size_t i = 0; i < counts.spots; ++i) consider(lighting.spotLights[i].light, counts.points + i);
-            for (std::size_t i = 0; i < counts.rects; ++i)
-                consider(lighting.rectLights[i].light, counts.points + counts.spots + i);
-            std::stable_sort(candidates.begin(), candidates.end(),
-                             [](const Candidate &a, const Candidate &b) { return a.score > b.score; });
-            for (const auto &candidate : candidates)
-            {
-                if (lights.size() == ScreenSpaceContactShadows::SlotCount)
-                    break;
-                lights.push_back({{Kind::Local, candidate.light->position, std::min(candidate.light->contactShadowLength, 2.0f)},
-                                  static_cast<float>(candidate.index)});
-            }
-            return lights;
         }
 
         // A rectangle light's orthonormal frame and sanitised size: `right` is made perpendicular to `forward`.
@@ -870,7 +827,7 @@ namespace PlutoGE::render
                 {19, 1, 11, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {21, 1, 13, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {20, 1, 12, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
-                {ContactShadowSlot, 0, ContactShadowSlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {LightVisibilitySlot, 0, LightVisibilitySlot, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {DirectionalShadowMask::MaskSlot, 0, DirectionalShadowMask::MaskBinding, rhi::ResourceBindingType::SampledTexture,
                  rhi::ShaderStageMask::Fragment},
                 {LtcTableSlot, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
@@ -1617,9 +1574,17 @@ namespace PlutoGE::render
             auto reflections = std::make_unique<ScreenSpaceReflections>();
             if (reflections->Initialize(device, reflectionShaders))
                 m_reflections = std::move(reflections);
-            auto contactShadows = std::make_unique<ScreenSpaceContactShadows>();
-            if (contactShadows->Initialize(device, fullscreen(shaders.contactShadows)))
-                m_contactShadows = std::move(contactShadows);
+            auto lightVisibility = std::make_unique<LightVisibilityMask>();
+            if (lightVisibility->Initialize(device, shaders.lightVisibility.contact))
+            {
+                m_lightVisibility = std::move(lightVisibility);
+                auto voxelOcclusion = std::make_unique<VoxelLightOcclusionSource>();
+                if (voxelOcclusion->Initialize(device, shaders.lightVisibility.voxel))
+                    m_voxelLightOcclusion = std::move(voxelOcclusion);
+                auto rayQueryOcclusion = std::make_unique<RayQueryLightOcclusionSource>();
+                if (rayQueryOcclusion->Initialize(device, shaders.lightVisibility.rayQuery))
+                    m_rayQueryLightOcclusion = std::move(rayQueryOcclusion);
+            }
             auto shadowMask = std::make_unique<DirectionalShadowMask>();
             if (shadowMask->Initialize(device, m_geometryDescriptors[0], shaders.directionalShadowMask.vertex,
                                        shaders.directionalShadowMask.fragment))
@@ -1842,6 +1807,11 @@ namespace PlutoGE::render
         m_shadowMaskActive = false;
         m_deferredLocalLights.reset();
         m_deferredLocalLightsActive = false;
+        m_lightVisibility.reset();
+        m_rayQueryLightOcclusion.reset();
+        m_voxelLightOcclusion.reset();
+        m_lastVoxelScene.reset();
+        m_lastVoxelSceneFrame = m_lastRayTracingSceneFrame = 0;
         m_ddgi.reset();
         m_rayQueryDdgiRays.reset();
         m_rayTracingScene.reset();
@@ -2180,7 +2150,7 @@ namespace PlutoGE::render
         if (m_ambientOcclusion) m_ambientOcclusion->ReleaseTargets();
         if (m_reflections) m_reflections->ReleaseTargets();
         if (m_globalIllumination) m_globalIllumination->ReleaseTargets();
-        if (m_contactShadows) m_contactShadows->ReleaseTargets();
+        if (m_lightVisibility) m_lightVisibility->ReleaseTargets();
         // Probe data is independent of the viewport and survives resizing.
         if (m_ddgi) m_ddgi->ReleaseTargets();
         m_depthTarget = std::move(newDepth);
@@ -2751,21 +2721,6 @@ namespace PlutoGE::render
             deferProbeIrradiance ? 1.0f : 0.0f);
         frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
         frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
-        // Contact shadows trace the coverage depth, so they exist only with it.
-        const auto contactLights = ContactShadowLights(lighting);
-        bool contactShadowsActive = false;
-        frameParameters.contactShadowParameters = glm::vec4(-1.0f, -1.0f, -1.0f, 0.0f);
-        if (depthPrepassActive && m_contactShadows && !geometryDebug)
-        {
-            ScreenSpaceContactShadows::Settings settings;
-            for (std::size_t slot = 0; slot < contactLights.size(); ++slot)
-            {
-                settings.lights[slot] = contactLights[slot].light;
-                frameParameters.contactShadowParameters[static_cast<glm::length_t>(slot)] = contactLights[slot].id;
-            }
-            contactShadowsActive = m_contactShadows->Prepare(MakeScreenSpaceView(m_width, m_height), settings);
-        }
-        frameParameters.contactShadowParameters.w = contactShadowsActive ? 1.0f : 0.0f;
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};
@@ -2832,6 +2787,19 @@ namespace PlutoGE::render
             frameParameters.lightClusterDepth = clusters.depth;
             m_frameStats.clusteredLocalLights = clusters.Enabled() ? localLightCount : 0;
         }
+        // The light visibility mask traces the coverage depth, so it exists only with it. It needs to know which
+        // local lights got shadow maps above: traced world occlusion is for the others.
+        LocalShadowMapFlags localShadowMaps{};
+        ForEachPackedLocalLight(lighting, [&](const BasicPointLight &, std::uint32_t id, PackedLocalLightType type, std::size_t)
+        {
+            const auto &settings = frameParameters.pointSettings[id];
+            localShadowMaps[id] = type == PackedLocalLightType::Point ? settings.x >= 0.0f
+                                                                      : type == PackedLocalLightType::Spot && settings.y >= 0.0f;
+        });
+        const bool lightVisibilityActive = depthPrepassActive && !geometryDebug &&
+            PrepareLightVisibility(lighting, localShadowMaps);
+        frameParameters.lightVisibilityParameters.x = lightVisibilityActive ? 1.0f : 0.0f;
+        frameParameters.lightVisibilitySlots = lightVisibilityActive ? m_lightVisibility->SlotTable() : LightVisibilitySlotTable{};
         m_device->UpdateBuffer(m_cameraBuffer.Get(), 0, Bytes(frameParameters));
         // OpenGL compiles the shaders' defaults (no specialisation constants), so its pipelines stay general.
         m_surfaceFeatures = m_surfaceSpecialization && m_device->GetApi() == rhi::GraphicsApi::Vulkan
@@ -3920,7 +3888,7 @@ namespace PlutoGE::render
                                  m_shadowSampler.Get());
             commands.BindTexture(DirectionalShadowMask::MaskSlot, m_shadowMaskActive ? m_shadowMask->Mask() : m_fallbackDataTexture.Get(),
                                  m_shadowSampler.Get());
-            commands.BindTexture(ContactShadowSlot, contactShadowsActive ? m_contactShadows->Mask() : m_fallbackDataTexture.Get(),
+            commands.BindTexture(LightVisibilitySlot, lightVisibilityActive ? m_lightVisibility->Mask() : m_fallbackDataTexture.Get(),
                                  m_shadowSampler.Get());
         };
         const auto recordDraw = [&](rhi::ICommandContext &commands, const BasicDraw &draw, bool transparent, std::size_t historyIndex)
@@ -4437,8 +4405,8 @@ namespace PlutoGE::render
                 commands.EndRendering();
                 commands.EndGpuScope();
                 // Before shading, which reads the mask.
-                if (contactShadowsActive)
-                    m_contactShadows->Record(commands, MakeScreenSpaceView(m_width, m_height));
+                if (lightVisibilityActive)
+                    m_lightVisibility->Record(commands, MakeScreenSpaceView(m_width, m_height));
                 m_frameStats.geometryDepthDraws = m_frameStats.geometryDraws;
                 m_frameStats.geometryDraws = m_frameStats.geometryInstances = 0;
                 m_frameStats.geometryTriangles = {};
@@ -4458,8 +4426,8 @@ namespace PlutoGE::render
                 commands.BindTexture(19, receiverShadows.atlas, m_shadowSampler.Get());
                 commands.BindTexture(20, receiverShadows.pageTable, m_shadowSampler.Get());
             }
-            if (contactShadowsActive)
-                commands.BindTexture(ContactShadowSlot, m_contactShadows->Mask(), m_shadowSampler.Get());
+            if (lightVisibilityActive)
+                commands.BindTexture(LightVisibilitySlot, m_lightVisibility->Mask(), m_shadowSampler.Get());
             // The directional shadow once per pixel, now that the shadow maps and the coverage depth are complete.
             if (m_shadowMaskActive)
             {
@@ -6723,6 +6691,50 @@ namespace PlutoGE::render
             if (guide) guide->InvalidateHistory();
     }
 
+    ILightOcclusionSource *BasicRenderer::SelectLightOcclusionSource()
+    {
+        // Scenes are stamped with the frame after the one that traced them; one traced last frame (or earlier this
+        // frame) is current, an older one may hold geometry that has since moved or gone.
+        const auto current = [&](std::uint64_t stamp) { return stamp != 0 && m_frameIndex + 1 - stamp <= 1; };
+        if (m_rayQueryLightOcclusion && m_rayTracingScene && current(m_lastRayTracingSceneFrame))
+        {
+            m_rayQueryLightOcclusion->SetScene(m_rayTracingScene.get());
+            if (m_rayQueryLightOcclusion->Ready())
+                return m_rayQueryLightOcclusion.get();
+        }
+        // The voxel scene's atlases must still be VCT's: they are recreated when its resolution changes.
+        if (m_voxelLightOcclusion && m_lastVoxelScene && current(m_lastVoxelSceneFrame) &&
+            m_lastVoxelScene->atlases[0] == m_vctRadianceAtlases[0].Get())
+        {
+            m_voxelLightOcclusion->SetScene(*m_lastVoxelScene);
+            if (m_voxelLightOcclusion->Ready())
+                return m_voxelLightOcclusion.get();
+        }
+        return nullptr;
+    }
+
+    bool BasicRenderer::PrepareLightVisibility(const BasicLighting &lighting, std::span<const bool> shadowMaps)
+    {
+        m_frameStats.lightVisibilitySlots = m_frameStats.tracedShadowLights = 0;
+        m_frameStats.lightOcclusionSource = "";
+        if (!m_lightVisibility)
+            return false;
+        LightVisibilityMask::Settings settings;
+        settings.occlusion = lighting.tracedShadowLights > 0 ? SelectLightOcclusionSource() : nullptr;
+        LocalShadowMapFlags flags{};
+        std::copy_n(shadowMaps.begin(), std::min(shadowMaps.size(), flags.size()), flags.begin());
+        const LightVisibilityBudget budget{.contactLights = 3,
+                                           .tracedLights = settings.occlusion ? lighting.tracedShadowLights : 0u};
+        settings.slots = SelectLightVisibilitySlots(lighting, budget, flags);
+        if (!m_lightVisibility->Prepare(MakeScreenSpaceView(m_width, m_height), settings))
+            return false;
+        m_frameStats.lightVisibilitySlots = settings.slots.size();
+        m_frameStats.tracedShadowLights = m_lightVisibility->TracedSlots();
+        if (const auto *source = m_lightVisibility->OcclusionSource())
+            m_frameStats.lightOcclusionSource = source->Name();
+        return true;
+    }
+
     ScreenSpaceView BasicRenderer::MakeScreenSpaceView(std::uint32_t width, std::uint32_t height) const
     {
         const auto target = [&](const rhi::Texture &texture)
@@ -6869,6 +6881,7 @@ namespace PlutoGE::render
                 m_rayQueryDdgiRays->SetScene(*m_rayTracingScene, lighting);
                 rays = m_rayQueryDdgiRays.get();
                 m_frameStats.ddgiHardwareRays = true;
+                m_lastRayTracingSceneFrame = m_frameIndex + 1;
             }
             m_frameStats.rayTracedInstances = m_rayTracingScene->InstanceCount();
             m_frameStats.rayTracedSkippedInstances = m_rayTracingScene->SkippedInstanceCount();
@@ -6899,6 +6912,13 @@ namespace PlutoGE::render
             scene.sampler = m_vctVolumeSampler.Get();
         }
         m_ddgiRays->SetScene(scene);
+        if (scene.Valid())
+        {
+            if (!m_lastVoxelScene)
+                m_lastVoxelScene = std::make_unique<DdgiVoxelScene>();
+            *m_lastVoxelScene = scene;
+            m_lastVoxelSceneFrame = m_frameIndex + 1;
+        }
         const DdgiEnvironment environment{.physicalSky = lighting.physicalSkyEnabled,
                                           .skyParameters = lighting.physicalSkyParameters,
                                           .skyExposure = lighting.physicalSkyExposure,

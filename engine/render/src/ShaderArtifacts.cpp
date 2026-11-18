@@ -174,7 +174,8 @@ namespace PlutoGE::render
                                   Load("InstanceCullingScatter", "compute")};
         result.ssaoDenoise = {Load("SSAODenoise", "vertex"),Load("SSAODenoise", "fragment")};
         result.ssaoUpsample = {Load("SSAOUpsample", "vertex"),Load("SSAOUpsample", "fragment")};
-        result.contactShadows = {Load("ContactShadows", "vertex"), Load("ContactShadows", "fragment")};
+        result.lightVisibility = {.contact = Load("LightVisibility", "compute"), .voxel = Load("LightVisibilityVoxel", "compute"),
+                                  .rayQuery = Load("LightVisibilityRayQuery", "compute")};
         result.directionalShadowMask = {Load("DirectionalShadowMask", "vertex"), Load("DirectionalShadowMask", "fragment")};
         result.deferredLocalLights = {Load("DeferredLocalLights", "vertex"), Load("DeferredLocalLights", "fragment")};
         result.diffuseProbeTrace = {Load("DiffuseProbeTrace", "vertex"), Load("DiffuseProbeTrace", "fragment")};

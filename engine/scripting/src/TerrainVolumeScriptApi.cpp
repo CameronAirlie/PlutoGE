@@ -109,10 +109,20 @@ namespace PlutoGE::scripting
                 scene::TerrainVolumeEditOptions options;
                 if (request->maxExtent >= 0.0f)
                     options.maxExtent = request->maxExtent;
+                if (request->debrisPieces > 0)
+                {
+                    options.debris.enabled = true;
+                    options.debris.maxPieces = std::min(request->debrisPieces, 64);
+                }
                 const auto report = scene::EditTerrainVolumes(*scene, *shape, edit, options);
                 Report(*request, report.result);
                 request->volumesChanged = report.volumesChanged;
                 request->foliageRemoved = static_cast<std::int32_t>(report.foliageRemoved);
+                request->debrisSpawned = static_cast<std::int32_t>(report.debris.size());
+                // The pieces' entity IDs, as many as the buffer holds.
+                const std::size_t room = buffer.size() / sizeof(std::uint32_t);
+                for (std::size_t index = 0; index < std::min(room, report.debris.size()); ++index)
+                    std::memcpy(buffer.data() + index * sizeof(std::uint32_t), &report.debris[index], sizeof(std::uint32_t));
                 request->result = report.refused ? -1 : report.Changed() ? 1 : 0;
                 return 1;
             }

@@ -9,6 +9,8 @@
 #include "PlutoGE/scene/volume/VolumeEditArchive.h"
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <functional>
 #include <limits>
 
@@ -80,6 +82,15 @@ namespace PlutoGE::scene
         constexpr std::string_view WorldPrefix = "world:";
         constexpr std::string_view VolumePrefix = "volume:";
 
+        // The world and tile a foliage component's entity is, when it is a streamed tile.
+        std::pair<TerrainWorldComponent *, std::optional<TerrainTileCoord>> TileOf(Entity &entity)
+        {
+            for (Entity *at = entity.GetParent(); at; at = at->GetParent())
+                if (auto *world = at->GetComponent<TerrainWorldComponent>())
+                    return {world, world->FindTile(entity)};
+            return {nullptr, std::nullopt};
+        }
+
         std::size_t RemoveCarvedFoliage(Scene &scene, const volume::VolumeShape &worldShape)
         {
             const glm::vec3 centre = (worldShape.BoundsMin() + worldShape.BoundsMax()) * 0.5f;
@@ -97,8 +108,12 @@ namespace PlutoGE::scene
                     if (transform && instance && worldShape.Distance(glm::vec3((*transform)[3])) <= 0.0f)
                         carved.push_back(instance->id);
                 }
-                if (!carved.empty())
-                    removed += foliage->RemoveInstances(carved).size();
+                if (carved.empty())
+                    return;
+                removed += foliage->RemoveInstances(carved).size();
+                // A tile regenerates its foliage when it streams in again: its world remembers what was dug away.
+                if (const auto [world, tile] = TileOf(entity); world && tile)
+                    world->SuppressFoliage(*tile, carved);
             });
             return removed;
         }
@@ -132,11 +147,25 @@ namespace PlutoGE::scene
         {
             if (options.accept && !options.accept(*terrainVolume))
                 continue;
+            // The rock about to go, while it is still there.
+            const bool debris = options.debris.enabled && edit.mode == volume::VolumeEditMode::Subtract;
+            glm::vec3 debrisOrigin(0.0f);
+            auto removed = debris ? terrainVolume->MeshRemovedRock(worldShape, debrisOrigin) : volume::VolumeMesh{};
             const auto result = terrainVolume->Apply(worldShape, edit);
             if (!result.Changed())
                 continue;
             report.result.Merge(result);
             ++report.volumesChanged;
+            const float rock = result.RockRemoved();
+            if (debris && rock >= options.debris.minimumRock && !removed.Empty())
+            {
+                auto settings = options.debris;
+                settings.shatter.pieces = std::clamp(static_cast<int>(std::ceil(rock * settings.piecesPerCubicMetre)), 1,
+                                                     std::max(settings.maxPieces, 1));
+                const glm::vec3 impact = (worldShape.BoundsMin() + worldShape.BoundsMax()) * 0.5f;
+                for (auto *piece : SpawnTerrainDebris(scene, *terrainVolume, std::move(removed), debrisOrigin, impact, settings))
+                    report.debris.push_back(piece->GetID());
+            }
         }
         if (report.Changed() && options.removeFoliage && edit.mode == volume::VolumeEditMode::Subtract)
             report.foliageRemoved = RemoveCarvedFoliage(scene, worldShape);

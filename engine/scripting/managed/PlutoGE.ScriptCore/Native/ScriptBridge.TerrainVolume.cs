@@ -26,11 +26,13 @@ internal static unsafe partial class ScriptBridge
         public int MainMaterial;
         public int VolumesChanged;
         public int FoliageRemoved;
+        public int DebrisPieces;
+        public int DebrisSpawned;
         public ulong Buffer;
         public long BufferSize;
     }
 
-    internal const int NativeTerrainVolumeRequestSize = 120;
+    internal const int NativeTerrainVolumeRequestSize = 128;
 
     internal enum TerrainVolumeOperation
     {

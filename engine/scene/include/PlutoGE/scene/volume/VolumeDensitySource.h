@@ -84,11 +84,8 @@ namespace PlutoGE::scene::volume
         };
 
         CompositeDensity() = default;
-        explicit CompositeDensity(std::vector<Layer> layers) : m_layers(std::move(layers)) {}
-        void Add(std::shared_ptr<const VolumeDensitySource> source, Operation operation)
-        {
-            m_layers.push_back({std::move(source), operation});
-        }
+        explicit CompositeDensity(std::vector<Layer> layers);
+        void Add(std::shared_ptr<const VolumeDensitySource> source, Operation operation);
         [[nodiscard]] const std::vector<Layer> &GetLayers() const { return m_layers; }
         // With no layers, air.
         [[nodiscard]] VolumeSample Sample(const glm::vec3 &position) const override;
@@ -100,7 +97,19 @@ namespace PlutoGE::scene::volume
         [[nodiscard]] static VolumeSample Combine(const VolumeSample &base, const VolumeSample &layer, Operation operation);
 
     private:
+        // Where a layer can change anything: the union of its features. Union, Subtract and Paint layers leave samples
+        // outside it (beyond the stored range) as they were, so Fill skips them there: a base of many stamps costs only
+        // the stamps near each block.
+        struct Envelope
+        {
+            bool bounded = false;
+            VolumeBounds bounds;
+        };
+        [[nodiscard]] static Envelope EnvelopeOf(const Layer &layer);
+        [[nodiscard]] bool Reaches(std::size_t layer, const glm::vec3 &low, const glm::vec3 &high, float reach) const;
+
         std::vector<Layer> m_layers;
+        std::vector<Envelope> m_envelopes;
     };
 
     // A shape as a source: its inside is rock of one material. Placed into a composite, shapes become stamps (a

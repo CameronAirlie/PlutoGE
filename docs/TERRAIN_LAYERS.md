@@ -75,8 +75,9 @@ Notes for extending it:
   matching constants and loops in `TerrainLayers.slang`.
 - **Per-layer features** (detail normals, distance tiling) belong in `sampleTerrainLayers`; per-layer scalars go into
   `BasicTerrainLayers::tiling`/`tint` and the parameter block, which never rebuild the arrays.
-- **Mapping switches.** `TerrainLayerSet::weights` (weight maps, or one layer per triangle named by the vertex's
-  `uv.x`) and `projection` (top-down, or triplanar with whiteout normals and `triplanarSharpness`) reach the shader as
+- **Mapping switches.** `TerrainLayerSet::weights` (weight maps, or vertex layers: up to three layers per triangle
+  packed in `uv.x`, their weights in `uv.y` and `uv2.x`, and occlusion in `uv2.y`; `scene::volume::VertexLayerEncoding`)
+  and `projection` (top-down, or triplanar with whiteout normals and `triplanarSharpness`) reach the shader as
   `terrainMapping`. Terrain volume chunks use vertex layers and triplanar projection
   ([Terrain volumes](TERRAIN_VOLUMES.md)); a heightfield could use triplanar for cliffs.
 - **The macro albedo** is the terrain material's ordinary albedo, so GI voxelization and probe baking see the

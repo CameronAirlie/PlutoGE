@@ -87,12 +87,19 @@ void CheckTerrainLayers(PlutoGE::render::BasicRenderer &renderer, PlutoGE::rende
     require(fading[0] > fading[1] + 20 && fading[1] > 10, "Terrain inside the detail fade band did not blend layers and albedo");
     terrain->detailDistance = terrain->detailFade = 0.0f;
 
-    // Vertex layers (terrain volume chunks): the vertices' uv.x names the layer, the weight map is ignored, there is
-    // no macro albedo to fade to, and triplanar projection shades a face looking along z.
+    // Vertex layers (terrain volume chunks): uv.x packs the triangle's layers, uv.y / uv2.x weigh them and uv2.y is
+    // occlusion; the weight map is ignored, there is no macro albedo to fade to, and triplanar projection shades a face
+    // looking along z.
     {
+        const auto setLayers = [&](std::array<BasicVertex, 4> &mesh, float packed, float weightA, float weightB, float occlusion) {
+            for (auto &vertex : mesh)
+            {
+                vertex.uv = {packed, weightA};
+                vertex.uv2 = {weightB, occlusion};
+            }
+        };
         auto layered = vertices;
-        for (auto &vertex : layered)
-            vertex.uv = {1.0f, 0.0f};
+        setLayers(layered, 1.0f, 1.0f, 0.0f, 1.0f); // layer 1 only
         auto layeredMesh = renderer.CreateMesh({layered, indices});
         auto volumeLayers = std::make_shared<BasicTerrainLayers>(*terrain);
         volumeLayers->vertexLayers = true;
@@ -111,6 +118,23 @@ void CheckTerrainLayers(PlutoGE::render::BasicRenderer &renderer, PlutoGE::rende
         require(blue(sampleVolume(0.3f)) && blue(sampleVolume(0.7f)), "Vertex layers did not shade the triangle's own layer triplanar");
         volumeLayers->triplanar = false;
         require(blue(sampleVolume(0.3f)), "Vertex layers did not shade top-down");
+
+        // Layers 0 and 1 (packed 0 + 256 * 1) half and half: a blend of red and blue.
+        auto blended = vertices;
+        setLayers(blended, 256.0f, 0.5f, 0.5f, 1.0f);
+        auto blendedMesh = renderer.CreateMesh({blended, indices});
+        volumeDraw.mesh = &blendedMesh;
+        const auto mixed = sampleVolume(0.5f);
+        require(mixed[0] > 20 && mixed[2] > 20, "Vertex layer weights did not blend two layers");
+
+        // No occlusion reaches no further than full occlusion: the occluded quad is never brighter.
+        auto occluded = blended;
+        for (auto &vertex : occluded)
+            vertex.uv2[1] = 0.0f;
+        auto occludedMesh = renderer.CreateMesh({occluded, indices});
+        volumeDraw.mesh = &occludedMesh;
+        const auto dark = sampleVolume(0.5f);
+        require(dark[0] + dark[1] + dark[2] <= mixed[0] + mixed[1] + mixed[2], "Vertex occlusion brightened the surface");
     }
 
     // Region updates patch textures in place (IRenderDevice::UpdateTexture): the left weight texel now belongs to

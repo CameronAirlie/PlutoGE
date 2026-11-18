@@ -4,6 +4,7 @@
 #include "PlutoGE/scene/components/VolumeStampComponent.h"
 #include "PlutoGE/scene/volume/CaveDensity.h"
 #include "PlutoGE/scene/volume/TerrainVolume.h"
+#include "PlutoGE/scene/volume/VolumeFarProxy.h"
 #include "PlutoGE/scene/volume/TerrainVolumeCoupling.h"
 #include "PlutoGE/scene/volume/VolumeMeshQueue.h"
 
@@ -74,6 +75,13 @@ namespace PlutoGE::scene
         void SetCollision(bool collision);
         [[nodiscard]] const volume::TerrainCouplingSettings &GetCoupling() const { return m_coupling; }
         void SetCoupling(const volume::TerrainCouplingSettings &settings);
+        // How chunks are meshed: smooth surface nets, or dual contouring that keeps sharp rock edges. Changing it
+        // meshes every chunk again.
+        [[nodiscard]] volume::VolumeMesherKind GetMesher() const { return m_mesherKind; }
+        void SetMesher(volume::VolumeMesherKind kind);
+        // Crevice and cave darkness (occlusion carried by the chunk vertices).
+        [[nodiscard]] const volume::VolumeShadingSettings &GetShading() const { return m_shading; }
+        void SetShading(const volume::VolumeShadingSettings &shading);
         // What dug ground is made of below the surface (the base; stored chunks keep what they had).
         [[nodiscard]] const volume::TerrainGroundMaterials &GetGroundMaterials() const { return m_ground; }
         void SetGroundMaterials(const volume::TerrainGroundMaterials &materials);
@@ -86,6 +94,11 @@ namespace PlutoGE::scene
         volume::VolumeEditResult Apply(const volume::VolumeShape &worldShape, const volume::VolumeEdit &edit);
         // Applies a shape in the terrain's local space (the volume's own space).
         volume::VolumeEditResult ApplyLocal(const volume::VolumeShape &localShape, const volume::VolumeEdit &edit);
+        // The rock an edit with this world-space shape would remove (call before the edit), as a closed mesh in the
+        // volume's space with positions relative to `localOrigin`. For debris (SpawnTerrainDebris).
+        [[nodiscard]] volume::VolumeMesh MeshRemovedRock(const volume::VolumeShape &worldShape, glm::vec3 &localOrigin);
+        // What the chunk entities draw with (the layered terrain material, a material asset, or the terrain's own).
+        [[nodiscard]] render::Material *GetChunkMaterial() { return ChunkMaterial(); }
         // The volume (made on first use from the terrain beside the component), or null without one.
         volume::TerrainVolume *GetVolume();
         [[nodiscard]] const volume::TerrainVolume *GetVolume() const { return m_volume.get(); }
@@ -117,13 +130,21 @@ namespace PlutoGE::scene
         [[nodiscard]] Entity *GetChunkEntity(volume::VolumeChunkCoord chunk) const;
         [[nodiscard]] std::size_t GetChunkEntityCount() const { return m_chunkEntities.size(); }
 
+        // ---- distance (phase 9) --------------------------------------------------------------------------------------
+        // The volume as coarse ground over a coarser drawing of the same terrain (a world's overview of this tile): the
+        // cells it cuts there and the meshes that fill them, with voxels `step` times this volume's. Empty when there
+        // is nothing but plain ground. Built on the calling thread (a tile does it as it streams out).
+        [[nodiscard]] volume::VolumeFarProxy BuildFarProxy(std::shared_ptr<const volume::TerrainSurface> farSurface, int step);
+        // A terrain's drawn surface as the volume sees it (heights and strongest layers).
+        [[nodiscard]] static std::shared_ptr<const volume::TerrainSurface> SnapshotSurface(const TerrainComponent &terrain);
+
     private:
         TerrainComponent *FindTerrain() const;
         // Makes the volume (and reads its file) when there is a terrain; false otherwise.
         bool EnsureVolume();
         void ResetVolume();
         void LoadStoredChunks();
-        std::shared_ptr<const volume::TerrainSurface> SnapshotSurface(const TerrainComponent &terrain) const;
+
         // A stamp as the base applies it.
         struct StampInput
         {
@@ -151,6 +172,9 @@ namespace PlutoGE::scene
         [[nodiscard]] BaseInputs CurrentBaseInputs(const TerrainComponent &terrain) const;
         // The base for these inputs: the ground, with the caves carved out. Also snapshots the surface.
         std::shared_ptr<const volume::VolumeDensitySource> MakeBase(const TerrainComponent &terrain, const BaseInputs &inputs);
+        // The same base over another surface (a coarse one, for far proxies).
+        static std::shared_ptr<const volume::VolumeDensitySource> MakeBaseOver(const std::shared_ptr<const volume::TerrainSurface> &surface,
+                                                                              const BaseInputs &inputs);
         // Queues the meshes of the base's features (generated caves).
         void QueueBaseFeatures();
         // The steps of an update.
@@ -176,6 +200,8 @@ namespace PlutoGE::scene
         bool m_collision = true;
         volume::TerrainCouplingSettings m_coupling;
         volume::TerrainGroundMaterials m_ground;
+        volume::VolumeMesherKind m_mesherKind = volume::VolumeMesherKind::SurfaceNets;
+        volume::VolumeShadingSettings m_shading;
         int m_meshesPerFrame = 4;
 
         // The volume and what it is built from.

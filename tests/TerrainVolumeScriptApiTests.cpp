@@ -4,6 +4,7 @@
 #include "TerrainVolumeScriptApi.h"
 
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Material.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
@@ -64,6 +65,8 @@ try
     for (int i = 0; i < 33 * 33; ++i)
         heights += (i ? ",5" : "5");
     terrain->Deserialize({{"HeightSamples", scene::PropertyType::String, heights}});
+    render::Material groundMaterial;
+    terrain->SetMaterial(&groundMaterial);
     auto *volume = entity->CreateComponent<scene::TerrainVolumeComponent>();
     volume->SetChunkVoxels(8);
     auto *bare = scene.AddEntity(std::make_unique<scene::Entity>(scene::EntityConfig{.name = "Bare"}));
@@ -79,6 +82,10 @@ try
                 dig.mainMaterial == 0 && dig.rockAdded == 0.0f,
             "A scene-wide dig reports the rock it removed");
     // Painted, so it moves no rock for the edits below.
+    auto broken = Sphere(TerrainVolumeScriptOperation::Edit, 6, 5, 26, 1.5f);
+    broken.debrisPieces = 3;
+    Require(ControlTerrainVolume(&broken) == 1 && broken.result == 1 && broken.debrisSpawned > 0 && broken.debrisSpawned <= 3,
+            "A dig asking for debris breaks its rock into pieces");
     auto big = Sphere(TerrainVolumeScriptOperation::Edit, 16, 5, 16, 20, 2);
     big.material = 1;
     Require(ControlTerrainVolume(&big) == 1 && big.result == -1, "The default budget refuses a huge shape");

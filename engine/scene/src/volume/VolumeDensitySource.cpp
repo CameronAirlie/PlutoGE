@@ -79,6 +79,44 @@ namespace PlutoGE::scene::volume
         return result;
     }
 
+    CompositeDensity::CompositeDensity(std::vector<Layer> layers)
+    {
+        for (auto &layer : layers)
+            Add(std::move(layer.source), layer.operation);
+    }
+
+    void CompositeDensity::Add(std::shared_ptr<const VolumeDensitySource> source, Operation operation)
+    {
+        m_layers.push_back({std::move(source), operation});
+        m_envelopes.push_back(EnvelopeOf(m_layers.back()));
+    }
+
+    CompositeDensity::Envelope CompositeDensity::EnvelopeOf(const Layer &layer)
+    {
+        Envelope envelope;
+        if (!layer.source || layer.operation == Operation::Intersect)
+            return envelope; // an intersection changes everything outside its source
+        std::vector<VolumeBounds> features;
+        layer.source->AppendFeatureBounds(features);
+        if (features.empty())
+            return envelope;
+        envelope.bounded = true;
+        envelope.bounds = features.front();
+        for (const auto &feature : features)
+        {
+            envelope.bounds.min = glm::min(envelope.bounds.min, feature.min);
+            envelope.bounds.max = glm::max(envelope.bounds.max, feature.max);
+        }
+        return envelope;
+    }
+
+    bool CompositeDensity::Reaches(std::size_t layer, const glm::vec3 &low, const glm::vec3 &high, float reach) const
+    {
+        const auto &envelope = m_envelopes[layer];
+        return !envelope.bounded || (glm::all(glm::lessThanEqual(envelope.bounds.min - reach, high)) &&
+                                     glm::all(glm::greaterThanEqual(envelope.bounds.max + reach, low)));
+    }
+
     void CompositeDensity::AppendFeatureBounds(std::vector<VolumeBounds> &out) const
     {
         for (const auto &layer : m_layers)
@@ -95,11 +133,16 @@ namespace PlutoGE::scene::volume
             std::fill_n(out.begin(), count, VolumeSample{1.0e6f, 0});
             return;
         }
-        // Each layer fills the whole box (so its own bulk path runs), then combines into the result.
+        // Each layer fills the whole box (so its own bulk path runs), then combines into the result; layers that cannot
+        // reach the box are skipped.
         m_layers.front().source->Fill(grid, box, out);
         std::vector<VolumeSample> layerSamples(count);
+        const float reach = kDensityRangeVoxels * grid.voxelSize + grid.voxelSize;
+        const glm::vec3 low = grid.SamplePosition(box.first), high = grid.SamplePosition(box.Last());
         for (std::size_t index = 1; index < m_layers.size(); ++index)
         {
+            if (!Reaches(index, low, high, reach))
+                continue;
             m_layers[index].source->Fill(grid, box, layerSamples);
             for (std::size_t sample = 0; sample < count; ++sample)
                 out[sample] = Combine(out[sample], layerSamples[sample], m_layers[index].operation);

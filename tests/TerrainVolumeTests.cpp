@@ -5,6 +5,7 @@
 #include "PlutoGE/scene/volume/TerrainVolumeCoupling.h"
 #include "PlutoGE/scene/volume/CaveDensity.h"
 #include "PlutoGE/scene/volume/VolumeEditArchive.h"
+#include "PlutoGE/scene/volume/VolumeFarProxy.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 #include "PlutoGE/scene/volume/VolumeMesher.h"
 #include "PlutoGE/scene/volume/VolumeMeshQueue.h"
@@ -553,7 +554,14 @@ namespace
 
 namespace
 {
-    // Chunk meshes name each triangle's terrain layer in its vertices' uv.x (the shader's vertex layers).
+    // The layer a vertex weighs fully (VertexLayerEncoding).
+    VolumeMaterial OwnLayer(const render::MeshVertexData &vertex)
+    {
+        const auto layers = VertexLayerEncoding::UnpackLayers(vertex.uv[0]);
+        return vertex.uv[1] >= 1.0f ? layers[0] : vertex.uv2[0] >= 1.0f ? layers[1] : layers[2];
+    }
+
+    // Chunk meshes name each triangle's terrain layers in its vertices (the shader's vertex layers).
     void TriangleMaterials()
     {
         // Ground of layer 1 with a box of layer 3 pressed into it: the mesh has both materials and vertices where
@@ -577,19 +585,20 @@ namespace
         Require(mesh.mesh.indices.size() == triangles, "Encoding keeps every triangle");
         Require(mesh.mesh.vertices.size() > vertices && mesh.materials.size() == mesh.mesh.vertices.size(),
                 "Vertices shared across materials are copied, materials follow the vertices");
-        bool sawGround = false, sawPaint = false;
+        bool sawBlend = false;
         for (std::size_t t = 0; t < triangles; t += 3)
         {
-            const float layer = mesh.mesh.vertices[mesh.mesh.indices[t]].uv[0];
+            const float packed = mesh.mesh.vertices[mesh.mesh.indices[t]].uv[0];
             for (int corner = 1; corner < 3; ++corner)
-                Require(mesh.mesh.vertices[mesh.mesh.indices[t + corner]].uv[0] == layer, "A triangle has one layer");
-            Require(layer == 1.0f || layer == 3.0f, "The layer is one of the rock's materials");
-            sawGround = sawGround || layer == 1.0f;
-            sawPaint = sawPaint || layer == 3.0f;
+                Require(mesh.mesh.vertices[mesh.mesh.indices[t + corner]].uv[0] == packed, "A triangle's corners name the same layers");
+            const auto layers = VertexLayerEncoding::UnpackLayers(packed);
+            for (const auto layer : layers)
+                Require(layer == 1 || layer == 3, "The layers are the rock's materials");
+            sawBlend = sawBlend || layers[0] != layers[1];
         }
-        Require(sawGround && sawPaint, "Both materials keep triangles");
+        Require(sawBlend, "Triangles where the materials meet blend them");
         for (std::size_t v = 0; v < mesh.mesh.vertices.size(); ++v)
-            Require(mesh.mesh.vertices[v].uv[0] == static_cast<float>(mesh.materials[v]), "uv.x is the vertex's material");
+            Require(OwnLayer(mesh.mesh.vertices[v]) == mesh.materials[v], "Each vertex weighs its own material fully");
 
         // Encoding twice changes nothing more.
         const auto encoded = mesh.mesh.vertices.size();
@@ -786,6 +795,106 @@ namespace
         Require(features.size() == 1 && features[0].min == glm::vec3(-1.0f, 1.0f, -1.0f), "A shape layer is a feature");
     }
 
+    // Phase 8: dual contouring keeps a box's corners that surface nets round off, closes surfaces as surface nets do,
+    // and both carry occlusion: open ground reads open, a crevice reads darker, depth under the terrain darker still.
+    void DualContouring()
+    {
+        const auto grid = SmallGrid();
+        TerrainVolume volume(grid, ConstantDensity::Air());
+        const BoxShape box({0.2f, 0.15f, 0.1f}, {1.6f, 1.3f, 1.45f});
+        volume.Apply(box, {VolumeEditMode::Add, 2});
+        const auto worst = [&](const VolumeMesher &mesher) {
+            float error = 0.0f;
+            Soup soup;
+            for (int z = -1; z <= 0; ++z)
+                for (int y = -1; y <= 0; ++y)
+                    for (int x = -1; x <= 0; ++x)
+                    {
+                        const auto mesh = MeshVolumeChunk(volume, {x, y, z}, mesher);
+                        for (const auto &vertex : mesh.mesh.vertices)
+                            error = std::max(error, std::abs(box.Distance(Position(vertex) + grid.ChunkOrigin({x, y, z}))));
+                        soup.Add(mesh, grid.ChunkOrigin({x, y, z}));
+                    }
+            RequireClosedAndConsistent(soup, "The box meshed chunk by chunk");
+            return error;
+        };
+        const float nets = worst(SurfaceNetsMesher()), contoured = worst(DualContouringMesher());
+        Require(contoured < nets * 0.6f, "Dual contouring keeps the corners: " + std::to_string(contoured) + " vs " +
+                                                                  std::to_string(nets));
+        Require(MakeVolumeMesher(VolumeMesherKind::DualContouring)->Apron() == 2 &&
+                    dynamic_cast<const DualContouringMesher *>(MakeVolumeMesher(VolumeMesherKind::DualContouring).get()),
+                "Meshers by kind");
+
+        // Occlusion: flat ground is open; the floor of a narrow slot is not.
+        TerrainVolume ground(grid, FlatGround(2.0f));
+        ground.Apply(BoxShape({2.0f, 1.25f, 2.0f}, {0.3f, 0.75f, 2.0f}), {VolumeEditMode::Subtract});
+        const auto mesh = MeshVolumeChunk(ground, {0, 0, 0}, SurfaceNetsMesher());
+        Require(mesh.occlusion.size() == mesh.mesh.vertices.size(), "Every vertex has an occlusion");
+        float open = 0.0f, slot = 1.0f;
+        for (std::size_t index = 0; index < mesh.mesh.vertices.size(); ++index)
+        {
+            const auto position = Position(mesh.mesh.vertices[index]);
+            if (position.y > 1.9f && std::abs(position.x - 2.0f) > 1.5f)
+                open = std::max(open, mesh.occlusion[index]);
+            if (position.y < 1.0f && std::abs(position.x - 2.0f) < 0.5f)
+                slot = std::min(slot, mesh.occlusion[index]);
+        }
+        Require(open > 0.95f && slot < 0.8f, "Open ground reads open, a slot's floor darker");
+
+        auto buried = mesh;
+        auto surface = std::make_shared<const TerrainSurface>(9, 9, 1.0f, std::vector<float>(81, 6.0f)); // 4 m above the ground
+        ApplyBurialOcclusion(buried, glm::vec3(0.0f), *surface, {.burialDepth = 4.0f, .buriedOpenness = 0.1f});
+        float before = 0.0f, after = 0.0f;
+        for (std::size_t index = 0; index < mesh.occlusion.size(); ++index)
+            before += mesh.occlusion[index], after += buried.occlusion[index];
+        Require(after < before * 0.5f, "Ground deep under the surface darkens");
+        EncodeTriangleMaterials(buried);
+        Require(buried.mesh.vertices.front().uv2[1] == buried.occlusion.front(), "Occlusion reaches uv2.y");
+    }
+
+    // Debris: the rock a dig would remove is one closed mesh; air removes nothing.
+    void RemovedRock()
+    {
+        const auto grid = SmallGrid();
+        TerrainVolume volume(grid, FlatGround(2.0f, 4));
+        const SphereShape dig({1.2f, 2.0f, 1.3f}, 1.5f);
+        const auto removed = MeshRemovedRock(volume, dig, SurfaceNetsMesher(), {1.2f, 2.0f, 1.3f});
+        Require(!removed.Empty() && removed.materials.size() == removed.mesh.vertices.size(), "A dig into the ground removes rock");
+        for (const auto material : removed.materials)
+            Require(material == 4, "The removed rock keeps its material");
+        Soup soup;
+        soup.Add(removed, {1.2f, 2.0f, 1.3f});
+        RequireClosedAndConsistent(soup, "The removed rock");
+        Require(MeshRemovedRock(volume, SphereShape({1.0f, 8.0f, 1.0f}, 1.0f), SurfaceNetsMesher(), {}).Empty(), "Air removes nothing");
+        Require(volume.GetStoredChunkCount() == 0, "Measuring the removed rock edits nothing");
+    }
+
+    // Phase 9: a far proxy cuts the coarse surface where the volume moved the ground and draws coarse ground there.
+    void FarProxies()
+    {
+        VolumeGrid grid;
+        grid.voxelSize = 0.5f;
+        grid.chunkVoxels = 16;
+        auto fineSurface = std::make_shared<const TerrainSurface>(33, 33, 1.0f, std::vector<float>(33 * 33, 2.0f));
+        auto farSurface = std::make_shared<const TerrainSurface>(5, 5, 8.0f, std::vector<float>(25, 2.0f));
+        TerrainVolume volume(grid, MakeTerrainDensity(fineSurface));
+        VolumeFarProxySettings settings;
+        settings.step = 4;
+        const auto plain = BuildVolumeFarProxy(volume, MakeTerrainDensity(farSurface), *farSurface, SurfaceNetsMesher(), settings);
+        Require(plain.Empty(), "Untouched ground needs no far proxy");
+
+        volume.Apply(SphereShape({20.0f, 2.0f, 12.0f}, 3.0f), {VolumeEditMode::Subtract});
+        const auto proxy = BuildVolumeFarProxy(volume, MakeTerrainDensity(farSurface), *farSurface, SurfaceNetsMesher(), settings);
+        Require(proxy.holes.GetCellsX() == 4 && proxy.holes.IsHole(2, 1), "The pit's coarse cell is cut");
+        Require(proxy.holes.GetHoleCount() <= 4, "Only the cells around the pit");
+        Require(!proxy.pieces.empty(), "Coarse ground fills the cut cell");
+        float lowest = 1.0e9f;
+        for (const auto &piece : proxy.pieces)
+            for (const auto &vertex : piece.mesh.mesh.vertices)
+                lowest = std::min(lowest, piece.origin.y + vertex.position[1]);
+        Require(lowest < 0.5f, "The coarse pit goes down");
+    }
+
     void EditArchives()
     {
         VolumeEditArchive::Entries entries;
@@ -836,6 +945,9 @@ int main()
         TerrainEdges();
         GeneratedCaves();
         StampPieces();
+        DualContouring();
+        RemovedRock();
+        FarProxies();
     }
     catch (const std::exception &error)
     {

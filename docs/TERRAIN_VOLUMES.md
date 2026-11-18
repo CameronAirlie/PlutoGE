@@ -28,6 +28,9 @@ Volume** button in the Terrain Editor (**Sculpt > Dig**).
 | Volume File | Where the dug ground is saved. A world sets its tiles' files (`tile_x_z_volume.plutovolume` beside the heights). The Dig tool names one for a lone terrain. |
 | Collision | Chunks get mesh colliders (on by default). |
 | Meshes Per Frame | Chunks meshed and applied each frame. |
+| Mesher | Surface Nets (smooth) or Dual Contouring (keeps sharp corners and cut faces). Changing it meshes every chunk again. |
+| Burial Depth | Metres under the surface at which dug and cave ground is as dark as it gets (6; 0 turns it off). |
+| Buried Openness | How much ambient light the deepest ground still gets, 0..1 (0.15). |
 | Rock Layer | The terrain layer that dug ground shows below Rock Depth (-1 keeps the surface's layer all the way down). |
 | Rock Depth | Metres below the surface where the rock layer starts (1). |
 | Breach Tolerance | Voxels the surface must move before the terrain's cells are cut there (0.25). |
@@ -72,12 +75,28 @@ TerrainVolumes.Edit(TerrainVolumeShape.Box(centre, halfExtents, rotation), Terra
 - The ground changes over the next few frames. `TerrainVolumes.Flush()` lands everything at once.
 - `TerrainVolumes.IsSupported` is false on a host from before terrain volumes, and then edits do nothing.
 
+**Debris.** `TerrainVolumes.Dig(point, radius, debrisPieces: 4)` breaks the rock the dig removed into up to that many
+physics pieces.
+- The pieces are tagged `Debris`, look like the layer most of the rock was, and are returned in
+  `TerrainVolumeEditResult.Debris`.
+- They are never saved. Settle them and clear them yourself (SurvivalGame lets them lie a few seconds and then sinks
+  them).
+
+**Multiplayer.** Edits are deterministic, so peers that apply the same edits in the same order have the same ground.
+- `TerrainVolumeEdit` is an edit as data: 72 bytes through `ToBytes` / `TryRead`, applied with
+  `TerrainVolumes.Apply`.
+- `TerrainVolumeServerReplicator(server)` applies edits and sends them on. A joining client first gets the whole state.
+  Clients ask with `TerrainVolumeClientReplicator(client).Request(edit)`, and the server's `Accept` decides.
+- Debris is made on each machine and never sent.
+
 **Save games.** `TerrainVolumes.CaptureEdits()` returns every terrain's edits as bytes, and
 `TerrainVolumes.RestoreEdits(bytes)` puts them back. A terrain the bytes do not name goes back to its file.
 `TerrainVolumes.ClearEdits()` sends every terrain back to its files, for a new game.
 
 While the game runs, a terrain world keeps the edits of tiles that stream out and gives them back when the tiles return.
 Play never writes the tiles' files.
+- It also remembers the foliage digging removed from a tile, so those plants stay gone after the tile regenerates them.
+- Both go into the capture.
 
 From C++, the same calls are in `PlutoGE/scene/TerrainVolumeEditing.h`: `EditTerrainVolumes`, `FlushTerrainVolumes`,
 `CaptureTerrainVolumeEdits` and `RestoreTerrainVolumeEdits`. For one terrain only, use
@@ -112,11 +131,23 @@ Add **Rendering > Volume Stamp** to any entity, and its shape changes the terrai
 
 Without a Material Asset, chunks draw with the terrain's layers through the terrain shader:
 
-- Each triangle shows one layer (the layer of the rock it was cut from).
+- Each vertex carries the layer of the rock it was cut from, and triangles blend up to three layers, so layers meet in
+  soft seams.
 - Maps are projected along the three axes, so walls and overhangs do not smear.
 - There is no macro albedo in the distance.
+- Crevices and ground deep under the surface are darker: each vertex's openness, and Burial Depth / Buried Openness,
+  multiply its ambient light.
+- Fog inside a cave is still lit as outside, unless an Ambient Light Volume is baked there.
 
-Where two layers meet, the edge is hard. Blending is planned (phase 8).
+## Far away
+
+A terrain world draws far tiles from its overview, which would close cave mouths and pits. When a tile with dug ground
+or caves streams out, it leaves a **far proxy**:
+- the overview is cut where the ground opens;
+- coarse meshes fill those cuts, with voxels **Far Volume Voxel** metres across (a TerrainWorld setting; 2 by default,
+  0 off).
+
+A tile shows its caves far away only once it has been loaded, because the proxy is made as the tile streams out.
 
 ## What changes in the scene
 
@@ -134,7 +165,7 @@ Where two layers meet, the edge is hard. Blending is planned (phase 8).
 
 ## Limits
 
-- Foliage removed by digging returns when a procedural tile regenerates.
+- Foliage removed by digging from a lone terrain is not part of `CaptureEdits` (a world's tiles are).
 - Sculpting a terrain later moves its unedited ground; dug chunks keep the shape they had.
-- Cave mouths close up in the distance, where the world's overview draws instead of the tile (phase 9).
 - Painting the terrain remeshes its volume's chunks shortly after the strokes stop.
+- A tile builds its far proxy on the main thread as it streams out.

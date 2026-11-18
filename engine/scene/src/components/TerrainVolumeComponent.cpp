@@ -134,6 +134,33 @@ namespace PlutoGE::scene
         m_holesVolumeRevision = kHolesStale;
     }
 
+    void TerrainVolumeComponent::SetMesher(volume::VolumeMesherKind kind)
+    {
+        if (kind == m_mesherKind)
+            return;
+        m_mesherKind = kind;
+        // Results queued for the old mesher are dropped; every chunk meshes again with the new one.
+        m_queue = std::make_unique<volume::VolumeMeshQueue>(volume::MakeVolumeMesher(kind));
+        if (m_volume)
+        {
+            m_volume->SetMeshApron(m_queue->GetMesher().Apron());
+            for (const auto &[chunk, id] : m_chunkEntities)
+                m_toMesh.insert(chunk);
+        }
+    }
+
+    void TerrainVolumeComponent::SetShading(const volume::VolumeShadingSettings &shading)
+    {
+        auto clamped = shading;
+        clamped.burialDepth = std::max(clamped.burialDepth, 0.0f);
+        clamped.buriedOpenness = std::clamp(clamped.buriedOpenness, 0.0f, 1.0f);
+        if (clamped == m_shading)
+            return;
+        m_shading = clamped;
+        for (const auto &[chunk, id] : m_chunkEntities)
+            m_toMesh.insert(chunk);
+    }
+
     void TerrainVolumeComponent::SetGroundMaterials(const volume::TerrainGroundMaterials &materials)
     {
         auto clamped = materials;
@@ -155,6 +182,9 @@ namespace PlutoGE::scene
             {"SurfaceTolerance", PropertyType::Float, std::to_string(m_coupling.surfaceTolerance)},
             {"OverlapCells", PropertyType::Int, std::to_string(m_coupling.overlapCells)},
             {"OverlapSink", PropertyType::Float, std::to_string(m_coupling.overlapSink)},
+            {"Mesher", PropertyType::Enum, std::to_string(static_cast<int>(m_mesherKind)), {"Surface Nets", "Dual Contouring"}},
+            {"BurialDepth", PropertyType::Float, std::to_string(m_shading.burialDepth)},
+            {"BuriedOpenness", PropertyType::Float, std::to_string(m_shading.buriedOpenness)},
             {"RockLayer", PropertyType::Int, std::to_string(m_ground.rockLayer)},
             {"RockDepth", PropertyType::Float, std::to_string(m_ground.rockDepth)},
         };
@@ -164,6 +194,7 @@ namespace PlutoGE::scene
     {
         auto coupling = m_coupling;
         auto ground = m_ground;
+        auto shading = m_shading;
         for (const auto &property : properties)
         {
             const auto &text = property.Text();
@@ -187,6 +218,12 @@ namespace PlutoGE::scene
                 coupling.overlapCells = std::clamp(ParseInt(text, coupling.overlapCells), 0, 4);
             else if (property.name == "OverlapSink")
                 coupling.overlapSink = std::max(ParseFloat(text, coupling.overlapSink), 0.0f);
+            else if (property.name == "Mesher")
+                SetMesher(static_cast<volume::VolumeMesherKind>(std::clamp(ParseInt(text, static_cast<int>(m_mesherKind)), 0, 1)));
+            else if (property.name == "BurialDepth")
+                shading.burialDepth = ParseFloat(text, shading.burialDepth);
+            else if (property.name == "BuriedOpenness")
+                shading.buriedOpenness = ParseFloat(text, shading.buriedOpenness);
             else if (property.name == "RockLayer")
                 ground.rockLayer = ParseInt(text, ground.rockLayer);
             else if (property.name == "RockDepth")
@@ -194,6 +231,7 @@ namespace PlutoGE::scene
         }
         SetCoupling(coupling);
         SetGroundMaterials(ground);
+        SetShading(shading);
     }
 
     // ---- editing -------------------------------------------------------------------------------------------------------
@@ -219,6 +257,18 @@ namespace PlutoGE::scene
         if (auto *terrain = FindTerrain())
             FollowBase(*terrain, true);
         return m_volume->Apply(localShape, edit);
+    }
+
+    volume::VolumeMesh TerrainVolumeComponent::MeshRemovedRock(const volume::VolumeShape &worldShape, glm::vec3 &localOrigin)
+    {
+        const auto *owner = GetOwner();
+        if (!owner || !EnsureVolume())
+            return {};
+        if (auto *terrain = FindTerrain())
+            FollowBase(*terrain, true);
+        const volume::TransformedShape local(worldShape, owner->GetWorldTransform());
+        localOrigin = (local.BoundsMin() + local.BoundsMax()) * 0.5f;
+        return volume::MeshRemovedRock(*m_volume, local, m_queue->GetMesher(), localOrigin);
     }
 
     volume::TerrainVolume *TerrainVolumeComponent::GetVolume()
@@ -342,7 +392,7 @@ namespace PlutoGE::scene
         return owner ? owner->GetComponent<TerrainComponent>() : nullptr;
     }
 
-    std::shared_ptr<const volume::TerrainSurface> TerrainVolumeComponent::SnapshotSurface(const TerrainComponent &terrain) const
+    std::shared_ptr<const volume::TerrainSurface> TerrainVolumeComponent::SnapshotSurface(const TerrainComponent &terrain)
     {
         const int width = terrain.GetWidth(), depth = terrain.GetDepth();
         std::vector<float> heights(static_cast<std::size_t>(width) * depth);
@@ -402,14 +452,20 @@ namespace PlutoGE::scene
     std::shared_ptr<const volume::VolumeDensitySource> TerrainVolumeComponent::MakeBase(const TerrainComponent &terrain, const BaseInputs &inputs)
     {
         m_surface = SnapshotSurface(terrain);
-        auto ground = volume::MakeTerrainDensity(m_surface, inputs.ground);
+        return MakeBaseOver(m_surface, inputs);
+    }
+
+    std::shared_ptr<const volume::VolumeDensitySource> TerrainVolumeComponent::MakeBaseOver(const std::shared_ptr<const volume::TerrainSurface> &surface,
+                                                                                         const BaseInputs &inputs)
+    {
+        auto ground = volume::MakeTerrainDensity(surface, inputs.ground);
         if (!inputs.caves.enabled && inputs.stamps.empty())
             return ground;
         auto base = std::make_shared<volume::CompositeDensity>();
         base->Add(std::move(ground), volume::CompositeDensity::Operation::Union);
         if (inputs.caves.enabled)
         {
-            const glm::vec3 extent(m_surface->GetCellsX() * m_surface->GetCellSize(), 0.0f, m_surface->GetCellsZ() * m_surface->GetCellSize());
+            const glm::vec3 extent(surface->GetCellsX() * surface->GetCellSize(), 0.0f, surface->GetCellsZ() * surface->GetCellSize());
             const glm::vec3 low(0.0f, inputs.caves.altitude.x - inputs.worldOffset.y - 64.0f, 0.0f);
             const glm::vec3 high(extent.x, inputs.caves.altitude.y - inputs.worldOffset.y + 64.0f, extent.z);
             base->Add(std::make_shared<volume::CaveDensity>(inputs.caves, inputs.caveSeed, inputs.worldOffset, glm::min(low, high),
@@ -436,6 +492,22 @@ namespace PlutoGE::scene
             }
         }
         return base;
+    }
+
+    volume::VolumeFarProxy TerrainVolumeComponent::BuildFarProxy(std::shared_ptr<const volume::TerrainSurface> farSurface, int step)
+    {
+        if (!farSurface || !farSurface->Valid() || !EnsureVolume())
+            return {};
+        if (auto *terrain = FindTerrain())
+            FollowBase(*terrain, true);
+        // Plain ground draws itself far away: only edits and features need a proxy.
+        if (m_volume->GetStoredChunkCount() == 0 && m_baseInputs.stamps.empty() && !m_baseInputs.caves.enabled)
+            return {};
+        volume::VolumeFarProxySettings settings;
+        settings.step = step;
+        settings.coupling = m_coupling;
+        settings.shading = m_shading;
+        return volume::BuildVolumeFarProxy(*m_volume, MakeBaseOver(farSurface, m_baseInputs), *farSurface, m_queue->GetMesher(), settings);
     }
 
     void TerrainVolumeComponent::QueueBaseFeatures()
@@ -598,9 +670,10 @@ namespace PlutoGE::scene
         if (m_toMesh.empty())
             return;
         // Fitted against the holes that will be on the terrain when these meshes land.
-        auto finish = [surface = m_surface, holes = m_pendingHoles ? m_pendingHoles : m_holes, coupling = m_coupling,
+        auto finish = [surface = m_surface, holes = m_pendingHoles ? m_pendingHoles : m_holes, coupling = m_coupling, shading = m_shading,
                        grid = m_volume->GetGrid()](volume::VolumeChunkCoord chunk, volume::VolumeMesh &mesh) {
             volume::FitVolumeMeshToTerrain(mesh, grid.ChunkOrigin(chunk), *surface, *holes, coupling, grid.voxelSize);
+            volume::ApplyBurialOcclusion(mesh, grid.ChunkOrigin(chunk), *surface, shading);
             volume::EncodeTriangleMaterials(mesh);
         };
         for (std::size_t scheduled = 0; scheduled < budget && !m_toMesh.empty(); ++scheduled)

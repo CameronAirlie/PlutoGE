@@ -12,8 +12,9 @@
 // the albedo fetched for height blending is reused for colour. Layers with anti-tiling fetch each map twice.
 //
 // Two switches (terrainMapping) let other surfaces share the layers:
-// - weights: the weight maps over the terrain's UVs, or one layer per triangle given by the vertex's uv.x (terrain
-//   volume chunks, docs/dev/TERRAIN_VOLUMES_PLAN.md phase 4; they have no terrain UVs and no macro albedo).
+// - weights: the weight maps over the terrain's UVs, or vertex layers (terrain volume chunks; no terrain UVs, no macro
+//   albedo): uv.x packs the triangle's three layers (a + 256 b + 65536 c), uv.y and uv2.x weigh a and b (c takes the
+//   rest), and uv2.y is the vertex's occlusion (scene::volume::VertexLayerEncoding).
 // - projection: top-down (x and z), or triplanar (each map projected along the three axes and blended by the
 //   normal), for cave walls, overhangs and cliffs a top-down projection would smear.
 //
@@ -43,6 +44,7 @@ struct TerrainSurface
     float3 normal; // world space
     float roughness;
     float metallic;
+    float occlusion; // multiplies the material's ambient occlusion (vertex layers carry one; otherwise 1)
 };
 
 // Below this weight a layer is skipped: it cannot change an 8-bit result.
@@ -220,10 +222,59 @@ TerrainSurface terrainLayerSurface(float3 albedo, float3 normal, float roughness
     surface.normal = normalize(normal);
     surface.roughness = clamp(roughness, 0.04, 1.0);
     surface.metallic = saturate(metallic);
+    surface.occlusion = 1.0;
     return surface;
 }
 
-TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float3 worldDx, float3 worldDy,
+// Vertex layers: up to three layers named by the triangle, weighed per vertex, so seams between layers blend.
+TerrainSurface sampleVertexLayers(float2 terrainUv, float2 terrainUv2, TerrainShadingFrame frame, uint count)
+{
+    const uint packed = uint(max(terrainUv.x, 0.0) + 0.5);
+    const uint last = max(count, 1u) - 1u;
+    uint layers[3] = { min(packed & 255u, last), min((packed >> 8) & 255u, last), min((packed >> 16) & 255u, last) };
+    float weights[3] = { saturate(terrainUv.y), saturate(terrainUv2.x), 0.0 };
+    weights[2] = saturate(1.0 - weights[0] - weights[1]);
+    // The same layer in two slots counts once.
+    [unroll] for (uint slot = 1; slot < 3; ++slot)
+        [unroll] for (uint earlier = 0; earlier < slot; ++earlier)
+            if (layers[slot] == layers[earlier] && weights[slot] > 0.0)
+            {
+                weights[earlier] += weights[slot];
+                weights[slot] = 0.0;
+            }
+
+    float3 albedo = 0.0;
+    float3 normal = 0.0;
+    float roughness = 0.0;
+    float metallic = 0.0;
+    float total = 0.0;
+    [unroll] for (uint slot = 0; slot < 3; ++slot)
+    {
+        if (weights[slot] <= kTerrainMinimumWeight)
+            continue;
+        const uint layer = layers[slot];
+        const float4 normalRoughness = sampleTerrainLayerNormal(layer, frame);
+        albedo += sampleTerrainLayerAlbedo(layer, frame).rgb * terrainTint[layer].rgb * weights[slot];
+        normal += normalRoughness.xyz * weights[slot];
+        roughness += normalRoughness.a * terrainTiling[layer].z * weights[slot];
+        metallic += terrainTiling[layer].w * weights[slot];
+        total += weights[slot];
+    }
+    if (total <= 0.0)
+    {
+        const float4 normalRoughness = sampleTerrainLayerNormal(layers[0], frame);
+        albedo = sampleTerrainLayerAlbedo(layers[0], frame).rgb * terrainTint[layers[0]].rgb;
+        normal = normalRoughness.xyz;
+        roughness = normalRoughness.a * terrainTiling[layers[0]].z;
+        metallic = terrainTiling[layers[0]].w;
+        total = 1.0;
+    }
+    TerrainSurface surface = terrainLayerSurface(albedo / total, normal, roughness / total, metallic / total);
+    surface.occlusion = saturate(terrainUv2.y);
+    return surface;
+}
+
+TerrainSurface sampleTerrainLayers(float2 terrainUv, float2 terrainUv2, float3 worldPosition, float3 worldDx, float3 worldDy,
                                    float3 geometricNormal, float4 worldTangent)
 {
     const uint count = min(uint(terrainParameters.x + 0.5), kTerrainMaxLayers);
@@ -238,13 +289,13 @@ TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float
     frame.tangent = normalize(worldTangent.xyz);
     frame.bitangent = normalize(cross(geometricNormal, frame.tangent)) * worldTangent.w;
 
-    // Fast path: one layer. Vertex layers always are; most of a painted terrain lies inside one layer too (open
-    // dust, rock faces), where no blending is needed.
+    if (terrainVertexLayers())
+        return sampleVertexLayers(terrainUv, terrainUv2, frame, count);
+
+    // Fast path: one layer. Most of a painted terrain lies inside one layer (open dust, rock faces), where no
+    // blending is needed.
     uint only = kTerrainMaxLayers;
     float4 weights0 = 0.0, weights1 = 0.0;
-    if (terrainVertexLayers())
-        only = min(uint(max(terrainUv.x, 0.0) + 0.5), max(count, 1u) - 1u);
-    else
     {
         // Weights change slowly across the terrain; the base level avoids blurring painted edges at a distance.
         weights0 = terrainWeights0.SampleLevel(terrainUv, 0.0);

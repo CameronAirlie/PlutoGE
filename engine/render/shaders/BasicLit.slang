@@ -1591,12 +1591,14 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const float terrainDetail = terrainDetailAmount(distance(cameraPositionAmbient.xyz, input.worldPosition));
     if (terrainDetail > 0.0)
     {
-        const TerrainSurface terrain = sampleTerrainLayers(input.uv, input.worldPosition, derivatives.worldDx, derivatives.worldDy,
+        const TerrainSurface terrain = sampleTerrainLayers(input.uv, input.uv2, input.worldPosition, derivatives.worldDx, derivatives.worldDy,
                                                            normalize(input.worldNormal), input.worldTangent);
         sampledColor = float4(lerp(sampledBaseColor.rgb, terrain.albedo, terrainDetail) * baseColor.rgb, 1.0);
         normal = normalize(lerp(normal, terrain.normal, terrainDetail));
         materialMetallic = lerp(materialMetallic, terrain.metallic, terrainDetail);
         materialRoughness = lerp(materialRoughness, terrain.roughness, terrainDetail);
+        // Vertex layers carry occlusion (crevices, cave depth): it darkens ambient light like an occlusion map.
+        materialOcclusion *= terrain.occlusion;
     }
 #endif
     // Material emission illuminates the albedo texture. An explicit graph

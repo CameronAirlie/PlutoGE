@@ -283,6 +283,7 @@ namespace PlutoGE::scene::volume
         std::vector<unsigned int> remap(vertices.size(), unused);
         render::MeshData fitted;
         std::vector<VolumeMaterial> materials;
+        std::vector<float> occlusion;
         mesh.boundsMin = glm::vec3(std::numeric_limits<float>::max());
         mesh.boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
         for (auto &index : kept)
@@ -303,6 +304,7 @@ namespace PlutoGE::scene::volume
                 mesh.boundsMax = glm::max(mesh.boundsMax, position);
                 fitted.vertices.push_back(vertex);
                 materials.push_back(index < mesh.materials.size() ? mesh.materials[index] : VolumeMaterial{0});
+                occlusion.push_back(index < mesh.occlusion.size() ? mesh.occlusion[index] : 1.0f);
             }
             index = remap[index];
         }
@@ -311,6 +313,26 @@ namespace PlutoGE::scene::volume
             mesh.boundsMin = mesh.boundsMax = glm::vec3(0.0f);
         mesh.mesh = std::move(fitted);
         mesh.materials = std::move(materials);
+        mesh.occlusion = std::move(occlusion);
+    }
+
+    void ApplyBurialOcclusion(VolumeMesh &mesh, const glm::vec3 &meshOrigin, const TerrainSurface &surface, const VolumeShadingSettings &settings)
+    {
+        if (mesh.Empty() || !surface.Valid() || !(settings.burialDepth > 0.0f))
+            return;
+        mesh.occlusion.resize(mesh.mesh.vertices.size(), 1.0f);
+        const float floor = std::clamp(settings.buriedOpenness, 0.0f, 1.0f);
+        for (std::size_t index = 0; index < mesh.mesh.vertices.size(); ++index)
+        {
+            const auto &position = mesh.mesh.vertices[index].position;
+            const glm::vec3 point = meshOrigin + glm::vec3(position[0], position[1], position[2]);
+            const auto height = surface.ExtendedHeight(point.x, point.z);
+            if (!height)
+                continue;
+            // Depth under the ground stands in for how little sky a point sees: a cave's walls darken with depth.
+            const float buried = std::clamp((*height - point.y) / settings.burialDepth, 0.0f, 1.0f);
+            mesh.occlusion[index] *= glm::mix(1.0f, floor, buried * buried * (3.0f - 2.0f * buried));
+        }
     }
 
     std::vector<glm::ivec2> ChangedCells(const TerrainHoleMask &before, const TerrainHoleMask &after)

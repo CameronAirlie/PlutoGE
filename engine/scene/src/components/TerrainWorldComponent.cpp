@@ -8,10 +8,13 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainVolumeComponent.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/volume/VolumeEditArchive.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 
@@ -199,6 +202,7 @@ namespace PlutoGE::scene
             {"OverviewSkirtDepth", PropertyType::Float, std::to_string(m_overviewSkirtDepth)},
             {"LoadRadius", PropertyType::Float, std::to_string(m_streaming.loadRadius)},
             {"UnloadRadius", PropertyType::Float, std::to_string(m_streaming.unloadRadius)},
+            {"FarVolumeVoxel", PropertyType::Float, std::to_string(m_farVolumeVoxel)},
             {"MaxLoadsInFlight", PropertyType::Int, std::to_string(m_streaming.maxLoadsInFlight)},
             {"ActivationsPerFrame", PropertyType::Int, std::to_string(m_streaming.activationsPerFrame)},
             {"StreamInEditor", PropertyType::Bool, m_streamInEditor ? "true" : "false"},
@@ -227,6 +231,7 @@ namespace PlutoGE::scene
             else if (property.name == "OverviewSkirtDepth") overviewSkirt = std::max(ParseFloat(property, overviewSkirt), 0.0f);
             else if (property.name == "LoadRadius") m_streaming.loadRadius = std::max(ParseFloat(property, m_streaming.loadRadius), 0.0f);
             else if (property.name == "UnloadRadius") m_streaming.unloadRadius = std::max(ParseFloat(property, m_streaming.unloadRadius), 0.0f);
+            else if (property.name == "FarVolumeVoxel") SetFarVolumeVoxel(ParseFloat(property, m_farVolumeVoxel));
             else if (property.name == "MaxLoadsInFlight") m_streaming.maxLoadsInFlight = std::clamp(ParseInt(property, m_streaming.maxLoadsInFlight), 1, 64);
             else if (property.name == "ActivationsPerFrame") m_streaming.activationsPerFrame = std::clamp(ParseInt(property, m_streaming.activationsPerFrame), 1, 64);
             else if (property.name == "StreamInEditor") m_streamInEditor = property.value == "true" || property.value == "1";
@@ -748,7 +753,11 @@ namespace PlutoGE::scene
         auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
         auto *entity = scene ? scene->FindEntityByID(tile.entity) : nullptr;
         if (auto *procedural = entity ? entity->GetComponent<ProceduralTerrainComponent>() : nullptr)
+        {
             procedural->Apply(result);
+            if (const auto coord = FindTile(*entity))
+                ApplySuppressedFoliage(*coord, *entity);
+        }
     }
 
     void TerrainWorldComponent::Abandon(Tile &tile)
@@ -768,7 +777,10 @@ namespace PlutoGE::scene
         if (tile.entity && scene)
         {
             if (auto *entity = scene->FindEntityByID(tile.entity))
+            {
                 KeepVolumeEdits(coord, *entity);
+                BuildFarProxy(coord, *entity);
+            }
             scene->DestroyEntity(tile.entity);
             InvalidateNavigation(coord);
         }
@@ -809,6 +821,32 @@ namespace PlutoGE::scene
     namespace
     {
         std::string TileKey(TerrainTileCoord tile) { return std::to_string(tile.x) + "," + std::to_string(tile.z); }
+        constexpr std::string_view FoliagePrefix = "foliage:";
+
+        std::vector<std::uint8_t> EncodeIds(const std::set<std::uint64_t> &ids)
+        {
+            std::vector<std::uint8_t> bytes;
+            bytes.reserve(ids.size() * 8);
+            for (const auto id : ids)
+                for (int shift = 0; shift < 64; shift += 8)
+                    bytes.push_back(static_cast<std::uint8_t>(id >> shift));
+            return bytes;
+        }
+
+        std::optional<std::set<std::uint64_t>> DecodeIds(std::span<const std::uint8_t> bytes)
+        {
+            if (bytes.size() % 8 != 0)
+                return std::nullopt;
+            std::set<std::uint64_t> ids;
+            for (std::size_t at = 0; at < bytes.size(); at += 8)
+            {
+                std::uint64_t id = 0;
+                for (int index = 0; index < 8; ++index)
+                    id |= static_cast<std::uint64_t>(bytes[at + index]) << (8 * index);
+                ids.insert(id);
+            }
+            return ids;
+        }
 
         std::optional<TerrainTileCoord> ParseTileKey(const std::string &key)
         {
@@ -853,7 +891,80 @@ namespace PlutoGE::scene
         volume::VolumeEditArchive::Entries entries;
         for (const auto &[coord, bytes] : m_volumeEdits)
             entries.emplace(TileKey(coord), bytes);
+        for (const auto &[coord, ids] : m_suppressedFoliage)
+            entries.emplace(std::string(FoliagePrefix) + TileKey(coord), EncodeIds(ids));
         return volume::VolumeEditArchive::Encode(entries);
+    }
+
+    void TerrainWorldComponent::BuildFarProxy(TerrainTileCoord coord, Entity &tileEntity)
+    {
+        auto *volume = tileEntity.GetComponent<TerrainVolumeComponent>();
+        auto *overviewEntity = GetOverviewEntity(coord);
+        auto *overview = overviewEntity ? overviewEntity->GetComponent<TerrainComponent>() : nullptr;
+        if (!volume || !overview || m_farVolumeVoxel <= 0.0f)
+            return;
+        const int step = std::max(1, static_cast<int>(std::lround(m_farVolumeVoxel / std::max(volume->GetVoxelSize(), 0.01f))));
+        auto proxy = volume->BuildFarProxy(TerrainVolumeComponent::SnapshotSurface(*overview), step);
+        auto &far = m_farProxies[coord];
+        far.proxy = std::move(proxy);
+        // The layers' material, copied: the tile's own goes with the tile.
+        if (auto *source = volume->GetChunkMaterial())
+        {
+            if (!far.material)
+                far.material = std::make_unique<render::Material>(source->ReadConfig());
+            else
+                far.material->SetConfig(source->ReadConfig());
+        }
+        ShowFarProxy(coord);
+    }
+
+    void TerrainWorldComponent::ShowFarProxy(TerrainTileCoord coord)
+    {
+        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        auto *overviewEntity = GetOverviewEntity(coord);
+        const auto found = m_farProxies.find(coord);
+        if (!scene || !overviewEntity || found == m_farProxies.end())
+            return;
+        auto &far = found->second;
+        for (const auto id : far.entities)
+            scene->DestroyEntity(id);
+        far.entities.clear();
+        if (auto *overview = overviewEntity->GetComponent<TerrainComponent>())
+            overview->SetDerivedHoles(TerrainVolumeComponent::HoleSource, far.proxy.holes);
+        for (std::size_t index = 0; index < far.proxy.pieces.size(); ++index)
+        {
+            const auto &piece = far.proxy.pieces[index];
+            auto created = std::make_unique<Entity>(EntityConfig{.name = "Far Volume " + std::to_string(index)});
+            created->SetTransient(true);
+            created->SetLocalTransform(Transform{.position = piece.origin});
+            auto *mesh = created->CreateComponent<MeshComponent>(MeshComponentConfig{});
+            mesh->SetMaterial(far.material.get());
+            mesh->SetStatic(true);
+            mesh->SetRuntimeGeometry(piece.mesh.mesh);
+            far.entities.push_back(scene->AddEntity(std::move(created), overviewEntity)->GetID());
+        }
+    }
+
+    void TerrainWorldComponent::SuppressFoliage(TerrainTileCoord tile, std::span<const std::uint64_t> instanceIds)
+    {
+        auto &ids = m_suppressedFoliage[tile];
+        ids.insert(instanceIds.begin(), instanceIds.end());
+    }
+
+    std::size_t TerrainWorldComponent::GetSuppressedFoliageCount(TerrainTileCoord tile) const
+    {
+        const auto found = m_suppressedFoliage.find(tile);
+        return found == m_suppressedFoliage.end() ? 0 : found->second.size();
+    }
+
+    void TerrainWorldComponent::ApplySuppressedFoliage(TerrainTileCoord tile, Entity &entity) const
+    {
+        const auto found = m_suppressedFoliage.find(tile);
+        auto *foliage = entity.GetComponent<FoliageComponent>();
+        if (found == m_suppressedFoliage.end() || !foliage)
+            return;
+        const std::vector<std::uint64_t> ids(found->second.begin(), found->second.end());
+        foliage->RemoveInstances(ids);
     }
 
     bool TerrainWorldComponent::ImportVolumeEdits(std::span<const std::uint8_t> bytes, std::string *error)
@@ -862,8 +973,22 @@ namespace PlutoGE::scene
         if (!entries)
             return false;
         std::map<TerrainTileCoord, std::vector<std::uint8_t>> edits;
+        std::map<TerrainTileCoord, std::set<std::uint64_t>> suppressed;
         for (auto &[key, data] : *entries)
         {
+            if (key.starts_with(FoliagePrefix))
+            {
+                const auto tile = ParseTileKey(key.substr(FoliagePrefix.size()));
+                auto ids = DecodeIds(data);
+                if (!tile || !ids)
+                {
+                    if (error)
+                        *error = "The edit archive's foliage entry \"" + key + "\" is damaged.";
+                    return false;
+                }
+                suppressed.emplace(*tile, std::move(*ids));
+                continue;
+            }
             const auto tile = ParseTileKey(key);
             if (!tile)
             {
@@ -874,7 +999,9 @@ namespace PlutoGE::scene
             edits.emplace(*tile, std::move(data));
         }
         m_volumeEdits = std::move(edits);
-        // Loaded tiles change now; the others take theirs when they load.
+        m_suppressedFoliage = std::move(suppressed);
+        // Loaded tiles change now; the others take theirs when they load. (Foliage a restore brings back on a loaded
+        // tile returns when the tile regenerates.)
         auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
         for (const auto &[coord, tile] : m_tiles)
         {
@@ -970,6 +1097,9 @@ namespace PlutoGE::scene
                     entity->SetActive(false);
                 m_overviewEntities[coord] = entity->GetID();
             }
+        // Tiles that streamed out before the overview was made again keep their far proxies.
+        for (const auto &[coord, far] : m_farProxies)
+            ShowFarProxy(coord);
     }
 
     void TerrainWorldComponent::ClearOverview()
@@ -979,6 +1109,9 @@ namespace PlutoGE::scene
             if (scene)
                 scene->DestroyEntity(id);
         m_overviewEntities.clear();
+        // Far proxy meshes went with their overview entities; the proxies stay for the next overview.
+        for (auto &[coord, far] : m_farProxies)
+            far.entities.clear();
         m_overview.reset();
         m_overviewTried = false;
     }

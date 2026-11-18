@@ -753,8 +753,13 @@ void ClearEdits()                // a new game
 ```
 
 `TerrainVolumeShape.Sphere/Capsule/Box` build shapes. The result has `Changed`, `Refused`, `RockRemoved` and
-`RockAdded` (cubic metres), `MainLayer` (the layer most of the removed rock was), `TerrainsChanged` and
-`FoliageRemoved`. `TerrainVolumeComponent` (from `GetComponent`) edits one terrain only and has `IsUpToDate`,
+`RockAdded` (cubic metres), `MainLayer` (the layer most of the removed rock was), `TerrainsChanged`, `FoliageRemoved`
+and `Debris` (the pieces a `debrisPieces` dig broke the rock into; yours to settle and clear).
+
+`TerrainVolumeEdit` holds an edit as data: `ToBytes` / `TryRead`, and `TerrainVolumes.Apply(edit)`. For multiplayer:
+- `Networking.TerrainVolumeServerReplicator(server)` applies edits, sends them to clients, and sends a joining client
+  the whole state. Its `Accept` vets clients' requests.
+- `TerrainVolumeClientReplicator(client)` applies what the server sends; `Request(edit)` asks the server for an edit. `TerrainVolumeComponent` (from `GetComponent`) edits one terrain only and has `IsUpToDate`,
 `ChunkCount`, `Flush()` and `Save()`. Dug ground is drawn by child entities tagged `TerrainVolumeChunk`, which carry the
 terrain's tags.
 

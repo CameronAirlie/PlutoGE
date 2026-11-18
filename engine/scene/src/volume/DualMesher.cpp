@@ -28,6 +28,7 @@ namespace PlutoGE::scene::volume
             explicit BlockView(const DensityBlock &block) : m_block(block) {}
             [[nodiscard]] const VolumeSample &At(glm::ivec3 sample) const { return m_block.At(sample - m_block.box.first); }
             [[nodiscard]] float Distance(glm::ivec3 sample) const { return At(sample).distance; }
+            [[nodiscard]] bool Holds(glm::ivec3 sample) const { return m_block.box.Contains(sample); }
             // Central differences: points towards the air.
             [[nodiscard]] glm::vec3 Gradient(glm::ivec3 sample) const
             {
@@ -40,6 +41,12 @@ namespace PlutoGE::scene::volume
             const DensityBlock &m_block;
         };
 
+        glm::vec3 Normalised(const glm::vec3 &vector, const glm::vec3 &fallback)
+        {
+            const float length = glm::length(vector);
+            return length > 1.0e-6f ? vector / length : fallback;
+        }
+
         glm::vec3 Tangent(const glm::vec3 &normal)
         {
             const glm::vec3 reference = std::abs(normal.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
@@ -51,10 +58,29 @@ namespace PlutoGE::scene::volume
             return glm::all(glm::lessThanEqual(outer.first, inner.first)) &&
                    glm::all(glm::greaterThanEqual(outer.first + outer.count, inner.first + inner.count));
         }
+
+        // How open the surface is around a cell: the share of air among the samples within `reach` of it, scaled so a
+        // flat surface (half air) reads as fully open.
+        float Openness(const BlockView &view, glm::ivec3 cell, int reach)
+        {
+            if (reach <= 0)
+                return 1.0f;
+            int air = 0, total = 0;
+            for (int z = -reach + 1; z <= reach; ++z)
+                for (int y = -reach + 1; y <= reach; ++y)
+                    for (int x = -reach + 1; x <= reach; ++x)
+                    {
+                        const glm::ivec3 sample = cell + glm::ivec3(x, y, z);
+                        if (!view.Holds(sample))
+                            continue;
+                        ++total;
+                        air += IsRock(view.Distance(sample)) ? 0 : 1;
+                    }
+            return total > 0 ? glm::clamp(2.0f * static_cast<float>(air) / static_cast<float>(total), 0.0f, 1.0f) : 1.0f;
+        }
     }
 
-    VolumeMesh SurfaceNetsMesher::Mesh(const DensityBlock &block, const VolumeSampleBox &region, const VolumeGrid &grid,
-                                       const glm::vec3 &origin) const
+    VolumeMesh DualMesher::Mesh(const DensityBlock &block, const VolumeSampleBox &region, const VolumeGrid &grid, const glm::vec3 &origin) const
     {
         VolumeMesh result;
         if (region.Empty() || !grid.Valid() || block.samples.size() != block.box.SampleCount() || !Contains(block.box, RequiredSamples(region)))
@@ -74,7 +100,7 @@ namespace PlutoGE::scene::volume
         result.boundsMin = glm::vec3(std::numeric_limits<float>::max());
         result.boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
 
-        // One vertex per cell the surface crosses: the average of its edges' crossings.
+        // One vertex per cell the surface crosses, placed by the implementation from the cell's crossings.
         for (int z = 0; z < cells.count.z; ++z)
             for (int y = 0; y < cells.count.y; ++y)
                 for (int x = 0; x < cells.count.x; ++x)
@@ -90,17 +116,18 @@ namespace PlutoGE::scene::volume
                     if (rockCorners == 0 || rockCorners == 8)
                         continue;
 
-                    glm::vec3 crossing(0.0f);
-                    int crossings = 0;
+                    Crossings crossings;
                     for (const auto &[a, b] : Edges)
                     {
                         if (IsRock(distance[a]) == IsRock(distance[b]))
                             continue;
                         const float t = distance[a] / (distance[a] - distance[b]);
-                        crossing += glm::mix(glm::vec3(Corners[a]), glm::vec3(Corners[b]), t);
-                        ++crossings;
+                        crossings.points[crossings.count] = glm::mix(glm::vec3(Corners[a]), glm::vec3(Corners[b]), t);
+                        crossings.normals[crossings.count] =
+                            Normalised(glm::mix(view.Gradient(cell + Corners[a]), view.Gradient(cell + Corners[b]), t), glm::vec3(0.0f, 1.0f, 0.0f));
+                        ++crossings.count;
                     }
-                    const glm::vec3 inCell = crossing / static_cast<float>(crossings);
+                    const glm::vec3 inCell = glm::clamp(PlaceVertex(crossings), glm::vec3(0.0f), glm::vec3(1.0f));
 
                     // The normal: the distance gradient at the corners, blended trilinearly to the vertex.
                     glm::vec3 gradient(0.0f);
@@ -112,8 +139,7 @@ namespace PlutoGE::scene::volume
                         if (distance[corner] < distance[deepest])
                             deepest = corner;
                     }
-                    const float length = glm::length(gradient);
-                    const glm::vec3 normal = length > 1.0e-6f ? gradient / length : glm::vec3(0.0f, 1.0f, 0.0f);
+                    const glm::vec3 normal = Normalised(gradient, glm::vec3(0.0f, 1.0f, 0.0f));
                     const glm::vec3 position = grid.SamplePosition(cell) + inCell * grid.voxelSize - origin;
                     const glm::vec3 tangent = Tangent(normal);
 
@@ -125,6 +151,7 @@ namespace PlutoGE::scene::volume
                     cellVertex[cellIndex(cell)] = static_cast<std::int32_t>(vertices.size());
                     vertices.push_back(vertex);
                     result.materials.push_back(view.At(cell + Corners[deepest]).material);
+                    result.occlusion.push_back(Openness(view, cell, m_occlusionReach));
                     result.boundsMin = glm::min(result.boundsMin, position);
                     result.boundsMax = glm::max(result.boundsMax, position);
                 }
@@ -178,6 +205,77 @@ namespace PlutoGE::scene::volume
         if (vertices.empty())
             result.boundsMin = result.boundsMax = glm::vec3(0.0f);
         return result;
+    }
+
+    glm::vec3 SurfaceNetsMesher::PlaceVertex(const Crossings &crossings) const
+    {
+        glm::vec3 sum(0.0f);
+        for (int index = 0; index < crossings.count; ++index)
+            sum += crossings.points[index];
+        return crossings.count > 0 ? sum / static_cast<float>(crossings.count) : glm::vec3(0.5f);
+    }
+
+    glm::vec3 DualContouringMesher::PlaceVertex(const Crossings &crossings) const
+    {
+        if (crossings.count == 0)
+            return glm::vec3(0.5f);
+        glm::vec3 mass(0.0f);
+        for (int index = 0; index < crossings.count; ++index)
+            mass += crossings.points[index];
+        mass /= static_cast<float>(crossings.count);
+
+        // Minimise sum((n . (x - p))^2) + w |x - mass|^2, solved about the mass point: (A^T A + w I) d = A^T b.
+        glm::mat3 ata(0.0f);
+        glm::vec3 atb(0.0f);
+        for (int index = 0; index < crossings.count; ++index)
+        {
+            const glm::vec3 &n = crossings.normals[index];
+            ata += glm::outerProduct(n, n);
+            atb += n * glm::dot(n, crossings.points[index] - mass);
+        }
+        const float w = std::max(m_regularisation, 1.0e-4f) * static_cast<float>(crossings.count);
+        ata += glm::mat3(w);
+        const float determinant = glm::determinant(ata);
+        if (!(std::abs(determinant) > 1.0e-8f))
+            return mass;
+        const glm::vec3 offset = glm::inverse(ata) * atb;
+        const glm::vec3 placed = mass + offset;
+        // A fit far outside the cell is a poor one (nearly parallel planes): the mass point is safer.
+        return glm::all(glm::greaterThanEqual(placed, glm::vec3(-0.5f))) && glm::all(glm::lessThanEqual(placed, glm::vec3(1.5f))) ? placed : mass;
+    }
+
+    std::shared_ptr<const VolumeMesher> MakeVolumeMesher(VolumeMesherKind kind)
+    {
+        switch (kind)
+        {
+        case VolumeMesherKind::DualContouring: return std::make_shared<DualContouringMesher>();
+        case VolumeMesherKind::SurfaceNets: break;
+        }
+        return std::make_shared<SurfaceNetsMesher>();
+    }
+
+    VolumeMesh MeshRemovedRock(const TerrainVolume &volume, const VolumeShape &shape, const VolumeMesher &mesher, const glm::vec3 &origin)
+    {
+        const auto &grid = volume.GetGrid();
+        // The shape's samples plus one: the outermost layer is forced to air, so the surface closes inside the region.
+        auto region = grid.SamplesIn(shape.BoundsMin(), shape.BoundsMax());
+        region.first -= 1;
+        region.count += 2;
+        auto block = volume.Gather(mesher.RequiredSamples(region));
+        const VolumeSampleBox inner{region.first + 1, region.count - 2};
+        bool rock = false;
+        for (int z = 0; z < block.box.count.z; ++z)
+            for (int y = 0; y < block.box.count.y; ++y)
+                for (int x = 0; x < block.box.count.x; ++x)
+                {
+                    const glm::ivec3 sample = block.box.first + glm::ivec3(x, y, z);
+                    auto &value = block.samples[block.Index({x, y, z})];
+                    // Rock where both the volume and the shape are (an intersection), air outside the inner box.
+                    value.distance = inner.Contains(sample) ? std::max(value.distance, shape.Distance(grid.SamplePosition(sample)))
+                                                            : std::max(value.distance, grid.voxelSize);
+                    rock = rock || value.distance < 0.0f;
+                }
+        return rock ? mesher.Mesh(block, region, grid, origin) : VolumeMesh{};
     }
 
     VolumeMesh MeshVolumeChunk(const TerrainVolume &volume, VolumeChunkCoord chunk, const VolumeMesher &mesher)

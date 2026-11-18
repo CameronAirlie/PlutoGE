@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PlutoGE/scene/TerrainDebris.h"
 #include "PlutoGE/scene/volume/TerrainVolume.h"
 
 #include <glm/glm.hpp>
@@ -28,6 +29,8 @@ namespace PlutoGE::scene
         bool removeFoliage = true;
         // Which volumes the edit may change (all when empty): an editor brush keeps to the terrain it is used on.
         std::function<bool(const TerrainVolumeComponent &)> accept;
+        // Subtract edits can break the rock they removed into physics pieces.
+        TerrainDebrisSettings debris;
     };
 
     struct TerrainVolumeEditReport
@@ -37,6 +40,7 @@ namespace PlutoGE::scene
         int volumesChanged = 0;
         std::size_t foliageRemoved = 0;
         bool refused = false; // the shape was larger than maxExtent
+        std::vector<std::uint32_t> debris; // the debris pieces' entity IDs
         [[nodiscard]] bool Changed() const { return volumesChanged > 0; }
     };
 
@@ -44,6 +48,7 @@ namespace PlutoGE::scene
     // covers part of a world-space box, looked at from above (volumes reach any height).
     [[nodiscard]] std::vector<TerrainVolumeComponent *> FindTerrainVolumes(Scene &scene, const glm::vec3 &worldMin, const glm::vec3 &worldMax);
 
+    // Every option at once, as an edit request travels (replication, scripts): the shape is carried as data.
     TerrainVolumeEditReport EditTerrainVolumes(Scene &scene, const volume::VolumeShape &worldShape, const volume::VolumeEdit &edit,
                                                const TerrainVolumeEditOptions &options = {});
 

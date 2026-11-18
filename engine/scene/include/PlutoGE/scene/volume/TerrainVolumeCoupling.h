@@ -103,6 +103,20 @@ namespace PlutoGE::scene::volume
     void FitVolumeMeshToTerrain(VolumeMesh &mesh, const glm::vec3 &meshOrigin, const TerrainSurface &surface,
                                 const TerrainHoleMask &volumeHoles, const TerrainCouplingSettings &settings, float voxelSize);
 
+    // How dug and cave ground is shaded (phase 8): the cave darkness that stands in for the sky a point cannot see.
+    struct VolumeShadingSettings
+    {
+        // Metres under the terrain's surface at which ground is as dark as it gets (0: no burial darkening).
+        float burialDepth = 6.0f;
+        // How open the deepest ground still reads, 0..1 (multiplies its ambient light).
+        float buriedOpenness = 0.15f;
+        bool operator==(const VolumeShadingSettings &) const = default;
+    };
+
+    // Darkens a mesh's occlusion by how far each vertex lies under the terrain's surface (positions relative to
+    // `meshOrigin`, in the terrain's space).
+    void ApplyBurialOcclusion(VolumeMesh &mesh, const glm::vec3 &meshOrigin, const TerrainSurface &surface, const VolumeShadingSettings &settings);
+
     // The cells whose cut differs between two masks of the same size.
     [[nodiscard]] std::vector<glm::ivec2> ChangedCells(const TerrainHoleMask &before, const TerrainHoleMask &after);
 

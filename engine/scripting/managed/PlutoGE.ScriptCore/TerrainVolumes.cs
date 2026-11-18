@@ -64,6 +64,11 @@ public readonly record struct TerrainVolumeEditResult
     public int TerrainsChanged { get; init; }
     /// <summary>Foliage instances (trees, rocks) whose root the dig carved out, and which were removed.</summary>
     public int FoliageRemoved { get; init; }
+    /// <summary>Debris pieces the dig broke the removed rock into (tagged "Debris").</summary>
+    public int DebrisSpawned { get; init; }
+    /// <summary>The debris pieces: physics bodies the caller settles or clears (they are never saved).</summary>
+    public GameObject[] Debris { get => _debris ?? []; init => _debris = value; }
+    private readonly GameObject[]? _debris;
 
     internal static TerrainVolumeEditResult From(in ScriptBridge.NativeTerrainVolumeRequest request) => new()
     {
@@ -74,7 +79,71 @@ public readonly record struct TerrainVolumeEditResult
         MainLayer = request.MainMaterial,
         TerrainsChanged = request.VolumesChanged,
         FoliageRemoved = request.FoliageRemoved,
+        DebrisSpawned = request.DebrisSpawned,
     };
+}
+
+/// <summary>
+/// One terrain volume edit as data: what <see cref="TerrainVolumes.Apply"/> does, and what travels between machines.
+/// Edits are deterministic, so peers that apply the same edits in the same order have the same ground
+/// (<see cref="Networking.TerrainVolumeServerReplicator"/>).
+/// </summary>
+public readonly record struct TerrainVolumeEdit(TerrainVolumeShape Shape, TerrainVolumeEditMode Mode, int Layer = 0, float? MaxExtent = null,
+                                                int DebrisPieces = 0)
+{
+    /// <summary>The bytes <see cref="Write"/> fills.</summary>
+    public const int EncodedSize = 72;
+    private const byte FormatVersion = 1;
+
+    /// <summary>Little endian: version, shape, mode, flags, layer, max extent, debris, then the shape's numbers.</summary>
+    public void Write(Span<byte> destination)
+    {
+        if (destination.Length < EncodedSize) throw new ArgumentException("Too small for a terrain volume edit.", nameof(destination));
+        destination[..EncodedSize].Clear();
+        destination[0] = FormatVersion;
+        destination[1] = (byte)Shape.Kind;
+        destination[2] = (byte)Mode;
+        destination[3] = MaxExtent.HasValue ? (byte)1 : (byte)0;
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(destination[4..], Layer);
+        System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(destination[8..], MaxExtent ?? 0f);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(destination[12..], DebrisPieces);
+        var rotation = Shape.Rotation == default ? Quaternion.Identity : Shape.Rotation;
+        ReadOnlySpan<float> numbers =
+        [
+            Shape.Centre.X, Shape.Centre.Y, Shape.Centre.Z, Shape.End.X, Shape.End.Y, Shape.End.Z, Shape.Radius,
+            Shape.HalfExtents.X, Shape.HalfExtents.Y, Shape.HalfExtents.Z, rotation.X, rotation.Y, rotation.Z, rotation.W,
+        ];
+        for (var index = 0; index < numbers.Length; ++index)
+            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(destination[(16 + 4 * index)..], numbers[index]);
+    }
+
+    public byte[] ToBytes()
+    {
+        var bytes = new byte[EncodedSize];
+        Write(bytes);
+        return bytes;
+    }
+
+    /// <summary>False for bytes that are too short, from a newer writer, or name an unknown shape or mode.</summary>
+    public static bool TryRead(ReadOnlySpan<byte> source, out TerrainVolumeEdit edit)
+    {
+        edit = default;
+        if (source.Length < EncodedSize || source[0] != FormatVersion || source[1] > 2 || source[2] > 2) return false;
+        Span<float> n = stackalloc float[14];
+        for (var index = 0; index < n.Length; ++index)
+            n[index] = System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(source[(16 + 4 * index)..]);
+        var centre = new Vector3(n[0], n[1], n[2]);
+        var end = new Vector3(n[3], n[4], n[5]);
+        var radius = n[6];
+        var half = new Vector3(n[7], n[8], n[9]);
+        var rotation = new Quaternion(n[10], n[11], n[12], n[13]);
+        var shape = new TerrainVolumeShape { Kind = source[1], Centre = centre, End = end, Radius = radius, HalfExtents = half, Rotation = rotation };
+        edit = new TerrainVolumeEdit(shape, (TerrainVolumeEditMode)source[2],
+            System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(source[4..]),
+            source[3] != 0 ? System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(source[8..]) : null,
+            System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(source[12..]));
+        return true;
+    }
 }
 
 /// <summary>
@@ -100,8 +169,9 @@ public static class TerrainVolumes
     /// <summary>True when the host has terrain volumes (older hosts: false, and edits do nothing).</summary>
     public static bool IsSupported => ScriptBridge.IsTerrainVolumeSupported;
 
-    public static TerrainVolumeEditResult Dig(Vector3 centre, float radius) =>
-        Edit(TerrainVolumeShape.Sphere(centre, radius), TerrainVolumeEditMode.Dig);
+    /// <summary>Digs a sphere; <paramref name="debrisPieces"/> above 0 breaks the removed rock into that many pieces at most.</summary>
+    public static TerrainVolumeEditResult Dig(Vector3 centre, float radius, int debrisPieces = 0) =>
+        Apply(new TerrainVolumeEdit(TerrainVolumeShape.Sphere(centre, radius), TerrainVolumeEditMode.Dig, DebrisPieces: debrisPieces));
 
     /// <summary>Fills a sphere with rock of a terrain layer (its index).</summary>
     public static TerrainVolumeEditResult Fill(Vector3 centre, float radius, int layer = 0) =>
@@ -117,18 +187,27 @@ public static class TerrainVolumes
     /// Any shape and mode. <paramref name="maxExtent"/> overrides the budget (0 accepts any size); null uses
     /// <see cref="DefaultMaxExtent"/>. Dig edits remove foliage whose root they carve out.
     /// </summary>
-    public static TerrainVolumeEditResult Edit(TerrainVolumeShape shape, TerrainVolumeEditMode mode, int layer = 0, float? maxExtent = null)
+    public static TerrainVolumeEditResult Edit(TerrainVolumeShape shape, TerrainVolumeEditMode mode, int layer = 0, float? maxExtent = null) =>
+        Apply(new TerrainVolumeEdit(shape, mode, layer, maxExtent));
+
+    /// <summary>Applies an edit as data (see <see cref="TerrainVolumeEdit"/>: what replication sends).</summary>
+    public static TerrainVolumeEditResult Apply(in TerrainVolumeEdit edit)
     {
         var request = new ScriptBridge.NativeTerrainVolumeRequest
         {
-            Mode = (int)mode,
-            Material = layer,
-            MaxExtent = maxExtent ?? -1.0f,
+            Mode = (int)edit.Mode,
+            Material = edit.Layer,
+            MaxExtent = edit.MaxExtent ?? -1.0f,
+            DebrisPieces = Math.Max(edit.DebrisPieces, 0),
         };
-        shape.Write(ref request);
-        return ScriptBridge.ControlTerrainVolume(0, ScriptBridge.TerrainVolumeOperation.Edit, ref request)
-            ? TerrainVolumeEditResult.From(request)
-            : default;
+        edit.Shape.Write(ref request);
+        var ids = request.DebrisPieces > 0 ? new byte[request.DebrisPieces * sizeof(uint)] : null;
+        if (!ScriptBridge.ControlTerrainVolume(0, ScriptBridge.TerrainVolumeOperation.Edit, ref request, ids))
+            return default;
+        var debris = new GameObject[ids is null ? 0 : Math.Clamp(request.DebrisSpawned, 0, request.DebrisPieces)];
+        for (var index = 0; index < debris.Length; index++)
+            debris[index] = new GameObject(BitConverter.ToUInt32(ids!, index * sizeof(uint)));
+        return TerrainVolumeEditResult.From(request) with { Debris = debris };
     }
 
     /// <summary>Lands every terrain's pending meshes and holes now (after loading a save, before a cutscene).</summary>

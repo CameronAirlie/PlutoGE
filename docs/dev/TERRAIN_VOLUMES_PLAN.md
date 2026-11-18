@@ -1,6 +1,7 @@
 # Terrain volumes: caves and destructible ground
 
-Written 2026-11-18. Status (2026-11-18): phases 0-7 are built; phases 8 and 9 are design only.
+Written 2026-11-18. Status (2026-11-18): phases 0-9 are built, with the phase 4-7 follow-ups (debris, replication,
+remembered foliage, levelkit caves on stamps) done.
 
 - 0-3: tile holes are saved; the volume core, surface nets mesher, coupling rules and meshing queue live in
   `engine/scene/volume` (`PlutoGETerrainVolumeTests`); `TerrainVolumeComponent` puts a volume on a terrain or a world
@@ -12,6 +13,10 @@ Written 2026-11-18. Status (2026-11-18): phases 0-7 are built; phases 8 and 9 ar
   (`PlutoGETerrainVolumeScriptApiTests`, `PlutoGETerrainVolumeManagedTests`).
 - 6: generated caves (`CaveDensity`, a `CAVES` record in `ProceduralTerrainDefinition`) and ground materials.
 - 7: `VolumeStampComponent` and the Terrain Editor's Dig tool (`PlutoGETerrainEditorTests` covers the tool state).
+- 8: the `DualMesher` frame with surface nets and dual contouring, blended layer seams, per-vertex cave occlusion.
+- 9: far proxies: a streamed-out tile's dug ground and cave mouths drawn coarsely in the world's overview.
+- Follow-ups: debris (`TerrainDebris`), edits as data and C# replicators, foliage removals remembered per tile,
+  composite layers culled by their bounds, and SurvivalGame's crag cave carved by stamps (Tools/levels/cave.py).
 
 User guide: [Terrain volumes](../TERRAIN_VOLUMES.md).
 
@@ -189,14 +194,58 @@ gives a lone terrain a volume file on its first stroke (`Assets/TerrainVolumes/<
 each touched volume's file when the stroke ends, and records one undo step (`TerrainWorldComponent::StoreTileVolume`
 for tiles that have streamed out). The cursor is a wireframe sphere. Biomes gained a Caves block.
 
-## Phases 4-7 limits and follow-ups
+## Phases 8-9 and the follow-ups as built
 
-- Not checked by eye: the triplanar look on real layers, shadow and GI updates after remeshing, the Dig tool in the
-  editor (its stroke needs a window; only the tool state is tested), and generated caves in a streamed world.
-- Debris through `FractureMesh`, replication as operations, and moving SurvivalGame's levelkit caves onto stamps are
-  not done. Edits report removed rock, which gameplay can turn into resources or spawn rubble from.
-- Removed foliage comes back when a procedural tile regenerates (the removal is not saved); grass already follows the
-  derived holes.
+**8. Surface quality.**
+- `SurfaceNetsMesher` became one implementation of `DualMesher`: one vertex per crossed cell, one quad per crossed
+  edge, with the edge ownership, winding and seams shared. Implementations only place the vertex (`PlaceVertex`).
+- `DualContouringMesher` places it with a regularised quadratic error fit to the crossings' planes, which keeps box
+  corners and cut faces. It about halves the corner error; gradient normals from quantized density limit it.
+  `TerrainVolumeComponent::Mesher` selects it, and `MakeVolumeMesher` maps a kind to a mesher.
+- Seams blend: `VertexLayerEncoding` packs a triangle's three layers in uv.x, the weights of the first two in uv.y and
+  uv2.x, and occlusion in uv2.y. The shader's `sampleVertexLayers` blends up to three layers, so neighbouring triangles
+  agree along their shared edges.
+- Cave darkness: the mesher measures each vertex's openness (the share of air around it). `ApplyBurialOcclusion` then
+  darkens by depth under the terrain (`VolumeShadingSettings`: BurialDepth, BuriedOpenness), and BasicLit multiplies it
+  into the material's ambient occlusion.
+- Fog is not part of this: darkening the fog in caves still needs a baked Ambient Light Volume, because the engine has
+  no unbaked sky-visibility source.
+
+**9. Distance.**
+- When a world tile streams out, `TerrainVolumeComponent::BuildFarProxy` builds a `volume::VolumeFarProxy`
+  (`BuildVolumeFarProxy`). It re-samples the volume at coarse voxels (`TerrainWorldComponent::FarVolumeVoxel`, 2 m by
+  default) over the overview's own heights: the tile's stored chunks where it has them, and the base made again over
+  the overview's surface elsewhere (`MakeBaseOver`). Untouched ground therefore agrees with the overview.
+- The overview tile is cut where the proxy breaches it, and coarse meshes fill those cells, drawn with a copy of the
+  tile's layered material that the world owns. Proxies survive overview rebuilds and are rebuilt each time the tile
+  streams out.
+- A tile never visited has no proxy, so its generated caves show in the distance only after the first visit.
+
+**Follow-ups.**
+- Debris: `volume::MeshRemovedRock` meshes the rock a Subtract would remove (the volume intersected with the shape)
+  as one closed mesh. `SpawnTerrainDebris` breaks it with `Shatter` into pieces of the rock's main layer. They draw with
+  a process-lifetime single-layer material, and fracture caps are normalised to it. The pieces are enabled through
+  `TerrainVolumeEditOptions::debris` and returned to C# (`TerrainVolumeEditResult.Debris`).
+- Replication: `TerrainVolumeEdit` (C#) is an edit as 72 bytes. `TerrainVolumeServerReplicator` applies edits and
+  broadcasts them, sends joining clients the whole state (`CaptureEdits`) and accepts client requests through `Accept`.
+  `TerrainVolumeClientReplicator` restores the state, applies edits in order and sends requests. Debris stays local.
+- Remembered foliage: digs record the procedural foliage instance IDs they remove on a world tile
+  (`TerrainWorldComponent::SuppressFoliage`). They are removed again after each regeneration and saved with the edits
+  (`foliage:x,z` archive entries).
+- Culling: `CompositeDensity` keeps each layer's feature envelope and skips Union, Subtract and Paint layers that
+  cannot reach a block, so a base of many stamps costs only the stamps near each chunk.
+- SurvivalGame:
+  - The crag cave is 37 capsule stamps on Main's terrain volume, written by `cave.py --cave-only`, which leaves the
+    heights the user sculpted alone.
+  - LakeDistrict's tiles generate caves and dig to rock (`Tools/levels/terrain_volumes.py`).
+  - Shovels and pickaxes dig through `GroundDigging`, and the dug ground is saved by `TerrainPersistence`.
+
+## Remaining limits
+
+- Not checked by eye: the triplanar look and seam blending on real layers, cave darkness at real exposure, shadow and
+  GI updates after remeshing, the Dig tool in the editor (its stroke needs a window), generated caves and far proxies
+  in a streamed world, and debris look.
+- Far proxies are built on the main thread as a tile streams out (tens of milliseconds for a tile full of caves).
 - Painting the terrain rebuilds the base a frame after the strokes stop, remeshing every chunk of the volume.
 - Stamps support primitives only (mesh SDFs and splines are open); a ray-marched brush preview is open.
 - Stamps and caves are re-sampled when the base is rebuilt; a world with many tiles rebuilds each tile's base when a

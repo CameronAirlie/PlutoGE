@@ -35,12 +35,13 @@ add_library(PlutoGEScene
     src/volume/VolumeShape.cpp
     src/volume/TerrainVolume.cpp
     src/volume/VolumeFile.cpp
-    src/volume/SurfaceNetsMesher.cpp
+    src/volume/DualMesher.cpp
     src/volume/TerrainVolumeCoupling.cpp
     src/volume/VolumeMeshQueue.cpp
     src/volume/VolumeMeshMaterials.cpp
     src/volume/VolumeEditArchive.cpp
     src/volume/CaveDensity.cpp
+    src/volume/VolumeFarProxy.cpp
     src/components/TerrainVolumeComponent.cpp
     src/components/VolumeStampComponent.cpp
     src/Shatter.cpp
@@ -60,6 +61,7 @@ add_library(PlutoGEScene
     src/TerrainEditSurface.cpp
     src/TerrainTileSource.cpp
     src/TerrainVolumeEditing.cpp
+    src/TerrainDebris.cpp
     src/components/TerrainWorldComponent.cpp
     src/TerrainHoleMask.cpp
     src/TerrainLayerStack.cpp

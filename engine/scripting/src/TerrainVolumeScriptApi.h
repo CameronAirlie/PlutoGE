@@ -54,10 +54,12 @@ namespace PlutoGE::scripting
         std::int32_t mainMaterial = -1; // the material most of the removed rock had, -1 none
         std::int32_t volumesChanged = 0;
         std::int32_t foliageRemoved = 0;
+        std::int32_t debrisPieces = 0;  // Edit (scene-wide, Subtract): at most this many debris pieces; 0 makes none
+        std::int32_t debrisSpawned = 0; // out; their entity IDs (u32) go into the buffer, as many as it holds
         std::uint64_t buffer = 0; // address of a byte buffer (CaptureEdits, RestoreEdits)
         std::int64_t bufferSize = 0;
     };
-    static_assert(sizeof(NativeTerrainVolumeRequest) == 120, "Keep in step with ScriptBridge.TerrainVolume.cs");
+    static_assert(sizeof(NativeTerrainVolumeRequest) == 128, "Keep in step with ScriptBridge.TerrainVolume.cs");
 
     // Returns 0 when the request is malformed, the scene is missing, or an entity has no terrain volume.
     std::int32_t PLUTO_TERRAIN_VOLUME_API_CALL ControlTerrainVolume(NativeTerrainVolumeRequest *request);

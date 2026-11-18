@@ -388,11 +388,22 @@ namespace
             if (const auto *mesh = child->GetComponent<MeshComponent>(); mesh && mesh->GetMesh())
                 for (const auto &vertex : mesh->GetMesh()->GetMeshData().vertices)
                 {
-                    rock = rock || vertex.uv[0] == 2.0f;
-                    surface = surface || vertex.uv[0] == 0.0f;
+                    const auto layers = volume::VertexLayerEncoding::UnpackLayers(vertex.uv[0]);
+                    const auto own = vertex.uv[1] >= 1.0f ? layers[0] : vertex.uv2[0] >= 1.0f ? layers[1] : layers[2];
+                    rock = rock || own == 2;
+                    surface = surface || own == 0;
                 }
         Require(rock && surface, "Dug ground shows the rock layer below its depth and the surface's above");
         Require(PropertyText(ground.volume->Serialize(), "RockLayer") == "2", "The rock layer is saved");
+
+        // Phase 8: the mesher and cave shading are settings; changing them meshes the chunks again.
+        const auto chunks = ground.volume->GetChunkEntityCount();
+        ground.volume->Deserialize({{"Mesher", PropertyType::Enum, "1"}, {"BurialDepth", PropertyType::Float, "3"}});
+        Require(ground.volume->GetMesher() == volume::VolumeMesherKind::DualContouring && ground.volume->GetShading().burialDepth == 3.0f &&
+                    !ground.volume->IsUpToDate(),
+                "Mesher and shading settings remesh");
+        ground.volume->Flush();
+        Require(ground.volume->IsUpToDate() && ground.volume->GetChunkEntityCount() == chunks, "Dual contouring meshes the same chunks");
     }
 
     // Phase 7: stamps are part of the base: they carve and fill without storing anything, follow their entity, apply in
@@ -451,6 +462,50 @@ namespace
         Require(copy.GetShape() == VolumeStampComponent::Shape::Box && copy.GetMode() == volume::VolumeEditMode::Add && copy.GetLayer() == 1 &&
                     copy.GetHalfExtents() == glm::vec3(3.0f, 0.75f, 3.0f) && copy.GetOrder() == -1,
                 "Stamp settings round-trip");
+    }
+
+    // Phase 9: a dug tile that streams out leaves its pit in the world's overview.
+    void FarTiles()
+    {
+        const auto directory = TempDirectory();
+        TerrainWorldGrid grid;
+        grid.tilesX = 2;
+        grid.tilesZ = 1;
+        grid.tileSamples = 33;
+        grid.cellSize = 1.0f;
+        grid.heightScale = 50.0f;
+        TerrainHeightField field{grid.WorldSamplesX(), grid.WorldSamplesZ(), {}};
+        field.samples.assign(static_cast<std::size_t>(field.width) * field.depth, 10.0f);
+        const std::string pattern = (directory / "tile_{x}_{z}.plutoheight").string();
+        const std::string overview = (directory / "overview.plutoheight").string();
+        Require(TerrainWorldComponent::WriteWorldFiles(field, grid, pattern, overview, 4).Ok(), "Writing the world with an overview");
+
+        Scene scene;
+        auto *worldEntity = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "World"}));
+        auto *world = worldEntity->CreateComponent<TerrainWorldComponent>();
+        world->SetGrid(grid);
+        world->SetTileFiles(pattern);
+        world->SetOverviewFile(overview);
+        TerrainStreamingSettings streaming;
+        streaming.loadRadius = 5.0f;
+        streaming.unloadRadius = 10.0f;
+        world->SetStreaming(streaming);
+        world->EnsureTileTemplate()->CreateComponent<TerrainVolumeComponent>()->SetChunkVoxels(8);
+        Require(world->LoadAround({16.0f, 0.0f, 16.0f}, std::chrono::seconds(10)) && world->GetOverviewEntity({0, 0}), "Loading with an overview");
+        EditTerrainVolumes(scene, volume::SphereShape({16.0f, 10.0f, 16.0f}, 3.0f), {volume::VolumeEditMode::Subtract});
+        Require(!world->HasFarProxy({0, 0}), "A loaded tile draws itself");
+
+        world->UnloadAll();
+        Require(world->HasFarProxy({0, 0}) && !world->HasFarProxy({1, 0}), "The dug tile left a far proxy; the other has none");
+        auto *overviewEntity = world->GetOverviewEntity({0, 0});
+        const auto *holes = overviewEntity->GetComponent<TerrainComponent>()->FindDerivedHoles(TerrainVolumeComponent::HoleSource);
+        Require(holes && holes->GetHoleCount() > 0, "The overview is cut where the pit is");
+        const auto farMeshes = std::count_if(overviewEntity->GetChildren().begin(), overviewEntity->GetChildren().end(), [](const Entity *child) {
+            return child->GetComponent<MeshComponent>() && child->GetComponent<MeshComponent>()->HasRuntimeGeometry();
+        });
+        Require(farMeshes > 0, "Coarse meshes draw the pit far away");
+        world->SetFarVolumeVoxel(0.0f);
+        Require(PropertyText(world->Serialize(), "FarVolumeVoxel").starts_with("0"), "The far voxel is a setting");
     }
 
     // Phase 5: export, import and reload; unsaved edits.
@@ -514,6 +569,26 @@ namespace
         Require(report.foliageRemoved == 1 && foliage->GetTotalInstanceCount() == 1, "The tree in the pit goes; the other stays");
         FlushTerrainVolumes(ground.scene);
         Require(ground.terrain->GetEffectiveHoles().IsHole(31, 16) && eastTerrain->GetEffectiveHoles().IsHole(0, 16), "Both sides open");
+
+        // Debris: the removed rock breaks into tagged physics pieces, a few per cubic metre.
+        render::Material plain;
+        ground.terrain->SetMaterial(&plain);
+        TerrainVolumeEditOptions withDebris;
+        withDebris.debris.enabled = true;
+        withDebris.debris.maxPieces = 4;
+        const auto broken = EditTerrainVolumes(ground.scene, volume::SphereShape({110.0f, 5.0f, 60.0f}, 1.2f),
+                                               {volume::VolumeEditMode::Subtract}, withDebris);
+        Require(broken.Changed() && !broken.debris.empty() && broken.debris.size() <= 4, "A dig with debris breaks the rock it removed");
+        for (const auto id : broken.debris)
+        {
+            const auto *piece = ground.scene.FindEntityByID(id);
+            Require(piece && piece->HasTag("Debris") && piece->GetComponent<MeshComponent>() &&
+                        piece->GetComponent<MeshComponent>()->GetMaterial() == &plain,
+                    "Debris pieces are tagged and draw like the ground (its plain material without layers)");
+        }
+        const auto fill = EditTerrainVolumes(ground.scene, volume::SphereShape({110.0f, 5.0f, 60.0f}, 1.2f), {volume::VolumeEditMode::Add},
+                                             withDebris);
+        Require(fill.debris.empty(), "Only digging makes debris");
 
         const auto tooBig = EditTerrainVolumes(ground.scene, volume::SphereShape({116.0f, 5.0f, 66.0f}, 20.0f), {volume::VolumeEditMode::Subtract});
         Require(tooBig.refused && !tooBig.Changed(), "An edit beyond the budget is refused");
@@ -599,6 +674,19 @@ namespace
                 "A save game brings the pit back to a loaded tile");
         world->UnloadAll();
         Require(world->GetVolumeEditTileCount() == 1, "and keeps it for the tile while it is away");
+
+        // Foliage dug away on a tile stays away: remembered per tile, saved with the edits.
+        const std::vector<std::uint64_t> plants{ProceduralFoliageInstanceIdBit | 7, ProceduralFoliageInstanceIdBit | 9};
+        world->SuppressFoliage({1, 0}, plants);
+        Require(world->GetSuppressedFoliageCount({1, 0}) == 2, "The world remembers dug-away plants");
+        const auto withPlants = world->ExportVolumeEdits();
+        world->ClearVolumeEdits();
+        Require(world->GetSuppressedFoliageCount({1, 0}) == 0, "Clearing forgets them");
+        Require(world->ImportVolumeEdits(withPlants) && world->GetSuppressedFoliageCount({1, 0}) == 2, "and a save brings them back");
+        volume::VolumeEditArchive::Entries broken;
+        broken["foliage:1,0"] = {1, 2, 3};
+        Require(!world->ImportVolumeEdits(volume::VolumeEditArchive::Encode(broken)) && world->GetSuppressedFoliageCount({1, 0}) == 2,
+                "A damaged foliage entry is refused and changes nothing");
     }
 }
 
@@ -618,6 +706,7 @@ int main()
         StreamedEdits();
         ProceduralCaves();
         Stamps();
+        FarTiles();
     }
     catch (const std::exception &error)
     {

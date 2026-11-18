@@ -1,5 +1,7 @@
 #pragma once
 
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/scene/volume/VolumeFarProxy.h"
 #include "PlutoGE/scene/TerrainEditSurface.h"
 #include "PlutoGE/scene/TerrainHoleMask.h"
 #include "PlutoGE/scene/TerrainTileSource.h"
@@ -14,6 +16,8 @@
 #include <cstdint>
 #include <future>
 #include <map>
+#include <memory>
+#include <set>
 #include <span>
 #include <memory>
 #include <optional>
@@ -149,6 +153,17 @@ namespace PlutoGE::scene
         bool ImportVolumeEdits(std::span<const std::uint8_t> bytes, std::string *error = nullptr);
         // Forgets the kept edits: every tile goes back to its file.
         void ClearVolumeEdits();
+        // Foliage instances dug away on a tile (procedural instance IDs are positional, so they name the same plants
+        // after the tile regenerates): removed again whenever the tile's foliage is generated. Kept with the volume edits.
+        void SuppressFoliage(TerrainTileCoord tile, std::span<const std::uint64_t> instanceIds);
+        [[nodiscard]] std::size_t GetSuppressedFoliageCount(TerrainTileCoord tile) const;
+
+        // ---- far proxies (terrain volumes, phase 9) --------------------------------------------------------------------
+        // When a tile with dug ground or caves streams out, its overview keeps their shape: the overview's cells are cut
+        // and coarse meshes fill them (TerrainVolumeComponent::BuildFarProxy), voxels this many metres (0: off).
+        [[nodiscard]] float GetFarVolumeVoxel() const { return m_farVolumeVoxel; }
+        void SetFarVolumeVoxel(float metres) { m_farVolumeVoxel = std::max(metres, 0.0f); }
+        [[nodiscard]] bool HasFarProxy(TerrainTileCoord tile) const { return m_farProxies.contains(tile); }
         // Tiles with kept edits (loaded tiles count once they have unsaved edits).
         [[nodiscard]] std::size_t GetVolumeEditTileCount();
 
@@ -219,6 +234,21 @@ namespace PlutoGE::scene
         std::map<TerrainTileCoord, Tile> m_tiles;
         // Tiles' volume edits made since their files were read (VolumeFile bytes), kept across streaming.
         std::map<TerrainTileCoord, std::vector<std::uint8_t>> m_volumeEdits;
+        std::map<TerrainTileCoord, std::set<std::uint64_t>> m_suppressedFoliage;
+
+        // A tile's far proxy: what it was built from, the material its meshes draw with (owned here: the tile that
+        // lent its layers is gone) and the mesh entities under the overview.
+        struct FarProxy
+        {
+            volume::VolumeFarProxy proxy;
+            std::unique_ptr<render::Material> material;
+            std::vector<std::uint32_t> entities;
+        };
+        std::map<TerrainTileCoord, FarProxy> m_farProxies;
+        float m_farVolumeVoxel = 2.0f;
+        void BuildFarProxy(TerrainTileCoord tile, Entity &tileEntity);
+        void ShowFarProxy(TerrainTileCoord tile);
+        void ApplySuppressedFoliage(TerrainTileCoord tile, Entity &entity) const;
         // Work whose result is no longer wanted; kept until it finishes (a future from std::async blocks when dropped).
         std::vector<std::future<std::optional<TileFiles>>> m_abandonedLoads;
         std::vector<std::future<procedural::ProceduralGenerationResult>> m_abandonedGenerations;

@@ -2,11 +2,14 @@
 
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/TerrainLayers.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/NavigationMeshComponent.h"
+#include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 
@@ -59,6 +62,8 @@ namespace PlutoGE::scene
 
     TerrainVolumeComponent::~TerrainVolumeComponent() = default;
 
+    // The chunk entities draw with ChunkMaterial(); Step reapplies it when it changes.
+
     // ---- settings ------------------------------------------------------------------------------------------------------
 
     void TerrainVolumeComponent::SetVoxelSize(float metres)
@@ -84,14 +89,7 @@ namespace PlutoGE::scene
         if (asset == m_materialAsset)
             return;
         m_materialAsset = std::move(asset);
-        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
-        if (!scene)
-            return;
-        auto *material = ChunkMaterial();
-        for (const auto &[chunk, id] : m_chunkEntities)
-            if (auto *entity = scene->FindEntityByID(id))
-                if (auto *mesh = entity->GetComponent<MeshComponent>())
-                    mesh->SetMaterial(material);
+        RefreshChunkMaterial();
     }
 
     void TerrainVolumeComponent::SetVolumeFile(std::string file)
@@ -136,6 +134,14 @@ namespace PlutoGE::scene
         m_holesVolumeRevision = kHolesStale;
     }
 
+    void TerrainVolumeComponent::SetGroundMaterials(const volume::TerrainGroundMaterials &materials)
+    {
+        auto clamped = materials;
+        clamped.rockLayer = std::clamp(clamped.rockLayer, -1, 255);
+        clamped.rockDepth = std::max(clamped.rockDepth, 0.0f);
+        m_ground = clamped; // the base follows on the next update
+    }
+
     std::vector<Property> TerrainVolumeComponent::Serialize() const
     {
         return {
@@ -149,12 +155,15 @@ namespace PlutoGE::scene
             {"SurfaceTolerance", PropertyType::Float, std::to_string(m_coupling.surfaceTolerance)},
             {"OverlapCells", PropertyType::Int, std::to_string(m_coupling.overlapCells)},
             {"OverlapSink", PropertyType::Float, std::to_string(m_coupling.overlapSink)},
+            {"RockLayer", PropertyType::Int, std::to_string(m_ground.rockLayer)},
+            {"RockDepth", PropertyType::Float, std::to_string(m_ground.rockDepth)},
         };
     }
 
     void TerrainVolumeComponent::Deserialize(const std::vector<Property> &properties)
     {
         auto coupling = m_coupling;
+        auto ground = m_ground;
         for (const auto &property : properties)
         {
             const auto &text = property.Text();
@@ -178,8 +187,13 @@ namespace PlutoGE::scene
                 coupling.overlapCells = std::clamp(ParseInt(text, coupling.overlapCells), 0, 4);
             else if (property.name == "OverlapSink")
                 coupling.overlapSink = std::max(ParseFloat(text, coupling.overlapSink), 0.0f);
+            else if (property.name == "RockLayer")
+                ground.rockLayer = ParseInt(text, ground.rockLayer);
+            else if (property.name == "RockDepth")
+                ground.rockDepth = ParseFloat(text, ground.rockDepth);
         }
         SetCoupling(coupling);
+        SetGroundMaterials(ground);
     }
 
     // ---- editing -------------------------------------------------------------------------------------------------------
@@ -201,6 +215,9 @@ namespace PlutoGE::scene
             m_lastError = "A terrain volume needs a terrain beside it.";
             return {};
         }
+        // Edits copy the base into the chunks they store: it must be the current one (materials, caves, heights).
+        if (auto *terrain = FindTerrain())
+            FollowBase(*terrain, true);
         return m_volume->Apply(localShape, edit);
     }
 
@@ -237,7 +254,58 @@ namespace PlutoGE::scene
         output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         if (!output)
             return fail("Could not write " + path.string() + ".");
+        m_savedRevision = m_volume->GetRevision();
         return true;
+    }
+
+    std::vector<std::uint8_t> TerrainVolumeComponent::ExportEdits()
+    {
+        if (!EnsureVolume())
+            return {};
+        return volume::VolumeFile::Encode(*m_volume);
+    }
+
+    bool TerrainVolumeComponent::ImportEdits(std::span<const std::uint8_t> bytes, std::string *error)
+    {
+        const auto fail = [&](std::string reason) {
+            m_lastError = reason;
+            if (error)
+                *error = std::move(reason);
+            return false;
+        };
+        if (!EnsureVolume())
+            return fail("A terrain volume needs a terrain beside it.");
+        std::string reason;
+        auto contents = volume::VolumeFile::Decode(bytes, &reason);
+        if (!contents)
+            return fail(reason);
+        if (!(contents->grid == m_volume->GetGrid()))
+            return fail("The edits were made for another voxel size or chunk size.");
+        // Every chunk the old edits or the new ones touch meshes again; holes follow in the next update.
+        m_volume->ClearChunks();
+        for (auto &[coord, chunk] : contents->chunks)
+            m_volume->SetChunk(coord, std::move(chunk));
+        m_savedRevision = m_volume->GetRevision();
+        return true;
+    }
+
+    bool TerrainVolumeComponent::ReloadFile(std::string *error)
+    {
+        if (!EnsureVolume())
+        {
+            if (error)
+                *error = "A terrain volume needs a terrain beside it.";
+            return false;
+        }
+        const auto bytes = m_volumeFile.empty() ? std::nullopt : ReadFileIfPresent(ResolvePath(m_volumeFile));
+        if (bytes)
+            return ImportEdits(*bytes, error);
+        return ImportEdits(volume::VolumeFile::Encode(m_volume->GetGrid(), {}), error);
+    }
+
+    bool TerrainVolumeComponent::HasUnsavedEdits() const
+    {
+        return m_volume && m_volume->GetRevision() != m_savedRevision;
     }
 
     void TerrainVolumeComponent::ProvideFileContents(std::optional<std::vector<std::uint8_t>> contents)
@@ -263,6 +331,7 @@ namespace PlutoGE::scene
         std::string error;
         if (!volume::VolumeFile::Load(*bytes, *m_volume, &error))
             m_lastError = m_volumeFile + ": " + error;
+        m_savedRevision = m_volume->GetRevision();
     }
 
     // ---- the volume ------------------------------------------------------------------------------------------------------
@@ -280,7 +349,99 @@ namespace PlutoGE::scene
         for (int z = 0; z < depth; ++z)
             for (int x = 0; x < width; ++x)
                 heights[static_cast<std::size_t>(z) * width + x] = terrain.GetSurfaceSampleHeight(x, z);
-        return std::make_shared<const volume::TerrainSurface>(width, depth, terrain.GetCellSize(), std::move(heights));
+        // Each sample's strongest painted layer: dug ground shows what the surface around it shows.
+        std::vector<volume::VolumeMaterial> layers;
+        const auto &stack = terrain.GetLayers();
+        if (!stack.Empty() && width > 1 && depth > 1)
+        {
+            layers.resize(heights.size());
+            for (int z = 0; z < depth; ++z)
+                for (int x = 0; x < width; ++x)
+                    layers[static_cast<std::size_t>(z) * width + x] = static_cast<volume::VolumeMaterial>(std::min<std::size_t>(
+                        stack.GetWeights().DominantLayer({static_cast<float>(x) / (width - 1), static_cast<float>(z) / (depth - 1)}), 255));
+        }
+        return std::make_shared<const volume::TerrainSurface>(width, depth, terrain.GetCellSize(), std::move(heights), std::move(layers));
+    }
+
+    TerrainVolumeComponent::BaseInputs TerrainVolumeComponent::CurrentBaseInputs(const TerrainComponent &terrain) const
+    {
+        BaseInputs inputs;
+        inputs.heightsRevision = terrain.GetHeightsRevision();
+        inputs.weightsRevision = terrain.GetLayers().GetWeightsRevision();
+        inputs.ground = m_ground;
+        if (const auto *owner = GetOwner())
+        {
+            if (const auto *procedural = owner->GetComponent<ProceduralTerrainComponent>(); procedural && procedural->GetDefinition().caves.enabled)
+            {
+                inputs.caves = procedural->GetDefinition().caves;
+                inputs.caveSeed = procedural->GetDefinition().seed;
+                // Caves are generated in world space, so a world's tiles agree where they meet.
+                inputs.worldOffset = glm::vec3(owner->GetWorldTransform()[3]);
+            }
+            // The stamps over the terrain, seen from its space.
+            if (const auto *scene = owner->GetScene())
+            {
+                const glm::mat4 terrainWorld = owner->GetWorldTransform();
+                const glm::vec2 extent(std::max(1, terrain.GetWidth() - 1) * terrain.GetCellSize(),
+                                       std::max(1, terrain.GetDepth() - 1) * terrain.GetCellSize());
+                VolumeStampComponent::ForEach(*scene, [&](const VolumeStampComponent &stamp) {
+                    StampInput input{stamp.GetShape(), stamp.GetMode(), stamp.GetLayer(), stamp.GetRadius(), stamp.GetHalfExtents(),
+                                     stamp.GetLength(), glm::inverse(stamp.GetOwner()->GetWorldTransform()) * terrainWorld};
+                    // Its bounds in the terrain's space, against the terrain's footprint.
+                    const auto shape = VolumeStampComponent::MakeShape(input.shape, input.radius, input.halfExtents, input.length);
+                    const volume::TransformedShape local(*shape, input.toStamp);
+                    if (local.BoundsMax().x < 0.0f || local.BoundsMax().z < 0.0f || local.BoundsMin().x > extent.x || local.BoundsMin().z > extent.y)
+                        return;
+                    inputs.stamps.push_back(input);
+                });
+            }
+        }
+        return inputs;
+    }
+
+    std::shared_ptr<const volume::VolumeDensitySource> TerrainVolumeComponent::MakeBase(const TerrainComponent &terrain, const BaseInputs &inputs)
+    {
+        m_surface = SnapshotSurface(terrain);
+        auto ground = volume::MakeTerrainDensity(m_surface, inputs.ground);
+        if (!inputs.caves.enabled && inputs.stamps.empty())
+            return ground;
+        auto base = std::make_shared<volume::CompositeDensity>();
+        base->Add(std::move(ground), volume::CompositeDensity::Operation::Union);
+        if (inputs.caves.enabled)
+        {
+            const glm::vec3 extent(m_surface->GetCellsX() * m_surface->GetCellSize(), 0.0f, m_surface->GetCellsZ() * m_surface->GetCellSize());
+            const glm::vec3 low(0.0f, inputs.caves.altitude.x - inputs.worldOffset.y - 64.0f, 0.0f);
+            const glm::vec3 high(extent.x, inputs.caves.altitude.y - inputs.worldOffset.y + 64.0f, extent.z);
+            base->Add(std::make_shared<volume::CaveDensity>(inputs.caves, inputs.caveSeed, inputs.worldOffset, glm::min(low, high),
+                                                            glm::max(low, high)),
+                      volume::CompositeDensity::Operation::Subtract);
+        }
+        // Authored stamps last: they can plug a generated cave or carve one where generation made none.
+        for (const auto &stamp : inputs.stamps)
+        {
+            auto shape = std::make_shared<volume::TransformedShape>(
+                VolumeStampComponent::MakeShape(stamp.shape, stamp.radius, stamp.halfExtents, stamp.length), stamp.toStamp);
+            const auto material = static_cast<volume::VolumeMaterial>(std::clamp(stamp.layer, 0, 255));
+            switch (stamp.mode)
+            {
+            case volume::VolumeEditMode::Subtract:
+                base->Add(std::make_shared<volume::ShapeDensity>(std::move(shape)), volume::CompositeDensity::Operation::Subtract);
+                break;
+            case volume::VolumeEditMode::Add:
+                base->Add(std::make_shared<volume::ShapeDensity>(std::move(shape), material), volume::CompositeDensity::Operation::Union);
+                break;
+            case volume::VolumeEditMode::Paint:
+                base->Add(std::make_shared<volume::ShapeDensity>(std::move(shape), material), volume::CompositeDensity::Operation::Paint);
+                break;
+            }
+        }
+        return base;
+    }
+
+    void TerrainVolumeComponent::QueueBaseFeatures()
+    {
+        for (const auto chunk : m_volume->GetBaseFeatureChunks())
+            m_toMesh.insert(chunk);
     }
 
     bool TerrainVolumeComponent::EnsureVolume()
@@ -290,16 +451,18 @@ namespace PlutoGE::scene
         auto *terrain = FindTerrain();
         if (!terrain)
             return false;
-        m_surface = SnapshotSurface(*terrain);
-        m_surfaceHeightsRevision = terrain->GetHeightsRevision();
+        m_baseInputs = CurrentBaseInputs(*terrain);
+        m_weightsSeen = m_baseInputs.weightsRevision;
         volume::VolumeGrid grid;
         grid.voxelSize = m_voxelSize;
         grid.chunkVoxels = m_chunkVoxels;
-        m_volume = std::make_unique<volume::TerrainVolume>(grid, volume::MakeTerrainDensity(m_surface));
+        m_volume = std::make_unique<volume::TerrainVolume>(grid, MakeBase(*terrain, m_baseInputs));
         m_volume->SetMeshApron(m_queue->GetMesher().Apron());
+        QueueBaseFeatures();
         m_holes = std::make_shared<const TerrainHoleMask>();
         m_pendingHoles.reset();
         m_holesVolumeRevision = kHolesStale;
+        m_savedRevision = m_volume->GetRevision();
         LoadStoredChunks();
         return true;
     }
@@ -349,6 +512,7 @@ namespace PlutoGE::scene
                 for (int dy = -1; dy <= 1; ++dy)
                     for (int dx = -1; dx <= 1; ++dx)
                         m_toMesh.insert({chunk.x + dx, chunk.y + dy, chunk.z + dz});
+        QueueBaseFeatures();
     }
 
     bool TerrainVolumeComponent::IsUpToDate() const
@@ -357,7 +521,7 @@ namespace PlutoGE::scene
             return true;
         const auto *terrain = FindTerrain();
         return m_toMesh.empty() && m_queue->Idle() && !m_pendingHoles && m_volume->GetDirtyChunks().empty() &&
-               m_holesVolumeRevision == m_volume->GetRevision() && (!terrain || terrain->GetHeightsRevision() == m_surfaceHeightsRevision);
+               m_holesVolumeRevision == m_volume->GetRevision() && (!terrain || CurrentBaseInputs(*terrain) == m_baseInputs);
     }
 
     void TerrainVolumeComponent::Flush()
@@ -376,7 +540,8 @@ namespace PlutoGE::scene
         if (!terrain || !EnsureVolume())
             return;
         ValidateChunkEntities();
-        FollowTerrainHeights(*terrain);
+        RefreshChunkMaterial();
+        FollowBase(*terrain, unbudgeted);
         for (const auto chunk : m_volume->TakeDirtyChunks())
             m_toMesh.insert(chunk);
         RefreshHoles();
@@ -386,16 +551,30 @@ namespace PlutoGE::scene
         ApplyHolesWhenMeshed(*terrain);
     }
 
-    void TerrainVolumeComponent::FollowTerrainHeights(TerrainComponent &terrain)
+    void TerrainVolumeComponent::FollowBase(TerrainComponent &terrain, bool immediately)
     {
-        if (terrain.GetHeightsRevision() == m_surfaceHeightsRevision)
+        auto inputs = CurrentBaseInputs(terrain);
+        if (inputs == m_baseInputs)
             return;
-        // Sculpted: unstored chunks follow the new surface; every mesh and the holes are made again.
-        m_surface = SnapshotSurface(terrain);
-        m_surfaceHeightsRevision = terrain.GetHeightsRevision();
-        m_volume->SetBase(volume::MakeTerrainDensity(m_surface));
+        // Painting changes the weights every dab: wait until a frame passes without one (Flush does not wait).
+        const bool painting = inputs.weightsRevision != m_weightsSeen;
+        m_weightsSeen = inputs.weightsRevision;
+        if (painting && !immediately)
+        {
+            auto withoutWeights = inputs;
+            withoutWeights.weightsRevision = m_baseInputs.weightsRevision;
+            if (withoutWeights == m_baseInputs)
+                return;
+        }
+        // Sculpted, painted, regenerated or moved: unstored chunks follow the new base; every mesh (the old caves' and
+        // the new ones') and the holes are made again.
+        for (const auto chunk : m_volume->GetBaseFeatureChunks())
+            m_toMesh.insert(chunk);
+        m_baseInputs = inputs;
+        m_volume->SetBase(MakeBase(terrain, m_baseInputs));
         for (const auto &[chunk, id] : m_chunkEntities)
             m_toMesh.insert(chunk);
+        QueueBaseFeatures();
         m_holesVolumeRevision = kHolesStale;
     }
 
@@ -422,6 +601,7 @@ namespace PlutoGE::scene
         auto finish = [surface = m_surface, holes = m_pendingHoles ? m_pendingHoles : m_holes, coupling = m_coupling,
                        grid = m_volume->GetGrid()](volume::VolumeChunkCoord chunk, volume::VolumeMesh &mesh) {
             volume::FitVolumeMeshToTerrain(mesh, grid.ChunkOrigin(chunk), *surface, *holes, coupling, grid.voxelSize);
+            volume::EncodeTriangleMaterials(mesh);
         };
         for (std::size_t scheduled = 0; scheduled < budget && !m_toMesh.empty(); ++scheduled)
         {
@@ -460,7 +640,7 @@ namespace PlutoGE::scene
                     created->AddTag(tag);
                 created->AddTag(std::string(ChunkTag));
                 auto *meshComponent = created->CreateComponent<MeshComponent>(MeshComponentConfig{});
-                meshComponent->SetMaterial(ChunkMaterial());
+                meshComponent->SetMaterial(m_appliedMaterial);
                 meshComponent->SetStatic(true);
                 if (m_collision)
                     created->CreateComponent<ColliderComponent>(ColliderComponentConfig{.shape = ColliderShape::Mesh});
@@ -539,12 +719,62 @@ namespace PlutoGE::scene
         InvalidateNavigationRegion(*scene, low, high);
     }
 
-    render::Material *TerrainVolumeComponent::ChunkMaterial() const
+    render::Material *TerrainVolumeComponent::ChunkMaterial()
     {
         if (!m_materialAsset.empty())
             if (auto *material = core::Engine::GetInstance().GetAssetManager().LoadMaterialAsset(m_materialAsset))
                 return material;
+        if (auto *layered = LayeredTerrainMaterial())
+            return layered;
         const auto *terrain = FindTerrain();
         return terrain ? terrain->GetMaterial() : nullptr;
+    }
+
+    render::Material *TerrainVolumeComponent::LayeredTerrainMaterial()
+    {
+        auto *terrain = FindTerrain();
+        auto *source = terrain ? terrain->GetRenderMaterial() : nullptr;
+        if (!source || !source->ReadConfig().terrainLayers)
+        {
+            // Kept (not freed): a chunk may still draw with it until RefreshChunkMaterial swaps it out.
+            m_layeredSource = nullptr;
+            return nullptr;
+        }
+        // Rebuilt when the terrain's layered material changes (its layers, their maps, the material under them);
+        // a revision of 0 means untracked edits, which the terrain's own copy does not follow either.
+        const auto revision = source->GetRevision();
+        if (m_layeredMaterial && m_layeredSource == source && (revision == 0 || revision == m_layeredSourceRevision))
+            return m_layeredMaterial.get();
+        auto config = source->ReadConfig();
+        auto layers = std::make_shared<render::TerrainLayerSet>(*config.terrainLayers);
+        // Chunks have no terrain UVs: each triangle names its layer (EncodeTriangleMaterials), projected three ways
+        // so cave walls and overhangs do not smear. The macro albedo is mapped by terrain UVs too.
+        layers->weights = render::TerrainLayerWeights::VertexLayer;
+        layers->projection = render::TerrainLayerProjection::Triplanar;
+        layers->weightMaps = {};
+        config.terrainLayers = std::move(layers);
+        config.albedoTexture = nullptr;
+        if (!m_layeredMaterial)
+            m_layeredMaterial = std::make_unique<render::Material>(config);
+        else
+            m_layeredMaterial->SetConfig(std::move(config));
+        m_layeredSource = source;
+        m_layeredSourceRevision = revision;
+        return m_layeredMaterial.get();
+    }
+
+    void TerrainVolumeComponent::RefreshChunkMaterial()
+    {
+        auto *material = ChunkMaterial();
+        if (material == m_appliedMaterial)
+            return;
+        m_appliedMaterial = material;
+        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        if (!scene)
+            return;
+        for (const auto &[chunk, id] : m_chunkEntities)
+            if (auto *entity = scene->FindEntityByID(id))
+                if (auto *mesh = entity->GetComponent<MeshComponent>())
+                    mesh->SetMaterial(material);
     }
 }

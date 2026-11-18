@@ -7,6 +7,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/ui/DetailGrassInspector.h"
 #include "PlutoGE/ui/EditorIcons.h"
@@ -383,8 +384,9 @@ namespace PlutoGE::ui
         ImGui::TextDisabled("%s", detail);
 
         // The tool sits at the right edge: what the mouse does in the viewport.
-        static constexpr std::array<const char *, 4> Tools{"Select", "Sculpt", "Paint", "Holes"};
-        const float width = ImGui::GetFontSize() * 18.0f;
+        static constexpr std::array<const char *, 5> Tools{"Select", "Sculpt", "Paint", "Holes", "Dig"};
+        static_assert(Tools.size() == static_cast<std::size_t>(TerrainToolMode::Dig) + 1, "One segment per tool mode, in order");
+        const float width = ImGui::GetFontSize() * 21.0f;
         const float frame = ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.x;
         ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetContentRegionMax().x - width - frame));
         auto &tool = shell.GetTerrainTool();
@@ -395,10 +397,12 @@ namespace PlutoGE::ui
             const auto *terrain = target.Terrain();
             if (mode == TerrainToolMode::Paint && (!terrain || terrain->GetLayers().Empty()))
                 m_section = Section::Paint; // the Paint section explains adding layers
+            else if (mode == TerrainToolMode::Dig && !target.HasVolume())
+                m_section = Section::Sculpt; // the Dig block offers to add a terrain volume
             else
             {
                 tool.SetMode(mode, target.RootId());
-                if (mode == TerrainToolMode::Sculpt || mode == TerrainToolMode::Holes)
+                if (mode == TerrainToolMode::Sculpt || mode == TerrainToolMode::Holes || mode == TerrainToolMode::Dig)
                     m_section = Section::Sculpt;
                 else if (mode == TerrainToolMode::Paint)
                     m_section = Section::Paint;
@@ -517,6 +521,50 @@ namespace PlutoGE::ui
                 tool.holes.cut = cut == 0;
             widgets::SettingsRow("Radius");
             ImGui::DragFloat("##HoleRadius", &tool.holes.radius, 0.05f, 0.1f, 1024.0f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
+            widgets::EndSettingsTable();
+        }
+
+        ImGui::Spacing();
+        widgets::SectionHeading("Dig", world ? "Dig pits, caves and overhangs in 3D, or build rock up. Shift swaps Dig and Fill. Each tile "
+                                               "keeps its dug ground in a file beside its heights."
+                                             : "Dig pits, caves and overhangs in 3D, or build rock up. Shift swaps Dig and Fill.");
+        if (!target.HasVolume())
+        {
+            Muted("Digging needs a Terrain Volume: 3D ground over the heightfield, which also carves the biomes' caves and any "
+                  "Volume Stamps placed in the scene.");
+            if (target.settings && widgets::PrimaryButton("Add Terrain Volume"))
+                shell.ExecuteSceneEdit("Add Terrain Volume", [&] { target.settings->CreateComponent<scene::TerrainVolumeComponent>(); });
+            return;
+        }
+        ToolButton(shell, target, TerrainToolMode::Dig, "Start Digging", "Stop Digging");
+        if (widgets::BeginSettingsTable("##DigBrush"))
+        {
+            widgets::SettingsRow("Brush", "Dig removes ground, Fill adds rock of the layer, Paint recolours rock without moving it.");
+            static constexpr std::array<const char *, 3> DigModes{"Dig", "Fill", "Paint"};
+            int mode = static_cast<int>(tool.dig.mode);
+            if (widgets::SegmentedControl("##DigMode", &mode, DigModes))
+                tool.dig.mode = static_cast<scene::volume::VolumeEditMode>(mode);
+            widgets::SettingsRow("Radius", "[ and ] resize it in the viewport.");
+            ImGui::DragFloat("##DigRadius", &tool.dig.radius, 0.05f, 0.25f, 64.0f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
+            widgets::SettingsRow("Rate", "Dabs a second while the mouse is held: each digs a little deeper.");
+            ImGui::DragFloat("##DigRate", &tool.dig.rate, 0.1f, 0.5f, 30.0f, "%.1f /s", ImGuiSliderFlags_AlwaysClamp);
+            if (tool.dig.mode != scene::volume::VolumeEditMode::Subtract)
+            {
+                const auto *terrain = target.Terrain();
+                const auto &layers = terrain ? terrain->GetLayers().GetLayers() : std::vector<scene::TerrainLayer>{};
+                widgets::SettingsRow("Layer", "The terrain layer the rock shows.");
+                const auto label = [&](int index) {
+                    return index < static_cast<int>(layers.size()) && !layers[index].name.empty() ? layers[index].name
+                                                                                                    : "Layer " + std::to_string(index + 1);
+                };
+                if (ImGui::BeginCombo("##DigLayer", label(tool.dig.layer).c_str()))
+                {
+                    for (int index = 0; index < std::max<int>(static_cast<int>(layers.size()), 1); ++index)
+                        if (ImGui::Selectable((label(index) + "##" + std::to_string(index)).c_str(), index == tool.dig.layer))
+                            tool.dig.layer = index;
+                    ImGui::EndCombo();
+                }
+            }
             widgets::EndSettingsTable();
         }
     }

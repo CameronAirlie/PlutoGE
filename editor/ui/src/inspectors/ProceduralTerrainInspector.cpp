@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/ui/AssetReferencePicker.h"
 #include "PlutoGE/ui/ComponentInspectors.h"
@@ -358,6 +359,37 @@ namespace PlutoGE::ui
             return changed;
         }
 
+        // Generated caves (terrain volumes, phase 6): carved by a Terrain Volume beside the terrain.
+        bool EditCaves(scene::volume::CaveNetworkSettings &caves, bool hasVolume)
+        {
+            bool changed = ImGui::Checkbox("Generate Caves", &caves.enabled);
+            if (!hasVolume)
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "Caves are carved by a Terrain Volume: add one (Terrain Editor > Sculpt > Dig).");
+            if (!caves.enabled)
+                return changed;
+            int seed = static_cast<int>(caves.seed);
+            if (ImGui::InputInt("Cave Seed", &seed))
+                caves.seed = static_cast<std::uint32_t>(std::max(seed, 0)), changed = true;
+            changed |= ImGui::DragFloat2("Altitude", &caves.altitude.x, 0.5f, -10000.0f, 10000.0f, "%.1f m");
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("The band of world heights tunnels wander through. Where the ground dips into it, they open "
+                                  "as cave mouths.");
+            changed |= ImGui::DragFloat("Cell Size", &caves.cellSize, 1.0f, 8.0f, 2048.0f, "%.0f m");
+            changed |= ImGui::SliderInt("Tunnels Per Cell", &caves.tunnelsPerCell, 0, 16);
+            changed |= ImGui::DragFloat("Tunnel Length", &caves.tunnelLength, 1.0f, 0.0f, 2000.0f, "%.0f m");
+            changed |= ImGui::DragFloat2("Radius", &caves.radius.x, 0.05f, 0.25f, 32.0f, "%.2f m");
+            changed |= ImGui::DragFloat("Step", &caves.stepLength, 0.1f, 0.5f, 32.0f, "%.1f m");
+            changed |= ImGui::SliderFloat("Turn Rate", &caves.turnRate, 0.0f, 1.5f, "%.2f rad");
+            changed |= ImGui::SliderFloat("Max Slope", &caves.maxSlope, 0.0f, 1.4f, "%.2f rad");
+            changed |= ImGui::SliderFloat("Chamber Chance", &caves.chamberChance, 0.0f, 0.5f, "%.2f");
+            changed |= ImGui::DragFloat("Chamber Radius", &caves.chamberRadius, 0.1f, 0.5f, 64.0f, "%.1f m");
+            changed |= ImGui::DragFloat("Wall Noise", &caves.wobble, 0.01f, 0.0f, 4.0f, "%.2f m");
+            changed |= ImGui::DragFloat("Wall Noise Scale", &caves.wobbleScale, 0.1f, 0.25f, 64.0f, "%.1f m");
+            caves.cellSize = std::max(caves.cellSize, 1.0f);
+            caves.stepLength = std::max(caves.stepLength, 0.5f);
+            return changed;
+        }
+
         // The compact inspector: what the biomes are, and where to edit them (the Terrain Editor's Biomes tab).
         void DrawProceduralTerrainInspector(scene::Component &component, ComponentInspectorContext &context,
                                             std::vector<scene::Property> &properties)
@@ -480,6 +512,12 @@ namespace PlutoGE::ui
         if (ImGui::InputInt("World Seed", &seed))
             definition.seed = static_cast<std::uint32_t>(std::max(seed, 0)), changed = true;
         changed |= ImGui::DragFloat("Biome Blend", &definition.biomeBlend, 0.1f, 0.0f, 500.0f, "%.1f m");
+
+        if (ImGui::TreeNode("Caves", "Caves (%s)", definition.caves.enabled ? "on" : "off"))
+        {
+            changed |= EditCaves(definition.caves, entity.GetComponent<scene::TerrainVolumeComponent>() != nullptr);
+            ImGui::TreePop();
+        }
 
         if (ImGui::TreeNode("Masks", "Masks (%zu)", definition.masks.size()))
         {

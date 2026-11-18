@@ -23,6 +23,10 @@ namespace PlutoGE::scene::volume
         // Every sample of a box of the grid's lattice, x fastest, then y, then z (`out` holds box.SampleCount()).
         // The default asks Sample for each; sources with cheaper bulk evaluation (a column at a time) override it.
         virtual void Fill(const VolumeGrid &grid, const VolumeSampleBox &box, std::span<VolumeSample> out) const;
+        // Where this source makes something other than plain ground (generated caves, a stamped shape): boxes in its
+        // space. A volume meshes the chunks they touch even when nothing was edited there, and looks there for cave
+        // mouths. Ground and constant sources add nothing.
+        virtual void AppendFeatureBounds(std::vector<VolumeBounds> &) const {}
     };
 
     // The same everywhere: all air (positive distance) or all rock.
@@ -71,6 +75,7 @@ namespace PlutoGE::scene::volume
             Union,     // rock where either is rock (min of distances); the added source's material where it wins
             Subtract,  // the source's rock becomes air (max(base, -source))
             Intersect, // rock only where both are (max of distances)
+            Paint,     // rock inside the source takes the source's material; the surface does not move
         };
         struct Layer
         {
@@ -88,6 +93,8 @@ namespace PlutoGE::scene::volume
         // With no layers, air.
         [[nodiscard]] VolumeSample Sample(const glm::vec3 &position) const override;
         void Fill(const VolumeGrid &grid, const VolumeSampleBox &box, std::span<VolumeSample> out) const override;
+        // Every layer's features.
+        void AppendFeatureBounds(std::vector<VolumeBounds> &out) const override;
 
         // How a layer's sample combines into the running one (the CSG rule shared with edits).
         [[nodiscard]] static VolumeSample Combine(const VolumeSample &base, const VolumeSample &layer, Operation operation);
@@ -106,6 +113,7 @@ namespace PlutoGE::scene::volume
         {
         }
         [[nodiscard]] VolumeSample Sample(const glm::vec3 &position) const override { return {m_shape->Distance(position), m_material}; }
+        void AppendFeatureBounds(std::vector<VolumeBounds> &out) const override { out.push_back({m_shape->BoundsMin(), m_shape->BoundsMax()}); }
 
     private:
         std::shared_ptr<const VolumeShape> m_shape;

@@ -212,6 +212,22 @@ namespace PlutoGE::scene::procedural
                 .Field("channel", std::to_string(mask.channel))
                 .Field("min", Pair(mask.worldMin))
                 .Field("size", Pair(mask.worldSize));
+        if (caves != volume::CaveNetworkSettings{})
+            Record(out, "CAVES")
+                .Field("enabled", caves.enabled ? "1" : "0")
+                .Field("seed", Number(caves.seed))
+                .Field("cell", Number(caves.cellSize))
+                .Field("tunnels", std::to_string(caves.tunnelsPerCell))
+                .Field("length", Number(caves.tunnelLength))
+                .Field("step", Number(caves.stepLength))
+                .Field("radius", Pair(caves.radius))
+                .Field("turn", Number(caves.turnRate))
+                .Field("slope", Number(caves.maxSlope))
+                .Field("altitude", Pair(caves.altitude))
+                .Field("chambers", Number(caves.chamberChance))
+                .Field("chamber", Number(caves.chamberRadius))
+                .Field("wobble", Number(caves.wobble))
+                .Field("wobbleScale", Number(caves.wobbleScale));
         for (const auto &biome : biomes)
         {
             Record(out, "BIOME").Text("name", biome.name).Field("enabled", biome.enabled ? "1" : "0").Text("mask", biome.mask);
@@ -283,6 +299,28 @@ namespace PlutoGE::scene::procedural
                 if (error)
                     *error = "Not a procedural terrain definition.";
                 return std::nullopt;
+            }
+            else if (kind == "CAVES")
+            {
+                auto &caves = definition.caves;
+                ReadBool(fields, "enabled", caves.enabled);
+                Read(fields, "seed", caves.seed);
+                Read(fields, "cell", caves.cellSize);
+                Read(fields, "tunnels", caves.tunnelsPerCell);
+                Read(fields, "length", caves.tunnelLength);
+                Read(fields, "step", caves.stepLength);
+                ReadPair(fields, "radius", caves.radius);
+                Read(fields, "turn", caves.turnRate);
+                Read(fields, "slope", caves.maxSlope);
+                ReadPair(fields, "altitude", caves.altitude);
+                Read(fields, "chambers", caves.chamberChance);
+                Read(fields, "chamber", caves.chamberRadius);
+                Read(fields, "wobble", caves.wobble);
+                Read(fields, "wobbleScale", caves.wobbleScale);
+                caves.cellSize = std::max(caves.cellSize, 1.0f);
+                caves.tunnelsPerCell = std::clamp(caves.tunnelsPerCell, 0, 64);
+                caves.stepLength = std::max(caves.stepLength, 0.5f);
+                rules = nullptr;
             }
             else if (kind == "MASK")
             {

@@ -47,6 +47,8 @@ namespace PlutoGE::ui
         [[nodiscard]] scene::DetailGrassComponent *Grass() const;
         // The terrains brushes edit: the terrain, or the world's loaded tiles.
         [[nodiscard]] scene::TerrainEditSurface Surface() const;
+        // Whether the target has 3D ground to dig (a TerrainVolumeComponent on the terrain, or on the world's template).
+        [[nodiscard]] bool HasVolume() const;
     };
 
     enum class TerrainToolMode
@@ -55,6 +57,7 @@ namespace PlutoGE::ui
         Sculpt,
         Paint,
         Holes,
+        Dig, // terrain volumes: 3D digging, filling and painting (needs a TerrainVolumeComponent)
     };
 
     class TerrainEditTool
@@ -75,6 +78,7 @@ namespace PlutoGE::ui
         scene::TerrainSculptBrush sculpt;
         scene::TerrainPaintBrush paint;
         scene::TerrainHoleBrush holes;
+        scene::TerrainVolumeBrush dig;
 
     private:
         TerrainToolMode m_mode = TerrainToolMode::Off;

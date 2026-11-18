@@ -87,6 +87,32 @@ void CheckTerrainLayers(PlutoGE::render::BasicRenderer &renderer, PlutoGE::rende
     require(fading[0] > fading[1] + 20 && fading[1] > 10, "Terrain inside the detail fade band did not blend layers and albedo");
     terrain->detailDistance = terrain->detailFade = 0.0f;
 
+    // Vertex layers (terrain volume chunks): the vertices' uv.x names the layer, the weight map is ignored, there is
+    // no macro albedo to fade to, and triplanar projection shades a face looking along z.
+    {
+        auto layered = vertices;
+        for (auto &vertex : layered)
+            vertex.uv = {1.0f, 0.0f};
+        auto layeredMesh = renderer.CreateMesh({layered, indices});
+        auto volumeLayers = std::make_shared<BasicTerrainLayers>(*terrain);
+        volumeLayers->vertexLayers = true;
+        volumeLayers->triplanar = true;
+        volumeLayers->detailDistance = 0.5f;
+        volumeLayers->detailFade = 0.25f;
+        BasicDraw volumeDraw = draw;
+        volumeDraw.mesh = &layeredMesh;
+        volumeDraw.terrainLayers = volumeLayers;
+        const auto sampleVolume = [&](float x) {
+            renderer.Render(glm::mat4(1), lighting, std::span(&volumeDraw, 1));
+            const auto image = readPixels(renderer.GetColorTexture());
+            const auto at = (renderer.GetHeight() / 2 * renderer.GetWidth() + static_cast<unsigned>(renderer.GetWidth() * x)) * 4;
+            return std::array<int, 3>{int(image[at]), int(image[at + 1]), int(image[at + 2])};
+        };
+        require(blue(sampleVolume(0.3f)) && blue(sampleVolume(0.7f)), "Vertex layers did not shade the triangle's own layer triplanar");
+        volumeLayers->triplanar = false;
+        require(blue(sampleVolume(0.3f)), "Vertex layers did not shade top-down");
+    }
+
     // Region updates patch textures in place (IRenderDevice::UpdateTexture): the left weight texel now belongs to
     // layer 1, then layer 1's albedo (array layer 1) turns green.
     require(device.UpdateTexture(weights.Get(), {0, 0, 1, 1}, bytes({0, 255, 0, 0})), "Weight map region update failed");

@@ -3,6 +3,8 @@
 // seamless across chunks).
 #include "PlutoGE/scene/volume/TerrainVolume.h"
 #include "PlutoGE/scene/volume/TerrainVolumeCoupling.h"
+#include "PlutoGE/scene/volume/CaveDensity.h"
+#include "PlutoGE/scene/volume/VolumeEditArchive.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 #include "PlutoGE/scene/volume/VolumeMesher.h"
 #include "PlutoGE/scene/volume/VolumeMeshQueue.h"
@@ -402,16 +404,26 @@ namespace
         Require(surface.CellHeightRange(0, 0) == glm::vec2(0.0f, 4.0f), "A cell's height range spans its corners");
         Require(!TerrainSurface(1, 5, 1.0f, {0, 0, 0, 0, 0}).Valid(), "A terrain needs at least one cell");
 
-        const auto density = MakeTerrainDensity(std::make_shared<const TerrainSurface>(surface), 4);
+        const auto density = MakeTerrainDensity(std::make_shared<const TerrainSurface>(surface), {.rockLayer = 4, .rockDepth = 1.0f});
         const auto sample = density->Sample({1.0f, 5.0f, 1.0f});
-        Require(Near(sample.distance, 2.0f, 1e-5f) && sample.material == 4, "The terrain density is height above its surface");
+        Require(Near(sample.distance, 2.0f, 1e-5f) && sample.material == 0, "The terrain density is height above its surface");
+        Require(density->Sample({1.0f, 2.8f, 1.0f}).material == 0 && density->Sample({1.0f, 1.0f, 1.0f}).material == 4,
+                "The surface's layer near the top, the rock layer from its depth down");
+
+        // Painted layers: the ground takes the nearest sample's.
+        const TerrainSurface painted(2, 2, 1.0f, {0, 0, 0, 0}, {1, 2, 3, 5});
+        Require(painted.Layer(0.1f, 0.1f) == 1 && painted.Layer(0.9f, 0.2f) == 2 && painted.Layer(0.2f, 0.8f) == 3 &&
+                    painted.Layer(5.0f, 5.0f) == 5 && TerrainSurface(2, 2, 1.0f, {0, 0, 0, 0}, {1}).Layer(0, 0) == 0,
+                "Surface layers by nearest sample (none when the sizes differ)");
+        const auto paintedDensity = MakeTerrainDensity(std::make_shared<const TerrainSurface>(painted));
+        Require(paintedDensity->Sample({0.9f, -0.5f, 0.1f}).material == 2, "Without a rock layer the surface's layer goes all the way down");
     }
 
     void CouplingHoles()
     {
         const auto surface = SlopedSurface();
         const TerrainCouplingSettings settings;
-        TerrainVolume volume(SmallGrid(), MakeTerrainDensity(surface, 1));
+        TerrainVolume volume(SmallGrid(), MakeTerrainDensity(surface, {.rockLayer = 1, .rockDepth = 0.0f}));
         Require(ComputeVolumeHoles(volume, *surface, settings).Empty(), "An unedited volume cuts nothing");
 
         // A cave well under the ground: stored chunks, but the surface is untouched.
@@ -440,7 +452,7 @@ namespace
         const auto surface = SlopedSurface();
         const TerrainCouplingSettings settings;
         const auto grid = SmallGrid();
-        TerrainVolume volume(grid, MakeTerrainDensity(surface, 1));
+        TerrainVolume volume(grid, MakeTerrainDensity(surface, {.rockLayer = 1, .rockDepth = 0.0f}));
         const SurfaceNetsMesher mesher;
         const VolumeChunkCoord ground = grid.ChunkAt({20.0f, *surface->Height(20.0f, 20.0f), 20.0f});
 
@@ -484,7 +496,7 @@ namespace
         Require(noRing.mesh.indices.size() < mesh.mesh.indices.size(), "The ring adds triangles around the cut");
 
         // A cave under the ground keeps its whole interior though nothing is cut.
-        TerrainVolume caves(grid, MakeTerrainDensity(surface, 1));
+        TerrainVolume caves(grid, MakeTerrainDensity(surface, {.rockLayer = 1, .rockDepth = 0.0f}));
         caves.Apply(SphereShape({6.0f, 2.0f, 6.0f}, 1.5f), {VolumeEditMode::Subtract});
         const auto caveChunk = grid.ChunkAt({6.0f, 2.0f, 6.0f});
         auto cave = MeshVolumeChunk(caves, caveChunk, mesher);
@@ -539,6 +551,270 @@ namespace
     }
 }
 
+namespace
+{
+    // Chunk meshes name each triangle's terrain layer in its vertices' uv.x (the shader's vertex layers).
+    void TriangleMaterials()
+    {
+        // Ground of layer 1 with a box of layer 3 pressed into it: the mesh has both materials and vertices where
+        // they meet.
+        TerrainVolume volume(SmallGrid(), FlatGround(2.0f, 1));
+        volume.Apply(BoxShape({2.0f, 2.0f, 2.0f}, {1.0f, 1.0f, 1.0f}), {VolumeEditMode::Paint, 3});
+        auto mesh = MeshVolumeChunk(volume, {0, 0, 0}, SurfaceNetsMesher());
+        Require(!mesh.Empty(), "The painted ground has a surface");
+        const auto triangles = mesh.mesh.indices.size();
+        const auto vertices = mesh.mesh.vertices.size();
+        bool mixed = false;
+        for (std::size_t t = 0; t < triangles; t += 3)
+        {
+            const auto a = mesh.materials[mesh.mesh.indices[t]], b = mesh.materials[mesh.mesh.indices[t + 1]],
+                       c = mesh.materials[mesh.mesh.indices[t + 2]];
+            mixed = mixed || a != b || b != c;
+        }
+        Require(mixed, "Some triangles straddle the two materials before encoding");
+
+        EncodeTriangleMaterials(mesh);
+        Require(mesh.mesh.indices.size() == triangles, "Encoding keeps every triangle");
+        Require(mesh.mesh.vertices.size() > vertices && mesh.materials.size() == mesh.mesh.vertices.size(),
+                "Vertices shared across materials are copied, materials follow the vertices");
+        bool sawGround = false, sawPaint = false;
+        for (std::size_t t = 0; t < triangles; t += 3)
+        {
+            const float layer = mesh.mesh.vertices[mesh.mesh.indices[t]].uv[0];
+            for (int corner = 1; corner < 3; ++corner)
+                Require(mesh.mesh.vertices[mesh.mesh.indices[t + corner]].uv[0] == layer, "A triangle has one layer");
+            Require(layer == 1.0f || layer == 3.0f, "The layer is one of the rock's materials");
+            sawGround = sawGround || layer == 1.0f;
+            sawPaint = sawPaint || layer == 3.0f;
+        }
+        Require(sawGround && sawPaint, "Both materials keep triangles");
+        for (std::size_t v = 0; v < mesh.mesh.vertices.size(); ++v)
+            Require(mesh.mesh.vertices[v].uv[0] == static_cast<float>(mesh.materials[v]), "uv.x is the vertex's material");
+
+        // Encoding twice changes nothing more.
+        const auto encoded = mesh.mesh.vertices.size();
+        EncodeTriangleMaterials(mesh);
+        Require(mesh.mesh.vertices.size() == encoded, "An encoded mesh is left as it is");
+    }
+}
+
+namespace
+{
+    // Phase 5: edits say how much rock they took (resources, debris), volumes clear, and archives hold many volumes.
+    void RockAccounting()
+    {
+        TerrainVolume volume(SmallGrid(), FlatGround(2.0f, 1));
+        // A sphere centred on the surface removes about half its volume: (2/3) pi r^3.
+        const auto dig = volume.Apply(SphereShape({2.0f, 2.0f, 2.0f}, 1.5f), {VolumeEditMode::Subtract});
+        const float expected = 2.0f / 3.0f * 3.14159265f * 1.5f * 1.5f * 1.5f;
+        Require(dig.rockRemoved.size() == 1 && dig.rockRemoved.contains(1), "The removed rock is the ground's material");
+        Require(Near(dig.RockRemoved(), expected, expected * 0.3f) && dig.rockAdded == 0.0f,
+                "Digging removes about the half sphere below the ground, adds nothing");
+        const auto again = volume.Apply(SphereShape({2.0f, 2.0f, 2.0f}, 1.5f), {VolumeEditMode::Subtract});
+        Require(again.RockRemoved() == 0.0f, "Digging air removes nothing");
+        const auto fill = volume.Apply(SphereShape({2.0f, 2.0f, 2.0f}, 1.5f), {VolumeEditMode::Add, 4});
+        Require(Near(fill.rockAdded, 2.0f * expected, expected * 0.6f) && fill.RockRemoved() == 0.0f, "Filling adds the whole sphere");
+        const auto paint = volume.Apply(SphereShape({2.0f, 2.0f, 2.0f}, 1.0f), {VolumeEditMode::Paint, 2});
+        Require(paint.Changed() && paint.RockRemoved() == 0.0f && paint.rockAdded == 0.0f, "Painting moves no rock");
+
+        VolumeEditResult total;
+        total.Merge(dig);
+        total.Merge(fill);
+        Require(total.changedChunks.size() == dig.changedChunks.size() + fill.changedChunks.size() &&
+                    Near(total.RockRemoved(), dig.RockRemoved(), 1e-4f) && Near(total.rockAdded, fill.rockAdded, 1e-4f),
+                "Results merge");
+
+        volume.TakeDirtyChunks();
+        const auto revision = volume.GetRevision();
+        volume.ClearChunks();
+        Require(volume.GetStoredChunkCount() == 0 && volume.GetRevision() != revision && !volume.GetDirtyChunks().empty(),
+                "Clearing drops every stored chunk and dirties their meshes");
+    }
+
+    // The base continues past the terrain's edges, so unedited chunks there have no wall at the edge, and fitting
+    // leaves nothing of them (a neighbouring tile's volume owns the ground beyond).
+    void TerrainEdges()
+    {
+        auto surface = std::make_shared<const TerrainSurface>(9, 9, 1.0f, std::vector<float>(81, 2.0f));
+        Require(!surface->Height(-1.0f, 3.0f) && surface->ExtendedHeight(-1.0f, 3.0f) == 2.0f &&
+                    surface->ExtendedHeight(20.0f, 20.0f) == 2.0f,
+                "The extended height carries the edge outwards");
+        TerrainVolume volume(SmallGrid(), MakeTerrainDensity(surface));
+        Require(volume.Sample({-4, 4, 2}).distance == 0.0f && volume.Sample({-4, 6, 2}).distance > 0.0f,
+                "Past the edge the base is the continued ground, not air");
+        const TerrainCouplingSettings settings;
+        for (const VolumeChunkCoord chunk : {VolumeChunkCoord{0, 0, 0}, VolumeChunkCoord{-1, 0, 0}, VolumeChunkCoord{0, 0, -1}})
+        {
+            auto mesh = MeshVolumeChunk(volume, chunk, SurfaceNetsMesher());
+            FitVolumeMeshToTerrain(mesh, volume.GetGrid().ChunkOrigin(chunk), *surface, TerrainHoleMask(8, 8), settings,
+                                   volume.GetGrid().voxelSize);
+            Require(mesh.Empty(), "An unedited chunk at the terrain's edge draws nothing");
+        }
+        // Dug at the edge, the pit is drawn over the terrain only.
+        volume.Apply(SphereShape({0.5f, 2.0f, 2.0f}, 1.5f), {VolumeEditMode::Subtract});
+        auto holes = ComputeVolumeHoles(volume, *surface, settings);
+        for (const VolumeChunkCoord chunk : {VolumeChunkCoord{0, 0, 0}, VolumeChunkCoord{-1, 0, 0}})
+        {
+            auto mesh = MeshVolumeChunk(volume, chunk, SurfaceNetsMesher());
+            FitVolumeMeshToTerrain(mesh, volume.GetGrid().ChunkOrigin(chunk), *surface, holes, settings, volume.GetGrid().voxelSize);
+            Require(chunk.x == 0 ? !mesh.Empty() : mesh.Empty(), "The pit's chunk on the terrain draws it; the one past the edge does not");
+            for (const auto &vertex : mesh.mesh.vertices)
+                Require(volume.GetGrid().ChunkOrigin(chunk).x + vertex.position[0] > -volume.GetGrid().voxelSize,
+                        "Nothing is drawn more than a voxel past the edge");
+        }
+    }
+
+    CaveNetworkSettings TestCaves()
+    {
+        CaveNetworkSettings caves;
+        caves.enabled = true;
+        caves.cellSize = 32.0f;
+        caves.tunnelsPerCell = 1;
+        caves.tunnelLength = 40.0f;
+        caves.radius = {1.5f, 1.5f};
+        caves.altitude = {-6.0f, 3.0f};
+        caves.chamberChance = 0.0f;
+        caves.wobble = 0.0f;
+        return caves;
+    }
+
+    // Phase 6: generated caves are deterministic, agree across neighbouring volumes, stay in their band, and reach the
+    // terrain's holes through their mouths.
+    void GeneratedCaves()
+    {
+        const auto caves = TestCaves();
+        const auto all = GenerateCaveNetwork(caves, 11, {0, -20, 0}, {64, 20, 64});
+        Require(!all.empty(), "Caves are generated");
+        const auto again = GenerateCaveNetwork(caves, 11, {0, -20, 0}, {64, 20, 64});
+        Require(all.size() == again.size() && std::equal(all.begin(), all.end(), again.begin(), [](const CavePrimitive &a, const CavePrimitive &b) {
+                    return a.a == b.a && a.b == b.b && a.radius == b.radius;
+                }),
+                "The same seed makes the same caves");
+        Require(GenerateCaveNetwork(caves, 12, {0, -20, 0}, {64, 20, 64}).front().a != all.front().a, "Another seed makes others");
+        auto off = caves;
+        off.enabled = false;
+        Require(GenerateCaveNetwork(off, 11, {0, -20, 0}, {64, 20, 64}).empty(), "Disabled caves make nothing");
+        for (const auto &piece : all)
+            Require(piece.a.y >= caves.altitude.x - 1e-3f && piece.a.y <= caves.altitude.y + 1e-3f && piece.b.y >= caves.altitude.x - 1e-3f &&
+                        piece.b.y <= caves.altitude.y + 1e-3f,
+                    "Tunnels stay inside their band of heights");
+
+        // Two neighbouring volumes (a world's tiles at x 0 and 32) see the same caves where they meet.
+        const CaveDensity west(caves, 11, {0, 0, 0}, {0, -20, 0}, {32, 20, 64});
+        const CaveDensity east(caves, 11, {32, 0, 0}, {0, -20, 0}, {32, 20, 64});
+        float worst = 0.0f;
+        int inside = 0;
+        for (float y = -6.0f; y <= 3.0f; y += 0.5f)
+            for (float z = 0.0f; z <= 64.0f; z += 0.5f)
+            {
+                const float a = west.Sample({32.0f, y, z}).distance, b = east.Sample({0.0f, y, z}).distance;
+                if (a < 2.0f || b < 2.0f)
+                    worst = std::max(worst, std::abs(a - b));
+                inside += a < 0.0f ? 1 : 0;
+            }
+        Require(worst < 1e-3f, "Neighbouring volumes agree on the caves at their shared edge");
+
+        // Fill matches Sample; features cover the pieces.
+        VolumeGrid grid = SmallGrid();
+        const VolumeSampleBox box{{0, -12, 0}, {16, 24, 16}};
+        std::vector<VolumeSample> filled(box.SampleCount());
+        west.Fill(grid, box, filled);
+        std::size_t index = 0, mismatches = 0;
+        for (int z = 0; z < box.count.z; ++z)
+            for (int y = 0; y < box.count.y; ++y)
+                for (int x = 0; x < box.count.x; ++x, ++index)
+                {
+                    const float sampled = west.Sample(grid.SamplePosition(box.first + glm::ivec3(x, y, z))).distance;
+                    if (sampled < 2.0f && std::abs(sampled - filled[index].distance) > 1e-4f)
+                        ++mismatches;
+                }
+        Require(mismatches == 0, "Fill gives what Sample gives near the caves");
+        std::vector<VolumeBounds> features;
+        west.AppendFeatureBounds(features);
+        Require(features.size() == west.GetPrimitives().size(), "Every piece is a feature");
+
+        // Carved from flat ground at 2 m (inside the band): the volume has feature chunks and cave mouths, unstored.
+        auto shallow = caves;
+        shallow.altitude = {1.0f, 3.0f};
+        auto surface = std::make_shared<const TerrainSurface>(33, 33, 1.0f, std::vector<float>(33 * 33, 2.0f));
+        const auto carved = std::make_shared<CompositeDensity>(std::vector<CompositeDensity::Layer>{
+            {MakeTerrainDensity(surface), CompositeDensity::Operation::Union},
+            {std::make_shared<CaveDensity>(shallow, 11, glm::vec3(0.0f), glm::vec3(0, -20, 0), glm::vec3(32, 20, 32)),
+             CompositeDensity::Operation::Subtract},
+        });
+        TerrainVolume volume(grid, carved);
+        const auto featureChunks = volume.GetBaseFeatureChunks();
+        Require(!featureChunks.empty() && volume.GetStoredChunkCount() == 0, "Generated caves give feature chunks without storing any");
+        const auto mouths = ComputeVolumeHoles(volume, *surface, TerrainCouplingSettings{});
+        Require(mouths.GetHoleCount() > 0, "Caves crossing the surface cut mouths");
+        // Deep caves cut nothing.
+        auto deep = caves;
+        deep.altitude = {-14.0f, -8.0f};
+        TerrainVolume deepVolume(grid, std::make_shared<CompositeDensity>(std::vector<CompositeDensity::Layer>{
+                                           {MakeTerrainDensity(surface), CompositeDensity::Operation::Union},
+                                           {std::make_shared<CaveDensity>(deep, 11, glm::vec3(0.0f), glm::vec3(0, -20, 0), glm::vec3(32, 20, 32)),
+                                            CompositeDensity::Operation::Subtract},
+                                       }));
+        Require(!deepVolume.GetBaseFeatureChunks().empty() && ComputeVolumeHoles(deepVolume, *surface, TerrainCouplingSettings{}).Empty(),
+                "Caves under the ground cut nothing");
+        // A mouth's chunk meshes the cave.
+        bool meshed = false;
+        for (const auto chunk : featureChunks)
+        {
+            auto mesh = MeshVolumeChunk(volume, chunk, SurfaceNetsMesher());
+            FitVolumeMeshToTerrain(mesh, grid.ChunkOrigin(chunk), *surface, mouths, TerrainCouplingSettings{}, grid.voxelSize);
+            meshed = meshed || !mesh.Empty();
+        }
+        Require(meshed, "The caves are meshed from the base alone");
+    }
+
+    // Phase 7: stamps rely on shared transformed shapes and the Paint layer of composites.
+    void StampPieces()
+    {
+        const glm::mat4 toShape = glm::translate(glm::mat4(1.0f), {-10.0f, 0.0f, 0.0f});
+        const TransformedShape owning(std::make_shared<SphereShape>(glm::vec3(0.0f), 2.0f), toShape);
+        Require(Near(owning.Distance({10.0f, 0.0f, 0.0f}), -2.0f, 1e-5f) && Near(owning.BoundsMin().x, 8.0f, 1e-4f), "An owning transformed shape");
+
+        CompositeDensity painted({{FlatGround(2.0f, 1), CompositeDensity::Operation::Union}});
+        painted.Add(std::make_shared<ShapeDensity>(std::make_shared<SphereShape>(glm::vec3(0.0f, 2.0f, 0.0f), 1.0f), 5),
+                    CompositeDensity::Operation::Paint);
+        const auto inside = painted.Sample({0.0f, 1.5f, 0.0f});
+        Require(inside.material == 5 && Near(inside.distance, -0.5f, 1e-5f), "Paint changes the material, not the distance");
+        Require(painted.Sample({3.0f, 1.5f, 0.0f}).material == 1, "Outside the shape the ground keeps its material");
+        std::vector<VolumeBounds> features;
+        painted.AppendFeatureBounds(features);
+        Require(features.size() == 1 && features[0].min == glm::vec3(-1.0f, 1.0f, -1.0f), "A shape layer is a feature");
+    }
+
+    void EditArchives()
+    {
+        VolumeEditArchive::Entries entries;
+        entries["0,0"] = {1, 2, 3};
+        entries["-1,4"] = {};
+        entries["world:A/B[1]"] = std::vector<std::uint8_t>(300, 7);
+        const auto bytes = VolumeEditArchive::Encode(entries);
+        std::string error;
+        const auto decoded = VolumeEditArchive::Decode(bytes, &error);
+        Require(decoded && *decoded == entries, "An archive round-trips: " + error);
+        Require(VolumeEditArchive::Decode(VolumeEditArchive::Encode({}))->empty(), "An empty archive round-trips");
+
+        auto cut = bytes;
+        cut.pop_back();
+        Require(!VolumeEditArchive::Decode(cut, &error) && !error.empty(), "A cut archive is refused");
+        auto trailing = bytes;
+        trailing.push_back(0);
+        Require(!VolumeEditArchive::Decode(trailing), "Trailing data is refused");
+        auto newer = bytes;
+        newer[4] = 9;
+        Require(!VolumeEditArchive::Decode(newer, &error) && error.find("newer") != std::string::npos, "A newer version is refused");
+        auto huge = bytes;
+        huge[8] = huge[9] = huge[10] = 0xff;
+        Require(!VolumeEditArchive::Decode(huge), "A damaged count is refused");
+        const std::vector<std::uint8_t> other{'P', 'L', 'V', 'O', 1, 0, 0, 0};
+        Require(!VolumeEditArchive::Decode(other), "A volume file is not an archive");
+    }
+}
+
 int main()
 {
     try
@@ -554,6 +830,12 @@ int main()
         CouplingFit();
         MeshQueue();
         TransformedShapes();
+        TriangleMaterials();
+        RockAccounting();
+        EditArchives();
+        TerrainEdges();
+        GeneratedCaves();
+        StampPieces();
     }
     catch (const std::exception &error)
     {

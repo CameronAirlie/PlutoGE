@@ -733,6 +733,36 @@ var surface = terrain.GetLayerName(terrain.GetDominantLayer(transform.Position))
 terrain.PaintLayer(wheelPosition, terrain.FindLayer("Road"), radius: 0.4f, opacity: 0.3f);
 ```
 
+### TerrainVolumes and TerrainVolumeComponent
+
+Digging, filling and painting the 3D ground of terrains that have a Terrain Volume ([Terrain volumes](TERRAIN_VOLUMES.md)).
+The static `TerrainVolumes` class takes world-space shapes and edits every terrain under them (a world's tiles too). It
+refuses shapes wider than 32 m unless you pass `maxExtent`, and a dig removes the foliage it carves out. The ground
+changes over the next few frames; `Flush()` lands it now. `IsSupported` is false on hosts from before terrain volumes.
+
+```csharp
+TerrainVolumeEditResult Dig(Vector3 centre, float radius)
+TerrainVolumeEditResult Fill(Vector3 centre, float radius, int layer = 0)
+TerrainVolumeEditResult Tunnel(Vector3 start, Vector3 end, float radius)
+TerrainVolumeEditResult Paint(Vector3 centre, float radius, int layer)
+TerrainVolumeEditResult Edit(TerrainVolumeShape shape, TerrainVolumeEditMode mode, int layer = 0, float? maxExtent = null)
+void Flush()
+byte[] CaptureEdits()            // every terrain's edits, for a save game
+bool RestoreEdits(byte[] edits)  // terrains the bytes do not name go back to their files
+void ClearEdits()                // a new game
+```
+
+`TerrainVolumeShape.Sphere/Capsule/Box` build shapes. The result has `Changed`, `Refused`, `RockRemoved` and
+`RockAdded` (cubic metres), `MainLayer` (the layer most of the removed rock was), `TerrainsChanged` and
+`FoliageRemoved`. `TerrainVolumeComponent` (from `GetComponent`) edits one terrain only and has `IsUpToDate`,
+`ChunkCount`, `Flush()` and `Save()`. Dug ground is drawn by child entities tagged `TerrainVolumeChunk`, which carry the
+terrain's tags.
+
+```csharp
+var dug = TerrainVolumes.Dig(hit.Point, 0.8f);
+if (dug.RockRemoved > 0) inventory.Add(dug.MainLayer == stoneLayer ? "Stone" : "Dirt", (int)MathF.Ceiling(dug.RockRemoved * 4));
+```
+
 ### FoliageComponent
 
 Painted foliage: many copies of a few plants, drawn and collided with as instances rather than entities. A

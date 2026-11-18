@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/TerrainWeightMap.h"
+#include "PlutoGE/scene/volume/TerrainVolume.h"
 
 #include <array>
 #include <cstdint>
@@ -28,6 +29,17 @@ namespace PlutoGE::scene
         float strength = 2.0f;      // metres per second at the centre (Raise, Lower); blend rate (Smooth, Flatten)
         float flattenHeight = 0.0f; // the terrain-local height Flatten pulls towards
         bool operator==(const TerrainSculptBrush &) const = default;
+    };
+
+    // The 3D brush of terrain volumes (the Terrain Editor's Dig tool): a sphere dug out of, built onto or painted into
+    // the ground at the cursor, `rate` times a second while held. Radius in metres.
+    struct TerrainVolumeBrush
+    {
+        volume::VolumeEditMode mode = volume::VolumeEditMode::Subtract;
+        float radius = 1.5f;
+        float rate = 6.0f; // dabs per second
+        int layer = 0;     // Add and Paint
+        bool operator==(const TerrainVolumeBrush &) const = default;
     };
 
     struct TerrainHoleBrush

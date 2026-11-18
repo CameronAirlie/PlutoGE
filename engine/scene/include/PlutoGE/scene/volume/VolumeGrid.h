@@ -53,6 +53,14 @@ namespace PlutoGE::scene::volume
         bool operator==(const VolumeSampleBox &) const = default;
     };
 
+    // A box in the volume's space (metres).
+    struct VolumeBounds
+    {
+        glm::vec3 min{0.0f};
+        glm::vec3 max{0.0f};
+        bool operator==(const VolumeBounds &) const = default;
+    };
+
     // Floor division, for negative coordinates.
     [[nodiscard]] constexpr int FloorDiv(int value, int divisor)
     {

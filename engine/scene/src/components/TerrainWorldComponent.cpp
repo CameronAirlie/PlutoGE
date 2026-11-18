@@ -12,6 +12,7 @@
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainVolumeComponent.h"
+#include "PlutoGE/scene/volume/VolumeEditArchive.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 
 #include <filesystem>
@@ -691,7 +692,11 @@ namespace PlutoGE::scene
         if (auto *terrainVolume = entity->GetComponent<TerrainVolumeComponent>())
         {
             terrainVolume->SetVolumeFile(TileVolumeFile(coord));
-            terrainVolume->ProvideFileContents(std::move(tile.data->volume));
+            // Edits made since the file was read (the tile streamed out after digging) win over the file.
+            if (const auto kept = m_volumeEdits.find(coord); kept != m_volumeEdits.end())
+                terrainVolume->ProvideFileContents(kept->second);
+            else
+                terrainVolume->ProvideFileContents(std::move(tile.data->volume));
         }
         tile.data.reset();
         tile.paintedWeights = false;
@@ -762,6 +767,8 @@ namespace PlutoGE::scene
         Abandon(tile);
         if (tile.entity && scene)
         {
+            if (auto *entity = scene->FindEntityByID(tile.entity))
+                KeepVolumeEdits(coord, *entity);
             scene->DestroyEntity(tile.entity);
             InvalidateNavigation(coord);
         }
@@ -771,6 +778,132 @@ namespace PlutoGE::scene
             if (const auto overview = m_overviewEntities.find(coord); overview != m_overviewEntities.end())
                 if (auto *overviewEntity = scene->FindEntityByID(overview->second))
                     overviewEntity->SetActive(true);
+    }
+
+    // ---- terrain volume edits -------------------------------------------------------------------------------------------
+
+    bool TerrainWorldComponent::StoreTileVolume(TerrainTileCoord coord, std::span<const std::uint8_t> edits)
+    {
+        if (auto *entity = GetTileEntity(coord))
+        {
+            auto *terrainVolume = entity->GetComponent<TerrainVolumeComponent>();
+            return terrainVolume && terrainVolume->ImportEdits(edits) && terrainVolume->SaveFile();
+        }
+        auto contents = volume::VolumeFile::Decode(edits);
+        if (!contents)
+            return false;
+        const std::filesystem::path path = ResolvePath(TileVolumeFile(coord));
+        std::error_code ignored;
+        if (contents->chunks.empty())
+        {
+            std::filesystem::remove(path, ignored);
+            return true;
+        }
+        if (path.has_parent_path())
+            std::filesystem::create_directories(path.parent_path(), ignored);
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(reinterpret_cast<const char *>(edits.data()), static_cast<std::streamsize>(edits.size()));
+        return static_cast<bool>(output);
+    }
+
+    namespace
+    {
+        std::string TileKey(TerrainTileCoord tile) { return std::to_string(tile.x) + "," + std::to_string(tile.z); }
+
+        std::optional<TerrainTileCoord> ParseTileKey(const std::string &key)
+        {
+            const auto comma = key.find(',');
+            if (comma == std::string::npos)
+                return std::nullopt;
+            try
+            {
+                std::size_t used = 0;
+                TerrainTileCoord tile{std::stoi(key.substr(0, comma), &used), 0};
+                if (used != comma)
+                    return std::nullopt;
+                const auto rest = key.substr(comma + 1);
+                tile.z = std::stoi(rest, &used);
+                if (used != rest.size())
+                    return std::nullopt;
+                return tile;
+            }
+            catch (...)
+            {
+                return std::nullopt;
+            }
+        }
+    }
+
+    void TerrainWorldComponent::KeepVolumeEdits(TerrainTileCoord coord, Entity &entity)
+    {
+        auto *terrainVolume = entity.GetComponent<TerrainVolumeComponent>();
+        // A tile that was given kept edits keeps following them, even unchanged since (its file never had them).
+        if (terrainVolume && (terrainVolume->HasUnsavedEdits() || m_volumeEdits.contains(coord)))
+            if (auto bytes = terrainVolume->ExportEdits(); !bytes.empty())
+                m_volumeEdits[coord] = std::move(bytes);
+    }
+
+    std::vector<std::uint8_t> TerrainWorldComponent::ExportVolumeEdits()
+    {
+        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        if (scene)
+            for (const auto &[coord, tile] : m_tiles)
+                if (auto *entity = tile.entity ? scene->FindEntityByID(tile.entity) : nullptr)
+                    KeepVolumeEdits(coord, *entity);
+        volume::VolumeEditArchive::Entries entries;
+        for (const auto &[coord, bytes] : m_volumeEdits)
+            entries.emplace(TileKey(coord), bytes);
+        return volume::VolumeEditArchive::Encode(entries);
+    }
+
+    bool TerrainWorldComponent::ImportVolumeEdits(std::span<const std::uint8_t> bytes, std::string *error)
+    {
+        auto entries = volume::VolumeEditArchive::Decode(bytes, error);
+        if (!entries)
+            return false;
+        std::map<TerrainTileCoord, std::vector<std::uint8_t>> edits;
+        for (auto &[key, data] : *entries)
+        {
+            const auto tile = ParseTileKey(key);
+            if (!tile)
+            {
+                if (error)
+                    *error = "The edit archive names a tile \"" + key + "\" that is not a tile coordinate.";
+                return false;
+            }
+            edits.emplace(*tile, std::move(data));
+        }
+        m_volumeEdits = std::move(edits);
+        // Loaded tiles change now; the others take theirs when they load.
+        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        for (const auto &[coord, tile] : m_tiles)
+        {
+            auto *entity = scene && tile.entity ? scene->FindEntityByID(tile.entity) : nullptr;
+            auto *terrainVolume = entity ? entity->GetComponent<TerrainVolumeComponent>() : nullptr;
+            if (!terrainVolume)
+                continue;
+            std::string reason;
+            const auto kept = m_volumeEdits.find(coord);
+            const bool ok = kept != m_volumeEdits.end() ? terrainVolume->ImportEdits(kept->second, &reason) : terrainVolume->ReloadFile(&reason);
+            if (!ok)
+                ReportError("Tile " + TileKey(coord) + " volume edits: " + reason);
+        }
+        return true;
+    }
+
+    void TerrainWorldComponent::ClearVolumeEdits()
+    {
+        ImportVolumeEdits(volume::VolumeEditArchive::Encode({}));
+    }
+
+    std::size_t TerrainWorldComponent::GetVolumeEditTileCount()
+    {
+        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        if (scene)
+            for (const auto &[coord, tile] : m_tiles)
+                if (auto *entity = tile.entity ? scene->FindEntityByID(tile.entity) : nullptr)
+                    KeepVolumeEdits(coord, *entity);
+        return m_volumeEdits.size();
     }
 
     void TerrainWorldComponent::UnloadAll()

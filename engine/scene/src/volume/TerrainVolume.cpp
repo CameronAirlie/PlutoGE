@@ -37,6 +37,25 @@ namespace PlutoGE::scene::volume
         ++m_revision;
     }
 
+    void TerrainVolume::ChunksReaching(const VolumeBounds &bounds, std::set<VolumeChunkCoord> &out) const
+    {
+        const float reach = kDensityRangeVoxels * m_grid.voxelSize;
+        auto box = m_grid.SamplesIn(bounds.min - reach, bounds.max + reach);
+        box.first -= m_meshApron;
+        box.count += 2 * m_meshApron;
+        m_grid.ForEachChunk(box, [&](VolumeChunkCoord coord) { out.insert(coord); });
+    }
+
+    std::vector<VolumeChunkCoord> TerrainVolume::GetBaseFeatureChunks() const
+    {
+        std::vector<VolumeBounds> features;
+        m_base->AppendFeatureBounds(features);
+        std::set<VolumeChunkCoord> chunks;
+        for (const auto &bounds : features)
+            ChunksReaching(bounds, chunks);
+        return {chunks.begin(), chunks.end()};
+    }
+
     VolumeSample TerrainVolume::Sample(glm::ivec3 sample) const
     {
         const auto coord = m_grid.ChunkOfSample(sample);
@@ -101,6 +120,15 @@ namespace PlutoGE::scene::volume
         return chunk;
     }
 
+    void VolumeEditResult::Merge(const VolumeEditResult &other)
+    {
+        changedChunks.insert(changedChunks.end(), other.changedChunks.begin(), other.changedChunks.end());
+        changedSamples = Union(changedSamples, other.changedSamples);
+        for (const auto &[material, amount] : other.rockRemoved)
+            rockRemoved[material] += amount;
+        rockAdded += other.rockAdded;
+    }
+
     VolumeEditResult TerrainVolume::Apply(const VolumeShape &shape, const VolumeEdit &edit)
     {
         VolumeEditResult result;
@@ -110,6 +138,7 @@ namespace PlutoGE::scene::volume
         const float reach = kDensityRangeVoxels * m_grid.voxelSize;
         const auto box = m_grid.SamplesIn(shape.BoundsMin() - reach, shape.BoundsMax() + reach);
         const float voxelSize = m_grid.voxelSize;
+        const float voxelVolume = voxelSize * voxelSize * voxelSize;
 
         m_grid.ForEachChunk(box, [&](VolumeChunkCoord coord) {
             // An unstored chunk is edited as a copy of the base, and stored only if the edit changed it.
@@ -155,6 +184,11 @@ namespace PlutoGE::scene::volume
                             continue;
                         chunk.Set(local, newDensity, newMaterial);
                         changed = Union(changed, {sample, glm::ivec3(1)});
+                        const bool wasRock = density < 0, isRock = newDensity < 0;
+                        if (wasRock && !isRock)
+                            result.rockRemoved[material] += voxelVolume;
+                        else if (!wasRock && isRock)
+                            result.rockAdded += voxelVolume;
                     }
             if (changed.Empty())
                 return;
@@ -205,6 +239,15 @@ namespace PlutoGE::scene::volume
         MarkDirty(m_grid.ChunkSamples(coord));
         ++m_revision;
         return true;
+    }
+
+    void TerrainVolume::ClearChunks()
+    {
+        for (const auto &[coord, chunk] : m_chunks)
+            MarkDirty(m_grid.ChunkSamples(coord));
+        if (!m_chunks.empty())
+            ++m_revision;
+        m_chunks.clear();
     }
 
     std::vector<VolumeChunkCoord> TerrainVolume::TakeDirtyChunks()

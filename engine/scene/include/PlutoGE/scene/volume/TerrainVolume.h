@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/volume/VolumeShape.h"
 
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <set>
 #include <unordered_map>
@@ -32,7 +33,20 @@ namespace PlutoGE::scene::volume
         std::vector<VolumeChunkCoord> changedChunks;
         // The samples that changed (empty when nothing did).
         VolumeSampleBox changedSamples;
+        // Roughly how much rock the edit took away and put back, in cubic metres of the volume's space: a voxel for
+        // every sample that crossed between rock and air. Gameplay turns it into resources or debris.
+        std::map<VolumeMaterial, float> rockRemoved; // by the material the rock had
+        float rockAdded = 0.0f;
         [[nodiscard]] bool Changed() const { return !changedChunks.empty(); }
+        [[nodiscard]] float RockRemoved() const
+        {
+            float total = 0.0f;
+            for (const auto &[material, amount] : rockRemoved)
+                total += amount;
+            return total;
+        }
+        // Accumulates another edit's result (several volumes, several shapes).
+        void Merge(const VolumeEditResult &other);
     };
 
     // A box of samples with their distances in metres, as meshing reads them.
@@ -70,6 +84,9 @@ namespace PlutoGE::scene::volume
         void SetBase(std::shared_ptr<const VolumeDensitySource> base);
         [[nodiscard]] int GetMeshApron() const { return m_meshApron; }
         void SetMeshApron(int samples) { m_meshApron = samples < 0 ? 0 : samples; }
+        // The chunks whose meshes the base's features (generated caves, stamps) reach: they have a surface of their own
+        // even where nothing was edited. In coordinate order.
+        [[nodiscard]] std::vector<VolumeChunkCoord> GetBaseFeatureChunks() const;
 
         // A sample: the stored chunk's, else the base's, quantized as stored samples are, so a chunk reads the same
         // before and after it is first stored.
@@ -91,6 +108,8 @@ namespace PlutoGE::scene::volume
         bool SetChunk(VolumeChunkCoord chunk, VolumeChunk samples);
         // Drops a stored chunk: it reads as the base again. False when it was not stored.
         bool RemoveChunk(VolumeChunkCoord chunk);
+        // Drops every stored chunk.
+        void ClearChunks();
         // The base's samples for a chunk, as storing it would hold them.
         [[nodiscard]] VolumeChunk MakeBaseChunk(VolumeChunkCoord chunk) const;
 
@@ -103,6 +122,8 @@ namespace PlutoGE::scene::volume
 
     private:
         void MarkDirty(const VolumeSampleBox &changedSamples);
+        // The chunks whose samples a box of the volume's space reaches (with the stored range and the mesh apron).
+        void ChunksReaching(const VolumeBounds &bounds, std::set<VolumeChunkCoord> &out) const;
 
         VolumeGrid m_grid;
         std::shared_ptr<const VolumeDensitySource> m_base;

@@ -30,6 +30,7 @@
 #include "PlutoGE/scene/components/WaterEffectsComponent.h"
 #include "PlutoGE/scene/components/WaterInteractorComponent.h"
 #include "PlutoGE/scene/components/TerrainVolumeComponent.h"
+#include "PlutoGE/scene/components/VolumeStampComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
@@ -126,6 +127,7 @@ namespace PlutoGE::scene
             };
 
             // Caves and dug ground on the terrain beside it (docs/dev/TERRAIN_VOLUMES_PLAN.md).
+            registry.Register<VolumeStampComponent>("VolumeStampComponent", "Volume Stamp");
             auto &terrainVolume = registry.Register<TerrainVolumeComponent>("TerrainVolumeComponent", "Terrain Volume");
             terrainVolume.canAdd = HasSibling<TerrainComponent>;
             terrainVolume.isAssetPathProperty = [](std::string_view name) { return name == "MaterialAsset" || name == "VolumeFile"; };
@@ -209,6 +211,7 @@ namespace PlutoGE::scene
             registry.AddMenuItem<TerrainComponent>("Rendering/Terrain");
             registry.AddMenuItem<TerrainWorldComponent>("Rendering/Terrain World");
             registry.AddMenuItem<TerrainVolumeComponent>("Rendering/Terrain Volume");
+            registry.AddMenuItem<VolumeStampComponent>("Rendering/Volume Stamp");
             registry.AddMenuItem<SplineComponent>("Rendering/Road / Spline Track");
             registry.AddMenuItem<OceanComponent>("Rendering/Ocean");
             registry.AddMenuItem<RiverComponent>("Rendering/River");

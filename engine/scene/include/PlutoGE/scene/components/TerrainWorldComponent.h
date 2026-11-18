@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <future>
 #include <map>
+#include <span>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -134,6 +135,22 @@ namespace PlutoGE::scene
         // A tile's volume file (beside its height file; volume::VolumeFile): the stored chunks of the tile's
         // TerrainVolumeComponent, when its source has one. Tiles nothing was dug in have none.
         [[nodiscard]] std::string TileVolumeFile(TerrainTileCoord tile) const;
+        // Gives a tile these volume edits (VolumeFile bytes): the loaded tile's volume (then saved), or the tile's file
+        // when it is not loaded (undo after the tile streamed out). False when neither is possible.
+        bool StoreTileVolume(TerrainTileCoord tile, std::span<const std::uint8_t> edits);
+
+        // ---- terrain volume edits at runtime ------------------------------------------------------------------------
+        // Tiles' volume edits that are not in their files (digging during play) stay with the world while their tiles
+        // stream out and back in, and leave and return as one blob for save games (volume::VolumeEditArchive, one
+        // entry per tile). The editor saves tiles' volume files instead, which these never touch.
+        [[nodiscard]] std::vector<std::uint8_t> ExportVolumeEdits();
+        // Replaces the kept edits; loaded tiles take theirs now, and tiles the blob has none for go back to their files.
+        // False (with a reason, and nothing changed) when the blob is damaged.
+        bool ImportVolumeEdits(std::span<const std::uint8_t> bytes, std::string *error = nullptr);
+        // Forgets the kept edits: every tile goes back to its file.
+        void ClearVolumeEdits();
+        // Tiles with kept edits (loaded tiles count once they have unsaved edits).
+        [[nodiscard]] std::size_t GetVolumeEditTileCount();
 
         // Writes a world's files: one .plutoheight per tile (with border rings) and the overview. `heights` is the whole
         // world in world units (WorldSamplesX x WorldSamplesZ; other sizes are resampled). Paths are file paths, the
@@ -184,6 +201,8 @@ namespace PlutoGE::scene
         void Abandon(Tile &state);
         void StartGeneration(Tile &state, Entity &tile);
         void WatchTileSource(float deltaTime);
+        // Copies a loaded tile's volume edits into m_volumeEdits when they differ from its file.
+        void KeepVolumeEdits(TerrainTileCoord tile, Entity &entity);
 
         TerrainWorldGrid m_grid;
         TerrainStreamingSettings m_streaming;
@@ -198,6 +217,8 @@ namespace PlutoGE::scene
         std::optional<glm::vec3> m_viewerOverride;
 
         std::map<TerrainTileCoord, Tile> m_tiles;
+        // Tiles' volume edits made since their files were read (VolumeFile bytes), kept across streaming.
+        std::map<TerrainTileCoord, std::vector<std::uint8_t>> m_volumeEdits;
         // Work whose result is no longer wanted; kept until it finishes (a future from std::async blocks when dropped).
         std::vector<std::future<std::optional<TileFiles>>> m_abandonedLoads;
         std::vector<std::future<procedural::ProceduralGenerationResult>> m_abandonedGenerations;

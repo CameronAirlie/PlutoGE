@@ -634,6 +634,8 @@ if (PLUTOGE_TEST_DOTNET)
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.TerrainSmokeTests/PlutoGE.TerrainSmokeTests.csproj --configuration Release)
     add_test(NAME PlutoGEFoliageManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
         --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.FoliageSmokeTests/PlutoGE.FoliageSmokeTests.csproj --configuration Release)
+    add_test(NAME PlutoGETerrainVolumeManagedTests COMMAND ${PLUTOGE_TEST_DOTNET} run
+        --project ${CMAKE_CURRENT_SOURCE_DIR}/managed/PlutoGE.TerrainVolumeSmokeTests/PlutoGE.TerrainVolumeSmokeTests.csproj --configuration Release)
 endif()
 
 add_executable(PlutoGEPrefabVariantTests
@@ -1060,6 +1062,11 @@ add_test(NAME PlutoGETerrainVolumeTests COMMAND PlutoGETerrainVolumeTests)
 add_executable(PlutoGETerrainVolumeComponentTests TerrainVolumeComponentTests.cpp)
 pluto_link_engine(PlutoGETerrainVolumeComponentTests)
 add_test(NAME PlutoGETerrainVolumeComponentTests COMMAND PlutoGETerrainVolumeComponentTests)
+
+add_executable(PlutoGETerrainVolumeScriptApiTests TerrainVolumeScriptApiTests.cpp)
+target_include_directories(PlutoGETerrainVolumeScriptApiTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/scripting/src)
+pluto_link_engine(PlutoGETerrainVolumeScriptApiTests)
+add_test(NAME PlutoGETerrainVolumeScriptApiTests COMMAND PlutoGETerrainVolumeScriptApiTests)
 
 add_executable(PlutoGETerrainHeightDataTests TerrainHeightDataTests.cpp)
 pluto_link_engine(PlutoGETerrainHeightDataTests)

@@ -63,6 +63,8 @@ namespace PlutoGE::scene::volume
             return {std::max(base.distance, -layer.distance), base.material};
         case Operation::Intersect:
             return {std::max(base.distance, layer.distance), base.material};
+        case Operation::Paint:
+            return layer.distance < 0.0f ? VolumeSample{base.distance, layer.material} : base;
         }
         return base;
     }
@@ -75,6 +77,12 @@ namespace PlutoGE::scene::volume
         for (std::size_t index = 1; index < m_layers.size(); ++index)
             result = Combine(result, m_layers[index].source->Sample(position), m_layers[index].operation);
         return result;
+    }
+
+    void CompositeDensity::AppendFeatureBounds(std::vector<VolumeBounds> &out) const
+    {
+        for (const auto &layer : m_layers)
+            layer.source->AppendFeatureBounds(out);
     }
 
     void CompositeDensity::Fill(const VolumeGrid &grid, const VolumeSampleBox &box, std::span<VolumeSample> out) const

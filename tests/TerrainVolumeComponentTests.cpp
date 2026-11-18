@@ -3,12 +3,19 @@
 // the volume file, and world tiles that keep their own volume file.
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/TerrainVolumeEditing.h"
 #include "PlutoGE/scene/TerrainWorldGrid.h"
+#include "PlutoGE/scene/components/FoliageComponent.h"
+#include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
+#include "PlutoGE/scene/components/VolumeStampComponent.h"
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
+#include "PlutoGE/render/Material.h"
+#include "PlutoGE/render/TerrainLayers.h"
+#include "PlutoGE/scene/volume/VolumeEditArchive.h"
 #include "PlutoGE/scene/volume/VolumeFile.h"
 
 #include <algorithm>
@@ -287,6 +294,314 @@ namespace
     }
 }
 
+namespace
+{
+    // Phase 4: chunks draw with the terrain's layers, re-projected (vertex layers, triplanar, no macro albedo), and
+    // follow the terrain's material as it changes.
+    void LayeredChunks()
+    {
+        Ground ground;
+        render::Material plain;
+        ground.terrain->SetMaterial(&plain);
+        ground.volume->Apply(volume::SphereShape({116.0f, 5.0f, 66.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        ground.volume->Flush();
+        const auto chunk = ground.volume->GetVolume()->GetGrid().ChunkAt({16.0f, 3.0f, 16.0f});
+        auto *mesh = ground.volume->GetChunkEntity(chunk)->GetComponent<MeshComponent>();
+        Require(mesh->GetMaterial() == &plain, "Without layers, chunks draw with the terrain's material");
+
+        TerrainLayer rock;
+        rock.name = "Rock";
+        rock.tileSize = 2.0f;
+        Require(ground.terrain->GetLayers().AddLayer(rock), "The terrain takes a layer");
+        ground.volume->Update(0.0f);
+        const auto *layered = mesh->GetMaterial();
+        Require(layered && layered != &plain && layered != ground.terrain->GetRenderMaterial(), "Layers give chunks their own material");
+        const auto &config = layered->ReadConfig();
+        Require(config.terrainLayers && config.terrainLayers->layers.size() == 1 &&
+                    config.terrainLayers->weights == render::TerrainLayerWeights::VertexLayer &&
+                    config.terrainLayers->projection == render::TerrainLayerProjection::Triplanar && !config.albedoTexture,
+                "The chunk material names layers per vertex, projects them triplanar and has no macro albedo");
+        Require(ground.terrain->GetRenderMaterial()->ReadConfig().terrainLayers->weights == render::TerrainLayerWeights::Maps,
+                "The terrain's own material keeps its weight maps");
+        const auto &vertex = mesh->GetMesh()->GetMeshData().vertices.front();
+        Require(vertex.uv[0] == 0.0f, "Chunk vertices name their layer");
+
+        // Another layer reaches the chunks without remeshing them.
+        TerrainLayer sand;
+        sand.name = "Sand";
+        ground.terrain->GetLayers().AddLayer(sand);
+        ground.volume->Update(0.0f);
+        Require(mesh->GetMaterial() == layered && layered->ReadConfig().terrainLayers->layers.size() == 2,
+                "The chunk material follows the terrain's layers");
+    }
+}
+
+namespace
+{
+    // Phase 6: a ProceduralTerrainComponent's caves are carved without edits, open mouths, follow the definition, and
+    // dug ground below the rock depth takes the rock layer.
+    void ProceduralCaves()
+    {
+        Ground ground;
+        auto *procedural = ground.entity->CreateComponent<ProceduralTerrainComponent>();
+        procedural::ProceduralTerrainDefinition definition;
+        definition.seed = 3;
+        definition.caves.enabled = true;
+        definition.caves.cellSize = 32.0f;
+        definition.caves.tunnelsPerCell = 2;
+        definition.caves.tunnelLength = 40.0f;
+        definition.caves.radius = {1.5f, 2.0f};
+        definition.caves.altitude = {2.0f, 6.0f}; // the ground is at 5 m: tunnels open to the surface
+        definition.caves.chamberChance = 0.0f;
+        procedural->SetDefinition(definition);
+        // The caves travel with the definition (also checked by PlutoGEProceduralTerrainTests).
+        const auto decoded = procedural::ProceduralTerrainDefinition::Decode(definition.Encode());
+        Require(decoded && decoded->caves == definition.caves, "The definition keeps its caves");
+
+        ground.volume->Flush();
+        Require(ground.volume->GetVolume()->GetStoredChunkCount() == 0 && ground.volume->GetChunkEntityCount() > 0,
+                "Caves are meshed without storing anything");
+        const auto *derived = ground.terrain->FindDerivedHoles(TerrainVolumeComponent::HoleSource);
+        Require(derived && derived->GetHoleCount() > 0, "Cave mouths cut the terrain");
+        Require(ground.volume->ExportEdits().size() == volume::VolumeFile::Encode(ground.volume->GetVolume()->GetGrid(), {}).size(),
+                "Generated caves are not edits: nothing to save");
+
+        // Deeper caves: the mouths close, the caves stay.
+        definition.caves.altitude = {-12.0f, -4.0f};
+        procedural->SetDefinition(definition);
+        ground.volume->Flush();
+        Require(ground.terrain->GetEffectiveHoles().GetHoleCount() == 0 && ground.volume->GetChunkEntityCount() > 0,
+                "Deep caves cut nothing but are still there");
+
+        // No caves: the ground is whole again.
+        definition.caves.enabled = false;
+        procedural->SetDefinition(definition);
+        ground.volume->Flush();
+        Require(ground.volume->GetChunkEntityCount() == 0, "Without caves nothing is meshed");
+
+        // Rock below a metre: a pit's walls are the rock layer, its rim the surface's.
+        ground.volume->SetGroundMaterials({.rockLayer = 2, .rockDepth = 1.0f});
+        ground.volume->Apply(volume::SphereShape({116.0f, 5.0f, 66.0f}, 2.5f), {volume::VolumeEditMode::Subtract});
+        ground.volume->Flush();
+        bool rock = false, surface = false;
+        for (const auto *child : ground.entity->GetChildren())
+            if (const auto *mesh = child->GetComponent<MeshComponent>(); mesh && mesh->GetMesh())
+                for (const auto &vertex : mesh->GetMesh()->GetMeshData().vertices)
+                {
+                    rock = rock || vertex.uv[0] == 2.0f;
+                    surface = surface || vertex.uv[0] == 0.0f;
+                }
+        Require(rock && surface, "Dug ground shows the rock layer below its depth and the surface's above");
+        Require(PropertyText(ground.volume->Serialize(), "RockLayer") == "2", "The rock layer is saved");
+    }
+
+    // Phase 7: stamps are part of the base: they carve and fill without storing anything, follow their entity, apply in
+    // order, and keep to the terrains under them.
+    void Stamps()
+    {
+        Ground ground;
+        auto *stampEntity = ground.scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Cave Stamp"}));
+        stampEntity->SetPosition({116.0f, 1.0f, 66.0f}); // a cave 4 m under the ground
+        auto *stamp = stampEntity->CreateComponent<VolumeStampComponent>();
+        stamp->SetRadius(2.0f);
+        ground.volume->Flush();
+        Require(ground.volume->GetVolume()->GetStoredChunkCount() == 0 && ground.volume->GetChunkEntityCount() > 0 &&
+                    ground.terrain->GetEffectiveHoles().Empty(),
+                "A stamp under the ground carves a cave without storing or cutting anything");
+
+        // Raised to the surface it opens; the ground follows the entity.
+        stampEntity->SetPosition({116.0f, 5.0f, 66.0f});
+        ground.volume->Flush();
+        Require(ground.terrain->GetEffectiveHoles().IsHole(16, 16), "A stamp at the surface opens a pit");
+        PhysicsRaycastHit hit;
+        Require(ground.scene.Raycast({116.0f, 20.0f, 66.0f}, {0, -1, 0}, 50.0f, hit) && std::abs(hit.point.y - 3.0f) < 0.3f,
+                "The pit's floor collides 2 m down");
+
+        // A later fill stamp plugs it; order decides.
+        auto *plugEntity = ground.scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Plug"}));
+        plugEntity->SetPosition({116.0f, 5.0f, 66.0f});
+        auto *plug = plugEntity->CreateComponent<VolumeStampComponent>();
+        plug->SetShape(VolumeStampComponent::Shape::Box);
+        plug->SetHalfExtents({3.0f, 0.75f, 3.0f});
+        plug->SetMode(volume::VolumeEditMode::Add);
+        plug->SetLayer(1);
+        plug->SetOrder(1);
+        ground.volume->Flush();
+        Require(ground.scene.Raycast({116.0f, 20.0f, 66.0f}, {0, -1, 0}, 50.0f, hit) && std::abs(hit.point.y - 5.75f) < 0.3f,
+                "A fill stamp after the carve builds rock over it");
+        plug->SetOrder(-1);
+        ground.volume->Flush();
+        Require(ground.scene.Raycast({116.0f, 20.0f, 66.0f}, {0, -1, 0}, 50.0f, hit) && hit.point.y < 4.0f, "Ordered first, the carve wins");
+
+        // Disabled or far away, stamps leave the ground alone.
+        plug->SetEnabled(false);
+        stamp->SetEnabled(false);
+        ground.volume->Flush();
+        Require(ground.volume->GetChunkEntityCount() == 0 && ground.terrain->GetEffectiveHoles().Empty(), "Disabled stamps do nothing");
+        stamp->SetEnabled(true);
+        stampEntity->SetPosition({300.0f, 5.0f, 66.0f});
+        ground.volume->Flush();
+        Require(ground.volume->GetChunkEntityCount() == 0, "A stamp off the terrain does nothing to it");
+        Require(ground.volume->ExportEdits().size() == volume::VolumeFile::Encode(ground.volume->GetVolume()->GetGrid(), {}).size(),
+                "Stamps are never edits");
+
+        // Saved with the scene like any component.
+        VolumeStampComponent copy;
+        copy.Deserialize(plug->Serialize());
+        Require(copy.GetShape() == VolumeStampComponent::Shape::Box && copy.GetMode() == volume::VolumeEditMode::Add && copy.GetLayer() == 1 &&
+                    copy.GetHalfExtents() == glm::vec3(3.0f, 0.75f, 3.0f) && copy.GetOrder() == -1,
+                "Stamp settings round-trip");
+    }
+
+    // Phase 5: export, import and reload; unsaved edits.
+    void EditsInAndOut()
+    {
+        Ground ground;
+        Require(!ground.volume->HasUnsavedEdits(), "A fresh volume has nothing unsaved");
+        ground.volume->Apply(volume::SphereShape({116.0f, 5.0f, 66.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        Require(ground.volume->HasUnsavedEdits(), "Digging leaves unsaved edits");
+        const auto dug = ground.volume->ExportEdits();
+        const auto storedDug = ground.volume->GetVolume()->GetStoredChunks();
+
+        ground.volume->Apply(volume::SphereShape({104.0f, 5.0f, 54.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        ground.volume->Flush();
+        Require(ground.terrain->GetEffectiveHoles().IsHole(4, 4), "The second pit is cut");
+
+        Require(ground.volume->ImportEdits(dug) && !ground.volume->HasUnsavedEdits(), "Importing replaces the edits");
+        Require(ground.volume->GetVolume()->GetStoredChunks() == storedDug, "Only the imported chunks are stored");
+        ground.volume->Flush();
+        Require(!ground.terrain->GetEffectiveHoles().IsHole(4, 4) && ground.terrain->GetEffectiveHoles().IsHole(16, 16),
+                "The second pit closes, the first stays");
+
+        std::string error;
+        auto damaged = dug;
+        damaged.resize(damaged.size() / 2);
+        Require(!ground.volume->ImportEdits(damaged, &error) && !error.empty() && ground.volume->GetVolume()->GetStoredChunks() == storedDug,
+                "Damaged edits are refused and change nothing");
+        auto otherGrid = ground.volume->GetVolume()->GetGrid();
+        otherGrid.voxelSize = 0.25f;
+        Require(!ground.volume->ImportEdits(volume::VolumeFile::Encode(otherGrid, {}), &error), "Edits for another grid are refused");
+
+        Require(ground.volume->ReloadFile() && ground.volume->GetVolume()->GetStoredChunkCount() == 0, "Without a file, reloading clears");
+        ground.volume->Flush();
+        Require(!ground.terrain->GetEffectiveHoles().IsHole(16, 16), "and the ground comes back");
+        Require(ground.volume->GetChunkEntityCount() == 0, "and its chunks go: " + std::to_string(ground.volume->GetChunkEntityCount()));
+    }
+
+    // Phase 5: one world-space call digs every terrain under it, keeps to a budget and clears foliage.
+    void SceneEdits()
+    {
+        Ground ground;
+        // A second terrain east of the first, sharing its edge at x = 132.
+        auto *east = ground.scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "East"}));
+        east->SetPosition({132.0f, 0.0f, 50.0f});
+        auto *eastTerrain = east->CreateComponent<TerrainComponent>(TerrainComponentConfig{.width = 33, .depth = 33, .cellSize = 1.0f});
+        eastTerrain->Deserialize({{"HeightSamples", PropertyType::String, FlatSamples(33, 33, 5.0f)}});
+        auto *eastVolume = east->CreateComponent<TerrainVolumeComponent>();
+        eastVolume->SetChunkVoxels(8);
+
+        // Foliage: a tree in the pit, one well outside it.
+        auto *trees = ground.scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "Trees"}));
+        auto *foliage = trees->CreateComponent<FoliageComponent>();
+        foliage->AddType("Tree").instances = {FoliageInstance{.id = 1, .position = {132.0f, 5.0f, 66.0f}},
+                                             FoliageInstance{.id = 2, .position = {120.0f, 5.0f, 60.0f}}};
+
+        Require(FindTerrainVolumes(ground.scene, {131.0f, 0.0f, 65.0f}, {133.0f, 9.0f, 67.0f}).size() == 2, "Both terrains lie under the seam");
+        Require(FindTerrainVolumes(ground.scene, {140.0f, 0.0f, 60.0f}, {141.0f, 9.0f, 61.0f}).size() == 1, "Only the east one lies east");
+
+        const auto report = EditTerrainVolumes(ground.scene, volume::SphereShape({132.0f, 5.0f, 66.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        Require(report.volumesChanged == 2 && report.result.RockRemoved() > 1.0f, "A pit across the seam digs both terrains");
+        Require(report.foliageRemoved == 1 && foliage->GetTotalInstanceCount() == 1, "The tree in the pit goes; the other stays");
+        FlushTerrainVolumes(ground.scene);
+        Require(ground.terrain->GetEffectiveHoles().IsHole(31, 16) && eastTerrain->GetEffectiveHoles().IsHole(0, 16), "Both sides open");
+
+        const auto tooBig = EditTerrainVolumes(ground.scene, volume::SphereShape({116.0f, 5.0f, 66.0f}, 20.0f), {volume::VolumeEditMode::Subtract});
+        Require(tooBig.refused && !tooBig.Changed(), "An edit beyond the budget is refused");
+        TerrainVolumeEditOptions tools;
+        tools.maxExtent = 0.0f;
+        tools.removeFoliage = false;
+        Require(EditTerrainVolumes(ground.scene, volume::SphereShape({116.0f, 5.0f, 66.0f}, 20.0f), {volume::VolumeEditMode::Subtract}, tools).Changed(),
+                "Without a budget it is not");
+
+        ground.volume->SetEnabled(false);
+        Require(FindTerrainVolumes(ground.scene, {131.0f, 0.0f, 65.0f}, {133.0f, 9.0f, 67.0f}).size() == 1, "Disabled volumes are not edited");
+    }
+
+    // Phase 5: a save game's edits for every terrain, lone and streamed.
+    void SaveState()
+    {
+        Ground ground;
+        EditTerrainVolumes(ground.scene, volume::SphereShape({116.0f, 5.0f, 66.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        const auto saved = CaptureTerrainVolumeEdits(ground.scene);
+        const auto stored = ground.volume->GetVolume()->GetStoredChunks();
+
+        EditTerrainVolumes(ground.scene, volume::SphereShape({104.0f, 5.0f, 54.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        std::string error;
+        Require(RestoreTerrainVolumeEdits(ground.scene, saved, &error) && error.empty(), "Restoring a capture works: " + error);
+        Require(ground.volume->GetVolume()->GetStoredChunks() == stored, "The capture's edits come back, later ones go");
+
+        Require(RestoreTerrainVolumeEdits(ground.scene, volume::VolumeEditArchive::Encode({})) &&
+                    ground.volume->GetVolume()->GetStoredChunkCount() == 0,
+                "A capture without the terrain sends it back to its file");
+        auto damaged = saved;
+        damaged.pop_back();
+        Require(!RestoreTerrainVolumeEdits(ground.scene, damaged, &error) && !error.empty(), "A damaged capture is refused");
+    }
+
+    // Phase 5: digging in play survives a tile streaming out and back, and save games carry it; files stay untouched.
+    void StreamedEdits()
+    {
+        const auto directory = TempDirectory();
+        TerrainWorldGrid grid;
+        grid.tilesX = 2;
+        grid.tilesZ = 1;
+        grid.tileSamples = 17;
+        grid.cellSize = 2.0f;
+        grid.heightScale = 50.0f;
+        TerrainHeightField field{grid.WorldSamplesX(), grid.WorldSamplesZ(), {}};
+        field.samples.assign(static_cast<std::size_t>(field.width) * field.depth, 10.0f);
+        const std::string pattern = (directory / "tile_{x}_{z}.plutoheight").string();
+        Require(TerrainWorldComponent::WriteWorldFiles(field, grid, pattern, {}, 4).Ok(), "Writing the world");
+
+        Scene scene;
+        auto *worldEntity = scene.AddEntity(std::make_unique<Entity>(EntityConfig{.name = "World"}));
+        auto *world = worldEntity->CreateComponent<TerrainWorldComponent>();
+        world->SetGrid(grid);
+        world->SetTileFiles(pattern);
+        TerrainStreamingSettings streaming;
+        streaming.loadRadius = 5.0f;
+        streaming.unloadRadius = 10.0f;
+        world->SetStreaming(streaming);
+        world->EnsureTileTemplate()->CreateComponent<TerrainVolumeComponent>()->SetChunkVoxels(8);
+        Require(world->LoadAround({8.0f, 0.0f, 8.0f}, std::chrono::seconds(10)), "Loading tile (0,0)");
+
+        const auto report = EditTerrainVolumes(scene, volume::SphereShape({8.0f, 10.0f, 8.0f}, 2.0f), {volume::VolumeEditMode::Subtract});
+        Require(report.volumesChanged == 1, "Digging a loaded tile through the scene");
+        Require(world->GetVolumeEditTileCount() == 1, "The world keeps the tile's edits");
+        const auto saved = CaptureTerrainVolumeEdits(scene);
+
+        world->UnloadAll();
+        Require(world->LoadAround({8.0f, 0.0f, 8.0f}, std::chrono::seconds(10)), "Loading tile (0,0) again");
+        auto *volume = world->GetTileEntity({0, 0})->GetComponent<TerrainVolumeComponent>();
+        volume->Flush();
+        Require(volume->GetVolume()->GetStoredChunkCount() > 0 && world->GetTileTerrain({0, 0})->GetEffectiveHoles().IsHole(4, 4),
+                "The pit survives the tile streaming out and back");
+        Require(!std::filesystem::exists(directory / "tile_0_0_volume.plutovolume"), "Play never writes the tile's files");
+
+        world->ClearVolumeEdits();
+        volume->Flush();
+        Require(volume->GetVolume()->GetStoredChunkCount() == 0 && world->GetVolumeEditTileCount() == 0, "Clearing goes back to the files");
+
+        std::string error;
+        Require(RestoreTerrainVolumeEdits(scene, saved, &error), "Restoring the save: " + error);
+        volume->Flush();
+        Require(volume->GetVolume()->GetStoredChunkCount() > 0 && world->GetTileTerrain({0, 0})->GetEffectiveHoles().IsHole(4, 4),
+                "A save game brings the pit back to a loaded tile");
+        world->UnloadAll();
+        Require(world->GetVolumeEditTileCount() == 1, "and keeps it for the tile while it is away");
+    }
+}
+
 int main()
 {
     try
@@ -296,6 +611,13 @@ int main()
         Files();
         Settings();
         WorldTiles();
+        LayeredChunks();
+        EditsInAndOut();
+        SaveState();
+        SceneEdits();
+        StreamedEdits();
+        ProceduralCaves();
+        Stamps();
     }
     catch (const std::exception &error)
     {

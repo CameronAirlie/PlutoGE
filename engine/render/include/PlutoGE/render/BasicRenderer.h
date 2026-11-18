@@ -501,6 +501,9 @@ namespace PlutoGE::render
         float detailFade = 0.0f;     // band beyond detailDistance over which the layers fade out
         std::array<glm::vec4, kMaxTerrainLayers> tiling{}; // x 1 / tile size, y normal strength, z roughness, w metallic
         std::array<glm::vec4, kMaxTerrainLayers> tint{};   // rgb tint, w anti-tiling (0 or 1)
+        bool vertexLayers = false; // TerrainLayerWeights::VertexLayer
+        bool triplanar = false;    // TerrainLayerProjection::Triplanar
+        float triplanarSharpness = 4.0f;
         // Owns the arrays (RhiTerrainLayerCache) while any draw refers to them.
         std::shared_ptr<const void> owner;
 

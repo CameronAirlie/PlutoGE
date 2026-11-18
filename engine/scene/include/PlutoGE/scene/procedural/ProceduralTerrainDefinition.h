@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/procedural/TerrainRules.h"
+#include "PlutoGE/scene/volume/CaveDensity.h"
 
 #include <glm/glm.hpp>
 
@@ -73,6 +74,9 @@ namespace PlutoGE::scene::procedural
         float biomeBlend = 8.0f; // metres over which neighbouring biomes blend
         std::vector<ProceduralMaskSource> masks;
         std::vector<ProceduralBiome> biomes;
+        // Generated caves, carved by a TerrainVolumeComponent beside the terrain (none without one). Seeded by `seed`
+        // and the caves' own seed. Written as a CAVES record, which readers from before caves skip.
+        volume::CaveNetworkSettings caves;
 
         // Line records of space-separated key=value fields (values percent-escaped). Unknown keys and records are
         // ignored, so newer fields can be added without breaking older readers.

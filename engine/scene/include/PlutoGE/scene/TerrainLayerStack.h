@@ -82,6 +82,8 @@ namespace PlutoGE::scene
 
         // ---- weights -------------------------------------------------------------------------------------------
         [[nodiscard]] const TerrainWeightMap &GetWeights() const { return m_weights; }
+        // Changes whenever the weights or the layers do (painting, generation, undo, loading).
+        [[nodiscard]] std::uint64_t GetWeightsRevision() const { return m_weightsRevision; }
         TerrainWeightRect Paint(glm::vec2 uv, glm::vec2 radiusUv, std::size_t layer, const TerrainLayerBrush &brush);
         void Fill(std::size_t layer);
         void SetWeightResolution(int resolution);
@@ -126,6 +128,7 @@ namespace PlutoGE::scene
         float m_heightBlend = 0.0f;
         float m_detailDistance = 0.0f;
         std::array<std::string, render::kTerrainWeightMaps> m_weightMapPaths;
+        std::uint64_t m_weightsRevision = 1;
 
         std::shared_ptr<const render::TerrainLayerSet> m_renderSet;
         std::array<std::unique_ptr<render::Texture>, render::kTerrainWeightMaps> m_weightTextures;

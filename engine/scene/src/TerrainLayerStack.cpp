@@ -281,6 +281,7 @@ namespace PlutoGE::scene
 
     void TerrainLayerStack::MarkLayersChanged()
     {
+        ++m_weightsRevision;
         m_renderSet.reset();
         m_meanColours.clear();
         m_macroStale = true;
@@ -288,12 +289,14 @@ namespace PlutoGE::scene
 
     void TerrainLayerStack::MarkWeightsChanged()
     {
+        ++m_weightsRevision;
         m_weightTexturesStale = true;
         m_macroStale = true;
     }
 
     void TerrainLayerStack::MarkWeightsChanged(const TerrainWeightRect &rect)
     {
+        ++m_weightsRevision;
         m_weightTexturesDirty.Include(rect);
         m_macroDirty.Include(rect);
     }

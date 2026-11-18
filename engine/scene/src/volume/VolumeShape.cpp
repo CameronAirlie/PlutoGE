@@ -20,6 +20,12 @@ namespace PlutoGE::scene::volume
         return glm::length(glm::max(q, glm::vec3(0.0f))) + std::min(std::max(q.x, std::max(q.y, q.z)), 0.0f);
     }
 
+    TransformedShape::TransformedShape(std::shared_ptr<const VolumeShape> shape, const glm::mat4 &toShape)
+        : TransformedShape(*shape, toShape)
+    {
+        m_owned = std::move(shape);
+    }
+
     TransformedShape::TransformedShape(const VolumeShape &shape, const glm::mat4 &toShape) : m_shape(shape), m_toShape(toShape)
     {
         // A shape-space metre is 1 / (axis scale) metres here; the largest axis scale gives the safe (smallest) ratio.

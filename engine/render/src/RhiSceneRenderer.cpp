@@ -805,6 +805,9 @@ namespace PlutoGE::render
             terrain->normal = arrays->normal.Get();
             terrain->layerCount = arrays->layers;
             terrain->heightBlend = set->heightBlend;
+            terrain->vertexLayers = set->weights == TerrainLayerWeights::VertexLayer;
+            terrain->triplanar = set->projection == TerrainLayerProjection::Triplanar;
+            terrain->triplanarSharpness = set->triplanarSharpness;
             // The fade band ends at the detail distance, so nothing past it pays for the layers.
             terrain->detailFade = std::max(set->detailDistance, 0.0f) * 0.25f;
             terrain->detailDistance = std::max(set->detailDistance, 0.0f) - terrain->detailFade;

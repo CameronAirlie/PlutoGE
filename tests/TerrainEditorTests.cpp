@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 #include "PlutoGE/ui/TerrainCreation.h"
 #include "PlutoGE/ui/TerrainEditTool.h"
@@ -91,6 +92,21 @@ namespace
         tool.SetMode(TerrainToolMode::Holes, 0);
         Require(tool.GetMode() == TerrainToolMode::Off, "No target, no tool");
         Require(std::string(TerrainToolModeName(TerrainToolMode::Paint)) == "Paint", "Mode names");
+
+        // Dig (terrain volumes) has its own brush and needs a volume on the target's settings entity.
+        tool.dig.radius = 2.5f;
+        tool.SetMode(TerrainToolMode::Dig, 7);
+        Require(tool.ActiveRadius() == 2.5f && std::string(TerrainToolModeName(TerrainToolMode::Dig)) == "Dig", "The dig brush's radius and name");
+        Scene scene;
+        auto *terrainEntity = CreateTerrainEntity(scene, nullptr, TerrainCreateOptions{.name = "Valley", .size = 64.0f});
+        Require(!TerrainEditTarget::Resolve(terrainEntity).HasVolume(), "A plain terrain has nothing to dig");
+        terrainEntity->CreateComponent<TerrainVolumeComponent>();
+        Require(TerrainEditTarget::Resolve(terrainEntity).HasVolume(), "A terrain volume makes it diggable");
+        auto *worldEntity = CreateTerrainWorldEntity(scene, nullptr, TerrainWorldCreateOptions{.name = "Island"});
+        auto *world = worldEntity->GetComponent<TerrainWorldComponent>();
+        Require(!TerrainEditTarget::Resolve(worldEntity).HasVolume(), "A world without one on its template has nothing to dig");
+        world->GetTileTemplate()->CreateComponent<TerrainVolumeComponent>();
+        Require(TerrainEditTarget::Resolve(worldEntity).HasVolume(), "A world digs when its template has a volume");
     }
 
     void Creation()

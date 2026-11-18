@@ -33,6 +33,20 @@ namespace PlutoGE::render
         bool antiTiling = false;            // stochastic tiling: hides the maps' repeats (two samples per map)
     };
 
+    // Where a surface's layer weights come from.
+    enum class TerrainLayerWeights : std::uint8_t
+    {
+        Maps,        // the weight maps, over the surface's 0..1 UVs (the heightfield)
+        VertexLayer, // one layer per triangle: the vertices' uv.x is its index (terrain volume chunks); no macro albedo
+    };
+
+    // How a layer's maps are laid on the surface.
+    enum class TerrainLayerProjection : std::uint8_t
+    {
+        TopDown,   // along y: cheapest, and smears on steep faces
+        Triplanar, // along each axis, blended by the normal: caves, overhangs, cliffs (three times the fetches)
+    };
+
     struct TerrainLayerSet
     {
         std::vector<TerrainLayerSurface> layers;
@@ -43,6 +57,10 @@ namespace PlutoGE::render
         // Beyond this distance from the camera (world units) the terrain shades from its macro albedo instead of
         // its layers, fading over the last quarter of the distance; 0 shows the layers at every distance.
         float detailDistance = 0.0f;
+        TerrainLayerWeights weights = TerrainLayerWeights::Maps;
+        TerrainLayerProjection projection = TerrainLayerProjection::TopDown;
+        // Triplanar only: how sharply the projections hand over as the normal turns (higher: narrower blends).
+        float triplanarSharpness = 4.0f;
     };
 
     // The layers' maps resampled to one size and packed for the GPU, one array layer per terrain layer, two maps

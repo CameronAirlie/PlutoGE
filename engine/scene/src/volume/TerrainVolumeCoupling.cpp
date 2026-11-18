@@ -8,9 +8,20 @@
 
 namespace PlutoGE::scene::volume
 {
-    TerrainSurface::TerrainSurface(int width, int depth, float cellSize, std::vector<float> heights)
-        : m_width(width), m_depth(depth), m_cellSize(cellSize), m_heights(std::move(heights))
+    TerrainSurface::TerrainSurface(int width, int depth, float cellSize, std::vector<float> heights, std::vector<VolumeMaterial> layers)
+        : m_width(width), m_depth(depth), m_cellSize(cellSize), m_heights(std::move(heights)), m_layers(std::move(layers))
     {
+        if (m_layers.size() != m_heights.size())
+            m_layers.clear();
+    }
+
+    VolumeMaterial TerrainSurface::Layer(float x, float z) const
+    {
+        if (m_layers.empty() || !Valid())
+            return 0;
+        const int sx = std::clamp(static_cast<int>(std::lround(x / m_cellSize)), 0, m_width - 1);
+        const int sz = std::clamp(static_cast<int>(std::lround(z / m_cellSize)), 0, m_depth - 1);
+        return m_layers[static_cast<std::size_t>(sz) * m_width + sx];
     }
 
     bool TerrainSurface::Valid() const
@@ -38,6 +49,14 @@ namespace PlutoGE::scene::volume
         return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
     }
 
+    std::optional<float> TerrainSurface::ExtendedHeight(float x, float z) const
+    {
+        if (!Valid() || !std::isfinite(x) || !std::isfinite(z))
+            return std::nullopt;
+        const float right = static_cast<float>(m_width - 1) * m_cellSize, far = static_cast<float>(m_depth - 1) * m_cellSize;
+        return Height(std::clamp(x, 0.0f, right), std::clamp(z, 0.0f, far));
+    }
+
     glm::vec2 TerrainSurface::CellHeightRange(int cellX, int cellZ) const
     {
         const int x = std::clamp(cellX, 0, m_width - 2), z = std::clamp(cellZ, 0, m_depth - 2);
@@ -45,10 +64,72 @@ namespace PlutoGE::scene::volume
         return {std::min({a, b, c, d}), std::max({a, b, c, d})};
     }
 
-    std::shared_ptr<const VolumeDensitySource> MakeTerrainDensity(std::shared_ptr<const TerrainSurface> surface, VolumeMaterial material)
+    namespace
     {
-        return std::make_shared<HeightfieldDensity>(
-            [surface = std::move(surface)](float x, float z) { return surface->Height(x, z); }, material);
+        // The terrain's ground: the surface's layer near the top, the rock layer deeper down.
+        class TerrainGroundDensity final : public VolumeDensitySource
+        {
+        public:
+            TerrainGroundDensity(std::shared_ptr<const TerrainSurface> surface, const TerrainGroundMaterials &materials)
+                : m_surface(std::move(surface)), m_materials(materials)
+            {
+            }
+
+            [[nodiscard]] VolumeSample Sample(const glm::vec3 &position) const override
+            {
+                const auto height = m_surface->ExtendedHeight(position.x, position.z);
+                if (!height)
+                    return {1.0e6f, 0};
+                return {position.y - *height, Material(position.x, position.z, *height - position.y)};
+            }
+
+            // A column at a time: one height and one layer lookup per (x, z).
+            void Fill(const VolumeGrid &grid, const VolumeSampleBox &box, std::span<VolumeSample> out) const override
+            {
+                if (out.size() < box.SampleCount())
+                    return;
+                const auto columns = static_cast<std::size_t>(box.count.x);
+                const auto rows = static_cast<std::size_t>(box.count.y);
+                for (int z = 0; z < box.count.z; ++z)
+                    for (int x = 0; x < box.count.x; ++x)
+                    {
+                        const auto base = grid.SamplePosition(box.first + glm::ivec3(x, 0, z));
+                        const auto height = m_surface->ExtendedHeight(base.x, base.z);
+                        const VolumeMaterial surfaceLayer = m_surface->Layer(base.x, base.z);
+                        for (int y = 0; y < box.count.y; ++y)
+                        {
+                            const float sampleY = base.y + static_cast<float>(y) * grid.voxelSize;
+                            const float depth = height ? *height - sampleY : -1.0e6f;
+                            const bool rock = m_materials.rockLayer >= 0 && depth >= m_materials.rockDepth;
+                            out[(static_cast<std::size_t>(z) * rows + static_cast<std::size_t>(y)) * columns + static_cast<std::size_t>(x)] = {
+                                height ? sampleY - *height : 1.0e6f, rock ? static_cast<VolumeMaterial>(m_materials.rockLayer) : surfaceLayer};
+                        }
+                    }
+            }
+
+        private:
+            [[nodiscard]] VolumeMaterial Material(float x, float z, float depth) const
+            {
+                if (m_materials.rockLayer >= 0 && depth >= m_materials.rockDepth)
+                    return static_cast<VolumeMaterial>(m_materials.rockLayer);
+                return m_surface->Layer(x, z);
+            }
+
+            std::shared_ptr<const TerrainSurface> m_surface;
+            TerrainGroundMaterials m_materials;
+        };
+    }
+
+    std::shared_ptr<const VolumeDensitySource> MakeTerrainDensity(std::shared_ptr<const TerrainSurface> surface,
+                                                                  const TerrainGroundMaterials &materials)
+    {
+        return std::make_shared<TerrainGroundDensity>(std::move(surface), materials);
+    }
+
+    float TerrainGroundDistance(const TerrainSurface &surface, const glm::vec3 &position)
+    {
+        const auto height = surface.ExtendedHeight(position.x, position.z);
+        return height ? position.y - *height : 1.0e6f;
     }
 
     namespace
@@ -73,7 +154,7 @@ namespace PlutoGE::scene::volume
     TerrainHoleMask ComputeVolumeHoles(const TerrainVolume &volume, const TerrainSurface &surface, const TerrainCouplingSettings &settings)
     {
         TerrainHoleMask holes(std::max(surface.GetCellsX(), 0), std::max(surface.GetCellsZ(), 0));
-        if (!surface.Valid() || volume.GetStoredChunkCount() == 0)
+        if (!surface.Valid())
             return holes;
         const auto &grid = volume.GetGrid();
         const float tolerance = settings.breachTolerance * grid.voxelSize;
@@ -87,6 +168,24 @@ namespace PlutoGE::scene::volume
                 for (int x = 0; x < grid.chunkVoxels; ++x)
                     columns.insert({first.x + x, first.z + z});
         }
+        // And the columns under the base's features that reach the surface (cave mouths); deep tunnels cannot breach.
+        std::vector<VolumeBounds> features;
+        volume.GetBase().AppendFeatureBounds(features);
+        const float slack = grid.voxelSize * 2.0f;
+        for (const auto &feature : features)
+        {
+            const auto box = grid.SamplesIn(feature.min - slack, feature.max + slack);
+            for (int z = 0; z < box.count.z; ++z)
+                for (int x = 0; x < box.count.x; ++x)
+                {
+                    const glm::vec3 column = grid.SamplePosition({box.first.x + x, 0, box.first.z + z});
+                    const auto height = surface.Height(column.x, column.z);
+                    if (height && *height >= feature.min.y - slack && *height <= feature.max.y + slack)
+                        columns.insert({box.first.x + x, box.first.z + z});
+                }
+        }
+        if (columns.empty())
+            return holes;
 
         for (const auto &[sampleX, sampleZ] : columns)
         {
@@ -100,7 +199,8 @@ namespace PlutoGE::scene::volume
             for (int y = surfaceSample - 1; y <= surfaceSample + 1 && !breached; ++y)
             {
                 const glm::ivec3 sample(sampleX, y, sampleZ);
-                const float base = DequantizeDistance(QuantizeDistance(volume.GetBase().Sample(grid.SamplePosition(sample)).distance,
+                // The terrain's own ground, as a stored sample would hold it.
+                const float base = DequantizeDistance(QuantizeDistance(TerrainGroundDistance(surface, grid.SamplePosition(sample)),
                                                                        grid.voxelSize),
                                                       grid.voxelSize);
                 breached = std::abs(volume.Sample(sample).distance - base) > tolerance;
@@ -134,7 +234,8 @@ namespace PlutoGE::scene::volume
             return glm::ivec2(static_cast<int>(std::floor(point.x / cellSize)), static_cast<int>(std::floor(point.z / cellSize)));
         };
         const auto onSurface = [&](const glm::vec3 &point) {
-            const auto height = surface.Height(point.x, point.z);
+            // Extended: a triangle reaching just past the edge still lies on the ground continued there.
+            const auto height = surface.ExtendedHeight(point.x, point.z);
             return height && std::abs(point.y - *height) <= tolerance;
         };
         const auto nearCut = [&](glm::ivec2 cell, int reach) {
@@ -168,8 +269,9 @@ namespace PlutoGE::scene::volume
             const glm::vec3 a = local(indices[index]), b = local(indices[index + 1]), c = local(indices[index + 2]);
             const glm::vec3 centre = (a + b + c) / 3.0f;
             const auto cell = cellOf(centre);
-            const bool keep = !surface.Height(centre.x, centre.z)                        // off the terrain: only the volume
-                              || IsCut(volumeHoles, cell.x, cell.y)                       // the heightfield is cut here
+            if (!surface.Height(centre.x, centre.z))
+                continue; // off the terrain: another volume's, or nobody's
+            const bool keep = IsCut(volumeHoles, cell.x, cell.y)                         // the heightfield is cut here
                               || !(onSurface(a) && onSurface(b) && onSurface(c))          // a cave, an overhang, a pit wall
                               || (ring > 0 && nearCut(cell, ring));                      // the overlap ring
             if (keep)

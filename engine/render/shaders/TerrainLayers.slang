@@ -11,6 +11,12 @@
 // kTerrainShadedLayers strongest are shaded (blends of more than four layers at one point are imperceptible), and
 // the albedo fetched for height blending is reused for colour. Layers with anti-tiling fetch each map twice.
 //
+// Two switches (terrainMapping) let other surfaces share the layers:
+// - weights: the weight maps over the terrain's UVs, or one layer per triangle given by the vertex's uv.x (terrain
+//   volume chunks, docs/dev/TERRAIN_VOLUMES_PLAN.md phase 4; they have no terrain UVs and no macro albedo).
+// - projection: top-down (x and z), or triplanar (each map projected along the three axes and blended by the
+//   normal), for cave walls, overhangs and cliffs a top-down projection would smear.
+//
 // OpenGL flattening (NormalizeOpenGLShader.cmake): textures 20..23 -> units 3..6, parameters 25 -> block 4.
 
 static const uint kTerrainMaxLayers = 8;
@@ -27,6 +33,8 @@ cbuffer TerrainLayerParameters : register(b25, space1)
     float4 terrainTiling[kTerrainMaxLayers]; // x 1 / tile size, y normal strength, z roughness, w metallic
     float4 terrainTint[kTerrainMaxLayers];   // rgb tint, w anti-tiling (0 or 1)
     float4 terrainParameters;                // x layer count, y height blend, z detail distance (0 = everywhere), w fade
+    float4 terrainMapping;                   // x weights (0 maps, 1 vertex layer), y projection (0 top-down, 1 triplanar),
+                                             // z triplanar sharpness
 };
 
 struct TerrainSurface
@@ -103,14 +111,116 @@ float4 sampleTerrainArray(Sampler2DArray map, float2 uv, uint layer, float2 dx, 
     return lerp(a, b, variation.blend);
 }
 
+// ---- one layer --------------------------------------------------------------------------------------------------
+// A layer's maps at a point, projected top-down or triplanar. Normals come back in world space (unnormalised), so
+// layers blend the same whatever their projection.
+
+struct TerrainShadingFrame
+{
+    float3 position; // world
+    float3 dx, dy;   // world-space derivatives of the position
+    float3 normal;   // geometric, normalised
+    float3 tangent, bitangent;
+};
+
+bool terrainVertexLayers() { return terrainMapping.x > 0.5; }
+bool terrainTriplanar() { return terrainMapping.y > 0.5; }
+
+// The three projections' weights: the normal's axes, sharpened so only steep transitions blend.
+float3 terrainTriplanarWeights(float3 normal)
+{
+    const float3 weights = pow(abs(normal), max(terrainMapping.z, 1.0));
+    return weights / max(weights.x + weights.y + weights.z, 1.0e-4);
+}
+
+float4 sampleTerrainPlane(Sampler2DArray map, uint layer, float2 position, float2 dx, float2 dy)
+{
+    const float scale = terrainTiling[layer].x;
+    const float2 uv = position * scale;
+    return sampleTerrainArray(map, uv, layer, dx * scale, dy * scale, terrainTileVariation(uv, terrainTint[layer].w > 0.5));
+}
+
+// rgb colour, a height.
+float4 sampleTerrainLayerAlbedo(uint layer, TerrainShadingFrame frame)
+{
+    if (!terrainTriplanar())
+        return sampleTerrainPlane(terrainAlbedo, layer, frame.position.xz, frame.dx.xz, frame.dy.xz);
+    const float3 weights = terrainTriplanarWeights(frame.normal);
+    float4 result = 0.0;
+    if (weights.x > kTerrainMinimumWeight)
+        result += sampleTerrainPlane(terrainAlbedo, layer, frame.position.zy, frame.dx.zy, frame.dy.zy) * weights.x;
+    if (weights.y > kTerrainMinimumWeight)
+        result += sampleTerrainPlane(terrainAlbedo, layer, frame.position.xz, frame.dx.xz, frame.dy.xz) * weights.y;
+    if (weights.z > kTerrainMinimumWeight)
+        result += sampleTerrainPlane(terrainAlbedo, layer, frame.position.xy, frame.dx.xy, frame.dy.xy) * weights.z;
+    return result;
+}
+
+float3 terrainTangentNormal(float4 normalRoughness, uint layer)
+{
+    float3 tangentNormal = normalRoughness.xyz * 2.0 - 1.0;
+    tangentNormal.xy *= terrainTiling[layer].y;
+    return tangentNormal;
+}
+
+// xyz world normal (unnormalised), w roughness (before the layer's multiplier).
+float4 sampleTerrainLayerNormal(uint layer, TerrainShadingFrame frame)
+{
+    if (!terrainTriplanar())
+    {
+        const float4 normalRoughness = sampleTerrainPlane(terrainNormal, layer, frame.position.xz, frame.dx.xz, frame.dy.xz);
+        const float3 tangentNormal = terrainTangentNormal(normalRoughness, layer);
+        return float4(frame.tangent * tangentNormal.x + frame.bitangent * tangentNormal.y +
+                      frame.normal * max(tangentNormal.z, 0.001), normalRoughness.a);
+    }
+    // Whiteout blend (Golus, "Normal Mapping for a Triplanar Shader"): each projection's tangent normal is added to
+    // the geometric normal swizzled into that projection's plane, then swizzled back.
+    const float3 weights = terrainTriplanarWeights(frame.normal);
+    const float3 n = frame.normal;
+    float3 normal = 0.0;
+    float roughness = 0.0;
+    if (weights.x > kTerrainMinimumWeight)
+    {
+        const float4 sample = sampleTerrainPlane(terrainNormal, layer, frame.position.zy, frame.dx.zy, frame.dy.zy);
+        const float3 t = terrainTangentNormal(sample, layer);
+        normal += float3(abs(t.z) * n.x, t.y + n.y, t.x + n.z) * weights.x;
+        roughness += sample.a * weights.x;
+    }
+    if (weights.y > kTerrainMinimumWeight)
+    {
+        const float4 sample = sampleTerrainPlane(terrainNormal, layer, frame.position.xz, frame.dx.xz, frame.dy.xz);
+        const float3 t = terrainTangentNormal(sample, layer);
+        normal += float3(t.x + n.x, abs(t.z) * n.y, t.y + n.z) * weights.y;
+        roughness += sample.a * weights.y;
+    }
+    if (weights.z > kTerrainMinimumWeight)
+    {
+        const float4 sample = sampleTerrainPlane(terrainNormal, layer, frame.position.xy, frame.dx.xy, frame.dy.xy);
+        const float3 t = terrainTangentNormal(sample, layer);
+        normal += float3(t.x + n.x, t.y + n.y, abs(t.z) * n.z) * weights.z;
+        roughness += sample.a * weights.z;
+    }
+    return float4(normal, roughness);
+}
+
 // ---- blending -------------------------------------------------------------------------------------------------
 
 // How much of the layers shows at a distance from the camera: 1 within the detail distance, fading to 0 (the
-// macro albedo alone) over the fade band beyond it.
+// macro albedo alone) over the fade band beyond it. Surfaces with vertex layers have no macro albedo.
 float terrainDetailAmount(float cameraDistance)
 {
     const float limit = terrainParameters.z;
-    return limit <= 0.0 ? 1.0 : saturate((limit - cameraDistance) / max(terrainParameters.w, 0.001) + 1.0);
+    return limit <= 0.0 || terrainVertexLayers() ? 1.0 : saturate((limit - cameraDistance) / max(terrainParameters.w, 0.001) + 1.0);
+}
+
+TerrainSurface terrainLayerSurface(float3 albedo, float3 normal, float roughness, float metallic)
+{
+    TerrainSurface surface;
+    surface.albedo = albedo;
+    surface.normal = normalize(normal);
+    surface.roughness = clamp(roughness, 0.04, 1.0);
+    surface.metallic = saturate(metallic);
+    return surface;
 }
 
 TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float3 worldDx, float3 worldDy,
@@ -118,34 +228,37 @@ TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float
 {
     const uint count = min(uint(terrainParameters.x + 0.5), kTerrainMaxLayers);
     const float heightBlend = terrainParameters.y;
-    // Weights change slowly across the terrain; the base level avoids blurring painted edges at a distance.
-    const float4 weights0 = terrainWeights0.SampleLevel(terrainUv, 0.0);
-    const float4 weights1 = terrainWeights1.SampleLevel(terrainUv, 0.0);
 
-    // Fast path: most of a terrain lies inside one layer (open dust, rock faces), where no blending is needed.
+    TerrainShadingFrame frame;
+    frame.position = worldPosition;
+    frame.dx = worldDx;
+    frame.dy = worldDy;
+    frame.normal = geometricNormal;
+    // The same tangent frame as the standard material path (terrain tangents run along +X, like its UVs).
+    frame.tangent = normalize(worldTangent.xyz);
+    frame.bitangent = normalize(cross(geometricNormal, frame.tangent)) * worldTangent.w;
+
+    // Fast path: one layer. Vertex layers always are; most of a painted terrain lies inside one layer too (open
+    // dust, rock faces), where no blending is needed.
     uint only = kTerrainMaxLayers;
-    [unroll] for (uint layer = 0; layer < kTerrainMaxLayers; ++layer)
-        if (layer < count && terrainWeight(weights0, weights1, layer) >= 1.0 - kTerrainMinimumWeight)
-            only = layer;
+    float4 weights0 = 0.0, weights1 = 0.0;
+    if (terrainVertexLayers())
+        only = min(uint(max(terrainUv.x, 0.0) + 0.5), max(count, 1u) - 1u);
+    else
+    {
+        // Weights change slowly across the terrain; the base level avoids blurring painted edges at a distance.
+        weights0 = terrainWeights0.SampleLevel(terrainUv, 0.0);
+        weights1 = terrainWeights1.SampleLevel(terrainUv, 0.0);
+        [unroll] for (uint layer = 0; layer < kTerrainMaxLayers; ++layer)
+            if (layer < count && terrainWeight(weights0, weights1, layer) >= 1.0 - kTerrainMinimumWeight)
+                only = layer;
+    }
     if (only < kTerrainMaxLayers || count <= 1)
     {
         const uint layer = only < kTerrainMaxLayers ? only : 0;
-        const float4 tiling = terrainTiling[layer];
-        const float2 uv = worldPosition.xz * tiling.x;
-        const float2 dx = worldDx.xz * tiling.x;
-        const float2 dy = worldDy.xz * tiling.x;
-        const TerrainTileVariation variation = terrainTileVariation(uv, terrainTint[layer].w > 0.5);
-        const float4 normalRoughness = sampleTerrainArray(terrainNormal, uv, layer, dx, dy, variation);
-        float3 tangentNormal = normalRoughness.xyz * 2.0 - 1.0;
-        tangentNormal.xy *= tiling.y;
-        TerrainSurface surface;
-        surface.albedo = sampleTerrainArray(terrainAlbedo, uv, layer, dx, dy, variation).rgb * terrainTint[layer].rgb;
-        const float3 tangent = normalize(worldTangent.xyz);
-        const float3 bitangent = normalize(cross(geometricNormal, tangent)) * worldTangent.w;
-        surface.normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + geometricNormal * max(tangentNormal.z, 0.001));
-        surface.roughness = clamp(normalRoughness.a * tiling.z, 0.04, 1.0);
-        surface.metallic = saturate(tiling.w);
-        return surface;
+        const float4 normalRoughness = sampleTerrainLayerNormal(layer, frame);
+        return terrainLayerSurface(sampleTerrainLayerAlbedo(layer, frame).rgb * terrainTint[layer].rgb, normalRoughness.xyz,
+                                   normalRoughness.a * terrainTiling[layer].z, terrainTiling[layer].w);
     }
 
     // Blend factors: the painted weights, or with height blending the layers whose height plus weight comes
@@ -161,10 +274,7 @@ TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float
         albedoSample[layer] = 0.0;
         if (heightBlend > 0.0 && weight > kTerrainMinimumWeight)
         {
-            const float scale = terrainTiling[layer].x;
-            const float2 uv = worldPosition.xz * scale;
-            albedoSample[layer] = sampleTerrainArray(terrainAlbedo, uv, layer, worldDx.xz * scale, worldDy.xz * scale,
-                                                     terrainTileVariation(uv, terrainTint[layer].w > 0.5));
+            albedoSample[layer] = sampleTerrainLayerAlbedo(layer, frame);
             sampledAlbedo |= 1u << layer;
             blend[layer] = weight + albedoSample[layer].a;
             top = max(top, blend[layer]);
@@ -210,7 +320,7 @@ TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float
     }
 
     float3 albedo = 0.0;
-    float3 tangentNormal = 0.0;
+    float3 normal = 0.0;
     float roughness = 0.0;
     float metallic = 0.0;
     [unroll] for (uint layer = 0; layer < kTerrainMaxLayers; ++layer)
@@ -218,29 +328,12 @@ TerrainSurface sampleTerrainLayers(float2 terrainUv, float3 worldPosition, float
         if ((shaded & (1u << layer)) == 0)
             continue;
         const float amount = blend[layer] / total;
-        const float4 tiling = terrainTiling[layer];
-        const float2 uv = worldPosition.xz * tiling.x;
-        const float2 dx = worldDx.xz * tiling.x;
-        const float2 dy = worldDy.xz * tiling.x;
-        const TerrainTileVariation variation = terrainTileVariation(uv, terrainTint[layer].w > 0.5);
-        const float4 layerAlbedo = (sampledAlbedo & (1u << layer)) != 0
-            ? albedoSample[layer] : sampleTerrainArray(terrainAlbedo, uv, layer, dx, dy, variation);
+        const float4 layerAlbedo = (sampledAlbedo & (1u << layer)) != 0 ? albedoSample[layer] : sampleTerrainLayerAlbedo(layer, frame);
         albedo += layerAlbedo.rgb * terrainTint[layer].rgb * amount;
-        const float4 normalRoughness = sampleTerrainArray(terrainNormal, uv, layer, dx, dy, variation);
-        float3 layerNormal = normalRoughness.xyz * 2.0 - 1.0;
-        layerNormal.xy *= tiling.y;
-        tangentNormal += layerNormal * amount;
-        roughness += normalRoughness.a * tiling.z * amount;
-        metallic += tiling.w * amount;
+        const float4 normalRoughness = sampleTerrainLayerNormal(layer, frame);
+        normal += normalRoughness.xyz * amount;
+        roughness += normalRoughness.a * terrainTiling[layer].z * amount;
+        metallic += terrainTiling[layer].w * amount;
     }
-
-    TerrainSurface surface;
-    surface.albedo = albedo;
-    // The same tangent frame as the standard material path (terrain tangents run along +X, like its UVs).
-    const float3 tangent = normalize(worldTangent.xyz);
-    const float3 bitangent = normalize(cross(geometricNormal, tangent)) * worldTangent.w;
-    surface.normal = normalize(tangent * tangentNormal.x + bitangent * tangentNormal.y + geometricNormal * max(tangentNormal.z, 0.001));
-    surface.roughness = clamp(roughness, 0.04, 1.0);
-    surface.metallic = saturate(metallic);
-    return surface;
+    return terrainLayerSurface(albedo, normal, roughness, metallic);
 }

@@ -218,6 +218,22 @@ namespace
         Require(!ProceduralTerrainDefinition::Decode("BIOME name=x\n", &error), "Text without a header is refused");
         const auto future = ProceduralTerrainDefinition::Decode(text + "FUTURE thing=1\nRULE input=Slope future=2\n");
         Require(future && future->biomes.size() == 2, "Unknown records and keys are skipped");
+
+        // Caves (terrain volumes, phase 6): written only when set, read back whole.
+        Require(text.find("CAVES") == std::string::npos, "Default caves are not written");
+        auto caved = definition;
+        caved.caves.enabled = true;
+        caved.caves.seed = 7;
+        caved.caves.tunnelsPerCell = 3;
+        caved.caves.radius = {1.0f, 2.5f};
+        caved.caves.altitude = {-30.0f, 4.5f};
+        caved.caves.wobble = 0.0f;
+        const auto cavedText = caved.Encode();
+        const auto cavedBack = ProceduralTerrainDefinition::Decode(cavedText);
+        Require(cavedBack && *cavedBack == caved && cavedBack->caves.enabled, "Caves round-trip:\n" + cavedText);
+        const auto wild = ProceduralTerrainDefinition::Decode("PROCEDURAL version=1\nCAVES enabled=1 cell=0 tunnels=900 step=0\n");
+        Require(wild && wild->caves.cellSize >= 1.0f && wild->caves.tunnelsPerCell == 64 && wild->caves.stepLength >= 0.5f,
+                "Cave settings are clamped");
     }
 
     // A terrain 64 m wide: flat at 2 m for x < 24, then a 45 degree ramp up to 42 m, then flat (the high land).

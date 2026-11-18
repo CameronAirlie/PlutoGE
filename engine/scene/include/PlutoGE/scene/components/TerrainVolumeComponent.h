@@ -1,6 +1,8 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/scene/components/VolumeStampComponent.h"
+#include "PlutoGE/scene/volume/CaveDensity.h"
 #include "PlutoGE/scene/volume/TerrainVolume.h"
 #include "PlutoGE/scene/volume/TerrainVolumeCoupling.h"
 #include "PlutoGE/scene/volume/VolumeMeshQueue.h"
@@ -10,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -32,6 +35,11 @@ namespace PlutoGE::scene
     //
     // Meshing runs on worker threads, a few chunks a frame; holes change together with the meshes that fill them.
     // Stored chunks persist in the volume file (a world gives each tile its own, beside its height file).
+    //
+    // The volume's base is the terrain's ground (its painted layer at the surface, an optional rock layer deeper down)
+    // with the caves of a ProceduralTerrainComponent beside it carved out (its definition's `caves`), then the scene's
+    // VolumeStampComponents over the terrain applied. The base follows sculpting, painting, the definition and the
+    // stamps; generated caves and stamps are meshed without being stored.
     class TerrainVolumeComponent : public TypedComponent<TerrainVolumeComponent>
     {
     public:
@@ -55,7 +63,8 @@ namespace PlutoGE::scene
         void SetVoxelSize(float metres);
         [[nodiscard]] int GetChunkVoxels() const { return m_chunkVoxels; }
         void SetChunkVoxels(int samples);
-        // The material chunk meshes draw with; empty uses the terrain's.
+        // The material chunk meshes draw with; empty uses the terrain's layers, triplanar, each triangle in the layer
+        // its rock has (a terrain without layers lends its plain material).
         [[nodiscard]] const std::string &GetMaterialAsset() const { return m_materialAsset; }
         void SetMaterialAsset(std::string asset);
         // Where the stored chunks are saved (an asset reference or path; a world sets its tiles'). Changing it reads it.
@@ -65,6 +74,9 @@ namespace PlutoGE::scene
         void SetCollision(bool collision);
         [[nodiscard]] const volume::TerrainCouplingSettings &GetCoupling() const { return m_coupling; }
         void SetCoupling(const volume::TerrainCouplingSettings &settings);
+        // What dug ground is made of below the surface (the base; stored chunks keep what they had).
+        [[nodiscard]] const volume::TerrainGroundMaterials &GetGroundMaterials() const { return m_ground; }
+        void SetGroundMaterials(const volume::TerrainGroundMaterials &materials);
         // Chunks meshed (and results applied) per frame.
         [[nodiscard]] int GetMeshesPerFrame() const { return m_meshesPerFrame; }
         void SetMeshesPerFrame(int meshes) { m_meshesPerFrame = meshes < 1 ? 1 : meshes; }
@@ -85,6 +97,15 @@ namespace PlutoGE::scene
         // The file's contents, already read (a world reads its tiles' on its streaming worker): used instead of reading
         // the volume file. nullopt says there is no file.
         void ProvideFileContents(std::optional<std::vector<std::uint8_t>> contents);
+        // The stored chunks as a volume file's bytes (save games, a world keeping a streamed-out tile's edits).
+        [[nodiscard]] std::vector<std::uint8_t> ExportEdits();
+        // Replaces every stored chunk with those of a volume file's bytes, as if the volume had been loaded from them.
+        // False (with a reason, and nothing changed) when they are damaged or were written for another grid.
+        bool ImportEdits(std::span<const std::uint8_t> bytes, std::string *error = nullptr);
+        // Replaces the stored chunks with the volume file's (none when there is no file): drops unsaved edits.
+        bool ReloadFile(std::string *error = nullptr);
+        // Whether the stored chunks changed since they were loaded, imported or saved.
+        [[nodiscard]] bool HasUnsavedEdits() const;
         // The last problem reading the file or editing (empty when none).
         [[nodiscard]] const std::string &GetLastError() const { return m_lastError; }
 
@@ -103,8 +124,37 @@ namespace PlutoGE::scene
         void ResetVolume();
         void LoadStoredChunks();
         std::shared_ptr<const volume::TerrainSurface> SnapshotSurface(const TerrainComponent &terrain) const;
+        // A stamp as the base applies it.
+        struct StampInput
+        {
+            VolumeStampComponent::Shape shape = VolumeStampComponent::Shape::Sphere;
+            volume::VolumeEditMode mode = volume::VolumeEditMode::Subtract;
+            int layer = 0;
+            float radius = 0.0f;
+            glm::vec3 halfExtents{0.0f};
+            float length = 0.0f;
+            glm::mat4 toStamp{1.0f}; // the volume's space to the stamp's
+            bool operator==(const StampInput &) const = default;
+        };
+        // Everything the base is made from; a change rebuilds it.
+        struct BaseInputs
+        {
+            std::uint64_t heightsRevision = 0;
+            std::uint64_t weightsRevision = 0;
+            volume::TerrainGroundMaterials ground;
+            volume::CaveNetworkSettings caves;
+            std::uint32_t caveSeed = 0;
+            glm::vec3 worldOffset{0.0f};
+            std::vector<StampInput> stamps;
+            bool operator==(const BaseInputs &) const = default;
+        };
+        [[nodiscard]] BaseInputs CurrentBaseInputs(const TerrainComponent &terrain) const;
+        // The base for these inputs: the ground, with the caves carved out. Also snapshots the surface.
+        std::shared_ptr<const volume::VolumeDensitySource> MakeBase(const TerrainComponent &terrain, const BaseInputs &inputs);
+        // Queues the meshes of the base's features (generated caves).
+        void QueueBaseFeatures();
         // The steps of an update.
-        void FollowTerrainHeights(TerrainComponent &terrain);
+        void FollowBase(TerrainComponent &terrain, bool immediately);
         void RefreshHoles();
         void ScheduleMeshing(std::size_t budget);
         void ApplyMeshes(std::vector<volume::VolumeMeshQueue::Result> results);
@@ -113,7 +163,10 @@ namespace PlutoGE::scene
         void ValidateChunkEntities();
         void DestroyChunkEntities();
         void InvalidateNavigation(const glm::vec3 &localMin, const glm::vec3 &localMax) const;
-        render::Material *ChunkMaterial() const;
+        render::Material *ChunkMaterial();
+        // Follows the terrain's layers and material into the chunks' derived material; true when it changed.
+        void RefreshChunkMaterial();
+        render::Material *LayeredTerrainMaterial();
 
         // Settings.
         float m_voxelSize = 0.5f;
@@ -122,14 +175,17 @@ namespace PlutoGE::scene
         std::string m_volumeFile;
         bool m_collision = true;
         volume::TerrainCouplingSettings m_coupling;
+        volume::TerrainGroundMaterials m_ground;
         int m_meshesPerFrame = 4;
 
         // The volume and what it is built from.
         std::unique_ptr<volume::TerrainVolume> m_volume;
         std::shared_ptr<const volume::TerrainSurface> m_surface;
-        std::uint64_t m_surfaceHeightsRevision = 0;
+        BaseInputs m_baseInputs;
+        std::uint64_t m_weightsSeen = 0; // painting settles for a frame before the base follows it
         std::optional<std::optional<std::vector<std::uint8_t>>> m_providedFile; // set: use it instead of reading
         bool m_fileLoaded = false;
+        std::uint64_t m_savedRevision = 0; // the volume's revision when its chunks matched what was loaded or saved
         std::string m_lastError;
 
         // Holes: those the terrain has, and those the latest edits call for (applied once their meshes are in).
@@ -141,5 +197,11 @@ namespace PlutoGE::scene
         std::unique_ptr<volume::VolumeMeshQueue> m_queue;
         std::set<volume::VolumeChunkCoord> m_toMesh;
         std::map<volume::VolumeChunkCoord, std::uint32_t> m_chunkEntities; // entity IDs
+
+        // The terrain's layered material, re-projected for chunks (vertex layers, triplanar).
+        std::unique_ptr<render::Material> m_layeredMaterial;
+        const render::Material *m_layeredSource = nullptr;
+        std::uint64_t m_layeredSourceRevision = 0;
+        render::Material *m_appliedMaterial = nullptr; // what the chunk entities draw with
     };
 }

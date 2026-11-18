@@ -2,15 +2,21 @@
 
 #include "PlutoGE/render/Material.h"
 
+#include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/TerrainVolumeEditing.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
+#include "PlutoGE/scene/volume/VolumeFile.h"
 #include "PlutoGE/ui/EditorShell.h"
 #include "PlutoGE/ui/TerrainHeightEditing.h"
 #include "PlutoGE/ui/TerrainLayerEditing.h"
 
 #include <algorithm>
+#include <array>
+#include <filesystem>
 #include <map>
 #include <memory>
 
@@ -58,6 +64,38 @@ namespace PlutoGE::ui
                 SaveTerrainWeightMaps(EditorShell::GetInstance(), *owner, terrain);
         }
 
+        // The project file a lone terrain's volume goes to: Assets/TerrainVolumes/<scene>_<entity>.plutovolume.
+        std::string DefaultTerrainVolumeFile(EditorShell &shell, const scene::Entity &entity)
+        {
+            auto *project = shell.GetProject();
+            if (!project)
+                return {};
+            const auto *scene = entity.GetScene();
+            const std::string stem = scene && !scene->GetFilePath().empty()
+                ? std::filesystem::path(scene->GetFilePath()).stem().string() : std::string("Scene");
+            const auto file = project->GetAssetDirectoryPath() / "TerrainVolumes" /
+                              (stem + "_" + std::to_string(entity.GetID()) + std::string(scene::volume::VolumeFile::Extension));
+            return project->MakeAssetReference(file);
+        }
+
+        scene::TerrainVolumeComponent *FindVolume(scene::EntityID id)
+        {
+            auto *scene = EditorShell::GetInstance().GetScene();
+            auto *entity = scene ? scene->FindEntityByID(id) : nullptr;
+            return entity ? entity->GetComponent<scene::TerrainVolumeComponent>() : nullptr;
+        }
+
+        // Whether a volume belongs to the target: the terrain itself, or one of the world's tiles.
+        bool BelongsTo(const scene::TerrainVolumeComponent &volume, const TerrainEditTarget &target)
+        {
+            const auto *owner = volume.GetOwner();
+            if (!owner)
+                return false;
+            if (target.kind == TerrainEditTarget::Kind::World)
+                return target.world && target.world->FindTile(*owner).has_value();
+            return owner == target.root;
+        }
+
         bool ToolButton(const char *label, bool active, bool enabled, const char *tooltip)
         {
             ImGui::BeginDisabled(!enabled);
@@ -89,6 +127,10 @@ namespace PlutoGE::ui
                                                         : "Add material layers first (Terrain Editor > Paint).");
         ImGui::SameLine();
         button("Holes", TerrainToolMode::Holes, true, "Cut cave mouths and shafts into the ground. Shift fills.");
+        ImGui::SameLine();
+        button("Dig", TerrainToolMode::Dig, target.HasVolume(),
+               target.HasVolume() ? "Dig into the ground in 3D: pits, caves, overhangs. Shift fills.\n[ and ] change the radius."
+                                  : "Add a Terrain Volume first (Terrain Editor > Sculpt > Dig).");
     }
 
     void DrawTerrainBrushSettings(TerrainEditTool &tool, const TerrainEditTarget &target, bool compact)
@@ -160,6 +202,28 @@ namespace PlutoGE::ui
             item();
             ImGui::DragFloat("Radius##TerrainHoles", &tool.holes.radius, 0.05f, kMinRadius, kMaxRadius, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
             break;
+        case TerrainToolMode::Dig:
+        {
+            static constexpr std::array<const char *, 3> DigModes{"Dig", "Fill", "Paint"};
+            for (std::size_t index = 0; index < DigModes.size(); ++index)
+            {
+                ImGui::SameLine();
+                if (ImGui::RadioButton(DigModes[index], tool.dig.mode == static_cast<scene::volume::VolumeEditMode>(index)))
+                    tool.dig.mode = static_cast<scene::volume::VolumeEditMode>(index);
+            }
+            item();
+            ImGui::DragFloat("Radius##TerrainDig", &tool.dig.radius, 0.05f, 0.25f, 64.0f, "%.2f m", ImGuiSliderFlags_AlwaysClamp);
+            item();
+            ImGui::DragFloat("Rate##TerrainDig", &tool.dig.rate, 0.1f, 0.5f, 30.0f, "%.1f /s", ImGuiSliderFlags_AlwaysClamp);
+            if (tool.dig.mode != scene::volume::VolumeEditMode::Subtract)
+            {
+                const auto *terrain = target.Terrain();
+                const auto layerCount = terrain ? static_cast<int>(terrain->GetLayers().GetLayers().size()) : 0;
+                item();
+                ImGui::SliderInt("Layer##TerrainDig", &tool.dig.layer, 0, std::max(layerCount - 1, 0));
+            }
+            break;
+        }
         case TerrainToolMode::Off:
             break;
         }
@@ -180,6 +244,7 @@ namespace PlutoGE::ui
         {
             // Never finish a stroke against a scene that replaced the one it started in.
             m_touched.clear();
+            m_touchedVolumes.clear();
             m_active = false;
             m_blockedUntilRelease = mouseDown;
             m_sceneRevision = shell.GetSceneRevision();
@@ -243,6 +308,7 @@ namespace PlutoGE::ui
             break;
         case TerrainToolMode::Paint: touched.weightsBefore = terrain.GetLayers().GetWeights(); break;
         case TerrainToolMode::Holes: touched.holesBefore = terrain.GetHoles(); break;
+        case TerrainToolMode::Dig:
         case TerrainToolMode::Off: break;
         }
         m_touched.push_back(std::move(touched));
@@ -270,6 +336,9 @@ namespace PlutoGE::ui
                 return true;
             }
         }
+
+        if (tool.GetMode() == TerrainToolMode::Dig)
+            return UpdateDig(shell, context, target);
 
         auto surface = target.Surface();
         const auto hit = context.rayOrigin && context.rayDirection ? surface.Raycast(*context.rayOrigin, *context.rayDirection) : std::nullopt;
@@ -374,16 +443,193 @@ namespace PlutoGE::ui
             }
             break;
         }
+        case TerrainToolMode::Dig:
         case TerrainToolMode::Off:
             break;
         }
         return true;
     }
 
+    void TerrainViewportTool::TouchVolume(EditorShell &shell, scene::TerrainVolumeComponent &volume, const TerrainEditTarget &target)
+    {
+        if (std::any_of(m_touchedVolumes.begin(), m_touchedVolumes.end(), [&](const TouchedVolume &touched) { return touched.volume == &volume; }))
+            return;
+        auto *owner = volume.GetOwner();
+        TouchedVolume touched;
+        touched.volume = &volume;
+        if (target.kind == TerrainEditTarget::Kind::World && target.world)
+        {
+            touched.ref.world = target.RootId();
+            touched.ref.tile = target.world->FindTile(*owner).value_or(scene::TerrainTileCoord{});
+        }
+        else
+        {
+            touched.ref.entity = owner->GetID();
+            // A lone terrain's dug ground goes to a project file, named on its first stroke (a scene edit of its own;
+            // the volume keeps what it already had).
+            if (volume.GetVolumeFile().empty())
+                if (const auto file = DefaultTerrainVolumeFile(shell, *owner); !file.empty())
+                {
+                    const auto edits = volume.ExportEdits();
+                    shell.BeginSceneEdit("Give Terrain Volume a File");
+                    volume.SetVolumeFile(file);
+                    if (!edits.empty())
+                        volume.ImportEdits(edits);
+                    owner->AddPrefabOverride("Component:TerrainVolumeComponent:VolumeFile");
+                    shell.MarkSceneDirty();
+                    shell.EndSceneEdit();
+                }
+        }
+        touched.before = volume.ExportEdits();
+        m_touchedVolumes.push_back(std::move(touched));
+    }
+
+    bool TerrainViewportTool::UpdateDig(EditorShell &shell, const TerrainViewportContext &context, const TerrainEditTarget &target)
+    {
+        auto &tool = shell.GetTerrainTool();
+        auto *scene = shell.GetScene();
+        if (!scene || !context.rayOrigin || !context.rayDirection || !target.HasVolume())
+            return true;
+        const auto &io = ImGui::GetIO();
+
+        // The cursor: the first terrain or dug ground the ray meets (physics sees the chunks), else the heightfield.
+        std::optional<glm::vec3> cursor;
+        scene::PhysicsRaycastHit physicsHit;
+        if (scene->Raycast(*context.rayOrigin, *context.rayDirection, 100000.0f, physicsHit))
+            if (const auto *entity = scene->FindEntityByID(physicsHit.entityId))
+            {
+                const auto *terrainEntity = entity->HasTag(std::string(scene::TerrainVolumeComponent::ChunkTag)) ? entity->GetParent() : entity;
+                const auto *volume = terrainEntity ? terrainEntity->GetComponent<scene::TerrainVolumeComponent>() : nullptr;
+                if (volume && BelongsTo(*volume, target))
+                    cursor = physicsHit.point;
+            }
+        if (!cursor)
+            if (const auto hit = target.Surface().Raycast(*context.rayOrigin, *context.rayDirection))
+                cursor = hit->position;
+        if (!cursor)
+        {
+            m_digTimer = 0.0f;
+            return true;
+        }
+
+        auto brush = tool.dig;
+        const bool invert = io.KeyShift;
+        if (invert && brush.mode == scene::volume::VolumeEditMode::Subtract)
+            brush.mode = scene::volume::VolumeEditMode::Add;
+        else if (invert && brush.mode == scene::volume::VolumeEditMode::Add)
+            brush.mode = scene::volume::VolumeEditMode::Subtract;
+        const ImU32 color = brush.mode == scene::volume::VolumeEditMode::Subtract ? kHoleColor
+                          : brush.mode == scene::volume::VolumeEditMode::Add  ? kSculptColor
+                                                                                : kPaintColor;
+        // A sphere: three great circles.
+        const float radius = brush.radius;
+        context.drawCircle(*cursor, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, radius), color);
+        context.drawCircle(*cursor, glm::vec3(radius, 0.0f, 0.0f), glm::vec3(0.0f, radius, 0.0f), color);
+        context.drawCircle(*cursor, glm::vec3(0.0f, 0.0f, radius), glm::vec3(0.0f, radius, 0.0f), color);
+
+        const bool brushDown = ImGui::IsMouseDown(ImGuiMouseButton_Left) && !m_blockedUntilRelease && context.hovered &&
+                               !context.controlsHovered && !io.KeyAlt;
+        if (!brushDown)
+        {
+            m_digTimer = 0.0f;
+            return true;
+        }
+        if (!m_active)
+        {
+            shell.FlushPendingSceneEdits();
+            m_active = true;
+            m_strokeMode = TerrainToolMode::Dig;
+            m_strokeRoot = target.RootId();
+            m_touchedVolumes.clear();
+            m_sceneEditStroke = false;
+            m_digTimer = 1.0f; // the first dab lands at once
+        }
+
+        // Dabs at the brush's rate while held: the cursor sinks into what each dab dug.
+        m_digTimer += context.deltaTime * std::max(brush.rate, 0.1f);
+        if (m_digTimer < 1.0f)
+            return true;
+        m_digTimer = 0.0f;
+        const scene::volume::SphereShape shape(*cursor, radius);
+        scene::TerrainVolumeEditOptions options;
+        options.maxExtent = 0.0f;       // the editor's brush has no runtime budget
+        options.removeFoliage = false;  // foliage is the foliage tool's
+        options.accept = [&target](const scene::TerrainVolumeComponent &volume) { return BelongsTo(volume, target); };
+        for (auto *volume : scene::FindTerrainVolumes(*scene, shape.BoundsMin(), shape.BoundsMax()))
+            if (BelongsTo(*volume, target))
+                TouchVolume(shell, *volume, target);
+        scene::EditTerrainVolumes(*scene, shape, {brush.mode, static_cast<scene::volume::VolumeMaterial>(std::clamp(brush.layer, 0, 255))},
+                                  options);
+        return true;
+    }
+
+    void TerrainViewportTool::FinishDigStroke(EditorShell &shell, std::vector<TouchedVolume> touched)
+    {
+        // Each touched volume's edits before and after, saved to its file (a tile's, or the terrain's).
+        struct Edit
+        {
+            TerrainRef ref;
+            std::vector<std::uint8_t> before, after;
+        };
+        auto edits = std::make_shared<std::vector<Edit>>();
+        std::size_t bytes = 0;
+        bool unsaved = false;
+        for (auto &entry : touched)
+        {
+            auto *volume = entry.ref.world ? nullptr : FindVolume(entry.ref.entity);
+            if (entry.ref.world)
+                if (auto *terrainWorld = FindWorld(entry.ref.world))
+                    if (auto *tile = terrainWorld->GetTileEntity(entry.ref.tile))
+                        volume = tile->GetComponent<scene::TerrainVolumeComponent>();
+            if (!volume || volume != entry.volume)
+                continue;
+            auto after = volume->ExportEdits();
+            if (after == entry.before)
+                continue;
+            std::string error;
+            if (!volume->SaveFile(&error))
+                unsaved = true;
+            bytes += entry.before.size() + after.size();
+            edits->push_back({entry.ref, std::move(entry.before), std::move(after)});
+        }
+        if (unsaved)
+            shell.Log(EditorShell::ConsoleSeverity::Warning,
+                      "Dug ground could not be saved (open a project, or give the Terrain Volume a Volume File): it lasts until the scene reloads.");
+        if (edits->empty())
+            return;
+        const auto apply = [edits](bool undo) {
+            for (const auto &edit : *edits)
+            {
+                const auto &state = undo ? edit.before : edit.after;
+                if (edit.ref.world)
+                {
+                    auto *terrainWorld = FindWorld(edit.ref.world);
+                    if (!terrainWorld || !terrainWorld->StoreTileVolume(edit.ref.tile, state))
+                        return false;
+                }
+                else if (auto *volume = FindVolume(edit.ref.entity); volume && volume->ImportEdits(state))
+                    volume->SaveFile(); // without a file the edits stay in memory, as the stroke's did
+                else
+                    return false;
+            }
+            return true;
+        };
+        const bool world = edits->front().ref.world != 0;
+        shell.PushSceneEditCommand(world ? "Dig Terrain World" : "Dig Terrain", [apply] { return apply(true); }, [apply] { return apply(false); },
+                                   bytes);
+    }
+
     void TerrainViewportTool::FinishStroke(EditorShell &shell)
     {
         m_active = false;
         m_sampler.Reset();
+        if (m_strokeMode == TerrainToolMode::Dig)
+        {
+            auto volumes = std::move(m_touchedVolumes);
+            m_touchedVolumes.clear();
+            FinishDigStroke(shell, std::move(volumes));
+            return;
+        }
         auto touched = std::move(m_touched);
         m_touched.clear();
         if (m_sceneEditStroke)

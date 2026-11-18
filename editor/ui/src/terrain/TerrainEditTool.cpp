@@ -6,6 +6,7 @@
 #include "PlutoGE/scene/components/FoliageComponent.h"
 #include "PlutoGE/scene/components/ProceduralTerrainComponent.h"
 #include "PlutoGE/scene/components/TerrainComponent.h"
+#include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 
 namespace PlutoGE::ui
@@ -57,6 +58,7 @@ namespace PlutoGE::ui
     scene::ProceduralTerrainComponent *TerrainEditTarget::Procedural() const { return On<scene::ProceduralTerrainComponent>(settings); }
     scene::FoliageComponent *TerrainEditTarget::Foliage() const { return On<scene::FoliageComponent>(settings); }
     scene::DetailGrassComponent *TerrainEditTarget::Grass() const { return On<scene::DetailGrassComponent>(settings); }
+    bool TerrainEditTarget::HasVolume() const { return On<scene::TerrainVolumeComponent>(settings) != nullptr; }
 
     scene::TerrainEditSurface TerrainEditTarget::Surface() const
     {
@@ -88,6 +90,7 @@ namespace PlutoGE::ui
         {
         case TerrainToolMode::Paint: return paint.radius;
         case TerrainToolMode::Holes: return holes.radius;
+        case TerrainToolMode::Dig: return dig.radius;
         default: return sculpt.radius;
         }
     }
@@ -99,6 +102,7 @@ namespace PlutoGE::ui
         case TerrainToolMode::Sculpt: return "Sculpt";
         case TerrainToolMode::Paint: return "Paint";
         case TerrainToolMode::Holes: return "Holes";
+        case TerrainToolMode::Dig: return "Dig";
         default: return "Off";
         }
     }

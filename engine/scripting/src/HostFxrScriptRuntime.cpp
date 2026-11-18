@@ -43,6 +43,7 @@
 #include "FoliageScriptApi.h"
 #include "UpscalerScriptApi.h"
 #include "FractureScriptApi.h"
+#include "TerrainVolumeScriptApi.h"
 #include "ComponentScriptApi.h"
 
 #include <algorithm>
@@ -4010,6 +4011,7 @@ namespace PlutoGE::scripting
         register_mesh_component_api_fn registerMeshComponentApi = nullptr;
         register_mesh_geometry_api_fn registerMeshGeometryApi = nullptr; // Optional: older ScriptCore builds lack it.
         int(PLUTO_HOST_CALL *registerFractureApi)(void *) = nullptr;    // Optional: older ScriptCore builds lack it.
+        int(PLUTO_HOST_CALL *registerTerrainVolumeApi)(void *) = nullptr; // Optional: older ScriptCore builds lack it.
         register_prefab_spawn_api_fn registerPrefabSpawnApi = nullptr;   // Optional: older ScriptCore builds lack it.
         register_mesh_camera_hidden_joints_api_fn registerMeshCameraHiddenJointsApi = nullptr; // Optional, likewise.
         register_time_api_fn registerTimeApi = nullptr;                  // Optional: older ScriptCore builds lack it.
@@ -4153,6 +4155,7 @@ namespace PlutoGE::scripting
             impl.registerMeshComponentApi = nullptr;
             impl.registerMeshGeometryApi = nullptr;
             impl.registerFractureApi = nullptr;
+            impl.registerTerrainVolumeApi = nullptr;
             impl.registerPrefabSpawnApi = nullptr;
             impl.registerMeshCameraHiddenJointsApi = nullptr;
             impl.registerTimeApi = nullptr;
@@ -4631,6 +4634,11 @@ namespace PlutoGE::scripting
             if (!LoadManagedExport(impl, HOST_TEXT("RegisterFractureApi"), impl.registerFractureApi))
             {
                 impl.registerFractureApi = nullptr;
+                impl.lastError.clear();
+            }
+            if (!LoadManagedExport(impl, HOST_TEXT("RegisterTerrainVolumeApi"), impl.registerTerrainVolumeApi))
+            {
+                impl.registerTerrainVolumeApi = nullptr;
                 impl.lastError.clear();
             }
 
@@ -5247,6 +5255,13 @@ namespace PlutoGE::scripting
         if (m_impl->registerFractureApi && m_impl->registerFractureApi(reinterpret_cast<void *>(&ShatterEntity)) == 0)
         {
             setManagedBridgeFailure("RegisterFractureApi");
+            return false;
+        }
+
+        if (m_impl->registerTerrainVolumeApi &&
+            m_impl->registerTerrainVolumeApi(reinterpret_cast<void *>(&ControlTerrainVolume)) == 0)
+        {
+            setManagedBridgeFailure("RegisterTerrainVolumeApi");
             return false;
         }
 

@@ -1,11 +1,19 @@
 # Terrain volumes: caves and destructible ground
 
-Written 2026-11-18. Status (2026-11-18): phases 0-3 are built. Tile holes are saved (`TerrainHoleFile`,
-`TerrainWorldComponent::SaveTileHoles` / `StoreTileHoles`, the Holes brush on worlds). The volume core, surface nets
-mesher, coupling rules and meshing queue live in `engine/scene/volume` (`PlutoGETerrainVolumeTests`).
-`TerrainVolumeComponent` puts a volume on a terrain or world tile (`PlutoGETerrainVolumeComponentTests`; user guide:
-[Terrain volumes](../TERRAIN_VOLUMES.md)). There is no editor brush or script API yet: edits come from C++ (phases 5
-and 7). Phase 4 (rendering) is next. Later phases are design only.
+Written 2026-11-18. Status (2026-11-18): phases 0-7 are built; phases 8 and 9 are design only.
+
+- 0-3: tile holes are saved; the volume core, surface nets mesher, coupling rules and meshing queue live in
+  `engine/scene/volume` (`PlutoGETerrainVolumeTests`); `TerrainVolumeComponent` puts a volume on a terrain or a world
+  tile (`PlutoGETerrainVolumeComponentTests`).
+- 4: chunks draw with the terrain's layers through the terrain shader's vertex-layer, triplanar mode
+  (`PlutoGEOpenGLTerrainLayerTests`, `PlutoGEVulkanTerrainLayerTests`).
+- 5: `scene::EditTerrainVolumes` (world-space edits over every volume under a shape, budget, foliage removal, rock
+  accounting), runtime edits kept across tile streaming, save-game capture and restore, and the C# `TerrainVolumes` API
+  (`PlutoGETerrainVolumeScriptApiTests`, `PlutoGETerrainVolumeManagedTests`).
+- 6: generated caves (`CaveDensity`, a `CAVES` record in `ProceduralTerrainDefinition`) and ground materials.
+- 7: `VolumeStampComponent` and the Terrain Editor's Dig tool (`PlutoGETerrainEditorTests` covers the tool state).
+
+User guide: [Terrain volumes](../TERRAIN_VOLUMES.md).
 
 ## Goal
 
@@ -39,14 +47,30 @@ engine/scene/volume/            pure data and algorithms, no scene/renderer depe
   TerrainVolumeCoupling         TerrainSurface (the drawn heightfield, an immutable snapshot), ComputeVolumeHoles,
                                 FitVolumeMeshToTerrain, ChunksAlongSurface: the rules joining a volume to its terrain
   VolumeMeshQueue               gathers on the caller's thread, meshes + finishes on workers, drops superseded results
-  TransformedShape              (in VolumeShape) a shape seen from another space: world-space edits on a local volume
+  TransformedShape              (in VolumeShape) a shape seen from another space: world-space edits on a local volume;
+                                owning or borrowing its inner shape
+  CaveDensity                   (phase 6) generated worm tunnels and chambers per world cell, deterministic, bucketed
+  VolumeEditArchive             (phase 5) named blobs of edits: a world's tiles, a scene's terrains (save games)
+  EncodeTriangleMaterials       (phase 4, VolumeMesher.h) one layer per triangle, written to uv.x for the shader
 
 engine/scene/components/
   TerrainVolumeComponent        owns a TerrainVolume beside a TerrainComponent or a world tile; glue only: snapshots,
                                 scheduling, chunk entities (mesh + mesh collider), derived holes, files, navigation
   TerrainComponent              derived hole layers (SetDerivedHoles by source; GetEffectiveHoles is what draws,
                                 collides and answers queries; GetHoles and the saved HoleMask stay authored)
+  VolumeStampComponent          (phase 7) an authored shape (carve, fill, paint) folded into the bases under it
+
+engine/scene/TerrainVolumeEditing (phase 5) gameplay edits in world space: every volume under a shape, the budget,
+                                foliage removal, flushing, save-game capture/restore
+engine/scripting/TerrainVolumeScriptApi + ScriptCore TerrainVolumes.cs   (phase 5) the C# bridge (optional export)
+editor TerrainViewportTool Dig  (phase 7) the 3D brush; strokes are undo steps saving each volume's file
 ```
+
+A volume's **base** is built by the component from everything that is not an edit, and rebuilt when any of it changes
+(`TerrainVolumeComponent::BaseInputs`): the terrain's ground (`MakeTerrainDensity`: the drawn surface, its painted layer
+at the top and an optional rock layer below a depth), then generated caves subtracted, then stamps in order. Sources
+report **feature bounds** (`VolumeDensitySource::AppendFeatureBounds`), so the volume meshes the chunks caves and stamps
+reach without storing them, and the hole pass looks for cave mouths under them. Edits always apply to the current base.
 
 Principles that keep it open to change:
 
@@ -127,20 +151,67 @@ useful.
    (the crag cave follow-ups).
 9. **Distance**: coarse volume LOD (Transvoxel or skirts) so cave mouths keep their shape far away.
 
+## Phases 4-7 as built
+
+**4. Rendering.** `TerrainLayers.slang` gained two switches in its parameters (`terrainMapping`): weights from the
+maps or from the vertex (`uv.x` names one layer per triangle; `render::TerrainLayerWeights`), and top-down or
+triplanar projection (`render::TerrainLayerProjection`, whiteout-blended normals). No new pipeline variants: chunks use
+the terrain shader with a derived material (`TerrainVolumeComponent::LayeredTerrainMaterial`: the terrain's layered
+material, vertex layers, triplanar, no macro albedo) that follows the terrain's layers. `EncodeTriangleMaterials`
+copies vertices where materials meet, so seams are hard edges until phase 8. Shadows: chunks are static meshes whose
+`ReplaceGeometry` bumps the content revision that the shadow draw signatures and VSM static pages hash; not checked
+by eye.
+
+**5. Runtime destruction.** Edits report the rock they removed (per material) and added. `EditTerrainVolumes` sends a
+world-space shape to every enabled volume under it (lone terrains and tiles alike), refuses shapes wider than
+`maxExtent` (32 m by default), optionally filters volumes (`accept`) and removes foliage instances whose pivot a dig
+carves out. A terrain world keeps tiles' unsaved edits while they stream out (`m_volumeEdits`, never written to tile
+files) and exports/imports them as a `VolumeEditArchive`; `CaptureTerrainVolumeEdits` / `RestoreTerrainVolumeEdits`
+do the whole scene (worlds and lone volumes named by entity path). The C# API (`TerrainVolumes.Dig/Fill/Tunnel/Paint/
+Edit/Flush/CaptureEdits/RestoreEdits/ClearEdits`, `TerrainVolumeComponent`) goes through one optional bridge export,
+`RegisterTerrainVolumeApi`. Fixed on the way: unedited chunks at a terrain's edge meshed a wall (the base was air past
+the edge); the base now continues the edge (`TerrainSurface::ExtendedHeight`) and fitting drops triangles off the
+terrain.
+
+**6. Procedural caves.** `CaveNetworkSettings` (in `ProceduralTerrainDefinition::caves`, a `CAVES` record older readers
+skip): per world cell, tunnels wander through a band of world heights with chambers and wall noise. Generation is in
+world space with a 16 m margin, so a world's tiles agree at their seams; `CaveDensity` buckets the pieces for fast
+`Fill`. Holes now compare samples with the terrain's own ground (`TerrainGroundDistance`), not the base, so a generated
+cave crossing the surface cuts a mouth; only feature columns that reach the surface are scanned. Ground materials:
+`TerrainSurface` carries each sample's strongest painted layer, and `TerrainGroundMaterials` adds a rock layer below a
+depth; `TerrainLayerStack::GetWeightsRevision` lets the base follow painting and generation (after a quiet frame).
+
+**7. Authoring.** `VolumeStampComponent` (sphere, box, capsule; carve, fill, paint; order) is folded into the base of
+every volume under it, so stamps move, resize and disappear with their entity and are saved with the scene, never as
+edits. Stamps live in a registry rather than a scene walk. The Terrain Editor's **Dig** tool (Dig / Fill / Paint,
+radius, rate, layer) aims with physics so it digs into dug ground, edits only the selected terrain or world's tiles,
+gives a lone terrain a volume file on its first stroke (`Assets/TerrainVolumes/<scene>_<entity>.plutovolume`), saves
+each touched volume's file when the stroke ends, and records one undo step (`TerrainWorldComponent::StoreTileVolume`
+for tiles that have streamed out). The cursor is a wireframe sphere. Biomes gained a Caves block.
+
+## Phases 4-7 limits and follow-ups
+
+- Not checked by eye: the triplanar look on real layers, shadow and GI updates after remeshing, the Dig tool in the
+  editor (its stroke needs a window; only the tool state is tested), and generated caves in a streamed world.
+- Debris through `FractureMesh`, replication as operations, and moving SurvivalGame's levelkit caves onto stamps are
+  not done. Edits report removed rock, which gameplay can turn into resources or spawn rubble from.
+- Removed foliage comes back when a procedural tile regenerates (the removal is not saved); grass already follows the
+  derived holes.
+- Painting the terrain rebuilds the base a frame after the strokes stop, remeshing every chunk of the volume.
+- Stamps support primitives only (mesh SDFs and splines are open); a ray-marched brush preview is open.
+- Stamps and caves are re-sampled when the base is rebuilt; a world with many tiles rebuilds each tile's base when a
+  stamp over it moves.
+
 ## Phase 3 limits and follow-ups
 
 - Holes are recomputed over every stored chunk's columns after each change: fine for occasional edits; continuous
   digging over many chunks wants an incremental pass over the changed box.
 - A lone terrain reads its volume file on the main thread when the volume is first made; tiles read on the worker.
-- Chunk meshes draw with the component's material, else the terrain's (with zero UVs): phase 4 gives them a triplanar
-  material from the terrain layers.
-- Foliage and detail grass still grow over cut cells' old surface (phase 5).
-- Chunk meshes are static: whether their shadow pages and GI follow a remesh is checked by eye in phase 4.
 - Stored chunks do not follow later sculpting of the terrain under them.
 - `ProvideFileContents` / `SetVolumeFile` / grid changes rebuild the volume from its file: unsaved edits go.
 
 ## Open questions
 
 - Whether edits in save games store whole chunks (simple, larger) or an operation log replayed on the generated base
-  (small, needs every op deterministic forever). Phase 5 starts with chunks; the op log is what the network sends.
+  (small, needs every op deterministic forever). Phase 5 stores chunks; an op log is what a network would send.
 - Whether the whole world can be dug or only marked zones. The design supports both; zones keep the far terrain simple.

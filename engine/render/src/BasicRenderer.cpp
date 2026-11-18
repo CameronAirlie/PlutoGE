@@ -121,8 +121,9 @@ namespace PlutoGE::render
             std::array<glm::vec4, kMaxTerrainLayers> tiling{};
             std::array<glm::vec4, kMaxTerrainLayers> tint{};
             glm::vec4 parameters{0.0f}; // x layer count, y height blend
+            glm::vec4 mapping{0.0f};    // x vertex layers, y triplanar, z triplanar sharpness
         };
-        static_assert(sizeof(BasicTerrainLayerParameters) == 16 * (2 * kMaxTerrainLayers + 1));
+        static_assert(sizeof(BasicTerrainLayerParameters) == 16 * (2 * kMaxTerrainLayers + 2));
 
         struct alignas(16) BasicMaterialParameters
         {
@@ -7012,6 +7013,8 @@ namespace PlutoGE::render
         parameters.tint = terrain.tint;
         parameters.parameters = glm::vec4(float(terrain.layerCount), std::max(terrain.heightBlend, 0.0f),
                                           std::max(terrain.detailDistance, 0.0f), std::max(terrain.detailFade, 0.0f));
+        parameters.mapping = glm::vec4(terrain.vertexLayers ? 1.0f : 0.0f, terrain.triplanar ? 1.0f : 0.0f,
+                                       std::max(terrain.triplanarSharpness, 1.0f), 0.0f);
         commands.BindUniformBuffer(TerrainParameterSlot, m_geometryParameters->Acquire(*m_device, Bytes(parameters)));
     }
 }

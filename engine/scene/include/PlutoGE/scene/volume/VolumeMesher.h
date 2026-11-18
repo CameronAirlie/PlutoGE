@@ -60,4 +60,10 @@ namespace PlutoGE::scene::volume
 
     // Gathers what the mesher needs for one chunk of a volume and meshes it, positions relative to the chunk's origin.
     [[nodiscard]] VolumeMesh MeshVolumeChunk(const TerrainVolume &volume, VolumeChunkCoord chunk, const VolumeMesher &mesher);
+
+    // Readies a mesh for the terrain layer shader's vertex layers (render::TerrainLayerWeights::VertexLayer): every
+    // triangle takes one material (the one most of its corners have; with three different, the first corner's) and
+    // its vertices carry it in uv.x. Vertices shared by triangles of different materials are copied, so materials
+    // meet at hard edges (blended seams are phase 8). `materials` follows the vertices.
+    void EncodeTriangleMaterials(VolumeMesh &mesh);
 }

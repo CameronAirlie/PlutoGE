@@ -31,7 +31,9 @@ namespace PlutoGE::scene::volume
     public:
         TerrainSurface() = default;
         // `heights` holds width x depth samples, x fastest, as the terrain draws them (GetSurfaceSampleHeight).
-        TerrainSurface(int width, int depth, float cellSize, std::vector<float> heights);
+        // `layers`, when given (the same size), is each sample's strongest terrain layer: the ground's material at the
+        // surface.
+        TerrainSurface(int width, int depth, float cellSize, std::vector<float> heights, std::vector<VolumeMaterial> layers = {});
 
         [[nodiscard]] bool Valid() const;
         [[nodiscard]] int GetCellsX() const { return m_width - 1; }
@@ -39,8 +41,13 @@ namespace PlutoGE::scene::volume
         [[nodiscard]] float GetCellSize() const { return m_cellSize; }
         // The surface's height at a local position; nullopt off the terrain.
         [[nodiscard]] std::optional<float> Height(float x, float z) const;
+        // The same, carried straight out past the terrain's edges (the nearest edge point's height), so ground
+        // continues there rather than ending in a wall; nullopt only for an invalid snapshot.
+        [[nodiscard]] std::optional<float> ExtendedHeight(float x, float z) const;
         // The lowest and highest corner heights of a cell.
         [[nodiscard]] glm::vec2 CellHeightRange(int cellX, int cellZ) const;
+        // The strongest layer at the sample nearest a local position (clamped onto the terrain); 0 without layers.
+        [[nodiscard]] VolumeMaterial Layer(float x, float z) const;
 
     private:
         [[nodiscard]] float Sample(int x, int z) const { return m_heights[static_cast<std::size_t>(z) * m_width + x]; }
@@ -49,11 +56,25 @@ namespace PlutoGE::scene::volume
         int m_depth = 0;
         float m_cellSize = 1.0f;
         std::vector<float> m_heights;
+        std::vector<VolumeMaterial> m_layers;
     };
 
-    // A volume base that is the terrain's surface (HeightfieldDensity over the snapshot).
+    // What the ground is made of: the terrain's painted layer at the surface and, from `rockDepth` metres below it,
+    // `rockLayer` (pit walls and cave walls in rock rather than grass). A negative rock layer keeps the surface's.
+    struct TerrainGroundMaterials
+    {
+        int rockLayer = -1;
+        float rockDepth = 1.0f;
+        bool operator==(const TerrainGroundMaterials &) const = default;
+    };
+
+    // A volume base that is the terrain's surface (HeightfieldDensity over the snapshot), extended past its edges: a
+    // volume's chunks reach over the edge, and its own ground must not end in a wall there (the neighbouring tile's
+    // volume, or nothing, owns that ground; FitVolumeMeshToTerrain drops it).
     [[nodiscard]] std::shared_ptr<const VolumeDensitySource> MakeTerrainDensity(std::shared_ptr<const TerrainSurface> surface,
-                                                                                VolumeMaterial material = 0);
+                                                                                const TerrainGroundMaterials &materials = {});
+    // The signed distance the terrain's own ground has at a position (what an unedited, cave-less volume holds).
+    [[nodiscard]] float TerrainGroundDistance(const TerrainSurface &surface, const glm::vec3 &position);
 
     struct TerrainCouplingSettings
     {
@@ -70,13 +91,15 @@ namespace PlutoGE::scene::volume
         bool operator==(const TerrainCouplingSettings &) const = default;
     };
 
-    // The cells where a volume's stored chunks have moved the terrain's surface: whole-cell cuts in a mask of the
-    // surface's cells. Columns of unstored chunks are never breached (they read the base).
+    // The cells where a volume's stored chunks, or its base's features (cave mouths), have moved the terrain's surface:
+    // whole-cell cuts in a mask of the surface's cells. Samples are compared with the terrain's own ground, so a
+    // generated cave opening into a valley cuts it as a dug pit does.
     [[nodiscard]] TerrainHoleMask ComputeVolumeHoles(const TerrainVolume &volume, const TerrainSurface &surface,
                                                      const TerrainCouplingSettings &settings);
 
     // Trims a chunk's mesh (positions relative to `meshOrigin`, the chunk's origin in the terrain's space) to what the
     // heightfield cannot draw given the volume's holes, sinks the overlap ring, and drops the vertices no longer used.
+    // Triangles off the terrain go too: past its edge the ground belongs to a neighbouring tile's volume, or to nobody.
     void FitVolumeMeshToTerrain(VolumeMesh &mesh, const glm::vec3 &meshOrigin, const TerrainSurface &surface,
                                 const TerrainHoleMask &volumeHoles, const TerrainCouplingSettings &settings, float voxelSize);
 

@@ -11,9 +11,15 @@
 #include <glm/glm.hpp>
 #include <imgui.h>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <vector>
+
+namespace PlutoGE::scene
+{
+    class TerrainVolumeComponent;
+}
 
 namespace PlutoGE::ui
 {
@@ -69,10 +75,24 @@ namespace PlutoGE::ui
             std::optional<scene::TerrainHoleMask> holesBefore;
         };
 
+        // A terrain volume a Dig stroke touched, with its edits before the stroke.
+        struct TouchedVolume
+        {
+            scene::TerrainVolumeComponent *volume = nullptr; // valid while the stroke runs
+            TerrainRef ref;
+            std::vector<std::uint8_t> before;
+        };
+
         Touched &Touch(scene::TerrainComponent &terrain, const TerrainEditTarget &target);
+        void TouchVolume(EditorShell &shell, scene::TerrainVolumeComponent &volume, const TerrainEditTarget &target);
+        // The Dig tool: its cursor (on dug ground too), dabs and stroke.
+        bool UpdateDig(EditorShell &shell, const TerrainViewportContext &context, const TerrainEditTarget &target);
+        void FinishDigStroke(EditorShell &shell, std::vector<TouchedVolume> touched);
         void FinishStroke(EditorShell &shell);
 
         std::vector<Touched> m_touched;
+        std::vector<TouchedVolume> m_touchedVolumes;
+        float m_digTimer = 0.0f;
         TerrainToolMode m_strokeMode = TerrainToolMode::Off;
         scene::EntityID m_strokeRoot = 0;
         bool m_active = false;

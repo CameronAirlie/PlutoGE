@@ -73,8 +73,12 @@ Notes for extending it:
   with mips generated per layer.
 - **More layers** means raising `kMaxTerrainLayers` (`TerrainLayerLimits.h`), adding weight-map bindings, and the
   matching constants and loops in `TerrainLayers.slang`.
-- **Per-layer features** (detail normals, triplanar rock, distance tiling) belong in `sampleTerrainLayers`; per-layer
-  scalars go into `BasicTerrainLayers::tiling`/`tint` and the parameter block, which never rebuild the arrays.
+- **Per-layer features** (detail normals, distance tiling) belong in `sampleTerrainLayers`; per-layer scalars go into
+  `BasicTerrainLayers::tiling`/`tint` and the parameter block, which never rebuild the arrays.
+- **Mapping switches.** `TerrainLayerSet::weights` (weight maps, or one layer per triangle named by the vertex's
+  `uv.x`) and `projection` (top-down, or triplanar with whiteout normals and `triplanarSharpness`) reach the shader as
+  `terrainMapping`. Terrain volume chunks use vertex layers and triplanar projection
+  ([Terrain volumes](TERRAIN_VOLUMES.md)); a heightfield could use triplanar for cliffs.
 - **The macro albedo** is the terrain material's ordinary albedo, so GI voxelization and probe baking see the
   painted colours without knowing about layers.
 - **Surface queries.** `TerrainWeightMap::DominantLayer` gives the layer under a point (footsteps, decals, AI).

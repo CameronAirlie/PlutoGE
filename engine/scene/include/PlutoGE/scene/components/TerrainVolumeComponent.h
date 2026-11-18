@@ -82,7 +82,8 @@ namespace PlutoGE::scene
         // Crevice and cave darkness (occlusion carried by the chunk vertices).
         [[nodiscard]] const volume::VolumeShadingSettings &GetShading() const { return m_shading; }
         void SetShading(const volume::VolumeShadingSettings &shading);
-        // What dug ground is made of below the surface (the base; stored chunks keep what they had).
+        // What dug ground is made of below the surface: strata of terrain layers by depth (the base; stored chunks keep
+        // what they had). Saved as "Strata" ("layer@depth;..."); scenes from before strata load RockLayer/RockDepth.
         [[nodiscard]] const volume::TerrainGroundMaterials &GetGroundMaterials() const { return m_ground; }
         void SetGroundMaterials(const volume::TerrainGroundMaterials &materials);
         // Chunks meshed (and results applied) per frame.

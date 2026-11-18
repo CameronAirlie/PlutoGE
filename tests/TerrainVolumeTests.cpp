@@ -405,11 +405,23 @@ namespace
         Require(surface.CellHeightRange(0, 0) == glm::vec2(0.0f, 4.0f), "A cell's height range spans its corners");
         Require(!TerrainSurface(1, 5, 1.0f, {0, 0, 0, 0, 0}).Valid(), "A terrain needs at least one cell");
 
-        const auto density = MakeTerrainDensity(std::make_shared<const TerrainSurface>(surface), {.rockLayer = 4, .rockDepth = 1.0f});
+        const auto density = MakeTerrainDensity(std::make_shared<const TerrainSurface>(surface), TerrainGroundMaterials::Rock(4, 1.0f));
         const auto sample = density->Sample({1.0f, 5.0f, 1.0f});
         Require(Near(sample.distance, 2.0f, 1e-5f) && sample.material == 0, "The terrain density is height above its surface");
         Require(density->Sample({1.0f, 2.8f, 1.0f}).material == 0 && density->Sample({1.0f, 1.0f, 1.0f}).material == 4,
                 "The surface's layer near the top, the rock layer from its depth down");
+
+        // Strata: subsoil from 0.5 m, rock from 2 m, in any order; text round-trips and bad entries are skipped.
+        const auto strata = TerrainGroundMaterials::Decode("1@2;5@0.5;bad;7@x");
+        Require(strata.strata.size() == 2 && strata.strata[0] == TerrainStratum{5, 0.5f} && strata.strata[1] == TerrainStratum{1, 2.0f},
+                "Strata decode, sorted by depth");
+        Require(TerrainGroundMaterials::Decode(strata.Encode()) == strata, "Strata round-trip");
+        Require(strata.MaterialAt(0, 0.2f) == 0 && strata.MaterialAt(0, 0.5f) == 5 && strata.MaterialAt(0, 1.5f) == 5 &&
+                    strata.MaterialAt(0, 3.0f) == 1 && TerrainGroundMaterials{}.MaterialAt(3, 9.0f) == 3,
+                "The surface's layer, then subsoil, then rock; without strata the surface's all the way down");
+        const auto layered = MakeTerrainDensity(std::make_shared<const TerrainSurface>(surface), strata);
+        Require(layered->Sample({1.0f, 2.0f, 1.0f}).material == 5 && layered->Sample({1.0f, -1.0f, 1.0f}).material == 1,
+                "The terrain density follows the strata");
 
         // Painted layers: the ground takes the nearest sample's.
         const TerrainSurface painted(2, 2, 1.0f, {0, 0, 0, 0}, {1, 2, 3, 5});
@@ -424,7 +436,7 @@ namespace
     {
         const auto surface = SlopedSurface();
         const TerrainCouplingSettings settings;
-        TerrainVolume volume(SmallGrid(), MakeTerrainDensity(surface, {.rockLayer = 1, .rockDepth = 0.0f}));
+        TerrainVolume volume(SmallGrid(), MakeTerrainDensity(surface, TerrainGroundMaterials::Rock(1, 0.0f)));
         Require(ComputeVolumeHoles(volume, *surface, settings).Empty(), "An unedited volume cuts nothing");
 
         // A cave well under the ground: stored chunks, but the surface is untouched.
@@ -453,7 +465,7 @@ namespace
         const auto surface = SlopedSurface();
         const TerrainCouplingSettings settings;
         const auto grid = SmallGrid();
-        TerrainVolume volume(grid, MakeTerrainDensity(surface, {.rockLayer = 1, .rockDepth = 0.0f}));
+        TerrainVolume volume(grid, MakeTerrainDensity(surface, TerrainGroundMaterials::Rock(1, 0.0f)));
         const SurfaceNetsMesher mesher;
         const VolumeChunkCoord ground = grid.ChunkAt({20.0f, *surface->Height(20.0f, 20.0f), 20.0f});
 
@@ -497,7 +509,7 @@ namespace
         Require(noRing.mesh.indices.size() < mesh.mesh.indices.size(), "The ring adds triangles around the cut");
 
         // A cave under the ground keeps its whole interior though nothing is cut.
-        TerrainVolume caves(grid, MakeTerrainDensity(surface, {.rockLayer = 1, .rockDepth = 0.0f}));
+        TerrainVolume caves(grid, MakeTerrainDensity(surface, TerrainGroundMaterials::Rock(1, 0.0f)));
         caves.Apply(SphereShape({6.0f, 2.0f, 6.0f}, 1.5f), {VolumeEditMode::Subtract});
         const auto caveChunk = grid.ChunkAt({6.0f, 2.0f, 6.0f});
         auto cave = MeshVolumeChunk(caves, caveChunk, mesher);

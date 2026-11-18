@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <set>
 #include <utility>
@@ -64,9 +65,60 @@ namespace PlutoGE::scene::volume
         return {std::min({a, b, c, d}), std::max({a, b, c, d})};
     }
 
+    VolumeMaterial TerrainGroundMaterials::MaterialAt(VolumeMaterial surfaceLayer, float depth) const
+    {
+        VolumeMaterial material = surfaceLayer;
+        float reached = -std::numeric_limits<float>::max();
+        for (const auto &stratum : strata)
+            if (stratum.layer >= 0 && depth >= stratum.depth && stratum.depth >= reached)
+            {
+                material = static_cast<VolumeMaterial>(std::min(stratum.layer, 255));
+                reached = stratum.depth;
+            }
+        return material;
+    }
+
+    TerrainGroundMaterials TerrainGroundMaterials::Normalised() const
+    {
+        TerrainGroundMaterials out;
+        for (const auto &stratum : strata)
+            if (stratum.layer >= 0)
+                out.strata.push_back({std::min(stratum.layer, 255), std::max(stratum.depth, 0.0f)});
+        std::stable_sort(out.strata.begin(), out.strata.end(), [](const auto &a, const auto &b) { return a.depth < b.depth; });
+        return out;
+    }
+
+    std::string TerrainGroundMaterials::Encode() const
+    {
+        std::string text;
+        for (const auto &stratum : strata)
+        {
+            char entry[48];
+            std::snprintf(entry, sizeof(entry), "%s%d@%g", text.empty() ? "" : ";", stratum.layer, stratum.depth);
+            text += entry;
+        }
+        return text;
+    }
+
+    TerrainGroundMaterials TerrainGroundMaterials::Decode(std::string_view text)
+    {
+        TerrainGroundMaterials out;
+        while (!text.empty())
+        {
+            const auto end = text.find(';');
+            const std::string entry(text.substr(0, end));
+            text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+            int layer = 0;
+            float depth = 0.0f;
+            if (std::sscanf(entry.c_str(), " %d @ %f", &layer, &depth) == 2)
+                out.strata.push_back({layer, depth});
+        }
+        return out.Normalised();
+    }
+
     namespace
     {
-        // The terrain's ground: the surface's layer near the top, the rock layer deeper down.
+        // The terrain's ground: the surface's layer near the top, the strata deeper down.
         class TerrainGroundDensity final : public VolumeDensitySource
         {
         public:
@@ -100,9 +152,8 @@ namespace PlutoGE::scene::volume
                         {
                             const float sampleY = base.y + static_cast<float>(y) * grid.voxelSize;
                             const float depth = height ? *height - sampleY : -1.0e6f;
-                            const bool rock = m_materials.rockLayer >= 0 && depth >= m_materials.rockDepth;
                             out[(static_cast<std::size_t>(z) * rows + static_cast<std::size_t>(y)) * columns + static_cast<std::size_t>(x)] = {
-                                height ? sampleY - *height : 1.0e6f, rock ? static_cast<VolumeMaterial>(m_materials.rockLayer) : surfaceLayer};
+                                height ? sampleY - *height : 1.0e6f, m_materials.MaterialAt(surfaceLayer, depth)};
                         }
                     }
             }
@@ -110,9 +161,7 @@ namespace PlutoGE::scene::volume
         private:
             [[nodiscard]] VolumeMaterial Material(float x, float z, float depth) const
             {
-                if (m_materials.rockLayer >= 0 && depth >= m_materials.rockDepth)
-                    return static_cast<VolumeMaterial>(m_materials.rockLayer);
-                return m_surface->Layer(x, z);
+                return m_materials.MaterialAt(m_surface->Layer(x, z), depth);
             }
 
             std::shared_ptr<const TerrainSurface> m_surface;

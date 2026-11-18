@@ -163,10 +163,7 @@ namespace PlutoGE::scene
 
     void TerrainVolumeComponent::SetGroundMaterials(const volume::TerrainGroundMaterials &materials)
     {
-        auto clamped = materials;
-        clamped.rockLayer = std::clamp(clamped.rockLayer, -1, 255);
-        clamped.rockDepth = std::max(clamped.rockDepth, 0.0f);
-        m_ground = clamped; // the base follows on the next update
+        m_ground = materials.Normalised(); // the base follows on the next update
     }
 
     std::vector<Property> TerrainVolumeComponent::Serialize() const
@@ -185,8 +182,7 @@ namespace PlutoGE::scene
             {"Mesher", PropertyType::Enum, std::to_string(static_cast<int>(m_mesherKind)), {"Surface Nets", "Dual Contouring"}},
             {"BurialDepth", PropertyType::Float, std::to_string(m_shading.burialDepth)},
             {"BuriedOpenness", PropertyType::Float, std::to_string(m_shading.buriedOpenness)},
-            {"RockLayer", PropertyType::Int, std::to_string(m_ground.rockLayer)},
-            {"RockDepth", PropertyType::Float, std::to_string(m_ground.rockDepth)},
+            {"Strata", PropertyType::String, m_ground.Encode()},
         };
     }
 
@@ -195,6 +191,8 @@ namespace PlutoGE::scene
         auto coupling = m_coupling;
         auto ground = m_ground;
         auto shading = m_shading;
+        int legacyRockLayer = -1;
+        float legacyRockDepth = 1.0f;
         for (const auto &property : properties)
         {
             const auto &text = property.Text();
@@ -224,12 +222,17 @@ namespace PlutoGE::scene
                 shading.burialDepth = ParseFloat(text, shading.burialDepth);
             else if (property.name == "BuriedOpenness")
                 shading.buriedOpenness = ParseFloat(text, shading.buriedOpenness);
+            else if (property.name == "Strata")
+                ground = volume::TerrainGroundMaterials::Decode(text);
+            // Before strata: one rock layer from a depth (read into one stratum).
             else if (property.name == "RockLayer")
-                ground.rockLayer = ParseInt(text, ground.rockLayer);
+                legacyRockLayer = ParseInt(text, -1);
             else if (property.name == "RockDepth")
-                ground.rockDepth = ParseFloat(text, ground.rockDepth);
+                legacyRockDepth = ParseFloat(text, legacyRockDepth);
         }
         SetCoupling(coupling);
+        if (legacyRockLayer >= 0 && ground.strata.empty())
+            ground = volume::TerrainGroundMaterials::Rock(legacyRockLayer, legacyRockDepth);
         SetGroundMaterials(ground);
         SetShading(shading);
     }

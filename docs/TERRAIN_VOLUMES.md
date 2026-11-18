@@ -31,8 +31,7 @@ Volume** button in the Terrain Editor (**Sculpt > Dig**).
 | Mesher | Surface Nets (smooth) or Dual Contouring (keeps sharp corners and cut faces). Changing it meshes every chunk again. |
 | Burial Depth | Metres under the surface at which dug and cave ground is as dark as it gets (6; 0 turns it off). |
 | Buried Openness | How much ambient light the deepest ground still gets, 0..1 (0.15). |
-| Rock Layer | The terrain layer that dug ground shows below Rock Depth (-1 keeps the surface's layer all the way down). |
-| Rock Depth | Metres below the surface where the rock layer starts (1). |
+| Strata | What lies under the surface, as `layer@depth` pairs: dug ground shows each terrain layer from its depth (metres below the surface) down, the deepest that applies winning. `4@0.35;3@3` is subsoil from 35 cm and rock from 3 m. Empty keeps the surface's painted layer all the way down. Add the strata's layers to the terrain unpainted, so they show only underground. Scenes saved before strata load their Rock Layer / Rock Depth as one stratum. |
 | Breach Tolerance | Voxels the surface must move before the terrain's cells are cut there (0.25). |
 | Surface Tolerance | Voxels within which volume ground counts as the terrain's own and is left to the terrain (0.5). |
 | Overlap Cells | Uncut cells around a cut where the volume still draws the surface, which hides seams (1). |

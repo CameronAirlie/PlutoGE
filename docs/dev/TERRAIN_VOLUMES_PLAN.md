@@ -221,6 +221,11 @@ for tiles that have streamed out). The cursor is a wireframe sphere. Biomes gain
   streams out.
 - A tile never visited has no proxy, so its generated caves show in the distance only after the first visit.
 
+**Strata** (after phase 9). `TerrainGroundMaterials` became an ordered list of `TerrainStratum` (layer, depth). Dug
+ground takes the deepest stratum it reaches, so it can be soil near the top and rock further down. The component saves
+the list as `Strata` (`layer@depth;...`) and reads the older `RockLayer` / `RockDepth` as one stratum. Seams between
+strata blend like any other layer seam.
+
 **Follow-ups.**
 - Debris: `volume::MeshRemovedRock` meshes the rock a Subtract would remove (the volume intersected with the shape)
   as one closed mesh. `SpawnTerrainDebris` breaks it with `Shatter` into pieces of the rock's main layer. They draw with

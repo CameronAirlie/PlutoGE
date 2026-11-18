@@ -8,6 +8,8 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace PlutoGE::scene::volume
@@ -59,13 +61,31 @@ namespace PlutoGE::scene::volume
         std::vector<VolumeMaterial> m_layers;
     };
 
-    // What the ground is made of: the terrain's painted layer at the surface and, from `rockDepth` metres below it,
-    // `rockLayer` (pit walls and cave walls in rock rather than grass). A negative rock layer keeps the surface's.
+    // One band of the ground under a terrain: from `depth` metres below the surface down, terrain layer `layer`.
+    struct TerrainStratum
+    {
+        int layer = 0;
+        float depth = 1.0f;
+        bool operator==(const TerrainStratum &) const = default;
+    };
+
+    // What the ground is made of under a terrain: its painted layer at the surface, then each stratum from its depth
+    // down (subsoil a little way down, rock deeper), so dug pits and cave walls show what lies there. With no strata the
+    // surface's layer goes all the way down.
     struct TerrainGroundMaterials
     {
-        int rockLayer = -1;
-        float rockDepth = 1.0f;
+        std::vector<TerrainStratum> strata; // any order; the deepest one a point reaches wins
         bool operator==(const TerrainGroundMaterials &) const = default;
+
+        // The material `depth` metres below a surface painted `surfaceLayer`.
+        [[nodiscard]] VolumeMaterial MaterialAt(VolumeMaterial surfaceLayer, float depth) const;
+        // Strata sorted by depth, layers clamped to 0..255 and depths to >= 0; strata without a layer dropped.
+        [[nodiscard]] TerrainGroundMaterials Normalised() const;
+        // As text: "layer@depth;layer@depth" (e.g. "3@0.4;1@2.5"), for component properties. Decode skips bad entries.
+        [[nodiscard]] std::string Encode() const;
+        [[nodiscard]] static TerrainGroundMaterials Decode(std::string_view text);
+        // One stratum (the older single rock layer).
+        [[nodiscard]] static TerrainGroundMaterials Rock(int layer, float depth) { return {{{layer, depth}}}; }
     };
 
     // A volume base that is the terrain's surface (HeightfieldDensity over the snapshot), extended past its edges: a

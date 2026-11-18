@@ -380,7 +380,7 @@ namespace
         Require(ground.volume->GetChunkEntityCount() == 0, "Without caves nothing is meshed");
 
         // Rock below a metre: a pit's walls are the rock layer, its rim the surface's.
-        ground.volume->SetGroundMaterials({.rockLayer = 2, .rockDepth = 1.0f});
+        ground.volume->SetGroundMaterials(volume::TerrainGroundMaterials::Rock(2, 1.0f));
         ground.volume->Apply(volume::SphereShape({116.0f, 5.0f, 66.0f}, 2.5f), {volume::VolumeEditMode::Subtract});
         ground.volume->Flush();
         bool rock = false, surface = false;
@@ -394,7 +394,12 @@ namespace
                     surface = surface || own == 0;
                 }
         Require(rock && surface, "Dug ground shows the rock layer below its depth and the surface's above");
-        Require(PropertyText(ground.volume->Serialize(), "RockLayer") == "2", "The rock layer is saved");
+        Require(PropertyText(ground.volume->Serialize(), "Strata") == "2@1", "The strata are saved");
+        TerrainVolumeComponent older;
+        older.Deserialize({{"RockLayer", PropertyType::Int, "3"}, {"RockDepth", PropertyType::Float, "1.5"}});
+        Require(older.GetGroundMaterials() == volume::TerrainGroundMaterials::Rock(3, 1.5f), "A scene from before strata loads its rock layer");
+        older.Deserialize({{"Strata", PropertyType::String, "4@0.4;3@2"}});
+        Require(older.GetGroundMaterials().strata.size() == 2 && older.GetGroundMaterials().strata[0].layer == 4, "Strata load");
 
         // Phase 8: the mesher and cave shading are settings; changing them meshes the chunks again.
         const auto chunks = ground.volume->GetChunkEntityCount();

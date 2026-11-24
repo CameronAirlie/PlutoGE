@@ -16,7 +16,8 @@ calls require no game changes. Benchmark/gameplay scene assets are not modified.
   yield to loading presentation after approximately 8 ms of work between frames. They do not
   run the normal game/editor loop, gameplay scripts, physics or scene rendering. Nested
   presentation is suppressed and workers do not inherit the context.
-- CPU-only file reading, uncached mesh-source parsing, and audio decoding,
+- CPU-only file reading, uncached mesh-source parsing, image decoding (a
+  material's textures side by side: `TextureManager::PrefetchTextureFiles`), and audio decoding,
   downmixing and PCM conversion run on a worker, with
   presentation continuing while the owner waits. Mesh cache publication, GPU
   resource creation, deserialization and activation remain on the owner thread.

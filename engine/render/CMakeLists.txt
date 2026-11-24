@@ -71,6 +71,9 @@ add_library(PlutoGERender
     src/PostProcessResourcePool.cpp
     src/PostProcessGraphExecutor.cpp
     src/TextureManager.cpp
+    src/TextureDecodeQueue.cpp
+    src/ImageDecoding.cpp
+    src/TextureCooking.cpp
     src/TextureCompression.cpp
     src/CompressedTextureStore.cpp
     src/TextureCompressionQueue.cpp

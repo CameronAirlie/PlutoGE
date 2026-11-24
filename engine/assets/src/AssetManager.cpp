@@ -164,6 +164,41 @@ namespace PlutoGE::assets
     render::Texture *AssetManager::LoadTextureResource(const char *path)
     { return LoadTextureResource(path, render::TextureColorSpace::Linear); }
 
+    void AssetManager::PrefetchTextures(std::span<const std::string> paths)
+    {
+        // The same reader LoadTextureResource will load each one through.
+        std::vector<std::string> own;
+        for (const auto &path : paths)
+        {
+            if (path.empty()) continue;
+            if (UsesSharedAssets(path)) m_ownedResources->sharedAssets->PrefetchTextures(std::span(&path, 1));
+            else own.push_back(path);
+        }
+        if (own.empty()) return;
+        if (m_ownedResources) m_ownedResources->textureReader.PrefetchTextureFiles(own);
+        else core::Engine::GetInstance().GetTextureManager().PrefetchTextureFiles(own);
+    }
+
+    void AssetManager::PrefetchMaterialTextures(std::string_view materialText)
+    {
+        std::vector<std::string> paths;
+        std::size_t begin = 0;
+        while (begin < materialText.size())
+        {
+            auto end = materialText.find('\n', begin);
+            if (end == std::string_view::npos) end = materialText.size();
+            auto line = materialText.substr(begin, end - begin);
+            begin = end + 1;
+            if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+            const auto delimiter = line.find('=');
+            if (delimiter == std::string_view::npos || delimiter + 1 == line.size()) continue;
+            if (!render::FindMaterialTextureSlotByAssetKey(line.substr(0, delimiter))) continue;
+            if (auto path = ResolveMaterialTexturePath(std::string(line.substr(delimiter + 1))); !path.empty())
+                paths.push_back(std::move(path));
+        }
+        PrefetchTextures(paths);
+    }
+
     render::Texture *AssetManager::LoadTextureResource(const char *path, render::TextureColorSpace colorSpace)
     {
         if (!path || !*path) return nullptr;
@@ -2355,9 +2390,12 @@ namespace PlutoGE::assets
         else
         {
             const std::string materialPath = ResolveAssetPath(assetReference);
-            PlutoGE::content::InputFile input(materialPath);
-            if (input.is_open())
+            std::string materialText;
+            if (PlutoGE::content::ReadFile(materialPath, materialText))
             {
+                // Its textures start decoding side by side on workers; the parse below then takes each one.
+                PrefetchMaterialTextures(materialText);
+                std::istringstream input(materialText);
                 render::MaterialConfig config;
                 std::string line;
                 while (std::getline(input, line))

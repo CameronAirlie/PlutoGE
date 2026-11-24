@@ -9,6 +9,7 @@
 #include "PlutoGE/render/SceneOutline.h"
 
 #include <memory>
+#include <optional>
 #include "PlutoGE/core/FrameWorker.h"
 #include "PlutoGE/render/LoadingScreenRenderer.h"
 #include "PlutoGE/render/NativeUIRenderer.h"
@@ -36,6 +37,9 @@ namespace PlutoGE::render
         [[nodiscard]] const GraphicsQuality &GetGraphicsQuality() const noexcept { return m_graphicsQuality; }
         void SetRenderingSettings(const RenderingSettings &settings);
         [[nodiscard]] const RenderingSettings &GetRenderingSettings() const noexcept { return m_renderingSettings; }
+        // Block compression of material textures (a host adds its game's cooked store here); kept for renderers made
+        // later. Waits for the frame in flight.
+        void SetTextureCompression(const TextureCompressionSettings &settings);
         bool Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain);
         void Shutdown();
         void SetTemporalUpscalerOptions(rhi::TemporalUpscalerOptions options) noexcept;
@@ -120,6 +124,7 @@ namespace PlutoGE::render
         GraphicsQualityPresets m_graphicsPresets;
         GraphicsQuality m_graphicsQuality;
         RenderingSettings m_renderingSettings;
+        std::optional<TextureCompressionSettings> m_textureCompression;
         rhi::IRenderDevice *m_device = nullptr;
         rhi::ISwapchain *m_swapchain = nullptr;
         std::unique_ptr<BasicRenderer> m_renderer;

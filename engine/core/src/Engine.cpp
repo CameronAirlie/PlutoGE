@@ -374,6 +374,9 @@ namespace PlutoGE::core
         constexpr std::uint32_t CadenceRefreshFrames = 120;
         if (++m_framesSinceCadenceUpdate >= CadenceRefreshFrames)
             UpdateFramePacingCadence();
+        // Between frames, on the owner thread: file textures the renderers have uploaded drop their CPU pixels when
+        // the host chose to (TexturePixelRetention); a no-op otherwise.
+        m_textureManager->ReleaseUploadedPixels();
         return m_framePacer.BeginFrame();
     }
 

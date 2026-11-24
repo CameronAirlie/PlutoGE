@@ -19,6 +19,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <span>
+#include <string_view>
 #include <string>
 #include <vector>
 
@@ -93,10 +95,17 @@ namespace PlutoGE::assets
         // Context changes reset this list to preserve legacy writer behavior.
         void SetLogicalReferenceTypes(const std::vector<ProjectAssetType> &types);
         bool LoadAssetCatalog(const std::string &path, std::string *errorMessage = nullptr);
+        // The file a material's texture value names (an asset ID, a project or engine reference, or a path relative to the
+        // asset directory), as material loading resolves it. Empty when it names nothing.
+        std::string ResolveMaterialTexturePath(const std::string &texturePath) const;
         std::string ResolveAssetReference(const AssetReference &reference) const;
 
         render::Texture *LoadTexture(const char *filePath);
         render::Texture *LoadTexture(const char *filePath, render::TextureColorSpace colorSpace);
+        // Starts decoding image files about to be loaded (TextureManager::PrefetchTextureFiles) through the reader
+        // LoadTexture would use for each, so they decode side by side on worker threads. Material loading does this for
+        // the material's textures; a loader that knows more files ahead (a whole scene's) can start them all.
+        void PrefetchTextures(std::span<const std::string> paths);
         render::Mesh *LoadMeshAsset(const std::string &assetReference);
         const std::vector<std::string> &GetMeshAssetMaterialReferences(const std::string &assetReference);
         bool ReplaceMeshAssetMaterialReference(const std::string &meshAssetReference,
@@ -171,6 +180,8 @@ namespace PlutoGE::assets
         std::unique_ptr<OwnedResources> m_ownedResources;
         // Resource-owning thread only. Scoped readers unregister before teardown.
         std::unordered_set<AssetManager *> m_scopedReaders;
+        // Starts decoding the textures a material file names, before its parse loads them one by one.
+        void PrefetchMaterialTextures(std::string_view materialText);
         render::Texture *LoadTextureResource(const char *path);
         render::Texture *LoadTextureResource(const char *path, render::TextureColorSpace colorSpace);
         bool UsesSharedAssets(const std::string &reference) const;
@@ -223,7 +234,6 @@ namespace PlutoGE::assets
         void BumpPostProcessPresetRevision(const std::string &assetReference);
 
         void RefreshCachedMaterialsForShaderGraph(const std::string &shaderGraphReference);
-        std::string ResolveMaterialTexturePath(const std::string &texturePath) const;
         std::string PersistMaterialTexturePath(const std::string &texturePath) const;
     };
 }

@@ -1,5 +1,8 @@
 # Texture streaming: assessment (2026-11-24)
 
+**Status:** the three cheaper steps below are implemented ([Texture compression](../TEXTURE_COMPRESSION.md): cooking,
+texture loading and CPU pixels). Mip streaming itself is not.
+
 Should PlutoGE stream textures (load mip levels by need, within a memory budget)? Short answer: **viable, but not
 the next thing to build.** The cheaper steps that streaming depends on fix the problems actually observed. Mip
 streaming itself pays off only once memory is constrained, which it is not on the target machine today.

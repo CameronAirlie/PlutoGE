@@ -74,8 +74,9 @@ namespace PlutoGE::render
         const auto sample=[&](int slot,glm::vec2 uv) {
             const Texture *textures[]{material.albedoTexture,material.normalTexture,material.metallicTexture,material.roughnessTexture};
             const auto *texture=slot>=0 && slot<4?textures[slot]:slot>=4&&slot<8?material.graphTextures[slot-4]:slot==10?material.emissionTexture:nullptr;
-            if(!texture || texture->GetRgba8Pixels().empty())return slot==1?glm::vec4(.5f,.5f,1,1):glm::vec4(1);
-            const auto pixels=texture->GetRgba8Pixels();
+            const auto acquired=texture?texture->AcquireRgba8Pixels():nullptr;
+            if(!acquired || acquired->empty())return slot==1?glm::vec4(.5f,.5f,1,1):glm::vec4(1);
+            const auto &pixels=*acquired;
             const int w=texture->GetWidth(),h=texture->GetHeight();
             const unsigned mode=slot>=4&&slot<8?material.graphSamplers[slot-4]:0;
             const glm::vec2 p=(mode>=2?glm::clamp(uv,glm::vec2(0),glm::vec2(1)):glm::fract(uv))*glm::vec2(w,h)-.5f, f=glm::fract(p);

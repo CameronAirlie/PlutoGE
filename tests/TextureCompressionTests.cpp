@@ -4,6 +4,7 @@
 #include "TextureCompressionQueue.h"
 #include "PlutoGE/render/DdsImage.h"
 #include "PlutoGE/render/TextureCompression.h"
+#include "PlutoGE/render/TextureCooking.h"
 #include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <array>
@@ -225,6 +226,41 @@ namespace
     }
 }
 
+namespace
+{
+    // A cooked store is a read-only layer of the renderer's: cooking computes the renderer's key and format, so the
+    // renderer's lookup hits it and encodes nothing.
+    void CheckCookedLayer()
+    {
+        const auto root = std::filesystem::temp_directory_path() / "PlutoGETextureCompressionTests" /
+                          ("cooked-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        const auto cooked = root / "cooked", cache = root / "cache";
+        const auto pixels = Image(256, 256, [](auto x, auto y) {
+            return std::array<unsigned char, 4>{static_cast<unsigned char>(x), static_cast<unsigned char>(y), 40, 255};
+        });
+        Require(CookCompressedTexture(cooked, pixels, 256, 256, TextureSemantic::Color, true) == TextureCookOutcome::Encoded,
+                "Cooking encodes");
+        Require(CookCompressedTexture(cooked, pixels, 256, 256, TextureSemantic::Color, true) == TextureCookOutcome::AlreadyCooked,
+                "Cooking twice reuses the entry");
+        Require(CookCompressedTexture(cooked, Image(16, 16, [](auto, auto) { return std::array<unsigned char, 4>{1, 2, 3, 255}; }),
+                                      16, 16, TextureSemantic::Color, true) == TextureCookOutcome::Uncompressed,
+                "Textures the renderer keeps RGBA8 are not cooked");
+
+        const auto format = SelectTextureCompression(pixels, 256, 256, TextureSemantic::Color, true, TextureCompressionSettings{},
+                                                     DesktopBlockCompressionSupport());
+        Require(format.has_value(), "A colour texture has a compressed format");
+        const auto store = std::make_shared<CompressedTextureStore>(cache, std::vector<std::filesystem::path>{cooked});
+        const auto result = TextureCompressionQueue::Run({1, pixels, 256, 256, TextureSemantic::Color, *format}, store.get());
+        Require(result.fromCache && result.texture && result.texture->format == *format, "The renderer finds the cooked entry");
+        Require(!std::filesystem::exists(cache), "Nothing is encoded or written to the cache");
+        // The writable cache alone misses it.
+        Require(!CompressedTextureStore(cache).Load(CompressedTextureStore::Key(pixels, 256, 256, TextureSemantic::Color, *format)),
+                "Cooked entries live in the cooked layer only");
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+    }
+}
+
 int main()
 {
     try
@@ -233,6 +269,7 @@ int main()
         CheckMipChain();
         CheckEncoding();
         CheckStoreAndQueue();
+        CheckCookedLayer();
         CheckPolicy(); // Last: it registers a fake BC7 encoder.
         std::cout << "Texture compression tests passed\n";
         return 0;

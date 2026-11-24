@@ -2,6 +2,7 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/platform/FilesystemPaths.h"
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/assets/TextureCook.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/render/RenderTexture.h"
 
@@ -1730,6 +1731,11 @@ namespace PlutoGE::assets
         cookOptions.includeUnreferencedAssets = !options.pruneUnused;
         cookOptions.alwaysInclude = options.alwaysInclude;
         if (!CookProjectContent(cookProject, exportedAssetDirectory, cookOptions, errorMessage))
+        {
+            return false;
+        }
+        if (options.cookTextures &&
+            !CookMaterialTextures(stagingDirectory, manifest.assetDirectory, manifest.assetPipelineVersion, nullptr, errorMessage))
         {
             return false;
         }

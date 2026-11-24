@@ -4,8 +4,8 @@ Material textures are sampled from block-compressed copies (BC1, BC3 and BC5) in
 takes a quarter (BC1) or half (BC3, BC5) of the memory, and every sample reads correspondingly fewer bytes. On an
 integrated GPU, which shares system memory bandwidth with the CPU, that bandwidth is the main win.
 
-Source images are unchanged. The engine still decodes them to RGBA8 on the CPU (CPU users such as the shader-graph
-preview, terrain painting and thumbnails keep reading those pixels), and the renderer encodes what it uploads.
+Source images are unchanged. The engine decodes them to RGBA8 on the CPU ([Texture loading](#texture-loading-and-cpu-pixels)),
+and the renderer encodes what it uploads, unless the game's export already did ([Cooking](#cooking)).
 
 ## What is compressed
 
@@ -27,6 +27,8 @@ sRGB forms; BC4, BC5 and BC7 are core). Anything unsupported stays RGBA8.
 
 ## When it happens
 
+- **Exported games** find their material textures already encoded in their content pack ([Cooking](#cooking)), and
+  encode only what the cook could not foresee.
 - **Runtime and editor.** The first frame that samples a texture uploads RGBA8 as before, and queues an encode on
   background threads. When the encode finishes, the compressed texture replaces the RGBA8 one and the materials that
   sample it re-prepare. Nothing waits for compression.
@@ -37,6 +39,50 @@ sRGB forms; BC4, BC5 and BC7 are core). Anything unsupported stays RGBA8.
   never invalidated by time: a change to any input is a different key. Deleting the directory is always safe.
 - **Memory bound.** Queued encodes hold a copy of their source texels, capped at 256 MB
   (`TextureCompressionSettings::maxPendingBytes`). Textures beyond it keep RGBA8 until earlier encodes finish.
+
+## Cooking
+
+Exporting a game (`ExportStandaloneProject`, `PlutoGERuntime --export`) encodes its material textures into the content
+pack, under `Cooked/TextureCompression` (`render::kCookedTextureDirectory`), in the cache's own entry format. The
+runtime host adds that directory to `TextureCompressionSettings::cookedDirectories`, read-only layers the store searches
+(through the content layer, so inside the mounted pack) before its writable cache. Players then start with every
+material texture encoded, rather than spending their first sessions encoding on background threads.
+
+- `assets::CookMaterialTextures` (`assets/TextureCook.h`) reads every `.plutomaterial` in the staged export, resolves its
+  texture slots as material loading does (`AssetManager::ResolveMaterialTexturePath`, through the export's runtime
+  catalog, so asset IDs resolve), decodes each file once (`render::DecodeImageFile`, the decoder the runtime uses) and
+  encodes it for every way a material samples it.
+- How a slot is sampled comes from the slot table (`render::GetMaterialTextureSampling`): sRGB slots as colour, the
+  normal slot as tangent normals, the rest as data, emission masks as data.
+- The format comes from `render::SelectTextureCompression`, which the renderer's own choice also goes through, for a
+  desktop target (`DesktopBlockCompressionSupport`: every BC format). Entries are keyed by content, semantic, format and
+  encoder, so a device or a newer encoder that would choose differently simply misses and encodes as before; a cook
+  never makes the image differ from an uncooked run.
+- `ExportOptions::cookTextures` (on by default; `--no-texture-cook`) turns it off.
+
+SurvivalGame (2026-11-24): 154 entries, the pack 139 MB larger (1,048 vs 909 MB). A first launch with an empty
+cache encoded 1 texture instead of 81. Only textures that material files name are cooked; one sampled through another
+path (detail grass ground textures, decals) is still encoded on first use.
+
+## Texture loading and CPU pixels
+
+- **Decoding off the owner thread.** `render::DecodeImageFile` (`ImageDecoding.h`) reads through the content layer and
+  decodes (stb_image, DDS) on any thread. `TextureManager::LoadTextureFromFile` decodes through `LoadingWork::Prepare`
+  (a loading screen keeps presenting), or takes a decode started ahead of time: material loading starts its textures'
+  decodes together (`AssetManager::PrefetchTextures`, `TextureDecodeQueue`), so they decode side by side on workers.
+  Loads still return complete textures.
+- **Releasing CPU pixels.** A file texture's pixels can be dropped once the renderers hold its GPU copies: a renderer
+  reports `Texture::MarkUploaded` when an upload's compression is settled (queued with its own copy, done, or not
+  wanted), and under `TexturePixelRetention::ReleaseAfterUpload` `TextureManager::ReleaseUploadedPixels` (called each
+  frame by `Engine::BeginFrame`) releases them. Anything that reads them later gets them back from the file
+  (`Texture::SetPixelSource`). The standalone runtime releases (`PLUTO_TEXTURE_PIXELS=keep` keeps them); the editor
+  keeps every texture's pixels for thumbnails, previews and painting. Generated and painted textures (no file) always
+  keep theirs.
+- **Threads.** Owner-thread code reads `GetRgba8Pixels()` (valid until the owner next replaces or releases them).
+  Code on other threads (the render thread's pixel reader, UI and portrait renderers) uses `AcquireRgba8Pixels()` or
+  `CopyRgba8Bytes()`, whose shared ownership keeps the pixels alive through a release.
+- SurvivalGame's LakeDistrict (camera travelling, Low): late-run private memory 3.5-3.8 GB with release against
+  4.1-4.2 GB kept; frame times equal and no pixel read above 0.16 ms (nothing was read back during play).
 
 ## Replaced textures
 
@@ -78,24 +124,29 @@ The pieces are independent (`TextureCompression.h`):
 - `TextureBlockEncoder` encodes 4x4 blocks of one format. `RegisterTextureBlockEncoder` adds or replaces one.
   The built-in encoders use `stb_dxt` (BC1, BC3, BC4, BC5). A BC7 encoder (for example bc7enc) only needs
   registering: the policy already prefers BC7 for textures with alpha, and its `Identity` keeps cache entries apart.
-- `BuildTextureMipChain` and `EncodeTexture` are usable on their own, for example to cook compressed textures into
-  content packs instead of encoding them on first use.
+- `BuildTextureMipChain` and `EncodeTexture` are usable on their own; `CookCompressedTexture` (`TextureCooking.h`)
+  encodes a texture into a store as a renderer would ask for it.
 
 The RHI accepts complete mip chains for any format (`TextureDescriptor::mipmapsProvided`); compressed formats require
 it. `rhi/FormatInfo.h` has the block and level size helpers both backends share.
 
 ## Not done
 
-- Textures are encoded on the user's machine on first use, not cooked into content packs.
+- Only textures named by material files are cooked; textures sampled through other paths encode on first use.
 - Terrain layer arrays and impostor atlases stay RGBA8 (both need texture-array or alpha-depth handling).
-- No mip streaming: every mip of every resident texture stays in memory.
+- No mip streaming: every mip of every resident texture stays in GPU memory
+  ([assessment](dev/texture-streaming-assessment.md)).
 - Alpha-tested foliage mips do not preserve alpha coverage (true before compression too).
 
 ## Checks
 
 - `PlutoGETextureCompressionTests`: format traits, format policy (including a registered BC7 encoder), sRGB mip
   averaging, encode error against the engine's DDS decoder, odd sizes, the store (round trip, damaged entries) and the
-  queue (results equal synchronous encodes, invalid jobs fail).
+  queue (results equal synchronous encodes, invalid jobs fail), and a cooked layer the renderer's lookup hits without
+  encoding or writing its cache.
+- `PlutoGETextureResidencyTests`: the shared decoder, prefetched loads, releasing and reading back pixels (including
+  readers on another thread during releases), material slot sampling, and cooking a project's materials (each sampling
+  once, small textures left RGBA8, a second cook reusing the store).
 - `PlutoGEVulkanCompressedTextureTests`, `PlutoGEOpenGLCompressedTextureTests` (`--compressed-textures`): BC1 sRGB
   albedo samples like its RGBA8 source; a tilted BC5 normal map shades like its RGBA8 source and differs when
   decoded as RGB; truncated chains are rejected.

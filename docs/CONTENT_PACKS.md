@@ -15,11 +15,11 @@
 6. Validate random access, corruption rejection, compatibility, overlays, cooking
    and runtime integration. Build the runtime and run relevant existing tests.
 
-These steps implement the pack-system changes. Target-specific texture/audio
-conversion remains separate work: the cooker currently copies the existing
-representations. Adding such conversion requires format/version decisions,
-import settings, target capabilities and matching GPU/audio upload paths. This
-change does not claim to introduce GPU-native texture cooking.
+These steps implement the pack-system changes. The cooker copies source files
+unchanged; in addition, export block compresses material textures into
+`Cooked/TextureCompression`, which the runtime reads before encoding any itself
+([Texture compression: Cooking](TEXTURE_COMPRESSION.md#cooking)). Audio
+conversion and per-mip texture storage remain separate work.
 
 ## Runtime behavior
 

@@ -29,6 +29,14 @@ namespace PlutoGE::render
         m_renderTextures.SetRenderingSettings(settings);
     }
 
+    void RhiRenderService::SetTextureCompression(const TextureCompressionSettings &settings)
+    {
+        (void)WaitForFrame();
+        m_textureCompression = settings;
+        // Renderers on a device share its texture cache and its compression.
+        if (m_sceneRenderer) m_sceneRenderer->SetTextureCompression(settings);
+    }
+
     bool RhiRenderService::Initialize(rhi::IRenderDevice &device, rhi::ISwapchain &swapchain)
     {
         Shutdown();
@@ -194,6 +202,7 @@ namespace PlutoGE::render
             sceneRenderer->SetGpuInstanceCulling(m_gpuInstanceCulling);
             sceneRenderer->SetGpuInstanceBatching(m_gpuInstanceBatching);
             sceneRenderer->SetDynamicResolution(m_dynamicResolution);
+            if (m_textureCompression) sceneRenderer->SetTextureCompression(*m_textureCompression);
             m_sceneRenderer = std::move(sceneRenderer);
         }
         const bool runtimeUi = cameraData.renderRuntimeUI && scene && scene->HasRmlRuntimeUI();

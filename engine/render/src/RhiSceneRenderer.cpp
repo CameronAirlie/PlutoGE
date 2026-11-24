@@ -531,9 +531,10 @@ namespace PlutoGE::render
                 return false;
             if (rect->Empty())
                 return true;
-            const auto pixels = source.GetRgba8Pixels();
-            if (pixels.size() != static_cast<std::size_t>(source.GetWidth()) * source.GetHeight() * 4)
+            const auto acquired = source.AcquireRgba8Pixels();
+            if (!acquired || acquired->size() != static_cast<std::size_t>(source.GetWidth()) * source.GetHeight() * 4)
                 return false;
+            const auto &pixels = *acquired;
             const std::size_t row = static_cast<std::size_t>(rect->width) * 4;
             std::vector<std::byte> region(row * rect->height);
             for (int y = 0; y < rect->height; ++y)
@@ -617,6 +618,12 @@ namespace PlutoGE::render
             }
             return std::nullopt;
         };
+        // An upload no longer needs its source's CPU pixels once compression is settled: queued with its own copy, done,
+        // or not wanted. The texture's owner may then release them (TexturePixelRetention::ReleaseAfterUpload).
+        const auto settle = [](const Texture &source, const CachedTexture &entry) {
+            if (entry.compressionDecided || entry.keepUncompressed || rhi::IsBlockCompressed(entry.format))
+                source.MarkUploaded();
+        };
         // Retire, rather than destroy, an upload this Prepare replaces (TextureCache::retired).
         {
             auto &observers = m_textureCache->preparedResidency;
@@ -654,7 +661,7 @@ namespace PlutoGE::render
                 {
                     if (existing != cache.end())
                         retire(existing->second);
-                    cache.insert_or_assign(done.source, std::move(*compressed));
+                    settle(*done.source, cache.insert_or_assign(done.source, std::move(*compressed)).first->second);
                     ++m_textureCache->residencyRevision;
                     ++m_timingStats.compressedTextureUploads;
                 }
@@ -694,6 +701,7 @@ namespace PlutoGE::render
                         entry.compressionDecided =
                             !format || m_textureCache->compression->Request(*source, kind, *format, std::move(pixels));
                     }
+                    settle(*source, entry);
                     return entry.Get();
                 }
                 // An exact use needs the RGBA8 texels: replace the compressed upload and keep it uncompressed.
@@ -734,7 +742,9 @@ namespace PlutoGE::render
                 {
                     ++m_timingStats.textureUploadCount;
                     ++m_timingStats.compressedTextureUploads;
-                    return cache.insert_or_assign(source, std::move(*compressed)).first->second.Get();
+                    const auto &stored = cache.insert_or_assign(source, std::move(*compressed)).first->second;
+                    settle(*source, stored);
+                    return stored.Get();
                 }
             }
             else if (compressedFormat)
@@ -749,9 +759,12 @@ namespace PlutoGE::render
                                       m_device->CreateTexture({width, height, format, rhi::TextureUsage::Sampled,
                                                                debugName, false, 1, false, 0, true, true},
                                                               pixels));
-                return uploaded ? cache.emplace(source, CachedTexture{std::move(uploaded), format, keepUncompressed,
-                                                                      compressionDecided}).first->second.Get()
-                                : rhi::TextureHandle{};
+                if (!uploaded)
+                    return {};
+                const auto &stored = cache.emplace(source, CachedTexture{std::move(uploaded), format, keepUncompressed,
+                                                                         compressionDecided}).first->second;
+                settle(*source, stored);
+                return stored.Get();
             }
             if (normalMap)
             {
@@ -777,9 +790,12 @@ namespace PlutoGE::render
                                                   format, rhi::TextureUsage::Sampled, debugName, false, 1, false, 0, normalMap},
                                                  pixels));
             m_timingStats.textureUploadMs += millisecondsBetween(uploadStart, std::chrono::steady_clock::now());
-            return uploaded ? cache.emplace(source, CachedTexture{std::move(uploaded), format, keepUncompressed,
-                                                                  compressionDecided}).first->second.Get()
-                            : rhi::TextureHandle{};
+            if (!uploaded)
+                return {};
+            const auto &stored = cache.emplace(source, CachedTexture{std::move(uploaded), format, keepUncompressed,
+                                                                     compressionDecided}).first->second;
+            settle(*source, stored);
+            return stored.Get();
         };
 
         // A terrain's layers: its weight maps (ordinary linear textures) and the device's layer arrays. Null when

@@ -5,7 +5,8 @@
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/DdsImage.h"
+#include "PlutoGE/render/ImageDecoding.h"
+#include "PlutoGE/platform/LoadingWork.h"
 
 #include <algorithm>
 #include <cctype>
@@ -23,29 +24,6 @@ namespace PlutoGE::render
 {
     namespace
     {
-        unsigned char *LoadImage(const char *path, int *w, int *h, int *channels, int desired)
-        {
-            std::string extension = std::filesystem::path(path).extension().string();
-            std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
-            if (extension == ".dds")
-            {
-                std::string bytes;
-                if (!content::ReadFile(path, bytes)) return nullptr;
-                DdsImage image;
-                if (!DecodeDds({reinterpret_cast<const unsigned char *>(bytes.data()), bytes.size()}, image)) return nullptr;
-                if (desired != 0 && desired != 4) return nullptr;
-                // Callers release these with stbi_image_free, which uses the default STBI_FREE (free).
-                auto *pixels = static_cast<unsigned char *>(std::malloc(image.pixels.size()));
-                if (!pixels) return nullptr;
-                std::memcpy(pixels, image.pixels.data(), image.pixels.size());
-                *w = image.width; *h = image.height; *channels = 4;
-                return pixels;
-            }
-            if (!content::IsMounted(path)) return stbi_load(path, w, h, channels, desired);
-            std::string bytes;
-            if (!content::ReadFile(path, bytes) || bytes.size() > INT_MAX) return nullptr;
-            return stbi_load_from_memory(reinterpret_cast<const stbi_uc *>(bytes.data()), static_cast<int>(bytes.size()), w, h, channels, desired);
-        }
         float *LoadFloatImage(const char *path, int *w, int *h, int *channels, int desired)
         {
             if (!content::IsMounted(path)) return stbi_loadf(path, w, h, channels, desired);
@@ -149,27 +127,15 @@ namespace PlutoGE::render
             return cacheKey;
         }
 
-        std::vector<unsigned char> ExpandBytePixelsToRgba(const unsigned char *pixels, int width, int height, int channels)
+        // Reads a file texture's pixels again after they were released.
+        Texture::PixelSource FilePixelSource(std::string path)
         {
-            const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
-            std::vector<unsigned char> rgbaPixels(pixelCount * 4, 255);
-            for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
-            {
-                const std::size_t srcOffset = pixelIndex * static_cast<std::size_t>(channels);
-                const std::size_t dstOffset = pixelIndex * 4;
-                rgbaPixels[dstOffset] = pixels[srcOffset];
-                rgbaPixels[dstOffset + 1] = channels >= 2 ? pixels[srcOffset + 1] : pixels[srcOffset];
-                rgbaPixels[dstOffset + 2] = channels >= 3 ? pixels[srcOffset + 2] : pixels[srcOffset];
-                rgbaPixels[dstOffset + 3] = channels >= 4 ? pixels[srcOffset + 3] : 255;
-            }
-            return rgbaPixels;
-        }
-
-        bool IsTextureSizeSupported(int width, int height)
-        {
-            // The largest 2D extent both RHI backends accept.
-            constexpr int kMaxTextureExtent = 16384;
-            return width > 0 && height > 0 && width <= kMaxTextureExtent && height <= kMaxTextureExtent;
+            return [path = std::move(path)]() -> std::optional<std::vector<unsigned char>> {
+                auto image = DecodeImageFile(path);
+                if (!image)
+                    return std::nullopt;
+                return std::move(image->rgba8);
+            };
         }
     }
 
@@ -248,7 +214,10 @@ namespace PlutoGE::render
             std::swap(texture->m_width, replacement->m_width);
             std::swap(texture->m_height, replacement->m_height);
             std::swap(texture->m_channels, replacement->m_channels);
-            texture->m_rgba8Pixels.swap(replacement->m_rgba8Pixels);
+            {
+                std::scoped_lock lock(texture->m_pixelMutex, replacement->m_pixelMutex);
+                texture->m_rgba8Pixels.swap(replacement->m_rgba8Pixels);
+            }
             ++texture->m_contentRevision;
         }
         if (error) error->clear();
@@ -275,30 +244,54 @@ namespace PlutoGE::render
             return it->second;
         }
 
-        int width, height, channels;
-        unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
-        if (!data)
-        {
+        // A decode started ahead of time, else one now off this thread (the owner keeps presenting a loading screen).
+        auto decoded = m_decodes.Take(sourcePath);
+        if (!decoded)
+            decoded = platform::LoadingWork::Prepare([sourcePath] { return DecodeImageFile(sourcePath); });
+        if (!*decoded)
             return nullptr;
-        }
-
-        if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
-        {
-            stbi_image_free(data);
-            return nullptr;
-        }
+        auto &image = **decoded;
 
         TextureConfig config;
         config.filePath = filePath;
         Texture *texture = new Texture(config);
-        texture->m_rgba8Pixels = ExpandBytePixelsToRgba(data, width, height, channels);
-        texture->m_width = width;
-        texture->m_height = height;
-        texture->m_channels = channels;
-        stbi_image_free(data);
+        texture->m_width = image.width;
+        texture->m_height = image.height;
+        texture->m_channels = image.channels;
+        texture->ReplaceRgba8Pixels(std::move(image.rgba8));
+        texture->SetPixelSource(FilePixelSource(sourcePath));
 
         m_textureCache[cacheKey] = texture;
         return texture;
+    }
+
+    void TextureManager::PrefetchTextureFiles(std::span<const std::string> filePaths)
+    {
+        if (core::Engine::GetInstance().GetConfig().headless)
+            return;
+        for (const auto &path : filePaths)
+        {
+            if (path.empty() || RenderTexture::IsAssetPath(path))
+                continue;
+            if (m_textureCache.contains(BuildTextureCacheKey(path, TextureColorSpace::Linear)) ||
+                m_textureCache.contains(BuildTextureCacheKey(path, TextureColorSpace::SRGB)))
+                continue;
+            m_decodes.Start(path);
+        }
+    }
+
+    std::size_t TextureManager::ReleaseUploadedPixels()
+    {
+        if (m_pixelRetention != TexturePixelRetention::ReleaseAfterUpload)
+            return 0;
+        std::size_t released = 0;
+        for (const auto &[key, texture] : m_textureCache)
+        {
+            const auto bytes = static_cast<std::size_t>(texture->GetWidth()) * static_cast<std::size_t>(texture->GetHeight()) * 4;
+            if (texture->ReleaseUploadedPixels())
+                released += bytes;
+        }
+        return released;
     }
 
     Texture *TextureManager::LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels)
@@ -318,7 +311,7 @@ namespace PlutoGE::render
         TextureConfig config;
         config.filePath = cacheKey;
         Texture *texture = new Texture(config);
-        texture->m_rgba8Pixels = ExpandBytePixelsToRgba(pixels, width, height, channels);
+        texture->ReplaceRgba8Pixels(ExpandPixelsToRgba8(pixels, width, height, channels));
         texture->m_width = width;
         texture->m_height = height;
         texture->m_channels = channels;
@@ -373,14 +366,15 @@ namespace PlutoGE::render
         }
         else
         {
-            unsigned char *data = LoadImage(filePath, &width, &height, &channels, 0);
-            if (!data)
+            auto image = DecodeImageFile(environmentPath);
+            if (!image)
             {
                 return nullptr;
             }
-            if (channels >= 1 && channels <= 4)
-                rgba8Pixels = ExpandBytePixelsToRgba(data, width, height, channels);
-            stbi_image_free(data);
+            width = image->width;
+            height = image->height;
+            channels = image->channels;
+            rgba8Pixels = std::move(image->rgba8);
         }
 
         if (channels < 1 || channels > 4 || !IsTextureSizeSupported(width, height))
@@ -393,7 +387,7 @@ namespace PlutoGE::render
         TextureConfig config;
         config.filePath = environmentPath;
         Texture *texture = new Texture(config);
-        texture->m_rgba8Pixels = std::move(rgba8Pixels);
+        texture->ReplaceRgba8Pixels(std::move(rgba8Pixels));
         texture->m_width = width;
         texture->m_height = height;
         texture->m_channels = channels;

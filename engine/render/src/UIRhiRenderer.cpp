@@ -155,7 +155,9 @@ namespace PlutoGE::render
 
         if (!entry->texture || entry->identity != source->GetIdentity() || entry->revision != source->GetContentRevision())
         {
-            const auto pixels = source->GetRgba8Pixels();
+            // Shared ownership: the owner thread may release a file texture's pixels while this reads them.
+            const auto acquired = source->AcquireRgba8Pixels();
+            const std::span<const unsigned char> pixels = acquired ? std::span<const unsigned char>(*acquired) : std::span<const unsigned char>{};
             const auto width = static_cast<std::uint32_t>(std::max(source->GetWidth(), 0));
             const auto height = static_cast<std::uint32_t>(std::max(source->GetHeight(), 0));
             entry->texture = {};

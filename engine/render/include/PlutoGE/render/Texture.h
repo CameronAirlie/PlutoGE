@@ -1,11 +1,15 @@
 #pragma once
 #include "PlutoGE/render/RenderObjectIdentity.h"
-#include <memory>
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
-#include <string>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace PlutoGE::render
@@ -53,7 +57,37 @@ namespace PlutoGE::render
         int GetHeight() const { return m_height; }
         int GetChannels() const { return m_channels; }
         const std::string &GetFilePath() const { return m_filePath; }
-        [[nodiscard]] std::span<const unsigned char> GetRgba8Pixels() const noexcept { return m_rgba8Pixels; }
+
+        // ---- CPU pixels ----------------------------------------------------------------------------------------
+        // A file texture's RGBA8 pixels may be released once the renderers hold GPU copies of them (MarkUploaded and
+        // TextureManager's pixel retention), and come back from the file when read again. Textures without a file
+        // (CreateRgba8, generated or painted data) always keep theirs.
+        //
+        // Owner thread. Reads the pixels back first if they were released; the span stays valid until the owner next
+        // replaces or releases them. Empty without pixels.
+        [[nodiscard]] std::span<const unsigned char> GetRgba8Pixels() const;
+        // Any thread. Shared ownership keeps the pixels alive while the caller reads them, whatever the owner does
+        // meanwhile. Null without pixels.
+        [[nodiscard]] std::shared_ptr<const std::vector<unsigned char>> AcquireRgba8Pixels() const;
+        // Any thread. A byte copy, as renderers upload them (their texture pixel reader). Empty without pixels.
+        [[nodiscard]] std::vector<std::byte> CopyRgba8Bytes() const;
+        // A renderer has a GPU copy of the current content and will not read the CPU pixels again unless the content
+        // changes. Any thread.
+        void MarkUploaded() const noexcept { m_uploadedRevision.store(m_contentRevision, std::memory_order_release); }
+        [[nodiscard]] bool IsUploaded() const noexcept
+        {
+            return m_uploadedRevision.load(std::memory_order_acquire) == m_contentRevision;
+        }
+        // Whether released pixels can be read again (the texture has a pixel source).
+        [[nodiscard]] bool CanReleasePixels() const noexcept { return static_cast<bool>(m_pixelSource); }
+        // Owner thread. Drops the pixels of an uploaded texture that can read them again; true when it did.
+        bool ReleaseUploadedPixels();
+        [[nodiscard]] bool HasResidentPixels() const;
+        // Reads the pixels again after a release (a file texture's decode): `width` x `height` RGBA8, or nothing.
+        using PixelSource = std::function<std::optional<std::vector<unsigned char>>()>;
+        // Owner thread, when the texture is made.
+        void SetPixelSource(PixelSource source) { m_pixelSource = std::move(source); }
+
         [[nodiscard]] std::span<const float> GetCubemapPixels() const noexcept { return m_cubemapPixels; }
         // Linear HDR faces in +X,-X,+Y,-Y,+Z,-Z order, bottom-up within each face.
         static Texture *CpuColorCubemap(int resolution, std::span<const float> pixels);
@@ -73,6 +107,11 @@ namespace PlutoGE::render
         static Texture *LoadFromFile(const char *filePath, TextureColorSpace colorSpace = TextureColorSpace::Linear);
 
     protected:
+        // Replaces the pixels (owner thread); they must be `m_width` x `m_height` RGBA8 or empty.
+        void ReplaceRgba8Pixels(std::vector<unsigned char> pixels);
+        // The resident pixels, reading them back from the pixel source when released. Holds m_pixelMutex.
+        [[nodiscard]] std::shared_ptr<std::vector<unsigned char>> ResidentPixelsLocked() const;
+
         RenderObjectIdentity m_identity;
         mutable std::uint64_t m_contentRevision = 1;
         std::shared_ptr<const void> m_lifetime = std::make_shared<const int>(0);
@@ -82,9 +121,13 @@ namespace PlutoGE::render
         int m_width = 0;
         int m_height = 0;
         int m_channels = 0; // Number of color channels (e.g., 3 for RGB, 4 for RGBA)
-        // Decoded source pixels, retained as the RHI upload source on every
-        // graphics API.
-        std::vector<unsigned char> m_rgba8Pixels;
+        // The decoded RGBA8 pixels, null when there are none or they were released. Shared, so a reader on another
+        // thread (AcquireRgba8Pixels) keeps what it read alive; swapped under m_pixelMutex.
+        mutable std::shared_ptr<std::vector<unsigned char>> m_rgba8Pixels;
+        PixelSource m_pixelSource;
+        mutable std::mutex m_pixelMutex;
+        // The content revision a renderer last reported holding on the GPU (MarkUploaded); 0 for none.
+        mutable std::atomic<std::uint64_t> m_uploadedRevision{0};
         // Recent region updates (revision, rectangle), for GetChangedRectSince; bounded.
         std::vector<std::pair<std::uint64_t, TextureRect>> m_regionUpdates;
         std::vector<float> m_cubemapPixels;

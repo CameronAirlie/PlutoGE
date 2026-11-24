@@ -24,7 +24,7 @@ namespace RenderTextureChecks
             m_width = width;
             m_height = height;
             m_channels = 4;
-            m_rgba8Pixels = std::move(pixels);
+            ReplaceRgba8Pixels(std::move(pixels));
         }
     };
 }

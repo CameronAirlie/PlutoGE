@@ -37,28 +37,90 @@ namespace PlutoGE::render
         texture->m_width = width;
         texture->m_height = height;
         texture->m_channels = 4;
-        texture->m_rgba8Pixels.assign(pixels.begin(), pixels.end());
+        texture->ReplaceRgba8Pixels({pixels.begin(), pixels.end()});
         return texture;
+    }
+
+    // ---- CPU pixels ---------------------------------------------------------------------------------------------
+
+    std::shared_ptr<std::vector<unsigned char>> Texture::ResidentPixelsLocked() const
+    {
+        if (!m_rgba8Pixels && m_pixelSource && m_kind == TextureKind::Texture2D)
+            if (auto pixels = m_pixelSource(); pixels && pixels->size() == static_cast<std::size_t>(m_width) * m_height * 4)
+                m_rgba8Pixels = std::make_shared<std::vector<unsigned char>>(std::move(*pixels));
+        return m_rgba8Pixels;
+    }
+
+    std::span<const unsigned char> Texture::GetRgba8Pixels() const
+    {
+        std::lock_guard lock(m_pixelMutex);
+        const auto pixels = ResidentPixelsLocked();
+        return pixels ? std::span<const unsigned char>(*pixels) : std::span<const unsigned char>{};
+    }
+
+    std::shared_ptr<const std::vector<unsigned char>> Texture::AcquireRgba8Pixels() const
+    {
+        std::lock_guard lock(m_pixelMutex);
+        return ResidentPixelsLocked();
+    }
+
+    std::vector<std::byte> Texture::CopyRgba8Bytes() const
+    {
+        const auto pixels = AcquireRgba8Pixels();
+        if (!pixels)
+            return {};
+        const auto *bytes = reinterpret_cast<const std::byte *>(pixels->data());
+        return {bytes, bytes + pixels->size()};
+    }
+
+    bool Texture::ReleaseUploadedPixels()
+    {
+        if (!CanReleasePixels() || !IsUploaded())
+            return false;
+        std::lock_guard lock(m_pixelMutex);
+        if (!m_rgba8Pixels)
+            return false;
+        // Readers on other threads keep their shared copies until they finish.
+        m_rgba8Pixels.reset();
+        return true;
+    }
+
+    bool Texture::HasResidentPixels() const
+    {
+        std::lock_guard lock(m_pixelMutex);
+        return m_rgba8Pixels != nullptr;
+    }
+
+    void Texture::ReplaceRgba8Pixels(std::vector<unsigned char> pixels)
+    {
+        auto replacement = pixels.empty() ? nullptr : std::make_shared<std::vector<unsigned char>>(std::move(pixels));
+        std::lock_guard lock(m_pixelMutex);
+        m_rgba8Pixels = std::move(replacement);
     }
 
     bool Texture::SetRgba8Pixels(std::span<const unsigned char> pixels)
     {
         if (m_kind != TextureKind::Texture2D || pixels.size() != static_cast<std::size_t>(m_width) * m_height * 4) return false;
-        m_rgba8Pixels.assign(pixels.begin(), pixels.end());
+        ReplaceRgba8Pixels({pixels.begin(), pixels.end()});
         ++m_contentRevision;
         return true;
     }
 
     bool Texture::UpdateRgba8Region(const TextureRect &rect, std::span<const unsigned char> pixels)
     {
-        if (m_kind != TextureKind::Texture2D || m_rgba8Pixels.empty() || rect.Empty() || rect.x < 0 || rect.y < 0 ||
+        if (m_kind != TextureKind::Texture2D || rect.Empty() || rect.x < 0 || rect.y < 0 ||
             rect.x + rect.width > m_width || rect.y + rect.height > m_height ||
             pixels.size() != static_cast<std::size_t>(rect.width) * rect.height * 4)
+            return false;
+        // Painted in place, as painting needs (whole replacements would copy the texture every dab).
+        std::lock_guard lock(m_pixelMutex);
+        const auto target = ResidentPixelsLocked();
+        if (!target)
             return false;
         const std::size_t row = static_cast<std::size_t>(rect.width) * 4;
         for (int y = 0; y < rect.height; ++y)
             std::copy_n(pixels.data() + y * row, row,
-                        m_rgba8Pixels.data() + (static_cast<std::size_t>(rect.y + y) * m_width + rect.x) * 4);
+                        target->data() + (static_cast<std::size_t>(rect.y + y) * m_width + rect.x) * 4);
         ++m_contentRevision;
         constexpr std::size_t kMaxRegionUpdates = 64;
         if (m_regionUpdates.size() == kMaxRegionUpdates)

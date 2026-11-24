@@ -57,6 +57,9 @@ namespace PlutoGE::render
         std::uint32_t minimumTexels = 128 * 128;
         // Encoded mip chains, keyed by content. Empty disables the cache (every texture is encoded each run).
         std::filesystem::path cacheDirectory;
+        // Read-only stores searched before the cache, through the content layer (so inside mounted content packs): the
+        // textures a game's export already encoded (TextureCooking.h). Entries here are never encoded at run time.
+        std::vector<std::filesystem::path> cookedDirectories;
         // Encoding threads for background compression (at least one).
         std::uint32_t workerCount = 2;
         // Source texels held by queued encodes. Textures beyond it keep their RGBA8 upload and are queued when
@@ -107,6 +110,14 @@ namespace PlutoGE::render
                                                                     const SampledFormatQuery &deviceSupports);
 
     [[nodiscard]] bool TextureUsesAlpha(std::span<const std::byte> rgba8);
+
+    // The format a texture sampled as `semantic` is compressed to, or nullopt to keep it RGBA8 (compression off, too
+    // small or too narrow for blocks, or no format both `supports` and an encoder accept). The renderer and the content
+    // cooker both decide through this, so a cooked texture is the one the renderer asks for.
+    [[nodiscard]] std::optional<rhi::Format> SelectTextureCompression(std::span<const std::byte> rgba8, std::uint32_t width,
+                                                                      std::uint32_t height, TextureSemantic semantic, bool srgb,
+                                                                      const TextureCompressionSettings &settings,
+                                                                      const SampledFormatQuery &supports);
 
     // The full RGBA8 mip chain of `semantic` texels: sRGB colour averages in linear light, data averages its bytes,
     // tangent normals keep their averaged length (rhi::BuildNormalMipmaps).

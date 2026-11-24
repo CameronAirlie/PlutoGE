@@ -32,6 +32,7 @@ add_library(PlutoGEAssets
     src/AnimationGraphValidation.cpp
     src/AnimationGraphSerialization.cpp
     src/AssetManager.cpp
+    src/TextureCook.cpp
     src/SurfaceResponseAsset.cpp
     src/LoadingScreenAsset.cpp
     src/ParticleSystemAsset.cpp

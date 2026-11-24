@@ -2,6 +2,7 @@
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/MaterialTextureSlotKeys.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/TextureCompression.h"
 
 #include <array>
 #include <cstddef>
@@ -92,6 +93,25 @@ namespace PlutoGE::render
     {
         if (slot == MaterialTextureSlot::Emission && config.emissionChannelMask) return TextureColorSpace::Linear;
         return GetMaterialTextureSlotInfo(slot).colorSpace;
+    }
+
+    // How the renderer samples a slot's texture, which decides how it is block compressed: RhiSceneRenderer uploads
+    // sRGB slots as colour, the normal slot as tangent normals and every other slot as data. The content cooker
+    // compresses each material texture for this sampling, so a game finds it already encoded. (A disagreement would
+    // only cost a cache miss: encoded textures are keyed by semantic.)
+    struct MaterialTextureSampling
+    {
+        TextureSemantic semantic = TextureSemantic::Data;
+        bool srgb = false;
+    };
+
+    // `emissionChannelMask` is the material's (an emission texture read as channel masks is linear data).
+    constexpr MaterialTextureSampling GetMaterialTextureSampling(MaterialTextureSlot slot, bool emissionChannelMask)
+    {
+        if (slot == MaterialTextureSlot::Normal) return {TextureSemantic::TangentNormal, false};
+        const bool srgb = !(slot == MaterialTextureSlot::Emission && emissionChannelMask) &&
+                          GetMaterialTextureSlotInfo(slot).colorSpace == TextureColorSpace::SRGB;
+        return {srgb ? TextureSemantic::Color : TextureSemantic::Data, srgb};
     }
 
     static_assert([]

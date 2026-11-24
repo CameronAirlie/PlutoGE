@@ -25,6 +25,8 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/TextureCooking.h"
+#include "PlutoGE/render/TextureManager.h"
 
 #include <algorithm>
 #include <chrono>
@@ -230,7 +232,7 @@ int RunRuntime(int argc, char **argv)
     {
         if (argc < 4)
         {
-            std::cerr << "Usage: PlutoGERuntime --export <project.plutoproject> <output executable> [--prune] [--include project://asset] [--no-compression]" << std::endl;
+            std::cerr << "Usage: PlutoGERuntime --export <project.plutoproject> <output executable> [--prune] [--include project://asset] [--no-compression] [--no-texture-cook]" << std::endl;
             return 2;
         }
 
@@ -240,6 +242,7 @@ int RunRuntime(int argc, char **argv)
             const std::string_view option(argv[i]);
             if (option == "--prune") exportOptions.pruneUnused = true;
             else if (option == "--no-compression") exportOptions.compress = false;
+            else if (option == "--no-texture-cook") exportOptions.cookTextures = false;
             else if (option == "--include" && i + 1 < argc) exportOptions.alwaysInclude.emplace_back(argv[++i]);
             else { std::cerr << "Unknown or incomplete export option: " << option << '\n'; return 2; }
         }
@@ -469,6 +472,17 @@ int RunRuntime(int argc, char **argv)
 
     if (projectBenchmark && engine.GetRenderDevice())
         engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
+    // A game's uploaded file textures need no CPU copy; anything that reads one later decodes its file again.
+    // PLUTO_TEXTURE_PIXELS=keep keeps them (for comparisons).
+    if (const char *pixels = std::getenv("PLUTO_TEXTURE_PIXELS"); !(pixels && std::string_view(pixels) == "keep"))
+        engine.GetTextureManager().SetPixelRetention(PlutoGE::render::TexturePixelRetention::ReleaseAfterUpload);
+    // An exported game's material textures were block compressed when it was cooked (TextureCooking.h): the renderer
+    // reads them from its content pack before encoding anything itself. Source projects have no such store.
+    {
+        auto compression = PlutoGE::render::TextureCompressionSettings::FromEnvironment();
+        compression.cookedDirectories.push_back(project->GetRootDirectory() / PlutoGE::render::kCookedTextureDirectory);
+        engine.GetRhiRenderService().SetTextureCompression(compression);
+    }
     if (projectBenchmark && projectBenchmark->quality)
     {
         auto quality = engine.GetRhiRenderService().GetGraphicsPreset(*projectBenchmark->quality);
@@ -730,12 +744,8 @@ int RunRuntime(int argc, char **argv)
                     effect->SetEnabled(false);
                 postProcessEffects.push_back(effect.get());
             }
-            const auto readTexturePixels = [](const PlutoGE::render::Texture &texture)
-            {
-                const auto source = texture.GetRgba8Pixels();
-                return std::vector<std::byte>(reinterpret_cast<const std::byte *>(source.data()),
-                                              reinterpret_cast<const std::byte *>(source.data() + source.size()));
-            };
+            // Runs on the render thread: a copy taken under the texture's own lock (its pixels may be released).
+            const auto readTexturePixels = [](const PlutoGE::render::Texture &texture) { return texture.CopyRgba8Bytes(); };
             // The base camera draws its frustum- and distance-culled commands at their view LODs; shadows and GI
             // read the camera's whole scene, as the editor's game view does.
             renderScene.PrepareVisibleRenderCommands(cameraData, static_cast<int>(windowExtents.height));

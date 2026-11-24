@@ -161,6 +161,21 @@ namespace PlutoGE::render
         }
     }
 
+    std::optional<rhi::Format> SelectTextureCompression(std::span<const std::byte> rgba8, std::uint32_t width, std::uint32_t height,
+                                                        TextureSemantic semantic, bool srgb,
+                                                        const TextureCompressionSettings &settings,
+                                                        const SampledFormatQuery &supports)
+    {
+        if (!settings.enabled || std::uint64_t(width) * height < settings.minimumTexels || width < 4 || height < 4 ||
+            rgba8.size() != std::size_t(width) * height * 4)
+            return std::nullopt;
+        TextureCompressionRequest request;
+        request.semantic = semantic;
+        request.srgb = srgb;
+        request.usesAlpha = semantic != TextureSemantic::TangentNormal && TextureUsesAlpha(rgba8);
+        return SelectCompressedFormat(request, supports);
+    }
+
     TextureCompressionSettings TextureCompressionSettings::FromEnvironment()
     {
         TextureCompressionSettings settings;

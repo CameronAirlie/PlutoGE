@@ -28,9 +28,7 @@ namespace PlutoGE::ui
         // Prefers retained CPU pixels; legacy textures may only exist in OpenGL.
         std::vector<std::byte> ReadTexturePixels(const render::Texture &source)
         {
-            const auto pixels = source.GetRgba8Pixels();
-            return std::vector<std::byte>(reinterpret_cast<const std::byte *>(pixels.data()),
-                                          reinterpret_cast<const std::byte *>(pixels.data() + pixels.size()));
+            return source.CopyRgba8Bytes();
         }
     }
 

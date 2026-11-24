@@ -200,6 +200,8 @@ namespace PlutoGE::assets
     {
         bool compress = true;
         bool pruneUnused = false;
+        // Block compress material textures into the pack (TextureCook.h), so players never encode them.
+        bool cookTextures = true;
         std::vector<std::string> alwaysInclude;
         std::function<void(float)> progress; // Stage completion, 0..1; called on the export thread.
     };

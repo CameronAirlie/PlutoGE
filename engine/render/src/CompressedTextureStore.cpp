@@ -1,10 +1,12 @@
 #include "CompressedTextureStore.h"
 
+#include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <atomic>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 
@@ -32,7 +34,10 @@ namespace PlutoGE::render
         }
     }
 
-    CompressedTextureStore::CompressedTextureStore(std::filesystem::path directory) : m_directory(std::move(directory)) {}
+    CompressedTextureStore::CompressedTextureStore(std::filesystem::path directory, std::vector<std::filesystem::path> readOnlyLayers)
+        : m_directory(std::move(directory)), m_readOnlyLayers(std::move(readOnlyLayers))
+    {
+    }
 
     content::ContentDigest CompressedTextureStore::Key(std::span<const std::byte> rgba8, std::uint32_t width,
                                                        std::uint32_t height, TextureSemantic semantic, rhi::Format format)
@@ -52,22 +57,19 @@ namespace PlutoGE::render
         return hasher.Finalize();
     }
 
-    std::filesystem::path CompressedTextureStore::PathFor(const content::ContentDigest &key) const
+    std::filesystem::path CompressedTextureStore::PathFor(const std::filesystem::path &directory, const content::ContentDigest &key)
     {
         const auto hex = content::DigestToHex(key);
-        return m_directory / hex.substr(0, 2) / (hex + ".ptxc");
+        return directory / hex.substr(0, 2) / (hex + ".ptxc");
     }
 
-    std::optional<EncodedTexture> CompressedTextureStore::Load(const content::ContentDigest &key) const
+    std::optional<EncodedTexture> CompressedTextureStore::Parse(std::span<const std::byte> bytes)
     {
-        if (m_directory.empty())
-            return std::nullopt;
-        std::ifstream input(PathFor(key), std::ios::binary);
-        if (!input)
-            return std::nullopt;
         Header header;
-        if (!input.read(reinterpret_cast<char *>(&header), sizeof(header)) || header.magic != kMagic ||
-            header.version != kVersion)
+        if (bytes.size() < sizeof(header))
+            return std::nullopt;
+        std::memcpy(&header, bytes.data(), sizeof(header));
+        if (header.magic != kMagic || header.version != kVersion)
             return std::nullopt;
         EncodedTexture texture;
         texture.format = static_cast<rhi::Format>(header.format);
@@ -75,19 +77,34 @@ namespace PlutoGE::render
         texture.height = header.height;
         texture.mipLevels = header.mipLevels;
         if (!rhi::IsBlockCompressed(texture.format) || !texture.width || !texture.height || !texture.mipLevels ||
-            header.byteCount != rhi::TextureChainByteSize(texture.format, texture.width, texture.height, texture.mipLevels))
+            header.byteCount != rhi::TextureChainByteSize(texture.format, texture.width, texture.height, texture.mipLevels) ||
+            bytes.size() - sizeof(header) != header.byteCount)
             return std::nullopt;
-        texture.data.resize(static_cast<std::size_t>(header.byteCount));
-        if (!input.read(reinterpret_cast<char *>(texture.data.data()), static_cast<std::streamsize>(texture.data.size())))
-            return std::nullopt;
+        texture.data.assign(bytes.begin() + sizeof(header), bytes.end());
         return texture;
+    }
+
+    std::optional<EncodedTexture> CompressedTextureStore::Load(const content::ContentDigest &key) const
+    {
+        std::string bytes;
+        for (const auto &layer : m_readOnlyLayers)
+            if (!layer.empty() && content::Exists(PathFor(layer, key)) && content::ReadFile(PathFor(layer, key), bytes))
+                if (auto texture = Parse(std::as_bytes(std::span(bytes.data(), bytes.size()))))
+                    return texture;
+        if (m_directory.empty())
+            return std::nullopt;
+        std::ifstream input(PathFor(m_directory, key), std::ios::binary);
+        if (!input)
+            return std::nullopt;
+        bytes.assign(std::istreambuf_iterator<char>(input), {});
+        return Parse(std::as_bytes(std::span(bytes.data(), bytes.size())));
     }
 
     bool CompressedTextureStore::Save(const content::ContentDigest &key, const EncodedTexture &texture) const
     {
         if (m_directory.empty())
             return false;
-        const auto path = PathFor(key);
+        const auto path = PathFor(m_directory, key);
         std::error_code error;
         std::filesystem::create_directories(path.parent_path(), error);
         if (error)

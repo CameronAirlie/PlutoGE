@@ -140,12 +140,7 @@ namespace PlutoGE::render
         lighting.directionalDirection = glm::normalize(glm::vec3(-.4f, -.8f, .6f));
         const std::array effects{BasicPostProcessEffect{BasicPostProcessEffectType::ToneMapping},
                                  BasicPostProcessEffect{BasicPostProcessEffectType::GammaCorrection}};
-        const auto pixels = [](const render::Texture &texture)
-        {
-            const auto rgba = texture.GetRgba8Pixels();
-            const auto *first = reinterpret_cast<const std::byte *>(rgba.data());
-            return rgba.empty() ? std::vector<std::byte>{} : std::vector<std::byte>(first, first + rgba.size());
-        };
+        const auto pixels = [](const render::Texture &texture) { return texture.CopyRgba8Bytes(); };
         if (!m_renderer->Render(width, height, camera, lighting, draws, {}, {}, effects, pixels)) return false;
         if (!m_copy)
         {

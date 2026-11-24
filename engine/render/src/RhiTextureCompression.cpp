@@ -18,7 +18,7 @@ namespace PlutoGE::render
             m_supported[format] = device.SupportsSampledFormat(format);
         if (!m_settings.enabled)
             return;
-        m_store = std::make_shared<CompressedTextureStore>(m_settings.cacheDirectory);
+        m_store = std::make_shared<CompressedTextureStore>(m_settings.cacheDirectory, m_settings.cookedDirectories);
         m_queue = std::make_unique<TextureCompressionQueue>(m_store, m_settings.workerCount);
     }
 
@@ -41,19 +41,12 @@ namespace PlutoGE::render
     std::optional<rhi::Format> RhiTextureCompression::SelectFormat(const Texture &source, TextureCacheKind kind,
                                                                    std::span<const std::byte> rgba8) const
     {
-        const auto width = static_cast<std::uint64_t>(std::max(source.GetWidth(), 0));
-        const auto height = static_cast<std::uint64_t>(std::max(source.GetHeight(), 0));
-        if (!m_settings.enabled || width * height < m_settings.minimumTexels || width < 4 || height < 4 ||
-            rgba8.size() != width * height * 4)
-            return std::nullopt;
-        TextureCompressionRequest request;
-        request.semantic = SemanticFor(kind);
-        request.srgb = kind == TextureCacheKind::Srgb;
-        request.usesAlpha = request.semantic != TextureSemantic::TangentNormal && TextureUsesAlpha(rgba8);
-        return SelectCompressedFormat(request, [&](rhi::Format format) {
-            const auto found = m_supported.find(format);
-            return found != m_supported.end() && found->second;
-        });
+        return SelectTextureCompression(rgba8, static_cast<std::uint32_t>(std::max(source.GetWidth(), 0)),
+                                        static_cast<std::uint32_t>(std::max(source.GetHeight(), 0)), SemanticFor(kind),
+                                        kind == TextureCacheKind::Srgb, m_settings, [&](rhi::Format format) {
+                                            const auto found = m_supported.find(format);
+                                            return found != m_supported.end() && found->second;
+                                        });
     }
 
     bool RhiTextureCompression::HasCapacityFor(const Texture &source) const

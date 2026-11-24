@@ -732,8 +732,8 @@ int main(int argc, char **argv)
         // view must not destroy images used by another.
         struct MutableTexture : render::Texture
         {
-            MutableTexture() : Texture({}) { m_width = m_height = 1; m_channels = 4; m_rgba8Pixels = {255, 0, 0, 255}; }
-            void Change() { m_rgba8Pixels = {0, 0, 255, 255}; ++m_contentRevision; }
+            MutableTexture() : Texture({}) { m_width = m_height = 1; m_channels = 4; ReplaceRgba8Pixels({255, 0, 0, 255}); }
+            void Change() { ReplaceRgba8Pixels({0, 0, 255, 255}); ++m_contentRevision; }
         } source;
         auto shaders = render::ShaderArtifactLibrary{}.LoadBasicRendererPackage();
         shaders.virtualShadows = {};

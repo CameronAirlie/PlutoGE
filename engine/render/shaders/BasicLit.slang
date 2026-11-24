@@ -1802,7 +1802,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const float3 ambientFresnel = f0 + (max(float3(1.0 - materialRoughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
     const float layerBaseScale = layersEnvironmentBaseScale(layers);
     const float3 coatResponse = coatEnvironmentResponse(layers, ndotv);
-    const float3 diffuseResponse = sampledColor.rgb * (1.0 - ambientFresnel) * (1.0 - materialMetallic) / PI * layerBaseScale +
+    // Multiplies cosine-weighted mean radiance (irradiance / pi), the convention of every environment layer below:
+    // albedo / pi times irradiance is albedo times mean radiance (DiffuseResponse.slang).
+    const float3 diffuseResponse = sampledColor.rgb * (1.0 - ambientFresnel) * (1.0 - materialMetallic) * layerBaseScale +
                                    sheenEnvironmentResponse(layers, ndotv);
     float captureWeights[4];
     float captureWeightSum = 0;
@@ -1842,7 +1844,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (captureCoverage < 1.0)
     {
         const bool skyLighting = physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0);
-        const float3 overcastIrradiance = PI * cloudOvercastRadiance(cloudLighting.overcast, normal) * diffuseResponse;
+        const float3 overcastIrradiance = cloudOvercastRadiance(cloudLighting.overcast, normal) * diffuseResponse;
         if (gridCovered)
             ambient = gridDiffuse;
         else if (skyLighting)
@@ -1851,7 +1853,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         else
             // Flat ambient radiance: the base's albedo without Fresnel (as before layers), under and with the layers.
             ambient = cloudySky((sampledColor.rgb * (1.0 - materialMetallic) * layerBaseScale +
-                                 sheenEnvironmentResponse(layers, ndotv) * PI) * cameraPositionAmbient.w,
+                                 sheenEnvironmentResponse(layers, ndotv)) * cameraPositionAmbient.w,
                                 overcastIrradiance, cloudLighting);
         if (skyLighting)
         {
@@ -1895,8 +1897,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if (transmits)
     {
         const float3 farNormal = -normal;
-        const float3 farResponse = diffuseTransmittance / PI;
-        const float3 farOvercast = PI * cloudOvercastRadiance(cloudLighting.overcast, farNormal) * farResponse;
+        const float3 farResponse = diffuseTransmittance;
+        const float3 farOvercast = cloudOvercastRadiance(cloudLighting.overcast, farNormal) * farResponse;
         float3 farAmbient = 0.0;
         if (captureCoverage < 1.0)
         {

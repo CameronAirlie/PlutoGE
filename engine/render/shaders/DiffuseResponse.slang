@@ -39,13 +39,14 @@ float3 ambientDiffuseResponse(float3 albedo, float metallic, float roughness, fl
     const float ndotv = max(saturate(dot(normal, viewDirection)), 0.0001);
     const float3 f0 = lerp(float3(0.04), albedo, metallic);
     const float3 fresnel = f0 + (max(float3(1.0 - roughness), f0) - f0) * pow(1.0 - ndotv, 5.0);
-    return albedo * (1.0 - fresnel) * (1.0 - metallic) / 3.14159265358979;
+    // Lambertian radiance is albedo / pi times irradiance, which is albedo times the mean radiance.
+    return albedo * (1.0 - fresnel) * (1.0 - metallic);
 }
 
 // The ambient response of the surface's far side, to the irradiance arriving there (zero for opaque surfaces).
 float3 foliageFarResponse(float4 albedo, float materialOcclusion)
 {
-    return foliageFarAlbedo(albedo) / 3.14159265358979 * multiBounceOcclusion(saturate(materialOcclusion), albedo.rgb);
+    return foliageFarAlbedo(albedo) * multiBounceOcclusion(saturate(materialOcclusion), albedo.rgb);
 }
 
 // The same response occluded by the surface's material ambient occlusion (the material target's alpha), as the

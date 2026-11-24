@@ -4,7 +4,7 @@
 //
 // Conventions match the rest of the renderer's ambient lighting: irradiance texels hold the cosine-weighted mean
 // radiance (irradiance / pi, as samplePhysicalSkyIrradiance and the baked probe grid), and a receiver's diffuse
-// light is that value times albedo (1 - F)(1 - metallic) / pi.
+// light is that value times albedo (1 - F)(1 - metallic): Lambert's albedo / pi times irradiance.
 //
 // The volume is a set of nested, camera-centred cascades (DdgiProbeGrid.h), each three times the spacing of the one
 // inside it. Grid coordinate g (0..counts-1) of cascade c is that cascade's probe g in its current placement; its data

@@ -197,10 +197,10 @@ namespace PlutoGE::render
                                0.0f};
         parameters.sampling = {m_settings.leakReduction, OcclusionTraced() ? 1.0f : 0.0f, 0.0f, 0.0f};
         parameters.atlas = {tiles * glm::uvec2(PLUTO_DDGI_IRRADIANCE_TILE), tiles * glm::uvec2(PLUTO_DDGI_DISTANCE_TILE)};
-        // Without the physical sky the geometry pass lights a surface with albedo * ambient, which is irradiance
-        // pi * ambient in this volume's convention (cosine-weighted mean radiance times albedo / pi).
-        parameters.sky = {m_environment.physicalSky ? 1.0f : 0.0f,
-                          3.14159265f * std::max(m_environment.ambientIntensity, 0.0f), 0.0f, 0.0f};
+        // Without the physical sky the geometry pass lights a surface with albedo * ambient: a uniform sky of
+        // radiance `ambient`, whose cosine-weighted mean radiance (this volume's convention) is `ambient` too.
+        parameters.sky = {m_environment.physicalSky ? 1.0f : 0.0f, std::max(m_environment.ambientIntensity, 0.0f),
+                          0.0f, 0.0f};
         parameters.physicalSkyParameters = m_environment.skyParameters;
         parameters.physicalSkySettings = {m_environment.physicalSky ? 1.0f : 0.0f,
                                           std::max(m_environment.skyExposure, 0.0f), 1.0f, 0.0f};

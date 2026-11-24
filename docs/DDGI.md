@@ -187,8 +187,10 @@ coverage). `DDGIApply.slang` then, per pixel (`DDGIReflection.slang`):
 The geometry pass writes that target whenever DDGI is on (as for SSR). Sky visibility needs no extra atlas: it
 uses the visibility atlas's spare channel.
 
-Irradiance uses the renderer's existing ambient convention (cosine-weighted mean radiance times
-`albedo (1 - F)(1 - metallic) / pi`). An unoccluded scene therefore looks as it does without DDGI: the GPU check
+Irradiance uses the renderer's ambient convention: cosine-weighted mean radiance (irradiance / pi) times
+`albedo (1 - F)(1 - metallic)`, which is Lambert's `albedo / pi` times irradiance. (Before 2026-11-24 receivers also
+divided by pi, so sky and probe light reached diffuse surfaces at a third of its strength while reflections of the
+same sky were full strength; reflections looked far too strong wherever ambient light was the only light.) An unoccluded scene therefore looks as it does without DDGI: the GPU check
 measures 0.96 of the flat-ambient brightness on open ground, the difference being ambient Fresnel, which the geometry
 pass omits.
 

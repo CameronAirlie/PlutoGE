@@ -137,13 +137,13 @@ float3 coatEnvironmentResponse(SurfaceLayers layers, float ndotv)
                                   : float3(0.0);
 }
 
-// What diffuse irradiance is multiplied by for the sheen's environment light (the coat transmits it as it does the
-// base's): its albedo along the view times the mean incident radiance, irradiance / pi.
+// What the environment's cosine-weighted mean radiance (irradiance / pi) is multiplied by for the sheen's light (the
+// coat transmits it as it does the base's): the sheen's albedo along the view.
 float3 sheenEnvironmentResponse(SurfaceLayers layers, float ndotv)
 {
     if (!layers.sheenActive) return float3(0.0);
     const float roughness = sqrt(layers.sheenAlpha);
-    return layers.sheenColor * saturate(sheenDirectionalAlbedo(ndotv, roughness)) * (1.0 - layers.viewCoatFresnel) / BrdfPi;
+    return layers.sheenColor * saturate(sheenDirectionalAlbedo(ndotv, roughness)) * (1.0 - layers.viewCoatFresnel);
 }
 
 #endif

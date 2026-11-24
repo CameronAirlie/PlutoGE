@@ -111,11 +111,14 @@ ApplyOutput composeApply(int2 pixel, float depth, uint view, DdgiSurfaceLight li
     float occlusion = 0.0;
     if (ddgiReflectionOcclusionEnabled())
     {
-        // The geometry pass's split-sum response (BasicLit.slang).
+        // The geometry pass's split-sum response, occluded by the material's cavities as it occludes the reflection
+        // it wrote (BasicLit.slang): the probes' light must not reach into creases the reflection it replaces did not.
         const float ndotv = max(saturate(dot(normal, viewDirection)), 0.0001);
         const float3 f0 = lerp(float3(0.04), albedo, metallicRoughness.x);
-        specular = ddgiOccludeEnvironmentSpecular(output.environmentSpecular, probes, coverage,
-                                                  iblSpecularResponse(f0, metallicRoughness.y, ndotv), occlusion);
+        const float3 specularResponse = iblSpecularResponse(f0, metallicRoughness.y, ndotv) *
+                                        specularOcclusion(material.a, ndotv, metallicRoughness.y);
+        specular = ddgiOccludeEnvironmentSpecular(output.environmentSpecular, probes, coverage, specularResponse,
+                                                  occlusion);
     }
     if (view == PLUTO_DDGI_VIEW_IRRADIANCE)
         output.color = float4(probes.irradiance * coverage, 1.0);

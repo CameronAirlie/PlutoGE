@@ -274,6 +274,10 @@ DiffuseGridSample sampleDiffuseVolume(float3 position, float3 normal, float3 rec
     // Visibility is linear in its coefficients, so interpolating them interpolates
     // it in every direction; the live sky factorises as visibility * irradiance.
     if (sky.x > 0.0) sample.irradiance += sky.x * evaluateSkyVisibility(skyVisibility, normal) * liveSkyRadiance(normal, position);
+    // Both terms are irradiance: the baker (SceneBaker) accumulates pi times radiance with the full cosine band
+    // factors, and scales the live sky's mean radiance by pi (skyIrradianceScale). Receivers take cosine-weighted mean
+    // radiance, as from the sky, captures and DDGI (DiffuseResponse.slang).
+    sample.irradiance *= 1.0 / 3.14159265358979;
     sample.skyVisibility = lerp(float4(0, 0, 0, 1), skyVisibility, sky.y);
     sample.coverage = 1;
     return sample;

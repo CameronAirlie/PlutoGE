@@ -32,7 +32,9 @@ float iblWeight(int index, float3 position)
     return iblSizeBlend[index].w > 0 ? saturate(distance / iblSizeBlend[index].w) : 1;
 }
 
-// Capture `index`'s diffuse irradiance, in the probe grid's convention.
+// Capture `index`'s diffuse light as cosine-weighted mean radiance (irradiance / pi), the convention of the probe
+// grid, the sky and DDGI. The capture's coefficients (RhiSceneRenderer) are cosine-convolved with the full band
+// factors (pi, 2pi/3, pi/4), so they evaluate to irradiance itself.
 float3 iblDiffuse(int index, float3 n)
 {
     const float basis[9] = {0.282095, 0.488603*n.y, 0.488603*n.z, 0.488603*n.x,
@@ -41,7 +43,7 @@ float3 iblDiffuse(int index, float3 n)
     float3 irradiance = float3(0);
     for (int coefficient = 0; coefficient < 9; ++coefficient)
         irradiance += iblIrradiance[index * 9 + coefficient].rgb * basis[coefficient];
-    return max(irradiance, 0.0) * iblOriginIntensity[index].w;
+    return max(irradiance, 0.0) * (iblOriginIntensity[index].w / 3.14159265358979);
 }
 
 bool iblRelightsFromAmbient(int index) { return iblSettings[index].w > 0.5; }

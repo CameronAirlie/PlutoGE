@@ -134,8 +134,21 @@ namespace PlutoGE::scene
         // ---- distance (phase 9) --------------------------------------------------------------------------------------
         // The volume as coarse ground over a coarser drawing of the same terrain (a world's overview of this tile): the
         // cells it cuts there and the meshes that fill them, with voxels `step` times this volume's. Empty when there
-        // is nothing but plain ground. Built on the calling thread (a tile does it as it streams out).
+        // is nothing but plain ground. Built on the calling thread; PrepareFarProxy builds it elsewhere.
         [[nodiscard]] volume::VolumeFarProxy BuildFarProxy(std::shared_ptr<const volume::TerrainSurface> farSurface, int step);
+        // What building a far proxy reads, copied (the volume's stored chunks, the far base, the mesher), so a tile that
+        // streams out can build its proxy on a worker thread: Build() may run on any thread.
+        struct FarProxyJob
+        {
+            volume::TerrainVolume volume;
+            std::shared_ptr<const volume::VolumeDensitySource> base;
+            std::shared_ptr<const volume::TerrainSurface> surface;
+            std::shared_ptr<const volume::VolumeMesher> mesher;
+            volume::VolumeFarProxySettings settings;
+            [[nodiscard]] volume::VolumeFarProxy Build() const;
+        };
+        // Nothing when there is nothing but plain ground (the proxy would be empty).
+        [[nodiscard]] std::optional<FarProxyJob> PrepareFarProxy(std::shared_ptr<const volume::TerrainSurface> farSurface, int step);
         // A terrain's drawn surface as the volume sees it (heights and strongest layers).
         [[nodiscard]] static std::shared_ptr<const volume::TerrainSurface> SnapshotSurface(const TerrainComponent &terrain);
 

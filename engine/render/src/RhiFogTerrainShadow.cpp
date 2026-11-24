@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 namespace PlutoGE::render
 {
@@ -54,8 +55,26 @@ namespace PlutoGE::render
             for (const auto &key : terrains)
             {
                 const glm::mat4 toLocal = glm::inverse(key.world);
-                for (int z = 0; z < m_resolution; ++z)
-                    for (int x = 0; x < m_resolution; ++x)
+                // Only the texels over this terrain's footprint (with a texel of margin) can sample it: a world's tiles
+                // each cover a small part of the grid.
+                const float sizeX = static_cast<float>(key.terrain->GetWidth() - 1) * key.terrain->GetCellSize();
+                const float sizeZ = static_cast<float>(key.terrain->GetDepth() - 1) * key.terrain->GetCellSize();
+                glm::vec2 footprintLower(std::numeric_limits<float>::max()), footprintUpper(std::numeric_limits<float>::lowest());
+                for (const glm::vec2 corner : {glm::vec2(0.0f), glm::vec2(sizeX, 0.0f), glm::vec2(0.0f, sizeZ), glm::vec2(sizeX, sizeZ)})
+                {
+                    const glm::vec3 world = glm::vec3(key.world * glm::vec4(corner.x, 0.0f, corner.y, 1.0f));
+                    footprintLower = glm::min(footprintLower, glm::vec2(world.x, world.z));
+                    footprintUpper = glm::max(footprintUpper, glm::vec2(world.x, world.z));
+                }
+                const auto texelRange = [&](float lowerWorld, float upperWorld, float origin) {
+                    const int first = static_cast<int>(std::floor((lowerWorld - origin) / texel - 0.5f)) - 1;
+                    const int last = static_cast<int>(std::ceil((upperWorld - origin) / texel - 0.5f)) + 1;
+                    return std::pair{std::clamp(first, 0, m_resolution - 1), std::clamp(last, 0, m_resolution - 1)};
+                };
+                const auto [firstX, lastX] = texelRange(footprintLower.x, footprintUpper.x, m_origin.x);
+                const auto [firstZ, lastZ] = texelRange(footprintLower.y, footprintUpper.y, m_origin.y);
+                for (int z = firstZ; z <= lastZ; ++z)
+                    for (int x = firstX; x <= lastX; ++x)
                     {
                         const glm::vec2 worldXz = m_origin + (glm::vec2(static_cast<float>(x), static_cast<float>(z)) + 0.5f) * texel;
                         const glm::vec3 local = glm::vec3(toLocal * glm::vec4(worldXz.x, 0.0f, worldXz.y, 1.0f));

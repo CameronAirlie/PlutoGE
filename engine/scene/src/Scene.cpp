@@ -1069,10 +1069,12 @@ namespace PlutoGE::scene
                                           const char *scopeName, SignatureOf &&signatureOf, Create &&create,
                                           Retire &&retire)
         {
+            core::CpuScope signatureScope("Physics body signatures", core::CpuCategory::Physics);
             std::vector<uint64_t> signatures;
             signatures.reserve(entities.size());
             for (auto *entity : entities)
                 signatures.push_back(signatureOf(*entity));
+            signatureScope.End();
 
             bool unchanged = bodies.size() == entities.size();
             for (std::size_t index = 0; unchanged && index < entities.size(); ++index)
@@ -1520,11 +1522,14 @@ namespace PlutoGE::scene
                 HashCombine(signature, core::Engine::GetInstance().GetAssetManager().LoadSurfaceResponseAsset(collider.GetSurfaceAssetReference()).friction);
             HashScale(signature, entity.GetWorldScale());
 
+            // Geometry by content revision (what the shape cache keys on), so a collider whose geometry changed in place
+            // gets a new body and every other collider keeps its own.
             if (const auto *terrain = entity.GetComponent<TerrainComponent>())
             {
                 HashCombine(signature, terrain->GetWidth());
                 HashCombine(signature, terrain->GetDepth());
                 HashCombine(signature, terrain->GetCellSize());
+                HashCombine(signature, terrain->GetHeightsRevision());
                 HashCombine(signature, terrain->GetHolesRevision());
             }
             if (const auto *meshComponent = entity.GetComponent<MeshComponent>())
@@ -1535,6 +1540,7 @@ namespace PlutoGE::scene
                 {
                     HashCombine(signature, mesh->GetVertexCount());
                     HashCombine(signature, mesh->GetIndexCount());
+                    HashCombine(signature, mesh->GetContentRevision());
                 }
             }
             if (const auto *spline = entity.GetComponent<SplineComponent>())
@@ -1547,6 +1553,7 @@ namespace PlutoGE::scene
                 {
                     HashCombine(signature, collisionMesh->GetVertexCount());
                     HashCombine(signature, collisionMesh->GetIndexCount());
+                    HashCombine(signature, collisionMesh->GetContentRevision());
                 }
                 HashCombine(signature, spline->GetCollisionPathPoints().size());
             }
@@ -1576,9 +1583,6 @@ namespace PlutoGE::scene
 
         std::unique_ptr<BulletQueryWorld> world = std::make_unique<BulletQueryWorld>();
         uint64_t refreshSequence = kStaleSequence;
-        // Collider geometry changed in place (MarkColliderShapesDirty): the next refresh recreates every entity body,
-        // and the shape cache rebuilds only geometry whose source changed. Foliage cells synchronize on their own.
-        bool colliderShapesStale = false;
     };
 
     struct Scene::RuntimePhysicsState
@@ -1764,7 +1768,10 @@ namespace PlutoGE::scene
 
     void Scene::RefreshPhysicsQueryMembership() const
     {
+        core::CpuScope indexScope("Physics query component index", core::CpuCategory::Physics);
         m_runtimeComponents->Refresh(m_rootEntities);
+        indexScope.End();
+        core::CpuScope reconcileScope("Physics query body reconcile", core::CpuCategory::Physics);
         std::vector<Entity *> queryEntities;
         queryEntities.reserve(m_runtimeComponents->colliders.size());
         for (auto *collider : m_runtimeComponents->colliders)
@@ -1774,16 +1781,7 @@ namespace PlutoGE::scene
         if (!m_physicsQueryCache)
             m_physicsQueryCache = std::make_unique<PhysicsQueryCache>();
         auto &world = *m_physicsQueryCache->world;
-        // After an in-place geometry edit every body is recreated. The old ones are retired only afterwards, so the
-        // shapes they share with unchanged colliders are still alive for the new bodies to reuse.
-        std::vector<BulletQueryBody> replaced;
-        if (m_physicsQueryCache->colliderShapesStale)
-        {
-            replaced = std::move(world.bodies);
-            world.bodies.clear();
-            m_physicsQueryCache->colliderShapesStale = false;
-        }
-
+        // Colliders whose geometry changed in place have new signatures (content revisions): only they are recreated.
         m_physicsSyncStats.queryBodiesCreated += ReconcileEntityBodies(
             world.bodies, queryEntities, "Physics query membership update", QueryBodySignature,
             [&](Entity &entity, uint64_t signature)
@@ -1794,13 +1792,14 @@ namespace PlutoGE::scene
                 return body;
             },
             [&](BulletQueryBody &body) { world.RetireBody(body); });
-        for (auto &body : replaced)
-            world.RetireBody(body);
+        reconcileScope.End();
+        core::CpuScope foliageScope("Physics query foliage check", core::CpuCategory::Physics);
         SynchronizeFoliageBodies(world.foliage, world.collisionWorld, m_foliageComponents);
     }
 
     void Scene::SynchronizePhysicsQueryBodyTransforms() const
     {
+        core::CpuScope scope("Physics query body transforms", core::CpuCategory::Physics);
         if (m_physicsQueryCache->world)
         {
             for (auto &body : m_physicsQueryCache->world->bodies)
@@ -1829,9 +1828,7 @@ namespace PlutoGE::scene
 
     void Scene::MarkColliderShapesDirty() const
     {
-        if (!m_physicsQueryCache)
-            return;
-        m_physicsQueryCache->colliderShapesStale = true;
+        // Body signatures carry the geometry's content revisions, so the next refresh replaces just the changed bodies.
         InvalidatePhysicsQueryMembership();
     }
 

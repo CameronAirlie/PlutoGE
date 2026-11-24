@@ -29,6 +29,9 @@ public sealed record GraphicsQuality
     public bool ContactShadows { get; init; } = true;
     /// <summary>Traced shadows: local lights without a shadow map stop at walls, floors and terrain.</summary>
     public bool TracedShadows { get; init; } = true;
+    /// <summary>Swaying foliage sways in the sun's shadows too. Off, those shadows hold the rest pose and stay cached
+    /// (much cheaper under a dense canopy) while the plants still sway.</summary>
+    public bool FoliageShadowSway { get; init; } = true;
     /// <summary>Instanced foliage detail ceiling: below 1, plants take coarser LODs and impostors from nearer.</summary>
     public float FoliageDetail { get; init; } = 1;
     /// <summary>Share of each detail grass layer's authored density.</summary>
@@ -57,7 +60,7 @@ public sealed record GraphicsQuality
             Flags = (Enabled ? 1u : 0) | (CascadedShadows ? 2u : 0) | (AmbientOcclusion ? 4u : 0) |
                 (GlobalIllumination ? 8u : 0) | (Reflections ? 16u : 0) | (Volumetrics ? 32u : 0) |
                 (Bloom ? 64u : 0) | (DepthOfField ? 128u : 0) | (MotionBlur ? 256u : 0) | (ContactShadows ? 512u : 0) |
-                (TracedShadows ? 1024u : 0),
+                (TracedShadows ? 1024u : 0) | (FoliageShadowSway ? 2048u : 0),
             FoliageDetail = FoliageDetail, GrassDensity = GrassDensity, GrassDistance = GrassDistance
         };
     }
@@ -71,6 +74,7 @@ public sealed record GraphicsQuality
         Volumetrics = (value.Flags & 32) != 0, Bloom = (value.Flags & 64) != 0,
         DepthOfField = (value.Flags & 128) != 0, MotionBlur = (value.Flags & 256) != 0,
         ContactShadows = (value.Flags & 512) != 0, TracedShadows = (value.Flags & 1024) != 0,
+        FoliageShadowSway = (value.Flags & 2048) != 0,
         FoliageDetail = value.FoliageDetail,
         GrassDensity = value.GrassDensity, GrassDistance = value.GrassDistance
     };

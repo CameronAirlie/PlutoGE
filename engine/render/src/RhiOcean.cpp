@@ -37,7 +37,8 @@ namespace PlutoGE::render
                     packet->waveMotion = spectrum.motion;
                     packet->crestFoam = {ocean->GetCrestFoamThreshold(), ocean->GetCrestFoamIntensity(), ocean->GetFoamScale(), spectrum.heightBound};
                     packet->detail = {ocean->GetRippleStrength(), ocean->GetCausticsIntensity(), ocean->GetCausticsScale(), 0};
-                    packet->reflections = {ocean->GetReflectionStrength(), ocean->GetReflectionDistance(), .6f, 48.f};
+                    packet->reflections = {ocean->GetReflectionStrength(), ocean->GetReflectionDistance(), .6f,
+                                           static_cast<float>(lighting.waterReflectionSteps)};
                     packet->contact = {ocean->GetContactDistance(), ocean->GetContactDamping(), ocean->GetContactDarkening(), ocean->GetContactFoam()};
                     const float windAngle = glm::radians(ocean->GetWindDirection());
                     packet->flow = {std::cos(windAngle), std::sin(windAngle), 0, 0};

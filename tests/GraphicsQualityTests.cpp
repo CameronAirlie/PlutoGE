@@ -1,4 +1,5 @@
 #include "PlutoGE/render/GraphicsQuality.h"
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 
@@ -31,6 +32,30 @@ int main()
     // Traced shadows: off on Low, allowed above it and whenever no tier is active.
     Check(!low.AllowsTracedShadows() && GraphicsQuality::FromPreset(GraphicsPreset::Medium).AllowsTracedShadows());
     Check(authored.AllowsTracedShadows());
+    // Foliage shadow sway: Low freezes it (no caster's sway reaches the minimum on any level); other tiers and disabled
+    // tiers keep the authored minimum.
+    {
+        BasicLighting windy = source;
+        windy.wind.shadowSwayMinTexels = 1.0f;
+        auto swaying = windy;
+        low.Apply(swaying);
+        Check(!low.foliageShadowSway && std::isfinite(swaying.wind.shadowSwayMinTexels) && swaying.wind.shadowSwayMinTexels > 1.0e30f);
+        swaying = windy;
+        GraphicsQuality::FromPreset(GraphicsPreset::Medium).Apply(swaying);
+        Check(swaying.wind.shadowSwayMinTexels == 1.0f);
+        swaying = windy;
+        authored.Apply(swaying);
+        Check(swaying.wind.shadowSwayMinTexels == 1.0f);
+    }
+    // Water reflections: tiers without screen-space reflections trace fewer steps.
+    {
+        auto water = source;
+        low.Apply(water);
+        Check(water.waterReflectionSteps == GraphicsQuality::WaterReflectionStepsWithoutReflections);
+        water = source;
+        GraphicsQuality::FromPreset(GraphicsPreset::High).Apply(water);
+        Check(water.waterReflectionSteps == source.waterReflectionSteps);
+    }
     auto custom = low;
     custom.reflections = true;
     Check(custom.Allows(BasicPostProcessEffectType::SSR));

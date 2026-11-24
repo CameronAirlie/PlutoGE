@@ -38,6 +38,10 @@ namespace PlutoGE::ui
             Allow("tracedShadows", "Traced shadows",
                 "Allows local lights without a shadow map to be traced against the world, so their light stops at walls, "
                 "floors and terrain.", Shadows, &Q::tracedShadows),
+            Allow("foliageShadowSway", "Foliage shadow sway",
+                "Lets swaying foliage sway in the sun's virtual shadow maps. Off, those shadows hold the rest pose and "
+                "stay cached, which is much cheaper under a dense canopy; the plants still sway.", Shadows,
+                &Q::foliageShadowSway),
             Allow("ambientOcclusion", "Ambient occlusion", "Allows SSAO.", Lighting, &Q::ambientOcclusion),
             Allow("globalIllumination", "Global illumination",
                 "Allows SSGI, DDGI probes and voxel cone tracing GI. Baked ambient volumes stay on.", Lighting,

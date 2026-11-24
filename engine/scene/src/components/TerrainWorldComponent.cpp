@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/TerrainWorldComponent.h"
 
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/Entity.h"
@@ -142,6 +143,12 @@ namespace PlutoGE::scene
         for (auto &future : m_abandonedGenerations)
             if (future.valid())
                 future.wait();
+        for (auto &future : m_abandonedFarProxies)
+            if (future.valid())
+                future.wait();
+        for (auto &[coord, far] : m_farProxies)
+            if (far.pending.valid())
+                far.pending.wait();
     }
 
     void TerrainWorldComponent::SetEditorViewer(std::optional<glm::vec3> worldPosition) { EditorViewer() = worldPosition; }
@@ -282,6 +289,7 @@ namespace PlutoGE::scene
         if (m_sourceCheckTimer > 0.0f || !GetOwner())
             return;
         m_sourceCheckTimer = 0.25f;
+        core::CpuScope signatureScope("TerrainWorld.WatchTileSource");
         const auto signature = MakeTileSource()->Signature();
         if (std::any_of(m_tiles.begin(), m_tiles.end(), [&](const auto &entry) {
                 return entry.second.state == TerrainTileState::Active && entry.second.entity && entry.second.sourceSignature != signature;
@@ -570,6 +578,8 @@ namespace PlutoGE::scene
         EnsureOverview();
         std::erase_if(m_abandonedLoads, [](const auto &future) { return !future.valid() || IsDone(future); });
         std::erase_if(m_abandonedGenerations, [](const auto &future) { return !future.valid() || IsDone(future); });
+        std::erase_if(m_abandonedFarProxies, [](const auto &future) { return !future.valid() || IsDone(future); });
+        CollectFarProxies(false);
 
         // Finished reads become ready; ready tiles become terrains, nearest first, a few a frame.
         for (auto &[coord, tile] : m_tiles)
@@ -607,6 +617,7 @@ namespace PlutoGE::scene
         const auto budget = unbudgeted ? ready.size() : static_cast<std::size_t>(std::max(m_streaming.activationsPerFrame, 1));
         for (std::size_t i = 0; i < ready.size() && i < budget; ++i)
             Activate(ready[i].second, m_tiles[ready[i].second]);
+        HideOverviewsUnderReadyTiles();
 
         const auto actions = PlanTerrainStreaming(m_grid, m_streaming, local, [this](TerrainTileCoord tile) {
             const auto found = m_tiles.find(tile);
@@ -660,11 +671,14 @@ namespace PlutoGE::scene
             tile.state = TerrainTileState::Unloaded;
             return;
         }
+        core::CpuScope activateScope("TerrainWorld.Activate");
 
         std::string error;
         const auto source = MakeTileSource();
         tile.sourceSignature = source->Signature();
+        core::CpuScope createScope("TerrainWorld.Activate.CreateTile");
         Entity *entity = source->Create(*scene, *owner, &error);
+        createScope.End();
         if (!entity)
         {
             ReportError("Tile source: " + error);
@@ -682,6 +696,8 @@ namespace PlutoGE::scene
             if (!entity->GetComponent<ColliderComponent>())
                 entity->CreateComponent<ColliderComponent>()->SetShape(ColliderShape::Terrain);
         }
+        // Its mesh builds on a worker (a 257-sample tile takes about 20 ms); the overview draws until it lands.
+        terrain->SetAsyncMeshBuild(true);
         // What belongs to the tile: the world's grid, the tile's heights, and its own weight files when it was painted.
         terrain->Deserialize({
             {"CellSize", PropertyType::Float, std::to_string(m_grid.cellSize)},
@@ -689,7 +705,9 @@ namespace PlutoGE::scene
             {"SkirtDepth", PropertyType::Float, std::to_string(m_tileSkirtDepth)},
             {"Static", PropertyType::Bool, "true"},
         });
+        core::CpuScope heightsScope("TerrainWorld.Activate.SetHeightData");
         terrain->SetHeightData(std::move(tile.data->heights));
+        heightsScope.End();
         terrain->SetHeightDataPath(TerrainTileFile(m_tileFiles, coord));
         // The tile's own holes: none without a hole file, whatever the tile source carried.
         terrain->SetHoles(tile.data->holes ? std::move(*tile.data->holes) : TerrainHoleMask{});
@@ -709,16 +727,36 @@ namespace PlutoGE::scene
         {
             terrain->GetLayers().SetWeightMapPaths({TileWeightFile(coord, 0), TileWeightFile(coord, 1)});
             std::error_code ignored;
+            core::CpuScope weightsScope("TerrainWorld.Activate.LoadWeightMaps");
             if (std::filesystem::exists(ResolvePath(TileWeightFile(coord, 0)), ignored))
                 tile.paintedWeights = terrain->GetLayers().LoadWeightMaps();
         }
         tile.entity = entity->GetID();
         tile.state = TerrainTileState::Active;
+        tile.overviewHidden = false;
+        core::CpuScope generationScope("TerrainWorld.Activate.StartGeneration");
         StartGeneration(tile, *entity);
-        if (const auto overview = m_overviewEntities.find(coord); overview != m_overviewEntities.end())
-            if (auto *overviewEntity = scene->FindEntityByID(overview->second))
-                overviewEntity->SetActive(false);
+        generationScope.End();
         InvalidateNavigation(coord);
+    }
+
+    void TerrainWorldComponent::HideOverviewsUnderReadyTiles()
+    {
+        auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
+        if (!scene)
+            return;
+        for (auto &[coord, tile] : m_tiles)
+        {
+            if (tile.state != TerrainTileState::Active || !tile.entity || tile.overviewHidden)
+                continue;
+            const auto *terrain = GetTileTerrain(coord);
+            if (!terrain || !terrain->HasMesh())
+                continue;
+            tile.overviewHidden = true;
+            if (const auto overview = m_overviewEntities.find(coord); overview != m_overviewEntities.end())
+                if (auto *overviewEntity = scene->FindEntityByID(overview->second))
+                    overviewEntity->SetActive(false);
+        }
     }
 
     void TerrainWorldComponent::StartGeneration(Tile &tile, Entity &entity)
@@ -748,6 +786,7 @@ namespace PlutoGE::scene
             tile.generation.wait();
         else if (!IsDone(tile.generation))
             return;
+        core::CpuScope applyScope("TerrainWorld.ApplyGeneration");
         auto result = tile.generation.get();
         tile.generating = false;
         auto *scene = GetOwner() ? GetOwner()->GetScene() : nullptr;
@@ -776,12 +815,16 @@ namespace PlutoGE::scene
         Abandon(tile);
         if (tile.entity && scene)
         {
+            core::CpuScope unloadScope("TerrainWorld.Unload");
             if (auto *entity = scene->FindEntityByID(tile.entity))
             {
                 KeepVolumeEdits(coord, *entity);
+                core::CpuScope proxyScope("TerrainWorld.Unload.BuildFarProxy");
                 BuildFarProxy(coord, *entity);
             }
+            core::CpuScope destroyScope("TerrainWorld.Unload.DestroyEntity");
             scene->DestroyEntity(tile.entity);
+            destroyScope.End();
             InvalidateNavigation(coord);
         }
         tile.entity = 0;
@@ -904,9 +947,8 @@ namespace PlutoGE::scene
         if (!volume || !overview || m_farVolumeVoxel <= 0.0f)
             return;
         const int step = std::max(1, static_cast<int>(std::lround(m_farVolumeVoxel / std::max(volume->GetVoxelSize(), 0.01f))));
-        auto proxy = volume->BuildFarProxy(TerrainVolumeComponent::SnapshotSurface(*overview), step);
+        auto job = volume->PrepareFarProxy(TerrainVolumeComponent::SnapshotSurface(*overview), step);
         auto &far = m_farProxies[coord];
-        far.proxy = std::move(proxy);
         // The layers' material, copied: the tile's own goes with the tile.
         if (auto *source = volume->GetChunkMaterial())
         {
@@ -915,7 +957,28 @@ namespace PlutoGE::scene
             else
                 far.material->SetConfig(source->ReadConfig());
         }
-        ShowFarProxy(coord);
+        // An older build still running is superseded.
+        if (far.pending.valid())
+            m_abandonedFarProxies.push_back(std::move(far.pending));
+        if (!job)
+        {
+            far.proxy = {};
+            ShowFarProxy(coord);
+            return;
+        }
+        // The job holds copies, so the tile can go while it runs.
+        far.pending = std::async(std::launch::async, [job = std::move(*job)] { return job.Build(); });
+    }
+
+    void TerrainWorldComponent::CollectFarProxies(bool wait)
+    {
+        for (auto &[coord, far] : m_farProxies)
+        {
+            if (!far.pending.valid() || (!wait && !IsDone(far.pending)))
+                continue;
+            far.proxy = far.pending.get();
+            ShowFarProxy(coord);
+        }
     }
 
     void TerrainWorldComponent::ShowFarProxy(TerrainTileCoord coord)
@@ -1038,6 +1101,8 @@ namespace PlutoGE::scene
         for (auto &[coord, tile] : m_tiles)
             Unload(coord, tile);
         m_tiles.clear();
+        // Everything went at once (a new grid, the component going): the proxies are there when this returns.
+        CollectFarProxies(true);
     }
 
     void TerrainWorldComponent::Reload()
@@ -1092,8 +1157,9 @@ namespace PlutoGE::scene
                     settings.push_back({"MaterialAsset", PropertyType::String, material});
                 terrain->Deserialize(settings);
                 terrain->SetHeightData({std::move(part), {}});
-                // Under a loaded tile the detailed terrain draws instead.
-                if (const auto found = m_tiles.find(coord); found != m_tiles.end() && found->second.state == TerrainTileState::Active && found->second.entity)
+                // Under a loaded tile whose mesh draws, the detailed terrain draws instead.
+                if (const auto found = m_tiles.find(coord); found != m_tiles.end() && found->second.state == TerrainTileState::Active &&
+                                                            found->second.entity && found->second.overviewHidden)
                     entity->SetActive(false);
                 m_overviewEntities[coord] = entity->GetID();
             }
@@ -1122,6 +1188,7 @@ namespace PlutoGE::scene
         auto *scene = owner ? owner->GetScene() : nullptr;
         if (!scene)
             return;
+        core::CpuScope navigationScope("TerrainWorld.InvalidateNavigation");
         const glm::mat4 world = owner->GetWorldTransform();
         const glm::vec2 origin = m_grid.TileOrigin(coord);
         const glm::vec3 a = glm::vec3(world * glm::vec4(origin.x, 0.0f, origin.y, 1.0f));
@@ -1197,6 +1264,11 @@ namespace PlutoGE::scene
                 break;
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
+        // Loading screens leave nothing to pop in: the loaded tiles' meshes are built now, so their overviews go.
+        for (const auto &[coord, tile] : m_tiles)
+            if (auto *terrain = tile.state == TerrainTileState::Active ? GetTileTerrain(coord) : nullptr)
+                terrain->FinishMeshBuild();
+        HideOverviewsUnderReadyTiles();
         m_viewerOverride = previous;
         return complete;
     }

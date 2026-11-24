@@ -74,7 +74,7 @@ namespace
             field.Set(edited, field.max * 4.0 + 1.0);
             Check(field.Get(edited) == field.max, "A field did not clamp to its maximum");
         }
-        Check(ids.size() == 15, "Quality field table does not cover every GraphicsQuality ceiling");
+        Check(ids.size() == 17, "Quality field table does not cover every GraphicsQuality ceiling");
         auto edited = quality;
         Field("shadowResolution").Set(edited, 2500.0);
         Check(edited.shadowResolution == 2048, "Shadow resolution did not round to a power of two");

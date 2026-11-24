@@ -3,6 +3,7 @@
 #include "PlutoGE/render/BasicRenderer.h"
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace PlutoGE::render
@@ -18,6 +19,8 @@ namespace PlutoGE::render
         static constexpr std::uint32_t MinShadowCascades = 1, MaxShadowCascades = 4;
         static constexpr float MinShadowDistance = 1.0f, MaxShadowDistance = 10000.0f;
         static constexpr float MinGrassDensity = 0.1f, MinGrassDistance = 0.25f;
+        // Water's screen-space reflection steps on tiers without screen-space reflections (BasicLighting).
+        static constexpr std::uint32_t WaterReflectionStepsWithoutReflections = 16;
 
         bool enabled = false;
         std::uint32_t shadowResolution = 2048;
@@ -39,6 +42,10 @@ namespace PlutoGE::render
         // Traced shadows: local lights without a shadow map tested against the world (walls, floors, terrain) so their
         // light stops there (BasicPointLight::tracedShadows, RenderingSettings::tracedShadowLights).
         bool tracedShadows = true;
+        // Swaying foliage sways in the sun's virtual shadow maps too (within the wind's Shadow Sway Distance). Off, its
+        // shadows hold the rest pose and stay cached: under a dense canopy that sway redraws most visible shadow pages
+        // every frame (about 5 ms on an integrated GPU), while the plants themselves still sway.
+        bool foliageShadowSway = true;
         // Detail grass ceilings, as shares of each layer's authored values: density scales clumps per square metre,
         // distance scales its draw, full-density and LOD distances together.
         float grassDensity = 1.0f;
@@ -70,6 +77,7 @@ namespace PlutoGE::render
                 result.foliageDetail = 0.6f;
                 result.contactShadows = false;
                 result.tracedShadows = false;
+                result.foliageShadowSway = false;
                 result.grassDensity = 0.4f; result.grassDistance = 0.5f;
                 break;
             case GraphicsPreset::Medium:
@@ -103,6 +111,11 @@ namespace PlutoGE::render
             if (cascadedShadows) lighting.shadowMethod = ShadowMethod::Cascaded;
             lighting.foliageDetail = std::min(lighting.foliageDetail, foliageDetail);
             if (!contactShadows) lighting.contactShadowLength = 0.0f;
+            // Water keeps its scene reflections without screen-space reflections, traced coarsely.
+            if (!reflections) lighting.waterReflectionSteps = std::min(lighting.waterReflectionSteps, WaterReflectionStepsWithoutReflections);
+            // No caster's sway reaches this many texels on any level, so every page keeps the rest pose (an infinite
+            // value would read as "sway at every level").
+            if (!foliageShadowSway) lighting.wind.shadowSwayMinTexels = std::numeric_limits<float>::max();
         }
 
         // Local lights carry their own contact-shadow length; scale it by this (0 or 1).

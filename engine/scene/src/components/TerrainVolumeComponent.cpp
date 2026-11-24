@@ -1,6 +1,7 @@
 #include "PlutoGE/scene/components/TerrainVolumeComponent.h"
 
 #include "PlutoGE/assets/AssetManager.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/TerrainLayers.h"
@@ -499,18 +500,31 @@ namespace PlutoGE::scene
 
     volume::VolumeFarProxy TerrainVolumeComponent::BuildFarProxy(std::shared_ptr<const volume::TerrainSurface> farSurface, int step)
     {
+        const auto job = PrepareFarProxy(std::move(farSurface), step);
+        return job ? job->Build() : volume::VolumeFarProxy{};
+    }
+
+    std::optional<TerrainVolumeComponent::FarProxyJob> TerrainVolumeComponent::PrepareFarProxy(std::shared_ptr<const volume::TerrainSurface> farSurface,
+                                                                                             int step)
+    {
         if (!farSurface || !farSurface->Valid() || !EnsureVolume())
-            return {};
+            return std::nullopt;
         if (auto *terrain = FindTerrain())
             FollowBase(*terrain, true);
         // Plain ground draws itself far away: only edits and features need a proxy.
         if (m_volume->GetStoredChunkCount() == 0 && m_baseInputs.stamps.empty() && !m_baseInputs.caves.enabled)
-            return {};
+            return std::nullopt;
         volume::VolumeFarProxySettings settings;
         settings.step = step;
         settings.coupling = m_coupling;
         settings.shading = m_shading;
-        return volume::BuildVolumeFarProxy(*m_volume, MakeBaseOver(farSurface, m_baseInputs), *farSurface, m_queue->GetMesher(), settings);
+        auto base = MakeBaseOver(farSurface, m_baseInputs);
+        return FarProxyJob{*m_volume, std::move(base), std::move(farSurface), m_queue->GetSharedMesher(), settings};
+    }
+
+    volume::VolumeFarProxy TerrainVolumeComponent::FarProxyJob::Build() const
+    {
+        return volume::BuildVolumeFarProxy(volume, base, *surface, *mesher, settings);
     }
 
     void TerrainVolumeComponent::QueueBaseFeatures()
@@ -614,23 +628,26 @@ namespace PlutoGE::scene
         auto *terrain = FindTerrain();
         if (!terrain || !EnsureVolume())
             return;
-        ValidateChunkEntities();
-        RefreshChunkMaterial();
-        FollowBase(*terrain, unbudgeted);
+        { core::CpuScope scope("TerrainVolume.Validate"); ValidateChunkEntities(); }
+        { core::CpuScope scope("TerrainVolume.ChunkMaterial"); RefreshChunkMaterial(); }
+        { core::CpuScope scope("TerrainVolume.FollowBase"); FollowBase(*terrain, unbudgeted); }
         for (const auto chunk : m_volume->TakeDirtyChunks())
             m_toMesh.insert(chunk);
-        RefreshHoles();
+        { core::CpuScope scope("TerrainVolume.RefreshHoles"); RefreshHoles(); }
         const std::size_t budget = unbudgeted ? std::numeric_limits<std::size_t>::max() : static_cast<std::size_t>(m_meshesPerFrame);
-        ScheduleMeshing(budget);
-        ApplyMeshes(m_queue->Collect(budget, unbudgeted));
-        ApplyHolesWhenMeshed(*terrain);
+        { core::CpuScope scope("TerrainVolume.ScheduleMeshing"); ScheduleMeshing(budget); }
+        { core::CpuScope scope("TerrainVolume.ApplyMeshes"); ApplyMeshes(m_queue->Collect(budget, unbudgeted)); }
+        { core::CpuScope scope("TerrainVolume.ApplyHoles"); ApplyHolesWhenMeshed(*terrain); }
     }
 
     void TerrainVolumeComponent::FollowBase(TerrainComponent &terrain, bool immediately)
     {
+        core::CpuScope inputsScope("TerrainVolume.CurrentBaseInputs");
         auto inputs = CurrentBaseInputs(terrain);
+        inputsScope.End();
         if (inputs == m_baseInputs)
             return;
+        core::CpuScope rebaseScope("TerrainVolume.Rebase");
         // Painting changes the weights every dab: wait until a frame passes without one (Flush does not wait).
         const bool painting = inputs.weightsRevision != m_weightsSeen;
         m_weightsSeen = inputs.weightsRevision;

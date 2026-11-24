@@ -85,6 +85,9 @@ namespace PlutoGE::render
             const Material *material;
             std::uint32_t submesh, lod;
             bool emissiveGi;
+            // Shadow-only packets carry no instance LOD chain (so no per-instance LODs, impostors or GPU culling): a
+            // camera list given one drew every instance of a cluster at full detail.
+            bool shadowOnly;
             bool operator==(const RetainedKey &) const = default;
         };
         struct RetainedHash
@@ -94,6 +97,7 @@ namespace PlutoGE::render
                 std::size_t hash = 0;
                 HashBatchValue(hash, key.object); HashBatchValue(hash, key.material);
                 HashBatchValue(hash, key.submesh); HashBatchValue(hash, key.lod); HashBatchValue(hash, key.emissiveGi);
+                HashBatchValue(hash, key.shadowOnly);
                 return hash;
             }
         };
@@ -104,25 +108,25 @@ namespace PlutoGE::render
         }
         // drawLod is the LOD the packet actually draws; shadow lists may select
         // a coarser caster than the visible list for the same command.
-        static RetainedKey Key(const RenderCommand &command, std::uint32_t drawLod, bool emissiveGi)
-        { return {command.sourceObject, command.material, command.submeshIndex, drawLod, emissiveGi}; }
+        static RetainedKey Key(const RenderCommand &command, std::uint32_t drawLod, bool emissiveGi, bool shadowOnly)
+        { return {command.sourceObject, command.material, command.submeshIndex, drawLod, emissiveGi, shadowOnly}; }
         // The key's drawLod already pins the geometry; the packet may come from a list with another LOD policy, so the
         // caller sets its own Entry::lod on the copy.
         const Entry *FindRetained(const RenderCommand &command, std::uint64_t revision, std::uint32_t drawLod, bool emissiveGi,
-                                  std::uint64_t frame)
+                                  bool shadowOnly, std::uint64_t frame)
         {
             if (!CanRetain(command)) return nullptr;
-            const auto found = retained.find(Key(command, drawLod, emissiveGi));
+            const auto found = retained.find(Key(command, drawLod, emissiveGi, shadowOnly));
             if (found == retained.end() || !found->second.packet.Matches(command, revision, found->second.packet.lod))
                 return nullptr;
             found->second.lastUse = frame;
             return &found->second.packet;
         }
-        void Retain(const Entry &entry, std::uint32_t drawLod, bool emissiveGi, std::uint64_t frame)
+        void Retain(const Entry &entry, std::uint32_t drawLod, bool emissiveGi, bool shadowOnly, std::uint64_t frame)
         {
             if (entry.valid && entry.emitted && CanRetain(entry.input))
             {
-                const auto key = Key(entry.input, drawLod, emissiveGi);
+                const auto key = Key(entry.input, drawLod, emissiveGi, shadowOnly);
                 if (retained.size() < MaxRetainedPackets || retained.contains(key))
                     retained.insert_or_assign(key, RetainedEntry{entry, frame});
             }

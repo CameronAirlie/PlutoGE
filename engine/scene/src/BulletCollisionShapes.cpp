@@ -169,51 +169,105 @@ namespace PlutoGE::scene::detail
             return shapeData;
         }
 
-        // A terrain with holes: Bullet's heightfield cannot leave cells out (and its accelerated ray test cannot be
-        // overridden), so the solid cells become a triangle mesh, split along the same (x+1,z)-(x,z+1) diagonal as the
-        // heightfield and the rendered mesh. Vertices are shared, so this costs about what the render mesh does.
+        // A heightfield child over samples [x0, x0 + cellsX] x [z0, z0 + cellsZ] of a terrain, its samples owned by
+        // `shapeData`, placed in the terrain's local space (scaled). Bullet centres a heightfield on its bounds.
+        void AddHeightfieldChild(BulletShapeData &shapeData, btCompoundShape &compound, const std::vector<float> &heights, int width,
+                                 int x0, int z0, int cellsX, int cellsZ, const btVector3 &scale)
+        {
+            std::vector<float> block;
+            block.reserve(static_cast<std::size_t>(cellsX + 1) * static_cast<std::size_t>(cellsZ + 1));
+            float minHeight = std::numeric_limits<float>::max();
+            float maxHeight = std::numeric_limits<float>::lowest();
+            for (int z = z0; z <= z0 + cellsZ; ++z)
+                for (int x = x0; x <= x0 + cellsX; ++x)
+                {
+                    const float height = heights[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+                    block.push_back(height);
+                    minHeight = std::min(minHeight, height);
+                    maxHeight = std::max(maxHeight, height);
+                }
+            if (!std::isfinite(minHeight) || !std::isfinite(maxHeight))
+                return;
+            if (std::abs(maxHeight - minHeight) <= 0.0001f)
+                maxHeight = minHeight + 0.0001f;
+            auto shape = std::make_unique<btHeightfieldTerrainShape>(cellsX + 1, cellsZ + 1, block.data(), 1.0f, minHeight, maxHeight, 1,
+                                                                    PHY_FLOAT, false);
+            shape->setLocalScaling(scale);
+            // The (x+1,z)-(x,z+1) diagonal, as the whole terrain's heightfield (see CreateTerrainShape).
+            shape->setUseDiamondSubdivision(false);
+            btTransform transform;
+            transform.setIdentity();
+            transform.setOrigin(btVector3(static_cast<btScalar>((x0 + cellsX * 0.5f) * scale.x()),
+                                          static_cast<btScalar>((minHeight + maxHeight) * 0.5f * scale.y()),
+                                          static_cast<btScalar>((z0 + cellsZ * 0.5f) * scale.z())));
+            compound.addChildShape(transform, shape.get());
+            shapeData.ownedHeightfieldBlocks.push_back(std::move(block));
+            shapeData.ownedChildShapes.push_back(std::move(shape));
+        }
+
+        // A terrain with holes. Bullet's heightfield cannot leave cells out (and its accelerated ray test cannot be
+        // overridden), so the terrain is split into blocks: solid blocks stay heightfields, and blocks holding holes become
+        // triangle meshes of their solid cells, split along the heightfield's (x+1,z)-(x,z+1) diagonal like the rendered
+        // mesh. Holes are local (a cave mouth, a dug pit), so a tile streaming in with a few of them builds a few small
+        // BVHs rather than one over every cell (about 90 ms for a 257-sample tile).
         BulletShapeData CreateHoledTerrainShape(const TerrainComponent &terrain, const glm::vec3 &worldScale)
         {
+            constexpr int BlockCells = 32;
             const int width = terrain.GetWidth();
             const int depth = terrain.GetDepth();
             const auto &heights = terrain.GetHeightSamples();
             const auto &holes = terrain.GetEffectiveHoles();
-            const float scaleX = std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f);
-            const float scaleY = std::max(std::abs(worldScale.y), 0.0001f);
-            const float scaleZ = std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f);
-
-            auto triangleMesh = std::make_unique<btTriangleMesh>(true, false);
-            triangleMesh->preallocateVertices(width * depth);
-            triangleMesh->preallocateIndices((width - 1) * (depth - 1) * 6);
-            std::vector<int> vertexOf(static_cast<std::size_t>(width) * static_cast<std::size_t>(depth), -1);
-            const auto vertex = [&](int x, int z) {
-                auto &index = vertexOf[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
-                if (index < 0)
-                {
-                    const float height = heights[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
-                    index = triangleMesh->findOrAddVertex(btVector3(static_cast<btScalar>(x * scaleX),
-                                                                    static_cast<btScalar>(height * scaleY),
-                                                                    static_cast<btScalar>(z * scaleZ)),
-                                                          false);
-                }
-                return index;
-            };
-            for (int z = 0; z + 1 < depth; ++z)
-                for (int x = 0; x + 1 < width; ++x)
-                {
-                    const auto triangles = TerrainCellTriangles(holes.GetCut(x, z));
-                    if (triangles.empty())
-                        continue;
-                    const int corners[4] = {vertex(x, z), vertex(x + 1, z), vertex(x, z + 1), vertex(x + 1, z + 1)};
-                    for (const auto &triangle : triangles)
-                        triangleMesh->addTriangleIndices(corners[triangle[0]], corners[triangle[1]], corners[triangle[2]]);
-                }
-            if (triangleMesh->getNumTriangles() == 0)
-                return {};
+            const btVector3 scale(std::max(terrain.GetCellSize() * std::abs(worldScale.x), 0.0001f), std::max(std::abs(worldScale.y), 0.0001f),
+                                  std::max(terrain.GetCellSize() * std::abs(worldScale.z), 0.0001f));
 
             BulletShapeData shapeData;
-            shapeData.shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
-            shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
+            auto compound = std::make_unique<btCompoundShape>();
+            for (int z0 = 0; z0 + 1 < depth; z0 += BlockCells)
+                for (int x0 = 0; x0 + 1 < width; x0 += BlockCells)
+                {
+                    const int cellsX = std::min(BlockCells, width - 1 - x0);
+                    const int cellsZ = std::min(BlockCells, depth - 1 - z0);
+                    if (!holes.AnyInRect(x0, z0, x0 + cellsX, z0 + cellsZ))
+                    {
+                        AddHeightfieldChild(shapeData, *compound, heights, width, x0, z0, cellsX, cellsZ, scale);
+                        continue;
+                    }
+                    auto triangleMesh = std::make_unique<btTriangleMesh>(true, false);
+                    std::vector<int> vertexOf(static_cast<std::size_t>(cellsX + 1) * static_cast<std::size_t>(cellsZ + 1), -1);
+                    const auto vertex = [&](int x, int z) {
+                        auto &index = vertexOf[static_cast<std::size_t>(z - z0) * static_cast<std::size_t>(cellsX + 1) + static_cast<std::size_t>(x - x0)];
+                        if (index < 0)
+                        {
+                            const float height = heights[static_cast<std::size_t>(z) * static_cast<std::size_t>(width) + static_cast<std::size_t>(x)];
+                            index = triangleMesh->findOrAddVertex(btVector3(static_cast<btScalar>(x * scale.x()),
+                                                                            static_cast<btScalar>(height * scale.y()),
+                                                                            static_cast<btScalar>(z * scale.z())),
+                                                                  false);
+                        }
+                        return index;
+                    };
+                    for (int z = z0; z < z0 + cellsZ; ++z)
+                        for (int x = x0; x < x0 + cellsX; ++x)
+                        {
+                            const auto triangles = TerrainCellTriangles(holes.GetCut(x, z));
+                            if (triangles.empty())
+                                continue;
+                            const int corners[4] = {vertex(x, z), vertex(x + 1, z), vertex(x, z + 1), vertex(x + 1, z + 1)};
+                            for (const auto &triangle : triangles)
+                                triangleMesh->addTriangleIndices(corners[triangle[0]], corners[triangle[1]], corners[triangle[2]]);
+                        }
+                    if (triangleMesh->getNumTriangles() == 0)
+                        continue;
+                    auto shape = std::make_unique<btBvhTriangleMeshShape>(triangleMesh.get(), true);
+                    btTransform identity;
+                    identity.setIdentity();
+                    compound->addChildShape(identity, shape.get());
+                    shapeData.ownedTriangleMeshes.push_back(std::move(triangleMesh));
+                    shapeData.ownedChildShapes.push_back(std::move(shape));
+                }
+            if (compound->getNumChildShapes() == 0)
+                return {};
+            shapeData.shape = std::move(compound);
             return shapeData;
         }
 

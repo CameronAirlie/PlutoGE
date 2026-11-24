@@ -13,10 +13,10 @@
 
 namespace PlutoGE::scene::volume
 {
-    // Meshes a volume's chunks off the calling thread. Enqueue gathers a chunk's samples on the caller's thread (the
-    // volume is not thread-safe), then a worker meshes them and runs the caller's finishing step. A chunk enqueued again
-    // before its earlier job is collected yields only the newer mesh, so edits in quick succession never land out of
-    // order.
+    // Meshes a volume's chunks off the calling thread. Enqueue copies the stored samples a chunk's mesh reads on the
+    // caller's thread (the volume is not thread-safe); a worker samples the base around them, meshes, and runs the
+    // caller's finishing step. A chunk enqueued again before its earlier job is collected yields only the newer mesh, so
+    // edits in quick succession never land out of order.
     class VolumeMeshQueue
     {
     public:
@@ -37,6 +37,7 @@ namespace PlutoGE::scene::volume
         VolumeMeshQueue &operator=(const VolumeMeshQueue &) = delete;
 
         [[nodiscard]] const VolumeMesher &GetMesher() const { return *m_mesher; }
+        [[nodiscard]] const std::shared_ptr<const VolumeMesher> &GetSharedMesher() const { return m_mesher; }
         void Enqueue(const TerrainVolume &volume, VolumeChunkCoord chunk, Finish finish = {});
         // Finished meshes, oldest first, at most `maxResults` (superseded ones are dropped and not counted). With
         // `wait`, blocks until every job has finished, and returns them all.

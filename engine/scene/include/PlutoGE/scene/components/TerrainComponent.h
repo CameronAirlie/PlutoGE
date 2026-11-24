@@ -10,6 +10,7 @@
 #include "PlutoGE/scene/components/Component.h"
 
 #include <glm/glm.hpp>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -45,6 +46,9 @@ namespace PlutoGE::scene
         int lodCount = 4;
         render::Material *material = nullptr;
     };
+
+    // What a terrain's mesh build reads (TerrainComponent.cpp).
+    struct TerrainMeshInputs;
 
     class TerrainComponent : public TypedComponent<TerrainComponent>
     {
@@ -142,6 +146,13 @@ namespace PlutoGE::scene
         // terrains seen from far away raise it so ridgelines keep their shape; dense small ones lower it.
         void SetLodDistanceScale(float scale);
         float GetLodDistanceScale() const { return m_lodDistanceScale; }
+        // Build the mesh on a worker thread (a world's tiles): the previous mesh, or none, draws until the new one
+        // lands, a frame or two later. Off by default: a terrain changed in a frame draws changed in that frame.
+        void SetAsyncMeshBuild(bool async) { m_asyncMeshBuild = async; }
+        // Whether a mesh has been built and can draw.
+        [[nodiscard]] bool HasMesh() const { return m_mesh != nullptr; }
+        // Brings the mesh up to date now (waiting for a worker build), as a loading screen wants.
+        void FinishMeshBuild();
         // Depth of a wall hung from the terrain's outer edges (0: none). Hides cracks where tiles drawn at different
         // detail meet; it is drawn, not collided with.
         void SetSkirtDepth(float depth);
@@ -223,14 +234,18 @@ namespace PlutoGE::scene
         void ReplaceHeights(int width, int depth, std::vector<float> heights, std::vector<float> border);
         void HeightsChanged();
         float SampleHeight(float x, float z) const;
-        glm::vec3 ComputeNormal(int x, int z) const;
         void EnsureHeightStorage();
         void HolesChanged();
         // Fits the authored and derived masks to the grid's cells and rebuilds the effective mask.
         void ResizeHoleMasks();
         void RebuildEffectiveHoles();
         void MarkMeshDirty();
+        // Builds the mesh now (waiting for a build in flight).
         void RebuildMesh();
+        [[nodiscard]] TerrainMeshInputs CaptureMeshInputs() const;
+        void StartMeshBuild();
+        // Takes a finished worker build.
+        void PollMeshBuild();
         void RebuildMaterialFromReference();
         static TerrainLayerStack::Services EngineLayerServices();
 
@@ -256,6 +271,8 @@ namespace PlutoGE::scene
         HeavyPropertyCache m_holesText;
 
         std::unique_ptr<render::Mesh> m_mesh;
+        std::future<render::MeshConfig> m_meshBuild;
+        bool m_asyncMeshBuild = false;
         render::Material *m_material = nullptr;
         std::string m_materialAssetReference;
         std::string m_paintedAlbedoPath;

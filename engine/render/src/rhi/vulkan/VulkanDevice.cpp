@@ -33,6 +33,7 @@
 #include <array>
 #include <algorithm>
 #include <atomic>
+#include <deque>
 #include <mutex>
 #include <span>
 #include <cmath>
@@ -1635,6 +1636,111 @@ namespace PlutoGE::render::rhi::vulkan
             submit.pCommandBuffers = &commandBuffer;
             Check(SubmitWithMemoryRetry(submit, VK_NULL_HANDLE), "vkQueueSubmit");
             Check(vkQueueWaitIdle(queue), "vkQueueWaitIdle");
+        }
+
+        // ---- uploads into new resources ----------------------------------------------------------------------------
+        // Filling a resource nothing has used yet (a texture or buffer just created) need not wait for the queue, as
+        // Immediate does: every later submission on the queue comes after the copy, and the copy's barriers make its
+        // writes visible to them. Waiting stalled the caller for whatever frames the GPU still had queued (tens of
+        // milliseconds when GPU-bound) every time a mesh or texture streamed in. Each upload has its own command buffer
+        // and fence; its staging buffer is freed once the fence signals. Without a frame context (tools, tests),
+        // destroyed resources are not retired by frame, so uploads there still wait.
+        struct PendingUpload
+        {
+            VkCommandBuffer command = VK_NULL_HANDLE;
+            VkFence fence = VK_NULL_HANDLE;
+            VkBuffer staging = VK_NULL_HANDLE;
+            VmaAllocation stagingAllocation = VK_NULL_HANDLE;
+            VkDeviceSize stagingBytes = 0;
+        };
+        std::deque<PendingUpload> pendingUploads; // submitted, oldest first
+        std::vector<PendingUpload> idleUploads;   // command buffers and fences to reuse
+        VkDeviceSize pendingUploadBytes = 0;
+        // A frame submission whose completion covers every upload submitted so far: the first frame submitted after
+        // the latest upload (a fence covers all earlier submissions on its queue). See RetirementSubmission.
+        std::atomic<std::uint64_t> uploadRetirement{0};
+        static constexpr std::size_t MaxPendingUploads = 64;
+        static constexpr VkDeviceSize MaxPendingUploadBytes = VkDeviceSize(256) << 20;
+
+        // Frees the oldest upload's staging if it finished (with `wait`, once it has). Holds queueMutex.
+        bool RetireOldestUploadLocked(bool wait)
+        {
+            if (pendingUploads.empty())
+                return false;
+            auto &oldest = pendingUploads.front();
+            const VkResult status = wait ? vkWaitForFences(device, 1, &oldest.fence, VK_TRUE, UINT64_MAX)
+                                         : vkGetFenceStatus(device, oldest.fence);
+            if (status == VK_NOT_READY || status == VK_TIMEOUT)
+                return false;
+            Check(status, "vkGetFenceStatus(upload)");
+            vmaDestroyBuffer(allocator, oldest.staging, oldest.stagingAllocation);
+            pendingUploadBytes -= oldest.stagingBytes;
+            Check(vkResetFences(device, 1, &oldest.fence), "vkResetFences(upload)");
+            idleUploads.push_back({oldest.command, oldest.fence});
+            pendingUploads.pop_front();
+            return true;
+        }
+
+        // Records and submits an upload that copies from `staging`, which it takes (and frees once the GPU is done).
+        template <typename Record>
+        void Upload(BufferResource staging, const Record &record)
+        {
+            std::lock_guard queueLock(queueMutex);
+            ScopeExit releaseStaging([&] { vmaDestroyBuffer(allocator, staging.buffer, staging.allocation); });
+            if (!context)
+            {
+                Immediate(record);
+                return;
+            }
+            while (RetireOldestUploadLocked(false)) {}
+            while (pendingUploads.size() >= MaxPendingUploads || pendingUploadBytes > MaxPendingUploadBytes)
+                if (!RetireOldestUploadLocked(true))
+                    break;
+            PendingUpload upload;
+            if (!idleUploads.empty())
+            {
+                upload = idleUploads.back();
+                idleUploads.pop_back();
+            }
+            else
+            {
+                VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+                allocate.commandPool = commandPool;
+                allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+                allocate.commandBufferCount = 1;
+                Check(vkAllocateCommandBuffers(device, &allocate, &upload.command), "vkAllocateCommandBuffers(upload)");
+                VkFenceCreateInfo fence{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                if (const VkResult created = vkCreateFence(device, &fence, nullptr, &upload.fence); created != VK_SUCCESS)
+                {
+                    vkFreeCommandBuffers(device, commandPool, 1, &upload.command);
+                    Check(created, "vkCreateFence(upload)");
+                }
+            }
+            // Back to the idle list unless it is submitted.
+            ScopeExit keepIdle([&] { idleUploads.push_back({upload.command, upload.fence}); });
+            Check(vkResetCommandBuffer(upload.command, 0), "vkResetCommandBuffer(upload)");
+            VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            Check(vkBeginCommandBuffer(upload.command, &begin), "vkBeginCommandBuffer(upload)");
+            record(upload.command);
+            Check(vkEndCommandBuffer(upload.command), "vkEndCommandBuffer(upload)");
+            VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            submit.commandBufferCount = 1;
+            submit.pCommandBuffers = &upload.command;
+            Check(SubmitWithMemoryRetry(submit, upload.fence), "vkQueueSubmit(upload)");
+            keepIdle.Dismiss();
+            releaseStaging.Dismiss();
+            VmaAllocationInfo stagingInfo{};
+            vmaGetAllocationInfo(allocator, staging.allocation, &stagingInfo);
+            upload.staging = staging.buffer;
+            upload.stagingAllocation = staging.allocation;
+            upload.stagingBytes = stagingInfo.size;
+            pendingUploadBytes += upload.stagingBytes;
+            pendingUploads.push_back(upload);
+            // Read after the submit: a frame given a serial before this point but submitted after it only makes the
+            // retirement later than it needs to be.
+            const auto covering = std::atomic_ref(lastSubmittedSubmission).load(std::memory_order_acquire) + 1;
+            for (auto current = uploadRetirement.load(); current < covering && !uploadRetirement.compare_exchange_weak(current, covering);) {}
         }
 
         // Rebuilds levels 1.. of `layerCount` layers from level 0 with linear blits. The image must be in
@@ -3451,7 +3557,8 @@ namespace PlutoGE::render::rhi::vulkan
 
         [[nodiscard]] std::uint64_t RetirementSubmission() const noexcept
         {
-            return m_impl.lastSubmittedSubmission + (m_frameOpen ? 1u : 0u);
+            // A resource destroyed while an upload into it may still run waits for the frame that covers the upload.
+            return (std::max)(m_impl.lastSubmittedSubmission + (m_frameOpen ? 1u : 0u), m_impl.uploadRetirement.load(std::memory_order_acquire));
         }
 
         [[nodiscard]] bool SupportsAsyncCompute() const noexcept override { return m_async != nullptr; }
@@ -4769,6 +4876,16 @@ namespace PlutoGE::render::rhi::vulkan
 #endif
         m_impl->context.reset();
         m_impl->CollectDeferredResources(UINT64_MAX);
+        // The device is idle: every upload finished. Command buffers go with their pool.
+        for (auto &upload : m_impl->pendingUploads)
+        {
+            vmaDestroyBuffer(m_impl->allocator, upload.staging, upload.stagingAllocation);
+            vkDestroyFence(m_impl->device, upload.fence, nullptr);
+        }
+        for (auto &upload : m_impl->idleUploads)
+            vkDestroyFence(m_impl->device, upload.fence, nullptr);
+        m_impl->pendingUploads.clear();
+        m_impl->idleUploads.clear();
         for (auto &slot : m_impl->readbacks)
         {
             // VMA_ALLOCATION_CREATE_MAPPED_BIT owns the persistent mapping.
@@ -4879,13 +4996,9 @@ namespace PlutoGE::render::rhi::vulkan
         if (deviceUpload)
         {
             const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Buffer staging"}, data);
-            ScopeExit releaseStaging([&]
-            {
-                if (auto removed = m_impl->buffers.Remove(stagingHandle))
-                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
-            });
-            const VkBuffer source = m_impl->buffers.Get(stagingHandle)->buffer;
-            m_impl->Immediate([&](VkCommandBuffer command)
+            auto staging = std::move(*m_impl->buffers.Remove(stagingHandle));
+            const VkBuffer source = staging.buffer;
+            m_impl->Upload(std::move(staging), [&](VkCommandBuffer command)
             {
                 const VkBufferCopy region{0, 0, data.size()};
                 vkCmdCopyBuffer(command, source, resource.buffer, 1, &region);
@@ -4996,20 +5109,17 @@ namespace PlutoGE::render::rhi::vulkan
                 height = (std::max)(1u, height / 2);
             }
             const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Texture staging"}, data);
-            auto *staging = m_impl->buffers.Get(stagingHandle);
-            ScopeExit releaseStaging([&]
-            {
-                if (auto removed = m_impl->buffers.Remove(stagingHandle))
-                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
-            });
-            m_impl->Immediate([&](VkCommandBuffer command)
+            auto staging = std::move(*m_impl->buffers.Remove(stagingHandle));
+            const VkBuffer source = staging.buffer;
+            // Not waited for: later frames' reads, in any stage, come after this barrier.
+            m_impl->Upload(std::move(staging), [&](VkCommandBuffer command)
             {
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-                vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                vkCmdCopyBufferToImage(command, source, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     static_cast<std::uint32_t>(copies.size()), copies.data());
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_READ_BIT);
             });
         }
         else if (!data.empty())
@@ -5111,27 +5221,22 @@ namespace PlutoGE::render::rhi::vulkan
                 mipHeight = nextHeight;
             }
             const BufferHandle stagingHandle = CreateBuffer({mipData.size(), BufferUsage::Vertex, "Texture staging"}, mipData);
-            auto *staging = m_impl->buffers.Get(stagingHandle);
-            // Immediate either fails to queue or waits for this upload. The
-            // staging allocation is safe to release on both paths, even while
-            // an unrelated scene frame is still being recorded.
-            ScopeExit releaseStaging([&]
-            {
-                if (auto removed = m_impl->buffers.Remove(stagingHandle))
-                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
-            });
-            m_impl->Immediate([&](VkCommandBuffer command)
+            // The upload owns the staging from here, even while an unrelated scene frame is still being recorded.
+            auto staging = std::move(*m_impl->buffers.Remove(stagingHandle));
+            const VkBuffer source = staging.buffer;
+            // Not waited for: later frames' reads, in any stage, come after this barrier.
+            m_impl->Upload(std::move(staging), [&](VkCommandBuffer command)
             {
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
-                vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                vkCmdCopyBufferToImage(command, source, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     static_cast<std::uint32_t>(copies.size()), copies.data());
                 // Hardware filtering handles sRGB decode/encode and avoids
                 // millions of CPU colour conversions on first visibility.
                 if (gpuMips)
                     m_impl->GenerateMipmaps(command, *stored, 0, 1);
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_READ_BIT);
             });
         }
         failedTexture.Dismiss();
@@ -5228,24 +5333,21 @@ namespace PlutoGE::render::rhi::vulkan
             if (stored->mipLevels > 1 && !m_impl->CanBlitMipmaps(image.format))
                 throw std::runtime_error("Vulkan texture arrays need linear blits to build mipmaps");
             const BufferHandle stagingHandle = CreateBuffer({data.size(), BufferUsage::Vertex, "Texture array staging"}, data);
-            auto *staging = m_impl->buffers.Get(stagingHandle);
-            ScopeExit releaseStaging([&]
-            {
-                if (auto removed = m_impl->buffers.Remove(stagingHandle))
-                    vmaDestroyBuffer(m_impl->allocator, removed->buffer, removed->allocation);
-            });
-            m_impl->Immediate([&](VkCommandBuffer command)
+            auto staging = std::move(*m_impl->buffers.Remove(stagingHandle));
+            const VkBuffer source = staging.buffer;
+            // Not waited for: later frames' reads, in any stage, come after this barrier.
+            m_impl->Upload(std::move(staging), [&](VkCommandBuffer command)
             {
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                     VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
                 // The layers' base levels are contiguous in the staging buffer.
                 const VkBufferImageCopy copy{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, descriptor.arrayLayers},
                     {0, 0, 0}, {descriptor.width, descriptor.height, 1}};
-                vkCmdCopyBufferToImage(command, staging->buffer, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                vkCmdCopyBufferToImage(command, source, stored->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
                 // Each level is blitted from the previous one for every layer at once.
                 m_impl->GenerateMipmaps(command, *stored, 0, descriptor.arrayLayers);
                 m_impl->Transition(command, *stored, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_SHADER_READ_BIT);
+                    VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_SHADER_READ_BIT);
             });
         }
         failedTexture.Dismiss();

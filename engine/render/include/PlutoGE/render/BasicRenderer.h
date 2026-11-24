@@ -1081,6 +1081,9 @@ namespace PlutoGE::render
         // first (traced shadows: docs/LIGHT_OCCLUSION.md). They need the depth prepass, shadowsEnabled and a world
         // representation: the ray-traced scene or the voxel scene DDGI keeps. 0 turns them off.
         std::uint32_t tracedShadowLights = 0;
+        // Steps each water pixel's screen-space reflection ray takes (RhiOcean; the shader keeps 8..64). Graphics tiers
+        // without reflections trace fewer: each step is a dependent depth read.
+        std::uint32_t waterReflectionSteps = 48;
     };
 
     struct BasicPostProcessEffect

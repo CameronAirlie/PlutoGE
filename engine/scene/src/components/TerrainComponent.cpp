@@ -5,6 +5,7 @@
 #include "PlutoGE/render/Texture.h"
 
 #include "PlutoGE/assets/Project.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/Engine.h"
 #include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/assets/AssetManager.h"
@@ -239,9 +240,14 @@ namespace PlutoGE::scene
 
     void TerrainComponent::SubmitRenderCommands()
     {
+        // World tiles build on a worker and draw their previous mesh (or nothing) until the new one lands.
+        PollMeshBuild();
         if (m_meshDirty)
         {
-            RebuildMesh();
+            if (m_asyncMeshBuild)
+                StartMeshBuild();
+            else
+                RebuildMesh();
         }
 
         auto *material = GetRenderMaterial();
@@ -280,8 +286,7 @@ namespace PlutoGE::scene
 
     render::Mesh *TerrainComponent::GetMeshForBaking()
     {
-        if (m_meshDirty)
-            RebuildMesh();
+        FinishMeshBuild();
         return m_mesh.get();
     }
 
@@ -1251,15 +1256,6 @@ namespace PlutoGE::scene
         return glm::mix(raw, total / std::max(weight, 0.0001f), m_surfaceSmoothing);
     }
 
-    glm::vec3 TerrainComponent::ComputeNormal(int x, int z) const
-    {
-        const float left = GetSurfaceSampleHeight(x - 1, z);
-        const float right = GetSurfaceSampleHeight(x + 1, z);
-        const float down = GetSurfaceSampleHeight(x, z - 1);
-        const float up = GetSurfaceSampleHeight(x, z + 1);
-        return glm::normalize(glm::vec3(left - right, 2.0f * m_cellSize, down - up));
-    }
-
     void TerrainComponent::EnsureHeightStorage()
     {
         if (m_holes.GetCellsX() != m_width - 1 || m_holes.GetCellsZ() != m_depth - 1)
@@ -1384,191 +1380,293 @@ namespace PlutoGE::scene
         }
     }
 
-    void TerrainComponent::RebuildMesh()
+    // What a terrain's mesh is built from, copied so the build can run on a worker thread (world tiles).
+    struct TerrainMeshInputs
     {
-        EnsureHeightStorage();
+        int width = 0;
+        int depth = 0;
+        float cellSize = 1.0f;
+        float surfaceSmoothing = 0.0f;
+        float skirtDepth = 0.0f;
+        float lodDistanceScale = 1.0f;
+        int chunkSize = 32;
+        int lodCount = 1;
+        std::vector<float> heights;
+        std::vector<float> border;
+        TerrainHoleMask holes;
 
-        const auto smoothedHeight = [&](int x, int z) { return GetSurfaceSampleHeight(x, z); };
-
-        const auto coarseHeight = [&](int x, int z, int step)
+        // As TerrainComponent::GetHeightSample.
+        float HeightSample(int x, int z) const
         {
-            const int x0 = (x / step) * step;
-            const int z0 = (z / step) * step;
-            const int x1 = std::min(x0 + step, m_width - 1);
-            const int z1 = std::min(z0 + step, m_depth - 1);
-            if (x1 == x0 || z1 == z0)
+            if (heights.empty())
+                return 0.0f;
+            if (!border.empty())
             {
-                return smoothedHeight(x, z);
+                x = glm::clamp(x, -TerrainHeightBorder::Width, width - 1 + TerrainHeightBorder::Width);
+                z = glm::clamp(z, -TerrainHeightBorder::Width, depth - 1 + TerrainHeightBorder::Width);
+                if (x < 0 || z < 0 || x >= width || z >= depth)
+                    return border[TerrainHeightBorder::Index(width, depth, x, z)];
             }
+            x = glm::clamp(x, 0, width - 1);
+            z = glm::clamp(z, 0, depth - 1);
+            return heights[static_cast<std::size_t>(z * width + x)];
+        }
 
-            const float tx = static_cast<float>(x - x0) / static_cast<float>(x1 - x0);
-            const float tz = static_cast<float>(z - z0) / static_cast<float>(z1 - z0);
-            const float h00 = smoothedHeight(x0, z0);
-            const float h10 = smoothedHeight(x1, z0);
-            const float h01 = smoothedHeight(x0, z1);
-            const float h11 = smoothedHeight(x1, z1);
-
-            // Match appendQuad's diagonal so the fully morphed fine mesh lies
-            // exactly on the next LOD's piecewise-linear surface.
-            if (tx + tz <= 1.0f)
-            {
-                return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
-            }
-            return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
-        };
-
-        render::MeshConfig config;
-        config.data.vertices.reserve(static_cast<std::size_t>(m_width * m_depth));
-        for (int z = 0; z < m_depth; ++z)
+        // As TerrainComponent::GetSurfaceSampleHeight.
+        float SurfaceHeight(int x, int z) const
         {
-            for (int x = 0; x < m_width; ++x)
-            {
-                const glm::vec3 normal = ComputeNormal(x, z);
-                render::MeshVertexData vertex;
-                const float height = smoothedHeight(x, z);
-                for (int morphIndex = 0; morphIndex < 4; ++morphIndex)
+            const float raw = HeightSample(x, z);
+            if (surfaceSmoothing <= 0.0f)
+                return raw;
+            float total = 0.0f;
+            float weight = 0.0f;
+            for (int offsetZ = -1; offsetZ <= 1; ++offsetZ)
+                for (int offsetX = -1; offsetX <= 1; ++offsetX)
                 {
-                    vertex.weights[static_cast<std::size_t>(morphIndex)] = coarseHeight(x, z, 2 << morphIndex);
+                    const float sampleWeight = (offsetX == 0 && offsetZ == 0) ? 4.0f : (offsetX == 0 || offsetZ == 0 ? 2.0f : 1.0f);
+                    total += HeightSample(x + offsetX, z + offsetZ) * sampleWeight;
+                    weight += sampleWeight;
                 }
-                vertex.joints[0] = static_cast<int>(std::round(coarseHeight(x, z, 32) * 4096.0f));
-                vertex.position = {static_cast<float>(x) * m_cellSize, height, static_cast<float>(z) * m_cellSize};
-                vertex.normal = {normal.x, normal.y, normal.z};
-                vertex.uv = {static_cast<float>(x) / static_cast<float>(std::max(1, m_width - 1)),
-                             static_cast<float>(z) / static_cast<float>(std::max(1, m_depth - 1))};
-                vertex.tangent = {1.0f, 0.0f, 0.0f, 1.0f};
-                config.data.vertices.push_back(vertex);
-            }
+            return glm::mix(raw, total / std::max(weight, 0.0001f), surfaceSmoothing);
         }
+    };
 
-        const auto appendQuad = [&](int x, int z, int step, const auto &self) -> void
+    namespace
+    {
+        render::MeshConfig BuildTerrainMesh(const TerrainMeshInputs &in)
         {
-            const int x1 = std::min(x + step, m_width - 1);
-            const int z1 = std::min(z + step, m_depth - 1);
-            if (x1 == x || z1 == z)
-            {
-                return;
-            }
-            // Holes stay exact at every LOD: a coarse quad over a hole is replaced by the full-detail quads of its solid
-            // cells. Their vertices geomorph onto the coarse surface like the rest of the LOD, so no cracks open.
-            const bool cut = GetEffectiveHoles().AnyInRect(x, z, x1, z1);
-            if (cut && step > 1)
-            {
-                for (int fineZ = z; fineZ < z1; ++fineZ)
-                    for (int fineX = x; fineX < x1; ++fineX)
-                        self(fineX, fineZ, 1, self);
-                return;
-            }
-
-            const unsigned int i0 = static_cast<unsigned int>(z * m_width + x);
-            const unsigned int i1 = static_cast<unsigned int>(z * m_width + x1);
-            const unsigned int i2 = static_cast<unsigned int>(z1 * m_width + x);
-            const unsigned int i3 = static_cast<unsigned int>(z1 * m_width + x1);
-            for (const auto &triangle : TerrainCellTriangles(cut ? GetEffectiveHoles().GetCut(x, z) : TerrainHoleCut::None))
-            {
-                const unsigned int corners[4] = {i0, i1, i2, i3};
-                config.data.indices.push_back(corners[triangle[0]]);
-                config.data.indices.push_back(corners[triangle[1]]);
-                config.data.indices.push_back(corners[triangle[2]]);
-            }
-        };
-
-        // Skirts: a copy of every outer edge sample, lowered, so a wall hangs from the terrain's edge and hides cracks
-        // against neighbouring terrain drawn at another detail (tiles, distant overview tiles).
-        const bool skirts = m_skirtDepth > 0.0f;
-        std::array<std::uint32_t, 4> skirtStart{}; // first skirt vertex of the edges z = 0, z = depth - 1, x = 0, x = width - 1
-        if (skirts)
-        {
-            const auto lowered = [&](int x, int z) {
-                auto vertex = config.data.vertices[static_cast<std::size_t>(z) * m_width + x];
-                vertex.position[1] -= m_skirtDepth;
-                for (auto &weight : vertex.weights)
-                    weight -= m_skirtDepth;
-                vertex.joints[0] -= static_cast<int>(std::round(m_skirtDepth * 4096.0f));
-                return vertex;
+            const int surfaceStride = in.width + 2;
+            std::vector<float> surface(static_cast<std::size_t>(surfaceStride) * static_cast<std::size_t>(in.depth + 2));
+            for (int z = -1; z <= in.depth; ++z)
+                for (int x = -1; x <= in.width; ++x)
+                    surface[static_cast<std::size_t>(z + 1) * surfaceStride + static_cast<std::size_t>(x + 1)] = in.SurfaceHeight(x, z);
+            const auto smoothedHeight = [&](int x, int z) {
+                return surface[static_cast<std::size_t>(z + 1) * surfaceStride + static_cast<std::size_t>(x + 1)];
             };
-            for (int edge = 0; edge < 4; ++edge)
-            {
-                skirtStart[edge] = static_cast<std::uint32_t>(config.data.vertices.size());
-                const int count = edge < 2 ? m_width : m_depth;
-                for (int i = 0; i < count; ++i)
-                    config.data.vertices.push_back(edge == 0 ? lowered(i, 0) : edge == 1 ? lowered(i, m_depth - 1)
-                                                 : edge == 2 ? lowered(0, i) : lowered(m_width - 1, i));
-            }
-        }
-        // The skirt along the samples [from, to] of an edge, every `step` samples. Both windings, so it shows from
-        // either side whatever the material's culling.
-        const auto appendSkirt = [&](int edge, int from, int to, int step) {
-            for (int i = from; i < to; i += step)
-            {
-                const int j = std::min(i + step, to);
-                if (j == i)
-                    continue;
-                const auto grid = [&](int k) {
-                    return static_cast<unsigned int>(edge == 0 ? k : edge == 1 ? (m_depth - 1) * m_width + k
-                                                   : edge == 2 ? k * m_width : k * m_width + (m_width - 1));
-                };
-                const unsigned int a = grid(i), b = grid(j);
-                const unsigned int lowA = skirtStart[edge] + static_cast<unsigned int>(i), lowB = skirtStart[edge] + static_cast<unsigned int>(j);
-                for (const unsigned int index : {a, b, lowB, a, lowB, lowA, a, lowB, b, a, lowA, lowB})
-                    config.data.indices.push_back(index);
-            }
-        };
 
-        const int chunkQuads = std::max(2, m_chunkSize);
-        for (int chunkZ = 0; chunkZ < m_depth - 1; chunkZ += chunkQuads)
-        {
-            for (int chunkX = 0; chunkX < m_width - 1; chunkX += chunkQuads)
+            const auto coarseHeight = [&](int x, int z, int step)
             {
-                render::Submesh submesh;
-                submesh.materialIndex = 0;
-                submesh.name = "Terrain Chunk " + std::to_string(chunkX / chunkQuads) + "," + std::to_string(chunkZ / chunkQuads);
-
-                for (int lodIndex = 0; lodIndex < m_lodCount; ++lodIndex)
+                const int x0 = (x / step) * step;
+                const int z0 = (z / step) * step;
+                const int x1 = std::min(x0 + step, in.width - 1);
+                const int z1 = std::min(z0 + step, in.depth - 1);
+                if (x1 == x0 || z1 == z0)
                 {
-                    const int step = 1 << lodIndex;
-                    const uint32_t lodOffset = static_cast<uint32_t>(config.data.indices.size());
-                    const int maxZ = std::min(chunkZ + chunkQuads, m_depth - 1);
-                    const int maxX = std::min(chunkX + chunkQuads, m_width - 1);
-                    for (int z = chunkZ; z < maxZ; z += step)
+                    return smoothedHeight(x, z);
+                }
+
+                const float tx = static_cast<float>(x - x0) / static_cast<float>(x1 - x0);
+                const float tz = static_cast<float>(z - z0) / static_cast<float>(z1 - z0);
+                const float h00 = smoothedHeight(x0, z0);
+                const float h10 = smoothedHeight(x1, z0);
+                const float h01 = smoothedHeight(x0, z1);
+                const float h11 = smoothedHeight(x1, z1);
+
+                // Match appendQuad's diagonal so the fully morphed fine mesh lies
+                // exactly on the next LOD's piecewise-linear surface.
+                if (tx + tz <= 1.0f)
+                {
+                    return h00 + (h10 - h00) * tx + (h01 - h00) * tz;
+                }
+                return h11 + (h01 - h11) * (1.0f - tx) + (h10 - h11) * (1.0f - tz);
+            };
+
+            render::MeshConfig config;
+            config.data.vertices.reserve(static_cast<std::size_t>(in.width * in.depth));
+            for (int z = 0; z < in.depth; ++z)
+            {
+                for (int x = 0; x < in.width; ++x)
+                {
+                    // Central differences of the smoothed surface.
+                    const glm::vec3 normal = glm::normalize(glm::vec3(smoothedHeight(x - 1, z) - smoothedHeight(x + 1, z), 2.0f * in.cellSize,
+                                                                      smoothedHeight(x, z - 1) - smoothedHeight(x, z + 1)));
+                    render::MeshVertexData vertex;
+                    const float height = smoothedHeight(x, z);
+                    for (int morphIndex = 0; morphIndex < 4; ++morphIndex)
                     {
-                        for (int x = chunkX; x < maxX; x += step)
+                        vertex.weights[static_cast<std::size_t>(morphIndex)] = coarseHeight(x, z, 2 << morphIndex);
+                    }
+                    vertex.joints[0] = static_cast<int>(std::round(coarseHeight(x, z, 32) * 4096.0f));
+                    vertex.position = {static_cast<float>(x) * in.cellSize, height, static_cast<float>(z) * in.cellSize};
+                    vertex.normal = {normal.x, normal.y, normal.z};
+                    vertex.uv = {static_cast<float>(x) / static_cast<float>(std::max(1, in.width - 1)),
+                                 static_cast<float>(z) / static_cast<float>(std::max(1, in.depth - 1))};
+                    vertex.tangent = {1.0f, 0.0f, 0.0f, 1.0f};
+                    config.data.vertices.push_back(vertex);
+                }
+            }
+
+            const auto appendQuad = [&](int x, int z, int step, const auto &self) -> void
+            {
+                const int x1 = std::min(x + step, in.width - 1);
+                const int z1 = std::min(z + step, in.depth - 1);
+                if (x1 == x || z1 == z)
+                {
+                    return;
+                }
+                // Holes stay exact at every LOD: a coarse quad over a hole is replaced by the full-detail quads of its solid
+                // cells. Their vertices geomorph onto the coarse surface like the rest of the LOD, so no cracks open.
+                const bool cut = in.holes.AnyInRect(x, z, x1, z1);
+                if (cut && step > 1)
+                {
+                    for (int fineZ = z; fineZ < z1; ++fineZ)
+                        for (int fineX = x; fineX < x1; ++fineX)
+                            self(fineX, fineZ, 1, self);
+                    return;
+                }
+
+                const unsigned int i0 = static_cast<unsigned int>(z * in.width + x);
+                const unsigned int i1 = static_cast<unsigned int>(z * in.width + x1);
+                const unsigned int i2 = static_cast<unsigned int>(z1 * in.width + x);
+                const unsigned int i3 = static_cast<unsigned int>(z1 * in.width + x1);
+                for (const auto &triangle : TerrainCellTriangles(cut ? in.holes.GetCut(x, z) : TerrainHoleCut::None))
+                {
+                    const unsigned int corners[4] = {i0, i1, i2, i3};
+                    config.data.indices.push_back(corners[triangle[0]]);
+                    config.data.indices.push_back(corners[triangle[1]]);
+                    config.data.indices.push_back(corners[triangle[2]]);
+                }
+            };
+
+            // Skirts: a copy of every outer edge sample, lowered, so a wall hangs from the terrain's edge and hides cracks
+            // against neighbouring terrain drawn at another detail (tiles, distant overview tiles).
+            const bool skirts = in.skirtDepth > 0.0f;
+            std::array<std::uint32_t, 4> skirtStart{}; // first skirt vertex of the edges z = 0, z = depth - 1, x = 0, x = width - 1
+            if (skirts)
+            {
+                const auto lowered = [&](int x, int z) {
+                    auto vertex = config.data.vertices[static_cast<std::size_t>(z) * in.width + x];
+                    vertex.position[1] -= in.skirtDepth;
+                    for (auto &weight : vertex.weights)
+                        weight -= in.skirtDepth;
+                    vertex.joints[0] -= static_cast<int>(std::round(in.skirtDepth * 4096.0f));
+                    return vertex;
+                };
+                for (int edge = 0; edge < 4; ++edge)
+                {
+                    skirtStart[edge] = static_cast<std::uint32_t>(config.data.vertices.size());
+                    const int count = edge < 2 ? in.width : in.depth;
+                    for (int i = 0; i < count; ++i)
+                        config.data.vertices.push_back(edge == 0 ? lowered(i, 0) : edge == 1 ? lowered(i, in.depth - 1)
+                                                     : edge == 2 ? lowered(0, i) : lowered(in.width - 1, i));
+                }
+            }
+            // The skirt along the samples [from, to] of an edge, every `step` samples. Both windings, so it shows from
+            // either side whatever the material's culling.
+            const auto appendSkirt = [&](int edge, int from, int to, int step) {
+                for (int i = from; i < to; i += step)
+                {
+                    const int j = std::min(i + step, to);
+                    if (j == i)
+                        continue;
+                    const auto grid = [&](int k) {
+                        return static_cast<unsigned int>(edge == 0 ? k : edge == 1 ? (in.depth - 1) * in.width + k
+                                                       : edge == 2 ? k * in.width : k * in.width + (in.width - 1));
+                    };
+                    const unsigned int a = grid(i), b = grid(j);
+                    const unsigned int lowA = skirtStart[edge] + static_cast<unsigned int>(i), lowB = skirtStart[edge] + static_cast<unsigned int>(j);
+                    for (const unsigned int index : {a, b, lowB, a, lowB, lowA, a, lowB, b, a, lowA, lowB})
+                        config.data.indices.push_back(index);
+                }
+            };
+
+            const int chunkQuads = std::max(2, in.chunkSize);
+            for (int chunkZ = 0; chunkZ < in.depth - 1; chunkZ += chunkQuads)
+            {
+                for (int chunkX = 0; chunkX < in.width - 1; chunkX += chunkQuads)
+                {
+                    render::Submesh submesh;
+                    submesh.materialIndex = 0;
+                    submesh.name = "Terrain Chunk " + std::to_string(chunkX / chunkQuads) + "," + std::to_string(chunkZ / chunkQuads);
+
+                    for (int lodIndex = 0; lodIndex < in.lodCount; ++lodIndex)
+                    {
+                        const int step = 1 << lodIndex;
+                        const uint32_t lodOffset = static_cast<uint32_t>(config.data.indices.size());
+                        const int maxZ = std::min(chunkZ + chunkQuads, in.depth - 1);
+                        const int maxX = std::min(chunkX + chunkQuads, in.width - 1);
+                        for (int z = chunkZ; z < maxZ; z += step)
                         {
-                            appendQuad(x, z, step, appendQuad);
+                            for (int x = chunkX; x < maxX; x += step)
+                            {
+                                appendQuad(x, z, step, appendQuad);
+                            }
+                        }
+                        if (skirts)
+                        {
+                            if (chunkZ == 0)
+                                appendSkirt(0, chunkX, maxX, step);
+                            if (maxZ == in.depth - 1)
+                                appendSkirt(1, chunkX, maxX, step);
+                            if (chunkX == 0)
+                                appendSkirt(2, chunkZ, maxZ, step);
+                            if (maxX == in.width - 1)
+                                appendSkirt(3, chunkZ, maxZ, step);
+                        }
+
+                        const uint32_t lodCount = static_cast<uint32_t>(config.data.indices.size()) - lodOffset;
+                        submesh.lods.push_back(render::Submesh::LodRange{
+                            .indexOffset = lodOffset,
+                            .indexCount = lodCount,
+                            .minDistanceFactor = static_cast<float>(lodIndex) * 2.0f,
+                            .maxScreenRadiusPixels = lodIndex == 0 ? std::numeric_limits<float>::max()
+                                                                   : 280.0f / (in.lodDistanceScale * static_cast<float>(1 << (lodIndex - 1))),
+                        });
+                        if (lodIndex == 0)
+                        {
+                            submesh.indexOffset = lodOffset;
+                            submesh.indexCount = lodCount;
                         }
                     }
-                    if (skirts)
-                    {
-                        if (chunkZ == 0)
-                            appendSkirt(0, chunkX, maxX, step);
-                        if (maxZ == m_depth - 1)
-                            appendSkirt(1, chunkX, maxX, step);
-                        if (chunkX == 0)
-                            appendSkirt(2, chunkZ, maxZ, step);
-                        if (maxX == m_width - 1)
-                            appendSkirt(3, chunkZ, maxZ, step);
-                    }
 
-                    const uint32_t lodCount = static_cast<uint32_t>(config.data.indices.size()) - lodOffset;
-                    submesh.lods.push_back(render::Submesh::LodRange{
-                        .indexOffset = lodOffset,
-                        .indexCount = lodCount,
-                        .minDistanceFactor = static_cast<float>(lodIndex) * 2.0f,
-                        .maxScreenRadiusPixels = lodIndex == 0 ? std::numeric_limits<float>::max()
-                                                               : 280.0f / (m_lodDistanceScale * static_cast<float>(1 << (lodIndex - 1))),
-                    });
-                    if (lodIndex == 0)
-                    {
-                        submesh.indexOffset = lodOffset;
-                        submesh.indexCount = lodCount;
-                    }
+                    config.submeshes.push_back(std::move(submesh));
                 }
-
-                config.submeshes.push_back(std::move(submesh));
             }
-        }
 
-        m_mesh.reset(render::Mesh::FromConfig(std::move(config)));
+            return config;
+        }
+    }
+
+    void TerrainComponent::RebuildMesh()
+    {
+        if (m_meshBuild.valid())
+            m_meshBuild.wait();
+        PollMeshBuild();
+        core::CpuScope scope("Terrain.RebuildMesh");
+        EnsureHeightStorage();
+        m_mesh.reset(render::Mesh::FromConfig(BuildTerrainMesh(CaptureMeshInputs())));
         m_meshDirty = false;
+        m_hasPreviousModelMatrix = false;
+    }
+
+    void TerrainComponent::FinishMeshBuild()
+    {
+        if (m_meshDirty || m_meshBuild.valid())
+            RebuildMesh();
+    }
+
+    TerrainMeshInputs TerrainComponent::CaptureMeshInputs() const
+    {
+        return TerrainMeshInputs{.width = m_width, .depth = m_depth, .cellSize = m_cellSize, .surfaceSmoothing = m_surfaceSmoothing,
+                                 .skirtDepth = m_skirtDepth, .lodDistanceScale = m_lodDistanceScale, .chunkSize = m_chunkSize,
+                                 .lodCount = m_lodCount, .heights = m_heights, .border = m_border, .holes = GetEffectiveHoles()};
+    }
+
+    void TerrainComponent::StartMeshBuild()
+    {
+        // One build at a time: a change made while one runs starts the next when it lands.
+        if (m_meshBuild.valid())
+            return;
+        EnsureHeightStorage();
+        m_meshDirty = false;
+        m_meshBuild = std::async(std::launch::async, [inputs = CaptureMeshInputs()] { return BuildTerrainMesh(inputs); });
+    }
+
+    void TerrainComponent::PollMeshBuild()
+    {
+        if (!m_meshBuild.valid() || m_meshBuild.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+            return;
+        m_mesh.reset(render::Mesh::FromConfig(m_meshBuild.get()));
         m_hasPreviousModelMatrix = false;
     }
 

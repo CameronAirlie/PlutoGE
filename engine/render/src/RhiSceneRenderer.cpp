@@ -1395,7 +1395,7 @@ namespace PlutoGE::render
                 const bool emissiveGi = giOnly && lod != 0 && command.material &&
                     glm::any(glm::greaterThan(command.material->ReadConfig().emission, glm::vec3(0.0f)));
                 std::uint32_t drawLod = emissiveGi ? 0u : lod;
-                if (const auto *shared = preparation.FindRetained(command, revision, drawLod, emissiveGi, m_preparationFrame))
+                if (const auto *shared = preparation.FindRetained(command, revision, drawLod, emissiveGi, shadowOnly, m_preparationFrame))
                 {
                     entry = *shared;
                     entry.lod = lod;
@@ -1594,7 +1594,7 @@ namespace PlutoGE::render
                 if (!command.material)
                     draw.preparedMaterialHash = BasicMaterialBatchHash(draw);
                 entry.Store(command, revision, lod, &draw);
-                preparation.Retain(entry, drawLod, emissiveGi, m_preparationFrame);
+                preparation.Retain(entry, drawLod, emissiveGi, shadowOnly, m_preparationFrame);
                 if (patch) destination[i] = std::move(draw); else destination.push_back(std::move(draw));
                 ++m_timingStats.rebuiltDrawPackets;
             }

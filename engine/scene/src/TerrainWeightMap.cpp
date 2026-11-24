@@ -46,15 +46,36 @@ namespace PlutoGE::scene
         return glm::mix(glm::mix(weight(0, 0), weight(1, 0), t.x), glm::mix(weight(0, 1), weight(1, 1), t.x), t.y);
     }
 
+    std::array<float, TerrainWeightMap::kLayers> TerrainWeightMap::SampleWeights(glm::vec2 uv) const
+    {
+        std::array<float, kLayers> weights{};
+        if (m_weights.empty() || m_resolution <= 0)
+            return weights;
+        const glm::vec2 texel = glm::clamp(uv, 0.0f, 1.0f) * float(m_resolution) - 0.5f;
+        const glm::vec2 base = glm::floor(texel);
+        const glm::vec2 t = texel - base;
+        const int x = static_cast<int>(base.x), y = static_cast<int>(base.y);
+        const int x0 = std::clamp(x, 0, m_resolution - 1), x1 = std::clamp(x + 1, 0, m_resolution - 1);
+        const int y0 = std::clamp(y, 0, m_resolution - 1), y1 = std::clamp(y + 1, 0, m_resolution - 1);
+        const std::uint8_t *w00 = &m_weights[Index(x0, y0)], *w10 = &m_weights[Index(x1, y0)];
+        const std::uint8_t *w01 = &m_weights[Index(x0, y1)], *w11 = &m_weights[Index(x1, y1)];
+        for (std::size_t layer = 0; layer < kLayers; ++layer)
+            weights[layer] = glm::mix(glm::mix(w00[layer] / 255.0f, w10[layer] / 255.0f, t.x),
+                                      glm::mix(w01[layer] / 255.0f, w11[layer] / 255.0f, t.x), t.y);
+        return weights;
+    }
+
     std::size_t TerrainWeightMap::DominantLayer(glm::vec2 uv) const
     {
+        // Volumes ask this of every terrain sample: the footprint is found once for all the layers.
+        const auto weights = SampleWeights(uv);
         std::size_t best = 0;
         float bestWeight = -1.0f;
         for (std::size_t layer = 0; layer < kLayers; ++layer)
-            if (const float weight = SampleWeight(uv, layer); weight > bestWeight)
+            if (weights[layer] > bestWeight)
             {
                 best = layer;
-                bestWeight = weight;
+                bestWeight = weights[layer];
             }
         return best;
     }

@@ -773,9 +773,10 @@ namespace PlutoGE::assets
                 int index = -1, enabled = -1, resolution = 0, cascades = 0;
                 float distance = 0;
                 // Fourteen fields, fifteen with foliage detail, eighteen with contact shadows, grass density and
-                // grass distance, or nineteen with traced shadows. Fields a record predates take the tier's engine
-                // default.
-                bool valid = tokens.size() == 14 || tokens.size() == 15 || tokens.size() == 18 || tokens.size() == 19;
+                // grass distance, nineteen with traced shadows, or twenty with foliage shadow sway. Fields a record
+                // predates take the tier's engine default.
+                bool valid = tokens.size() == 14 || tokens.size() == 15 || tokens.size() == 18 || tokens.size() == 19 ||
+                             tokens.size() == 20;
                 if (valid)
                     valid = ParseInteger(tokens[1], index) && index >= 0 && index < 4 &&
                         ParseInteger(tokens[2], enabled) && (enabled == 0 || enabled == 1) &&
@@ -802,6 +803,7 @@ namespace PlutoGE::assets
                     quality.foliageDetail = defaults.foliageDetail;
                     quality.contactShadows = defaults.contactShadows;
                     quality.tracedShadows = defaults.tracedShadows;
+                    quality.foliageShadowSway = defaults.foliageShadowSway;
                     quality.grassDensity = defaults.grassDensity;
                     quality.grassDistance = defaults.grassDistance;
                     if (valid && tokens.size() >= 15)
@@ -814,11 +816,17 @@ namespace PlutoGE::assets
                             !tokens[17].empty() && ParseFloat(tokens[17], quality.grassDistance);
                         quality.contactShadows = contact == 1;
                     }
-                    if (valid && tokens.size() == 19)
+                    if (valid && tokens.size() >= 19)
                     {
                         int traced = -1;
                         valid = ParseInteger(tokens[18], traced) && (traced == 0 || traced == 1);
                         quality.tracedShadows = traced == 1;
+                    }
+                    if (valid && tokens.size() == 20)
+                    {
+                        int sway = -1;
+                        valid = ParseInteger(tokens[19], sway) && (sway == 0 || sway == 1);
+                        quality.foliageShadowSway = sway == 1;
                     }
                 }
                 if (!valid || !quality.IsValid())
@@ -1242,7 +1250,7 @@ namespace PlutoGE::assets
                 << q.reflections << '\t' << q.volumetrics << '\t' << q.bloom << '\t'
                 << q.depthOfField << '\t' << q.motionBlur << '\t' << q.foliageDetail << '\t'
                 << q.contactShadows << '\t' << q.grassDensity << '\t' << q.grassDistance << '\t'
-                << q.tracedShadows << '\n';
+                << q.tracedShadows << '\t' << q.foliageShadowSway << '\n';
         }
         output.precision(previousPrecision);
         output << "WINDOW_TITLE\t" << EscapeText(m_manifest.windowTitle) << '\n';

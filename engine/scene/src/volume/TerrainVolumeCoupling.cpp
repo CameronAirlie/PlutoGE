@@ -208,14 +208,15 @@ namespace PlutoGE::scene::volume
         const auto &grid = volume.GetGrid();
         const float tolerance = settings.breachTolerance * grid.voxelSize;
 
-        // Every sample column of a stored chunk, once.
-        std::set<std::pair<int, int>> columns;
+        // Every sample column of a stored chunk, once (sorted and deduplicated below, which is cheaper than a std::set
+        // for the tens of thousands of candidates cave features add).
+        std::vector<std::pair<int, int>> columns;
         for (const auto chunk : volume.GetStoredChunks())
         {
             const auto first = grid.ChunkFirstSample(chunk);
             for (int z = 0; z < grid.chunkVoxels; ++z)
                 for (int x = 0; x < grid.chunkVoxels; ++x)
-                    columns.insert({first.x + x, first.z + z});
+                    columns.push_back({first.x + x, first.z + z});
         }
         // And the columns under the base's features that reach the surface (cave mouths); deep tunnels cannot breach.
         std::vector<VolumeBounds> features;
@@ -230,11 +231,13 @@ namespace PlutoGE::scene::volume
                     const glm::vec3 column = grid.SamplePosition({box.first.x + x, 0, box.first.z + z});
                     const auto height = surface.Height(column.x, column.z);
                     if (height && *height >= feature.min.y - slack && *height <= feature.max.y + slack)
-                        columns.insert({box.first.x + x, box.first.z + z});
+                        columns.push_back({box.first.x + x, box.first.z + z});
                 }
         }
         if (columns.empty())
             return holes;
+        std::sort(columns.begin(), columns.end());
+        columns.erase(std::unique(columns.begin(), columns.end()), columns.end());
 
         for (const auto &[sampleX, sampleZ] : columns)
         {

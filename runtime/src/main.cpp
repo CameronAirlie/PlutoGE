@@ -618,7 +618,8 @@ int RunRuntime(int argc, char **argv)
 
     while (!window.ShouldClose())
     {
-        PlutoGE::core::CpuTrace cpuTrace(runtimeProfiler && runtimeProfiler->profiler.IsRecording());
+        // The profiler window and project benchmarks (whose ".cpu.csv" lists each main-thread scope) record CPU scopes.
+        PlutoGE::core::CpuTrace cpuTrace((runtimeProfiler && runtimeProfiler->profiler.IsRecording()) || projectBenchmark.has_value());
         PlutoGE::ui::EditorFrameTimingStats frameTiming;
         // Waits out the frame limit before input is read, and measures the delta from frame start to frame start
         // (so input polling and other work inside the frame never shift it). Captured frame times exclude the wait.
@@ -875,6 +876,14 @@ int RunRuntime(int argc, char **argv)
                     addCpuScopes("Animation", update.animationTimings);
                     addCpuScopes("Script", update.scriptUpdateTimings);
                     addCpuScopes("Late script", update.scriptLateUpdateTimings);
+                    // Main-thread CPU scopes, summed per frame by name: their max and p95 show which work makes a spike.
+                    {
+                        std::map<std::string, float> traced;
+                        for (const auto &traceSample : cpuTrace.TakeSamples())
+                            traced[traceSample.name] += traceSample.durationMs;
+                        for (const auto &[name, ms] : traced)
+                            projectBenchmarkCpuScopes["Trace / " + name].push_back(ms);
+                    }
                     const auto gpu = engine.GetRenderDevice()->GetTimingStats("Scene");
                     sample.gpuAvailable = gpu.hasGpuResult && gpu.gpuObservationId != 0 &&
                         gpu.gpuObservationId != lastBenchmarkGpuObservation;

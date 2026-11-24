@@ -1,9 +1,12 @@
 #include "PlutoGE/scene/TerrainLayerStack.h"
 
+#include "PlutoGE/core/CpuTrace.h"
+
 #include <stb_image.h>
 #include <stb_image_write.h>
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cmath>
 #include <fstream>
@@ -15,6 +18,18 @@ namespace PlutoGE::scene
         float SrgbToLinear(float value)
         {
             return value <= 0.04045f ? value / 12.92f : std::pow((value + 0.055f) / 1.055f, 2.4f);
+        }
+
+        // SrgbToLinear of each 8-bit value: mean colours read tens of thousands of texels per layer, for every tile.
+        const std::array<float, 256> &SrgbByteToLinear()
+        {
+            static const auto table = [] {
+                std::array<float, 256> values{};
+                for (int value = 0; value < 256; ++value)
+                    values[static_cast<std::size_t>(value)] = SrgbToLinear(static_cast<float>(value) / 255.0f);
+                return values;
+            }();
+            return table;
         }
 
         float LinearToSrgb(float value)
@@ -303,6 +318,7 @@ namespace PlutoGE::scene
 
     void TerrainLayerStack::UpdateWeightTextures()
     {
+        core::CpuScope scope("TerrainLayers.WeightTextures");
         const int size = m_weights.GetResolution();
         const auto &dirty = m_weightTexturesDirty;
         for (std::size_t plane = 0; plane < m_weightTextures.size(); ++plane)
@@ -332,6 +348,7 @@ namespace PlutoGE::scene
     {
         if (m_meanColours.size() != m_layers.size())
         {
+            core::CpuScope scope("TerrainLayers.MeanColours");
             m_meanColours.assign(m_layers.size(), glm::vec3(0.5f));
             for (std::size_t index = 0; index < m_layers.size(); ++index)
             {
@@ -344,9 +361,10 @@ namespace PlutoGE::scene
                 // A strided sample is plenty for a mean colour.
                 const std::size_t step = std::max<std::size_t>(1, texels / 65536);
                 std::size_t counted = 0;
+                const auto &toLinear = SrgbByteToLinear();
                 for (std::size_t texel = 0; texel < texels; texel += step, ++counted)
                     for (int channel = 0; channel < 3; ++channel)
-                        sum[channel] += SrgbToLinear(pixels[texel * 4 + channel] / 255.0f);
+                        sum[channel] += toLinear[pixels[texel * 4 + channel]];
                 const glm::vec3 mean = counted ? glm::vec3(sum / double(counted)) : glm::vec3(1.0f);
                 m_meanColours[index] = mean * source.tint;
             }
@@ -366,9 +384,10 @@ namespace PlutoGE::scene
             for (int x = rect.x; x < rect.x + rect.width; ++x, pixel += 4)
             {
                 const glm::vec2 uv = (glm::vec2(x, y) + 0.5f) / float(size);
+                const auto weights = m_weights.SampleWeights(uv);
                 glm::vec3 colour(0.0f);
-                for (std::size_t layer = 0; layer < m_layers.size(); ++layer)
-                    colour += colours[layer] * m_weights.SampleWeight(uv, layer);
+                for (std::size_t layer = 0; layer < m_layers.size() && layer < weights.size(); ++layer)
+                    colour += colours[layer] * weights[layer];
                 for (int channel = 0; channel < 3; ++channel)
                     pixel[channel] = static_cast<unsigned char>(std::lround(LinearToSrgb(colour[channel]) * 255.0f));
                 pixel[3] = 255;
@@ -378,6 +397,7 @@ namespace PlutoGE::scene
 
     void TerrainLayerStack::UpdateMacroAlbedo()
     {
+        core::CpuScope scope("TerrainLayers.MacroAlbedo");
         const int size = std::min(kMacroResolution, m_weights.GetResolution());
         if (m_macroStale || !m_macroAlbedo || m_macroAlbedo->GetWidth() != size)
         {

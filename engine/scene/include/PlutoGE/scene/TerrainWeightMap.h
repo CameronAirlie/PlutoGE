@@ -46,6 +46,8 @@ namespace PlutoGE::scene
         [[nodiscard]] std::uint8_t GetWeight(int x, int y, std::size_t layer) const;
         // Bilinear weight of `layer` at a 0..1 UV (clamped), 0..1.
         [[nodiscard]] float SampleWeight(glm::vec2 uv, std::size_t layer) const;
+        // SampleWeight for every layer, finding the bilinear footprint once.
+        [[nodiscard]] std::array<float, kLayers> SampleWeights(glm::vec2 uv) const;
         // The layer with the most weight at a UV, for surface queries (footsteps, decals).
         [[nodiscard]] std::size_t DominantLayer(glm::vec2 uv) const;
 

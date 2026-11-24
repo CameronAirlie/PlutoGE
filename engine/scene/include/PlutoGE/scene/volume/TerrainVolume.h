@@ -94,6 +94,20 @@ namespace PlutoGE::scene::volume
         // Every sample of a box (stored chunks where there are some, the base elsewhere), for meshing.
         [[nodiscard]] DensityBlock Gather(const VolumeSampleBox &box) const;
 
+        // What Gather reads for a box, taken on the volume's thread: copies of the stored chunks the box reaches and the
+        // (immutable) base. Its Gather may then run on any thread, so the base's sampling (generated caves' noise)
+        // leaves the volume's thread.
+        struct GatherSnapshot
+        {
+            VolumeGrid grid;
+            VolumeSampleBox box;
+            std::shared_ptr<const VolumeDensitySource> base;
+            std::unordered_map<VolumeChunkCoord, VolumeChunk, VolumeChunkCoordHash> chunks;
+            // The samples the volume's Gather returned when the snapshot was taken.
+            [[nodiscard]] DensityBlock Gather() const;
+        };
+        [[nodiscard]] GatherSnapshot SnapshotGather(const VolumeSampleBox &box) const;
+
         // ---- edits ------------------------------------------------------------------------------------------------
         // Applies a shape to the volume. Chunks it changes are stored; chunks it leaves as they were are not. Dirties
         // every chunk whose mesh read a changed sample.

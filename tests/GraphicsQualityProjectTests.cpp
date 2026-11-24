@@ -49,6 +49,7 @@ int main(int argc, char **argv)
             q.foliageDetail = 0.3f + 0.123f * static_cast<float>(i);
             q.contactShadows = i % 2 == 0;
             q.tracedShadows = i % 2 != 0;
+            q.foliageShadowSway = i % 2 == 0;
             q.grassDensity = 0.15f + 0.1234567f * static_cast<float>(i);
             q.grassDistance = 0.3f + 0.1765432f * static_cast<float>(i);
         }
@@ -137,6 +138,14 @@ int main(int argc, char **argv)
         Check(eighteenField && !eighteenField->GetManifest().graphicsQualityPresets.tiers[0].tracedShadows &&
                   eighteenField->GetManifest().graphicsQualityPresets.tiers[2].tracedShadows,
               "An eighteen-field quality record did not take its tier's traced-shadow default");
+        // Records written before foliage shadow sway take their tier's default: off on Low, on above it.
+        { std::ofstream file(path); file << "PLUTOPROJECT\t3\nQUALITY_PRESET\t0\t1\t512\t1\t40\t1\t0\t0\t0\t0\t0\t0\t0\t0.6\t1\t0.4\t0.5\t1\n"
+                                             "QUALITY_PRESET\t2\t1\t2048\t4\t150\t0\t1\t1\t1\t1\t1\t0\t0\t1\t1\t1\t1\t1\n"; }
+        const auto nineteenField = assets::Project::Load(path, &error);
+        Check(nineteenField && !nineteenField->GetManifest().graphicsQualityPresets.tiers[0].foliageShadowSway &&
+                  nineteenField->GetManifest().graphicsQualityPresets.tiers[2].foliageShadowSway &&
+                  nineteenField->GetManifest().graphicsQualityPresets.tiers[0].tracedShadows,
+              "A nineteen-field quality record did not take its tier's foliage-shadow-sway default");
         if (argc > 1)
         {
             const auto activeProject = assets::Project::Load(argv[1], &error);

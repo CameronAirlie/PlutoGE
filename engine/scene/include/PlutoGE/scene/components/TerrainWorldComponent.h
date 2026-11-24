@@ -198,6 +198,7 @@ namespace PlutoGE::scene
             std::future<procedural::ProceduralGenerationResult> generation;
             bool generating = false;
             bool paintedWeights = false; // the tile's weights come from its own files, not its biomes
+            bool overviewHidden = false; // the tile's mesh draws, so its overview tile is hidden
             std::uint64_t sourceSignature = 0; // the tile source's signature when the tile was made or refreshed
         };
 
@@ -206,6 +207,8 @@ namespace PlutoGE::scene
         void Activate(TerrainTileCoord tile, Tile &state);
         void Unload(TerrainTileCoord tile, Tile &state);
         void PollGeneration(Tile &state, bool wait);
+        // Hides the overview under each loaded tile whose own mesh can draw (tiles build their meshes on workers).
+        void HideOverviewsUnderReadyTiles();
         void EnsureOverview();
         void ClearOverview();
         void ValidateEntities();
@@ -243,15 +246,20 @@ namespace PlutoGE::scene
             volume::VolumeFarProxy proxy;
             std::unique_ptr<render::Material> material;
             std::vector<std::uint32_t> entities;
+            // A newer proxy being built on a worker (meshing a tile's caves takes a few hundred milliseconds).
+            std::future<volume::VolumeFarProxy> pending;
         };
         std::map<TerrainTileCoord, FarProxy> m_farProxies;
         float m_farVolumeVoxel = 2.0f;
         void BuildFarProxy(TerrainTileCoord tile, Entity &tileEntity);
+        // Shows the proxies whose builds finished; with `wait`, waits for every build first.
+        void CollectFarProxies(bool wait);
         void ShowFarProxy(TerrainTileCoord tile);
         void ApplySuppressedFoliage(TerrainTileCoord tile, Entity &entity) const;
         // Work whose result is no longer wanted; kept until it finishes (a future from std::async blocks when dropped).
         std::vector<std::future<std::optional<TileFiles>>> m_abandonedLoads;
         std::vector<std::future<procedural::ProceduralGenerationResult>> m_abandonedGenerations;
+        std::vector<std::future<volume::VolumeFarProxy>> m_abandonedFarProxies;
 
         std::optional<TerrainHeightField> m_overview;
         bool m_overviewTried = false;

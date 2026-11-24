@@ -22,6 +22,43 @@ namespace PlutoGE::scene::volume
             const glm::ivec3 high = glm::max(a.first + a.count, b.first + b.count);
             return {low, high - low};
         }
+        // Every sample of a box: a stored chunk's where `findChunk` has one, the base's (quantized alike) elsewhere.
+        template <typename FindChunk>
+        DensityBlock GatherSamples(const VolumeGrid &grid, const VolumeDensitySource &base, const VolumeSampleBox &box, FindChunk &&findChunk)
+        {
+            DensityBlock block;
+            block.box = box;
+            block.samples.resize(box.SampleCount());
+            if (box.Empty())
+                return block;
+            std::vector<VolumeSample> baseSamples;
+            grid.ForEachChunk(box, [&](VolumeChunkCoord coord) {
+                const auto part = box.Intersect(grid.ChunkSamples(coord));
+                const auto chunkFirst = grid.ChunkFirstSample(coord);
+                const VolumeChunk *chunk = findChunk(coord);
+                if (!chunk)
+                {
+                    baseSamples.resize(part.SampleCount());
+                    base.Fill(grid, part, baseSamples);
+                }
+                std::size_t partIndex = 0;
+                for (int z = 0; z < part.count.z; ++z)
+                    for (int y = 0; y < part.count.y; ++y)
+                        for (int x = 0; x < part.count.x; ++x, ++partIndex)
+                        {
+                            const glm::ivec3 sample = part.first + glm::ivec3(x, y, z);
+                            auto &out = block.samples[block.Index(sample - box.first)];
+                            if (chunk)
+                            {
+                                const auto local = sample - chunkFirst;
+                                out = {DequantizeDistance(chunk->GetDensity(local), grid.voxelSize), chunk->GetMaterial(local)};
+                            }
+                            else
+                                out = Quantized(baseSamples[partIndex], grid.voxelSize);
+                        }
+            });
+            return block;
+        }
     }
 
     TerrainVolume::TerrainVolume(VolumeGrid grid, std::shared_ptr<const VolumeDensitySource> base)
@@ -69,38 +106,26 @@ namespace PlutoGE::scene::volume
 
     DensityBlock TerrainVolume::Gather(const VolumeSampleBox &box) const
     {
-        DensityBlock block;
-        block.box = box;
-        block.samples.resize(box.SampleCount());
-        if (box.Empty())
-            return block;
-        std::vector<VolumeSample> baseSamples;
-        m_grid.ForEachChunk(box, [&](VolumeChunkCoord coord) {
-            const auto part = box.Intersect(m_grid.ChunkSamples(coord));
-            const auto chunkFirst = m_grid.ChunkFirstSample(coord);
-            const auto *chunk = FindChunk(coord);
-            if (!chunk)
-            {
-                baseSamples.resize(part.SampleCount());
-                m_base->Fill(m_grid, part, baseSamples);
-            }
-            std::size_t partIndex = 0;
-            for (int z = 0; z < part.count.z; ++z)
-                for (int y = 0; y < part.count.y; ++y)
-                    for (int x = 0; x < part.count.x; ++x, ++partIndex)
-                    {
-                        const glm::ivec3 sample = part.first + glm::ivec3(x, y, z);
-                        auto &out = block.samples[block.Index(sample - box.first)];
-                        if (chunk)
-                        {
-                            const auto local = sample - chunkFirst;
-                            out = {DequantizeDistance(chunk->GetDensity(local), m_grid.voxelSize), chunk->GetMaterial(local)};
-                        }
-                        else
-                            out = Quantized(baseSamples[partIndex], m_grid.voxelSize);
-                    }
+        return GatherSamples(m_grid, *m_base, box, [this](VolumeChunkCoord coord) { return FindChunk(coord); });
+    }
+
+    TerrainVolume::GatherSnapshot TerrainVolume::SnapshotGather(const VolumeSampleBox &box) const
+    {
+        GatherSnapshot snapshot{.grid = m_grid, .box = box, .base = m_base};
+        if (!box.Empty())
+            m_grid.ForEachChunk(box, [&](VolumeChunkCoord coord) {
+                if (const auto *chunk = FindChunk(coord))
+                    snapshot.chunks.emplace(coord, *chunk);
+            });
+        return snapshot;
+    }
+
+    DensityBlock TerrainVolume::GatherSnapshot::Gather() const
+    {
+        return GatherSamples(grid, *base, box, [this](VolumeChunkCoord coord) -> const VolumeChunk * {
+            const auto found = chunks.find(coord);
+            return found == chunks.end() ? nullptr : &found->second;
         });
-        return block;
     }
 
     VolumeChunk TerrainVolume::MakeBaseChunk(VolumeChunkCoord coord) const

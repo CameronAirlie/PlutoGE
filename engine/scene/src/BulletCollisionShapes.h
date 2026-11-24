@@ -29,6 +29,8 @@ namespace PlutoGE::scene::detail
         std::unique_ptr<btCollisionShape> shape;
         std::vector<std::unique_ptr<btCollisionShape>> ownedChildShapes;
         std::vector<float> ownedHeightfieldData;
+        // Samples of heightfield children made from parts of a terrain (each child reads its own block).
+        std::vector<std::vector<float>> ownedHeightfieldBlocks;
     };
 
     // A finished collider shape that any number of collision objects, in any number of Bullet worlds, may share.

@@ -18,14 +18,16 @@ namespace PlutoGE::scene::volume
     {
         const auto &grid = volume.GetGrid();
         const auto region = grid.ChunkSamples(chunk);
-        auto block = volume.Gather(m_mesher->RequiredSamples(region));
+        // Only the stored chunks are copied here; the worker samples the base, which can be costly (cave noise).
+        auto snapshot = volume.SnapshotGather(m_mesher->RequiredSamples(region));
         const std::uint64_t ticket = m_nextTicket++;
         m_latest[chunk] = ticket;
         m_jobs.push_back(Job{
             .chunk = chunk,
             .ticket = ticket,
             .mesh = std::async(std::launch::async,
-                               [mesher = m_mesher, block = std::move(block), region, grid, chunk, finish = std::move(finish)] {
+                               [mesher = m_mesher, snapshot = std::move(snapshot), region, grid, chunk, finish = std::move(finish)] {
+                                   const auto block = snapshot.Gather();
                                    auto mesh = mesher->Mesh(block, region, grid, grid.ChunkOrigin(chunk));
                                    if (finish)
                                        finish(chunk, mesh);

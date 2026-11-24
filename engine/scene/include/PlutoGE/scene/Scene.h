@@ -354,8 +354,8 @@ namespace PlutoGE::scene
         const std::vector<TerrainComponent *> &GetTerrainComponents() const { return m_terrainComponents; }
         void MarkShadowLightsDirty();
         void InvalidateFoliagePhysics();
-        // A collider's geometry changed in place (a terrain's holes): the next physics query recreates every collider
-        // body, rebuilding only the geometry that changed. Adding or removing colliders needs no call.
+        // A collider's geometry changed in place (a terrain's holes): the next physics query recreates that collider's
+        // body (its signature carries the geometry's revision). Adding or removing colliders needs no call.
         void MarkColliderShapesDirty() const;
         [[nodiscard]] PhysicsSynchronizationStats GetPhysicsSynchronizationStats() const;
         void SubmitRenderCommands();

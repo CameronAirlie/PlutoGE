@@ -1,7 +1,10 @@
 #pragma once
 
 #include "PlutoGE/render/TextureCompression.h"
+#include "PlutoGE/render/TextureSourceIndex.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
+
+#include <functional>
 
 #include <cstdint>
 #include <memory>
@@ -40,6 +43,13 @@ namespace PlutoGE::render
             EncodedTexture texture;
         };
 
+        // A source's stored chain found through the source index, and the source's means.
+        struct IndexedTexture
+        {
+            EncodedTexture texture;
+            TextureMeans means;
+        };
+
         RhiTextureCompression(const rhi::IRenderDevice &device, TextureCompressionSettings settings);
         ~RhiTextureCompression();
         RhiTextureCompression(const RhiTextureCompression &) = delete;
@@ -62,6 +72,10 @@ namespace PlutoGE::render
         // Encodes on the calling thread (through the store), for renderers that must not show interim textures.
         [[nodiscard]] std::optional<EncodedTexture> EncodeNow(const Texture &source, TextureCacheKind kind, rhi::Format format,
                                                               std::span<const std::byte> rgba8) const;
+        // `source`'s compressed chain for `kind`, when the source index knows its file content (Texture::GetFileVersion)
+        // was compressed that way under this device's policy: no pixels are read. nullopt otherwise; the caller then
+        // reads pixels as usual (and an encode it requests records the result for next time).
+        [[nodiscard]] std::optional<IndexedTexture> LoadIndexed(const Texture &source, TextureCacheKind kind) const;
         // Encodes finished since the last call, in completion order.
         [[nodiscard]] std::vector<Completed> TakeCompleted();
         [[nodiscard]] std::size_t Pending() const;
@@ -76,9 +90,15 @@ namespace PlutoGE::render
             std::size_t bytes = 0;
         };
         static TextureSemantic SemanticFor(TextureCacheKind kind);
+        // What a job of `source` calls once stored: records it in the source index (empty when there is nothing to
+        // record: no index, or content that is not exactly its file's).
+        [[nodiscard]] std::function<void(const content::ContentDigest &, std::span<const std::byte>)>
+        RecordingFor(const Texture &source, TextureCacheKind kind, rhi::Format format) const;
 
         TextureCompressionSettings m_settings;
         std::shared_ptr<CompressedTextureStore> m_store;
+        std::shared_ptr<TextureSourceIndex> m_sourceIndex;
+        std::uint64_t m_policy = 0; // TextureCompressionPolicy for this device
         std::unique_ptr<TextureCompressionQueue> m_queue;
         // Format support is fixed for a device; asked once per format.
         std::unordered_map<rhi::Format, bool> m_supported;

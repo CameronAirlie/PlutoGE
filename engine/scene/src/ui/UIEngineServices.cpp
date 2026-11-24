@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/ui/UIEngineServices.h"
 
 #include "PlutoGE/assets/AssetManager.h"
@@ -50,6 +51,7 @@ namespace PlutoGE::scene
 
     render::Texture *LoadUITexture(const std::string &reference)
     {
+        const core::CpuScope scope("UI texture load", core::CpuCategory::UI);
         const auto path = ResolveUIAssetPath(reference);
         return path.empty() ? nullptr : render::Texture::LoadFromFile(path.string().c_str());
     }

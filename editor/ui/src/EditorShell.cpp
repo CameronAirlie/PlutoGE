@@ -1,7 +1,9 @@
 #include "PlutoGE/asset_import/ModelImportTask.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/platform/LoadingWork.h"
+#include "PlutoGE/core/LoadProfile.h"
 #include <atomic>
+#include <optional>
 #include "PlutoGE/assets/ProjectAssetLock.h"
 #include "PlutoGE/asset_import/ImportFileTransaction.h"
 #include "PlutoGE/ui/FileDialogs.h"
@@ -1051,7 +1053,8 @@ namespace PlutoGE::ui
             return false;
         }
         if (!assetimport::ImportFileTransaction::Recover(m_project->GetRootDirectory(), m_project->GetAssetDirectoryPath(), &error) ||
-            !database.Scan(*m_project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false, .importedFileChecks=assets::SharedImportedFileChecks(), .allowUnavailableImportedStorage=true}, &error))
+            !database.Scan(*m_project, assets::AssetScanOptions{.hashContent=false, .collectDependencies=false, .importedFileChecks=assets::SharedImportedFileChecks(),
+                .importedFileCheckPersistence=assets::ImportedFileCheckPersistence::ReadWrite, .allowUnavailableImportedStorage=true}, &error))
         {
             Log(ConsoleSeverity::Error, "Cannot refresh asset catalog: " + error);
             return false;
@@ -2794,8 +2797,10 @@ namespace PlutoGE::ui
 
     bool EditorShell::LoadProjectFromPath(const std::filesystem::path &manifestPath)
     {
+        const core::LoadProfile::Phase phase("Project open", true);
         ProjectOperationTiming timing("open", [this](std::string message) { Log(ConsoleSeverity::Info, message); });
         constexpr std::string_view kMissingScriptAssemblyPrefix = "Project script assembly was not found: ";
+        std::optional<core::CpuScope> stage(std::in_place, "Project manifest");
 
         std::string errorMessage;
         auto loadedProject = assets::Project::Load(manifestPath, &errorMessage);
@@ -2829,8 +2834,10 @@ namespace PlutoGE::ui
         m_panelManager.OnProjectChanged();
         ClearCachedMaterialPreviews();
         m_sceneHistory.Clear();
+        stage.emplace("Project context");
         ApplyProjectContext();
         timing.Stage("asset catalog");
+        stage.emplace("Project settings and script assembly");
 
         const auto &manifest = m_project->GetManifest();
         m_panelManager.SetEditorFontSize(manifest.editorFontSize);
@@ -2856,6 +2863,7 @@ namespace PlutoGE::ui
         }
 
         timing.Stage("settings and script assembly");
+        stage.emplace("Startup scene deserialization");
         std::unique_ptr<scene::Scene> loadedScene;
         if (!manifest.startupScene.empty())
         {
@@ -2867,6 +2875,7 @@ namespace PlutoGE::ui
         }
 
         timing.Stage("scene deserialization");
+        stage.emplace("Startup scene installation");
         if (loadedScene)
         {
             SetScene(std::move(loadedScene));
@@ -3549,6 +3558,9 @@ namespace PlutoGE::ui
 
     bool EditorShell::Initialize(const std::filesystem::path &startupProject, bool visible)
     {
+        // PLUTO_LOAD_PROFILE=<file> reports where opening the editor and its project spends time (LoadProfile.h).
+        if (core::LoadProfile::Get().EnableFromEnvironment()) core::LoadProfile::Get().Mark("Editor initialization started");
+        const core::LoadProfile::Phase phase("Editor initialization", true);
         m_persistEditorSettings = visible;
         auto config = core::EngineConfig{
             platform::WindowConfig{
@@ -3617,6 +3629,7 @@ namespace PlutoGE::ui
         m_statusMessage = "Open or create a project to begin.";
         UpdateWindowTitle();
 
+        core::CpuScope imguiScope("Editor UI initialization");
         if (!m_panelManager.InitializeImGui(&m_engine.GetWindow(), m_engine.GetRenderDevice(), m_engine.GetSwapchain()))
         {
             m_editorCamera.ClearPostProcessEffects();
@@ -3708,6 +3721,7 @@ namespace PlutoGE::ui
     {
         // Do not create workspace panels or viewport targets before project selection.
         if (!m_project && !RunProjectLauncher()) return;
+        std::optional<core::LoadProfile::Phase> panelPhase(std::in_place, "Editor panels", true);
         auto &window = m_engine.GetWindow();
         auto &renderScene = m_engine.GetRenderScene();
         auto deltaTime = std::chrono::duration<float>::zero();
@@ -3835,6 +3849,9 @@ namespace PlutoGE::ui
         auto profilerPanel = new ProfilerPanel(PanelConfig{"Profiler"}, &m_profiler, &m_panelManager, &renderScene);
         profilerPanel->Initialize();
         m_panelManager.AddPanel(profilerPanel);
+        panelPhase.reset();
+        // The first frames build the viewports' GPU resources: a load profile records them (written after the third).
+        int profiledLoadFrames = 0;
 
         auto *windowHandle = static_cast<GLFWwindow *>(window.GetWindow());
         bool isEditorCameraLookActive = false;
@@ -3953,6 +3970,14 @@ namespace PlutoGE::ui
             viewportPanel2->SetTemporalUpscalerOptions(gameUpscaler ? gameUpscaler->ApplyTo(viewportUpscaler)
                                                                     : viewportUpscaler);
             core::CpuTrace cpuTrace(m_profiler.IsRecording());
+            std::optional<core::LoadProfile::Phase> loadFramePhase;
+            if (profiledLoadFrames < 3)
+                loadFramePhase.emplace("Editor frame " + std::to_string(++profiledLoadFrames), true);
+            else if (profiledLoadFrames == 3)
+            {
+                ++profiledLoadFrames;
+                (void)core::LoadProfile::Get().Write();
+            }
             // The viewports render with the project's rendering settings, as the runtime does; the profiler can
             // override occlusion culling for the session.
             auto renderingSettings = m_project ? m_project->GetManifest().rendering : render::RenderingSettings{};

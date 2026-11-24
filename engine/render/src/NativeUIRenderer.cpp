@@ -36,6 +36,7 @@ namespace PlutoGE::render
             return;
         if (!m_renderer || m_device != &device)
         {
+            core::CpuScope creationScope("Native UI renderer creation", core::CpuCategory::UI);
             const ShaderArtifactLibrary shaders;
             m_renderer = std::make_unique<UIRhiRenderer>(device, shaders.Load("NativeUI", "vertex"),
                                                          shaders.Load("NativeUI", "fragment"));
@@ -47,6 +48,7 @@ namespace PlutoGE::render
 
         // Rendering refreshes the UI system's per-frame layout and paint cache;
         // the scene itself is not modified.
+        core::CpuScope layoutScope("Native UI draw lists", core::CpuCategory::UI);
         auto &uiSystem = const_cast<scene::Scene &>(scene).GetUISystem();
         const scene::UICameraInfo camera{view, projection};
         const auto &canvases = uiSystem.BuildDrawLists(const_cast<scene::Scene &>(scene),
@@ -56,6 +58,7 @@ namespace PlutoGE::render
         for (const auto &canvas : canvases)
             if (!canvas.drawList.Empty())
                 items.push_back({&canvas.drawList, canvas.entity ? canvas.entity->GetID() : 0u});
+        layoutScope.End();
         if (items.empty())
             return;
 
@@ -63,6 +66,7 @@ namespace PlutoGE::render
         auto &context = immediate ? device.GetImmediateContext() : *commands;
         if (immediate && manageSubmission)
             context.BeginFrame("Native UI");
+        core::CpuScope recordScope("Native UI recording", core::CpuCategory::UI);
         m_renderer->Render(target, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), context, items,
                            ui::FontLibrary::Get().GetAtlas());
         m_renderer->CollectUnused();

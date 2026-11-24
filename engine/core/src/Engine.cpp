@@ -1,4 +1,5 @@
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/audio/AudioSystem.h"
 #include "PlutoGE/import/MeshImporter.h"
@@ -6,6 +7,7 @@
 #include "PlutoGE/render/RenderSceneFrontend.h"
 #include "PlutoGE/render/RhiRenderService.h"
 #include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/TextureSourceIndex.h"
 #include "PlutoGE/render/rhi/RenderDevice.h"
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
@@ -20,6 +22,7 @@
 #include <stdexcept>
 #include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <iostream>
 #include <type_traits>
 
@@ -234,6 +237,7 @@ namespace PlutoGE::core
                                               ? platform::WindowClientApi::None
                                               : platform::WindowClientApi::OpenGL;
 
+        std::optional<CpuScope> stage(std::in_place, "Window creation");
         if (!m_window.Create(m_config.windowConfig))
         {
             std::cerr << "Failed to create window." << std::endl;
@@ -254,6 +258,7 @@ namespace PlutoGE::core
             .height = static_cast<std::uint32_t>((std::max)(extents.height, 1)),
             .vSync = m_config.vSync,
         };
+        stage.emplace("Render device creation");
         auto deviceCreation = render::rhi::CreateRenderDevice(m_config.graphicsApi, presentation);
         if (!deviceCreation)
         {
@@ -265,6 +270,7 @@ namespace PlutoGE::core
         }
         m_renderDevice = std::move(deviceCreation.device);
         m_renderDevice->GetImmediateContext().SetGpuProfilingEnabled(m_config.isEditorHost);
+        stage.emplace("Swapchain creation");
         try
         {
             m_swapchain = m_renderDevice->CreateSwapchain(presentation);
@@ -283,6 +289,7 @@ namespace PlutoGE::core
             m_window.Close();
             return false;
         }
+        stage.emplace("Render service initialization");
         try
         {
             if (!m_rhiRenderService->Initialize(*m_renderDevice, *m_swapchain))
@@ -310,12 +317,16 @@ namespace PlutoGE::core
                 static_cast<void>(m_rhiRenderService->Resize(static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height)));
         });
 
+        SetTextureCompression(render::TextureCompressionSettings::FromEnvironment());
+        stage.emplace("Audio initialization");
         if (!m_audioSystem->Initialize())
         {
             std::cerr << "Failed to initialize audio system." << std::endl;
         }
 
+        stage.emplace("Script engine initialization");
         m_scriptEngine->Initialize();
+        stage.reset();
         UpdateFramePacingCadence();
 
         m_isInitialized = true;
@@ -596,6 +607,12 @@ namespace PlutoGE::core
         return requested;
     }
 
+    void Engine::SetTextureCompression(const render::TextureCompressionSettings &settings)
+    {
+        m_rhiRenderService->SetTextureCompression(settings);
+        m_textureManager->SetSourceIndex(render::TextureSourceIndex::ForSettings(settings));
+    }
+
     void Engine::StartRuntime()
     {
         if (m_isRuntimeRunning)
@@ -609,6 +626,7 @@ namespace PlutoGE::core
         m_scriptEngine->NotifyPlayStateChanged(true);
         if (m_scene)
         {
+            CpuScope scope("Scene runtime start");
             m_scene->StartRuntime();
         }
     }

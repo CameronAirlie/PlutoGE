@@ -74,6 +74,7 @@ add_library(PlutoGERender
     src/TextureDecodeQueue.cpp
     src/ImageDecoding.cpp
     src/TextureCooking.cpp
+    src/TextureSourceIndex.cpp
     src/TextureCompression.cpp
     src/CompressedTextureStore.cpp
     src/TextureCompressionQueue.cpp
@@ -94,6 +95,7 @@ add_library(PlutoGERender
     src/rhi/opengl/OpenGLDevice.cpp
     src/rhi/vulkan/VulkanBootstrap.cpp
     src/rhi/vulkan/VulkanDevice.cpp
+    src/rhi/vulkan/VulkanPipelines.cpp
     src/Mesh.cpp
     src/postprocess/AutoExposureEffect.cpp
     src/postprocess/BloomEffect.cpp

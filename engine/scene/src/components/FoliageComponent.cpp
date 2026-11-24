@@ -561,15 +561,22 @@ namespace PlutoGE::scene
             return true;
         }
 
+        // The files of the mesh asset's baked impostor atlases (albedo, normal-depth); empty when it has none.
+        std::vector<std::string> ImpostorTexturePaths(assets::AssetManager &assets, const std::string &meshReference)
+        {
+            const auto &impostor = assets.GetMeshAssetMetadata(meshReference).impostor;
+            if (!impostor) return {};
+            return {assets.ResolveAssetPath(impostor->albedoReference), assets.ResolveAssetPath(impostor->normalDepthReference)};
+        }
+
         // The mesh asset's baked impostor with its atlas textures loaded; null when it has none or they fail to load.
         std::shared_ptr<const render::MeshImpostor> LoadImpostor(assets::AssetManager &assets, const std::string &meshReference)
         {
             const auto &impostor = assets.GetMeshAssetMetadata(meshReference).impostor;
             if (!impostor) return nullptr;
-            const auto *albedo = assets.LoadTexture(assets.ResolveAssetPath(impostor->albedoReference).c_str(),
-                                                    render::TextureColorSpace::SRGB);
-            const auto *normalDepth = assets.LoadTexture(assets.ResolveAssetPath(impostor->normalDepthReference).c_str(),
-                                                         render::TextureColorSpace::Linear);
+            const auto paths = ImpostorTexturePaths(assets, meshReference);
+            const auto *albedo = assets.LoadTexture(paths[0].c_str(), render::TextureColorSpace::SRGB);
+            const auto *normalDepth = assets.LoadTexture(paths[1].c_str(), render::TextureColorSpace::Linear);
             if (!albedo || !normalDepth) return nullptr;
             return std::make_shared<const render::MeshImpostor>(render::MeshImpostor{impostor->parameters, albedo, normalDepth});
         }
@@ -1173,6 +1180,20 @@ namespace PlutoGE::scene
                     type.asset.modelAssetId, type.asset.modelObjectId);
                 if (!resolved.empty()) type.asset.sourceMeshPath = resolved;
             }
+        }
+        // Every type's impostor atlases decode side by side (they stay RGBA8, so each is decoded): loading the types
+        // one by one would decode them in turn.
+        {
+            auto &assets = core::Engine::GetInstance().GetAssetManager();
+            std::vector<std::string> impostorTextures;
+            for (const auto &type : m_types)
+                if (!type.asset.sourceMeshPath.empty())
+                    for (auto &path : ImpostorTexturePaths(assets, type.asset.sourceMeshPath))
+                        impostorTextures.push_back(std::move(path));
+            assets.PrefetchTextures(impostorTextures);
+        }
+        for (auto &type : m_types)
+        {
             RebuildTypeMeshFromReference(type);
             RebuildTypeMaterialFromReference(type);
         }

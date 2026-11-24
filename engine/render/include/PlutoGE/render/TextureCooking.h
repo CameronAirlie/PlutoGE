@@ -10,8 +10,8 @@
 
 // Block compression at build time. The renderer compresses material textures on the player's machine the first time it
 // samples them (RhiTextureCompression), caching the results by content. Cooking fills a store of the same entries
-// while a game is exported, and the runtime searches it first (TextureCompressionSettings::cookedDirectories), so
-// players start with every material texture already encoded.
+// while a game is exported, with a source index naming each file's entries (TextureSourceIndex.h), and the runtime searches
+// both first (TextureCompressionSettings::cookedRoots), so players neither decode nor encode material textures.
 namespace PlutoGE::render
 {
     // Where an exported game keeps its cooked store, relative to the project root (inside its content pack).
@@ -29,10 +29,21 @@ namespace PlutoGE::render
         Failed,        // encoding or writing failed
     };
 
+    // The image file a cooked texture was decoded from: the cook records it in the store's source index, so the game
+    // loads the texture from its cooked chains without decoding it (TextureSourceIndex.h).
+    struct TextureCookSource
+    {
+        std::filesystem::path file;
+        std::filesystem::path contentRoot; // the game's project root: the index names files relative to it
+        int channels = 0;                  // as decoded (DecodedImage::channels)
+    };
+
     // Encodes `rgba8` (width x height, as ImageDecoding.h decodes it) the way a renderer sampling it as `semantic` would
-    // request it, into the store at `directory`. Safe to call from several threads.
+    // request it, into the store at `directory`, and records it in the store's source index when `source` names its
+    // file. Safe to call from several threads for different files.
     TextureCookOutcome CookCompressedTexture(const std::filesystem::path &directory, std::span<const std::byte> rgba8,
                                              std::uint32_t width, std::uint32_t height, TextureSemantic semantic, bool srgb,
                                              const TextureCompressionSettings &settings = {},
-                                             const SampledFormatQuery &targetSupports = DesktopBlockCompressionSupport());
+                                             const SampledFormatQuery &targetSupports = DesktopBlockCompressionSupport(),
+                                             const TextureCookSource *source = nullptr);
 }

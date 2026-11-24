@@ -85,8 +85,9 @@ namespace PlutoGE::render
             const Material *material;
             std::uint32_t submesh, lod;
             bool emissiveGi;
-            // Shadow-only packets carry no instance LOD chain (so no per-instance LODs, impostors or GPU culling): a
-            // camera list given one drew every instance of a cluster at full detail.
+            // A shadow-only packet of an instanced command carries no instance LOD chain (so no per-instance LODs,
+            // impostors or GPU culling): a camera list given one drew every instance of a cluster at full detail. Other
+            // packets are the same in every pass and are shared (see Key).
             bool shadowOnly;
             bool operator==(const RetainedKey &) const = default;
         };
@@ -109,7 +110,10 @@ namespace PlutoGE::render
         // drawLod is the LOD the packet actually draws; shadow lists may select
         // a coarser caster than the visible list for the same command.
         static RetainedKey Key(const RenderCommand &command, std::uint32_t drawLod, bool emissiveGi, bool shadowOnly)
-        { return {command.sourceObject, command.material, command.submeshIndex, drawLod, emissiveGi, shadowOnly}; }
+        {
+            const bool instanced = command.instanceModels && command.instanceModels->size() > 1;
+            return {command.sourceObject, command.material, command.submeshIndex, drawLod, emissiveGi, shadowOnly && instanced};
+        }
         // The key's drawLod already pins the geometry; the packet may come from a list with another LOD policy, so the
         // caller sets its own Entry::lod on the copy.
         const Entry *FindRetained(const RenderCommand &command, std::uint64_t revision, std::uint32_t drawLod, bool emissiveGi,

@@ -1,3 +1,4 @@
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/UISystem.h"
 
 #include "PlutoGE/scene/Entity.h"
@@ -374,7 +375,10 @@ namespace PlutoGE::scene
     const std::vector<UICanvasFrame> &UISystem::BuildDrawLists(Scene &scene, const glm::vec2 &viewportSize,
                                                                const UICameraInfo *camera)
     {
+        core::CpuScope layoutScope("UI layout", core::CpuCategory::UI);
         RebuildLayout(scene, viewportSize, camera);
+        layoutScope.End();
+        core::CpuScope paintScope("UI paint", core::CpuCategory::UI);
         auto &fonts = ui::FontLibrary::Get();
         const auto paintCanvas = [&](std::uint32_t index)
         {

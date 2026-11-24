@@ -35,6 +35,14 @@ namespace PlutoGE::render
         [[nodiscard]] bool Empty() const { return width <= 0 || height <= 0; }
     };
 
+    // Identifies one version of a source file without reading it: its size and modification time.
+    struct TextureFileVersion
+    {
+        std::uint64_t size = 0;
+        std::int64_t modified = 0; // file clock ticks; 0 where there is none (files inside content packs)
+        friend bool operator==(const TextureFileVersion &, const TextureFileVersion &) = default;
+    };
+
     struct TextureConfig
     {
         std::string filePath; // Path to the texture file
@@ -57,6 +65,12 @@ namespace PlutoGE::render
         int GetHeight() const { return m_height; }
         int GetChannels() const { return m_channels; }
         const std::string &GetFilePath() const { return m_filePath; }
+        // The version of GetFilePath() this texture's content is, while it is exactly that file's (no pixels set
+        // or painted since it was loaded): what TextureSourceIndex knows the file by. nullopt otherwise.
+        [[nodiscard]] std::optional<TextureFileVersion> GetFileVersion() const
+        {
+            return m_fileVersion && m_fileContentRevision == m_contentRevision ? m_fileVersion : std::nullopt;
+        }
 
         // ---- CPU pixels ----------------------------------------------------------------------------------------
         // A file texture's RGBA8 pixels may be released once the renderers hold GPU copies of them (MarkUploaded and
@@ -128,6 +142,9 @@ namespace PlutoGE::render
         mutable std::mutex m_pixelMutex;
         // The content revision a renderer last reported holding on the GPU (MarkUploaded); 0 for none.
         mutable std::atomic<std::uint64_t> m_uploadedRevision{0};
+        // The file version the content was loaded from, and the content revision that load produced (TextureManager).
+        std::optional<TextureFileVersion> m_fileVersion;
+        std::uint64_t m_fileContentRevision = 0;
         // Recent region updates (revision, rectangle), for GetChangedRectSince; bounded.
         std::vector<std::pair<std::uint64_t, TextureRect>> m_regionUpdates;
         std::vector<float> m_cubemapPixels;

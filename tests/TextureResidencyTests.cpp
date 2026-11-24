@@ -1,18 +1,22 @@
 // Texture loading and CPU residency: the shared image decoder (ImageDecoding.h), decodes started ahead of use
 // (TextureManager::PrefetchTextureFiles), file textures releasing their CPU pixels once uploaded and reading them back
 // (Texture, TexturePixelRetention), how material slots are sampled (GetMaterialTextureSampling) and cooking a
-// project's material textures (assets/TextureCook.h).
+// project's material textures (assets/TextureCook.h), and the source index that lets indexed files load without
+// decoding (TextureSourceIndex.h).
 #include "PlutoGE/assets/TextureCook.h"
 #include "PlutoGE/render/ImageDecoding.h"
 #include "PlutoGE/render/MaterialTextureSlots.h"
 #include "PlutoGE/render/TextureCooking.h"
 #include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/TextureSourceIndex.h"
 
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
+#include <optional>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -188,6 +192,49 @@ namespace
         Require(assets::CookMaterialTextures(project, "Assets", 1, &again, &error) && again.encoded == 0 && again.alreadyCooked == 3,
                 "A second cook reuses the store");
         Require(std::filesystem::exists(project / render::kCookedTextureDirectory), "The store is under the project root");
+
+        // The cook's source index names each cooked file, relative to the project root, so the game finds them.
+        const render::TextureSourceIndex cooked({}, {{render::TextureSourceIndex::DirectoryBeside(project / render::kCookedTextureDirectory), project}});
+        const auto bark = project / "Assets/Textures/Bark.bmp";
+        const auto barkVersion = render::TextureSourceIndex::CurrentVersion(bark);
+        const auto barkRecord = barkVersion ? cooked.Find(bark, *barkVersion) : std::nullopt;
+        Require(barkRecord && barkRecord->width == 256 && barkRecord->samplings.size() == 2, "A cooked file's samplings are indexed");
+        const auto tiny = project / "Assets/Textures/Tiny.bmp";
+        Require(!cooked.Find(tiny, *render::TextureSourceIndex::CurrentVersion(tiny)), "Uncompressed textures are not indexed");
+    }
+
+    void SourceIndex(const Scratch &scratch)
+    {
+        const auto file = scratch.root / "indexed.bmp";
+        WriteBmp(file, 8, 4, Gradient());
+        const auto version = render::TextureSourceIndex::CurrentVersion(file);
+        Require(version && version->size > 0, "A file has a version");
+        const auto shared = std::make_shared<render::TextureSourceIndex>(scratch.root / "index");
+        const render::TextureSourceSampling colour{render::TextureSemantic::Color, true, 7, render::rhi::Format::BC1RgbaSrgb, {}};
+        const render::TextureSourceSampling data{render::TextureSemantic::Data, false, 7, render::rhi::Format::BC4RUnorm, {}};
+        Require(shared->Record(file, *version, 8, 4, 3, {}, colour) && shared->Record(file, *version, 8, 4, 3, {}, data),
+                "Samplings are recorded");
+        // A fresh index (another session) reads both back from disk.
+        const render::TextureSourceIndex reread(scratch.root / "index");
+        const auto record = reread.Find(file, *version);
+        Require(record && record->width == 8 && record->height == 4 && record->channels == 3 && record->samplings.size() == 2,
+                "Records persist with every sampling");
+        Require(record->Find(render::TextureSemantic::Data, false, 7) && !record->Find(render::TextureSemantic::Data, false, 8),
+                "A sampling recorded under another policy does not match");
+        auto changed = *version;
+        ++changed.modified;
+        Require(!reread.Find(file, changed), "Another version of the file is unknown");
+
+        // Loading an indexed file decodes nothing until its pixels are read.
+        render::TextureManager textures(true);
+        textures.SetSourceIndex(shared);
+        auto *texture = textures.LoadTextureFromFile(file.string().c_str(), render::TextureColorSpace::SRGB);
+        Require(texture && texture->GetWidth() == 8 && texture->GetHeight() == 4 && !texture->HasResidentPixels(),
+                "An indexed file loads without decoding");
+        Require(texture->GetFileVersion() == version, "It holds its file's content");
+        Require(texture->GetRgba8Pixels().size() == 8 * 4 * 4 && texture->HasResidentPixels(), "Its pixels decode when read");
+        Require(texture->SetRgba8Pixels(std::vector<unsigned char>(8 * 4 * 4, 1)) && !texture->GetFileVersion(),
+                "New pixels are no longer the file's content");
     }
 }
 
@@ -200,6 +247,7 @@ try
     Release(scratch);
     Sampling();
     Cooking(scratch);
+    SourceIndex(scratch);
     std::cout << "Texture residency tests passed\n";
     return 0;
 }

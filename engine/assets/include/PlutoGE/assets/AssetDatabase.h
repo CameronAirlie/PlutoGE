@@ -10,6 +10,7 @@
 #include <optional>
 #include <set>
 #include <memory>
+#include <span>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -36,11 +37,26 @@ namespace PlutoGE::assets
 
     // Remembers which Library files have been verified, by path, size and modification time, so a scan need not hash
     // them again. Library generations are immutable, so in practice a file only changes by being replaced. Thread-safe.
+    // The checks can persist between sessions (Load/Save), so opening a project does not hash its whole Library.
     class ImportedFileCheckCache
     {
     public:
+        struct File
+        {
+            std::filesystem::path path;
+            content::ContentDigest expected{};
+        };
+
         // Whether the file has `expected` content, hashing it unless it was verified unchanged since.
         [[nodiscard]] bool Verify(const std::filesystem::path &path, const content::ContentDigest &expected);
+        // Verifies files side by side on worker threads; later Verify calls for them answer from the results.
+        void VerifyAll(std::span<const File> files);
+
+        // Adds the checks a Save of `directory` wrote. A missing, damaged or foreign file adds nothing.
+        void Load(const std::filesystem::path &file, const std::filesystem::path &directory);
+        // Writes the checks of files under `directory`, replacing `file` (atomically), when any changed since the last
+        // Load or Save of that file.
+        bool Save(const std::filesystem::path &file, const std::filesystem::path &directory, std::string *errorMessage = nullptr);
 
     private:
         struct Entry
@@ -51,10 +67,24 @@ namespace PlutoGE::assets
         };
         std::mutex m_mutex;
         std::unordered_map<std::string, Entry> m_entries;
+        std::uint64_t m_revision = 0;                                   // bumped by every new check
+        std::unordered_map<std::string, std::uint64_t> m_savedRevisions; // per persisted file
     };
 
     // The cache interactive scans share for the life of the process. Cooking and validation scan without it.
     [[nodiscard]] std::shared_ptr<ImportedFileCheckCache> SharedImportedFileChecks();
+
+    // The project's persisted file checks, in its Library.
+    inline constexpr std::string_view kImportedFileChecksFileName = "ImportedFileChecks.tsv";
+
+    // Whether a scan reads and writes the project's persisted file checks (kImportedFileChecksFileName), with
+    // AssetScanOptions::importedFileChecks.
+    enum class ImportedFileCheckPersistence
+    {
+        None,
+        Read,      // trusts earlier sessions' checks, writes nothing (read-only startup)
+        ReadWrite, // also records this scan's checks for later sessions
+    };
 
     struct AssetScanOptions
     {
@@ -67,6 +97,7 @@ namespace PlutoGE::assets
         bool collectDependencies = true;
         // Trusts files this cache verified earlier. Without it every imported file is hashed, as cooking needs.
         std::shared_ptr<ImportedFileCheckCache> importedFileChecks;
+        ImportedFileCheckPersistence importedFileCheckPersistence = ImportedFileCheckPersistence::None;
         std::shared_ptr<const AssetStorageMap> importedStorage;
         // Editor/import recovery can retain unavailable generated identities.
         // Cooking remains strict. Missing/corrupt payloads are never loadable.

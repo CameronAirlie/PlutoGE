@@ -53,11 +53,13 @@ namespace PlutoGE::render
             {
                 result.texture = std::move(cached);
                 result.fromCache = true;
+                if (job.stored)
+                    job.stored(key, job.rgba8);
                 return result;
             }
         result.texture = EncodeTexture(job.rgba8, job.width, job.height, job.semantic, job.format);
-        if (store && result.texture)
-            store->Save(key, *result.texture);
+        if (store && result.texture && store->Save(key, *result.texture) && job.stored)
+            job.stored(key, job.rgba8);
         return result;
     }
 

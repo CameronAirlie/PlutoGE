@@ -1,3 +1,4 @@
+#include "PlutoGE/core/LoadProfile.h"
 #include "PlutoGE/core/LoadingScreenSession.h"
 #include "RuntimeProfiler.h"
 #include "RuntimeContent.h"
@@ -25,7 +26,7 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/render/Texture.h"
-#include "PlutoGE/render/TextureCooking.h"
+#include "PlutoGE/render/TextureCompression.h"
 #include "PlutoGE/render/TextureManager.h"
 
 #include <algorithm>
@@ -376,6 +377,13 @@ int RunRuntime(int argc, char **argv)
     SetUnhandledExceptionFilter(PlutoGE::RuntimeUnhandledExceptionFilter);
 #endif
 
+    // PLUTO_LOAD_PROFILE=<file> reports where startup time goes (LoadProfile.h).
+    auto &loadProfile = PlutoGE::core::LoadProfile::Get();
+    loadProfile.EnableFromEnvironment();
+    loadProfile.Mark("Runtime main");
+    std::optional<PlutoGE::core::LoadProfile::Phase> startupPhase(std::in_place, "Runtime startup");
+    std::optional<PlutoGE::core::CpuScope> startupStage(std::in_place, "Project manifest");
+
     std::string errorMessage;
 #ifdef _WIN32
     PlutoGE::g_runtimeDiagnostics.currentPhase = "load project manifest";
@@ -394,6 +402,7 @@ int RunRuntime(int argc, char **argv)
     engine.GetRhiRenderService().SetGraphicsQualityPresets(project->GetManifest().graphicsQualityPresets);
     engine.GetRhiRenderService().SetRenderingSettings(project->GetManifest().rendering);
     engine.GetAssetManager().SetProjectContext(project->GetRootDirectory().string(), project->GetManifest().assetDirectory, project->GetManifest().assetPipelineVersion);
+    startupStage.emplace("Asset catalog");
     const auto catalogPath = project->GetRootDirectory() / "PlutoAssetCatalog.manifest";
     std::error_code catalogError;
     const bool hasCatalog = PlutoGE::content::IsRegularFile(catalogPath, catalogError);
@@ -411,6 +420,9 @@ int RunRuntime(int argc, char **argv)
         options.createMissingMetadata = false;
         options.hashContent = false;
         options.collectDependencies = false;
+        // Trusts Library files an editor session already verified (unchanged since); verifies the rest side by side.
+        options.importedFileChecks = PlutoGE::assets::SharedImportedFileChecks();
+        options.importedFileCheckPersistence = PlutoGE::assets::ImportedFileCheckPersistence::Read;
         if (!database.Scan(*project, options, &errorMessage))
         {
             std::cerr << "Failed to load source project asset catalog: " << errorMessage << std::endl;
@@ -425,6 +437,7 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.currentPhase = "engine initialize";
 #endif
 
+    startupStage.reset();
     PlutoGE::core::EngineConfig config{
         PlutoGE::platform::WindowConfig{
             .title = project->GetManifest().windowTitle.empty() ? project->GetManifest().name : project->GetManifest().windowTitle,
@@ -470,18 +483,19 @@ int RunRuntime(int argc, char **argv)
         return 1;
     }
 
+    loadProfile.Mark("Engine initialized");
     if (projectBenchmark && engine.GetRenderDevice())
         engine.GetRenderDevice()->GetImmediateContext().SetGpuProfilingEnabled(true);
     // A game's uploaded file textures need no CPU copy; anything that reads one later decodes its file again.
     // PLUTO_TEXTURE_PIXELS=keep keeps them (for comparisons).
     if (const char *pixels = std::getenv("PLUTO_TEXTURE_PIXELS"); !(pixels && std::string_view(pixels) == "keep"))
         engine.GetTextureManager().SetPixelRetention(PlutoGE::render::TexturePixelRetention::ReleaseAfterUpload);
-    // An exported game's material textures were block compressed when it was cooked (TextureCooking.h): the renderer
-    // reads them from its content pack before encoding anything itself. Source projects have no such store.
+    // An exported game's material textures were block compressed when it was cooked (TextureCooking.h): textures load
+    // from its content pack without decoding, and nothing is encoded at run time. Source projects have no cooked store.
     {
         auto compression = PlutoGE::render::TextureCompressionSettings::FromEnvironment();
-        compression.cookedDirectories.push_back(project->GetRootDirectory() / PlutoGE::render::kCookedTextureDirectory);
-        engine.GetRhiRenderService().SetTextureCompression(compression);
+        compression.cookedRoots.push_back(project->GetRootDirectory());
+        engine.SetTextureCompression(compression);
     }
     if (projectBenchmark && projectBenchmark->quality)
     {
@@ -492,6 +506,7 @@ int RunRuntime(int argc, char **argv)
 
     if (!(projectBenchmark && projectBenchmark->frozenRender) && !project->GetManifest().scriptAssembly.empty())
     {
+        const PlutoGE::core::CpuScope scriptScope("Script assembly load");
         const std::string scriptAssemblyPath = engine.GetAssetManager().ResolveAssetPath(project->GetManifest().scriptAssembly);
         if (scriptAssemblyPath.empty() || !std::filesystem::exists(scriptAssemblyPath) || !engine.GetScriptEngine().LoadAssembly(scriptAssemblyPath))
         {
@@ -539,6 +554,7 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::g_runtimeDiagnostics.Log("Startup scene: " + startupScenePath);
     PlutoGE::g_runtimeDiagnostics.currentPhase = "load startup scene";
 #endif
+    loadProfile.Mark("Scripts loaded");
 
     std::unique_ptr<PlutoGE::scene::Scene> scene;
     const auto loadWithScreen = [&](const std::string &path, const PlutoGE::core::SceneLoading::Activation &activate)
@@ -561,6 +577,8 @@ int RunRuntime(int argc, char **argv)
         engine.Shutdown();
         return 1;
     }
+    loadProfile.Mark("Startup scene loaded");
+    startupPhase.reset();
 
 #ifdef _WIN32
     std::vector<PlutoGE::scene::Entity *> loadedEntities;
@@ -584,6 +602,7 @@ int RunRuntime(int argc, char **argv)
     PlutoGE::scene::CameraOverlayLayerBuilder overlayCameraLayers;
     PlutoGE::scene::RenderTextureViewBuilder renderTextureViews;
     bool hasLoggedFirstFrame = false;
+    int profiledLoadFrames = 0;
     bool hasLoggedFirstFrameDiagnostics = false;
     std::size_t benchmarkFrameIndex = 0;
     // The orientation --camera-pan swings about: the base camera's on the first frame.
@@ -634,6 +653,16 @@ int RunRuntime(int argc, char **argv)
     {
         // The profiler window and project benchmarks (whose ".cpu.csv" lists each main-thread scope) record CPU scopes.
         PlutoGE::core::CpuTrace cpuTrace((runtimeProfiler && runtimeProfiler->profiler.IsRecording()) || projectBenchmark.has_value());
+        // The first frames create most GPU resources: a load profile records their main-thread scopes. The render
+        // thread presents a frame while the next is prepared, so the second frame's end waits for the first's.
+        std::optional<PlutoGE::core::LoadProfile::Phase> loadFramePhase;
+        if (profiledLoadFrames < 2)
+            loadFramePhase.emplace(++profiledLoadFrames == 1 ? "First frame" : "Second frame", true);
+        else if (profiledLoadFrames == 2)
+        {
+            ++profiledLoadFrames;
+            (void)loadProfile.Write();
+        }
         PlutoGE::ui::EditorFrameTimingStats frameTiming;
         // Waits out the frame limit before input is read, and measures the delta from frame start to frame start
         // (so input polling and other work inside the frame never shift it). Captured frame times exclude the wait.
@@ -941,6 +970,7 @@ int RunRuntime(int argc, char **argv)
     // Finish the frame in flight before reading its output or releasing what it renders.
     if (!engine.GetRhiRenderService().WaitForFrame())
         std::cerr << "The last runtime frame failed to render." << std::endl;
+    (void)loadProfile.Write();
     runtimeProfiler.reset();
 
     if (benchmarkEnabled && !projectBenchmark && !benchmarkFrameTimes.empty())

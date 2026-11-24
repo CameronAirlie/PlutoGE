@@ -43,10 +43,11 @@ sRGB forms; BC4, BC5 and BC7 are core). Anything unsupported stays RGBA8.
 ## Cooking
 
 Exporting a game (`ExportStandaloneProject`, `PlutoGERuntime --export`) encodes its material textures into the content
-pack, under `Cooked/TextureCompression` (`render::kCookedTextureDirectory`), in the cache's own entry format. The
-runtime host adds that directory to `TextureCompressionSettings::cookedDirectories`, read-only layers the store searches
-(through the content layer, so inside the mounted pack) before its writable cache. Players then start with every
-material texture encoded, rather than spending their first sessions encoding on background threads.
+pack, under `Cooked/TextureCompression` (`render::kCookedTextureDirectory`), in the cache's own entry format, with a
+[source index](#source-index) naming each cooked file's entries. The runtime host adds its project root to
+`TextureCompressionSettings::cookedRoots` (`Engine::SetTextureCompression`): the store and the index search those
+read-only layers (through the content layer, so inside the mounted pack) before their writable caches. Players then
+start with every material texture encoded and never decode one.
 
 - `assets::CookMaterialTextures` (`assets/TextureCook.h`) reads every `.plutomaterial` in the staged export, resolves its
   texture slots as material loading does (`AssetManager::ResolveMaterialTexturePath`, through the export's runtime
@@ -59,13 +60,44 @@ material texture encoded, rather than spending their first sessions encoding on 
   encoder, so a device or a newer encoder that would choose differently simply misses and encodes as before; a cook
   never makes the image differ from an uncooked run.
 - `ExportOptions::cookTextures` (on by default; `--no-texture-cook`) turns it off.
+- `CookCompressedTexture` with a `TextureCookSource` also records the file in the store's source index (path relative
+  to the project root, size, decoded channels, means), under the desktop policy.
 
 SurvivalGame (2026-11-24): 154 entries, the pack 139 MB larger (1,048 vs 909 MB). A first launch with an empty
 cache encoded 1 texture instead of 81. Only textures that material files name are cooked; one sampled through another
 path (detail grass ground textures, decals) is still encoded on first use.
 
+## Source index
+
+The store is keyed by texels, so finding an entry used to mean decoding the image first. `render::TextureSourceIndex`
+(`TextureSourceIndex.h`) maps a source file version to what became of it: its size, channel count, mean colour
+(`TextureMeans`), and per sampling (semantic, sRGB, policy) the store entry and format.
+
+- **Loading.** `TextureManager::LoadTextureFromFile` asks the index (`TextureManager::SetSourceIndex`). A file with
+  records becomes a texture of the recorded size with no pixels: nothing is decoded. Its pixels decode from the file
+  when CPU code reads them (`Texture::SetPixelSource`), so thumbnails, painting and shader-graph sampling still work.
+  `PrefetchTextureFiles` skips such files.
+- **Uploading.** `RhiTextureCompression::LoadIndexed` finds the texture's record (by `Texture::GetFileVersion`, which is
+  set only while the content is exactly the file's) and loads the entry; the renderer uploads it and takes its means
+  from the record. Otherwise it reads pixels as before.
+- **Recording.** Every encode or cache hit of a file texture records its sampling (`TextureCompressionQueue::Job::stored`),
+  so the editor and development runs fill the index as they go; a cook fills an exported game's.
+- **Validity.** A writable record is keyed by absolute path, size and modification time; a cooked one by path relative to
+  its content root and size (content packs are immutable). A sampling only matches under the same
+  `TextureCompressionPolicy` (settings, device formats, encoder identities). Anything missing, stale or damaged is a miss.
+- **Shared.** `TextureSourceIndex::ForSettings` returns one index per configuration, so the texture manager and every
+  renderer see the same records. `Engine::SetTextureCompression` sets both; `Engine::Initialize` applies the
+  environment defaults.
+- **Not indexed.** Textures sampled exactly (terrain layer arrays, impostor atlases, shader-graph data) keep decoding;
+  terrain layers and foliage impostors start their decodes together (`TerrainLayerStack::Services::prefetchTextures`,
+  `FoliageComponent`), so they decode side by side.
+
+SurvivalGame (2026-11-24): with the index warm the editor decodes 46 textures while opening LakeDistrict instead of
+249, and the exported game decodes none of its material textures.
+
 ## Texture loading and CPU pixels
 
+- **Indexed files** load without decoding ([Source index](#source-index)).
 - **Decoding off the owner thread.** `render::DecodeImageFile` (`ImageDecoding.h`) reads through the content layer and
   decodes (stb_image, DDS) on any thread. `TextureManager::LoadTextureFromFile` decodes through `LoadingWork::Prepare`
   (a loading screen keeps presenting), or takes a decode started ahead of time: material loading starts its textures'

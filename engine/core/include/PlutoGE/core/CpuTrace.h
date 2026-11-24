@@ -33,8 +33,9 @@ namespace PlutoGE::core
         static constexpr std::size_t MaxLabelLength = 160;
         inline static thread_local CpuTrace *current = nullptr;
 
-        explicit CpuTrace(bool enabled, Clock::time_point origin = Clock::now())
-            : m_origin(origin), m_previous(current), m_enabled(enabled)
+        // capacity bounds the samples kept (one frame's worth by default; a load profile keeps more).
+        explicit CpuTrace(bool enabled, Clock::time_point origin = Clock::now(), std::size_t capacity = MaxSamples)
+            : m_origin(origin), m_previous(current), m_enabled(enabled), m_capacity(capacity)
         {
             if (enabled) m_samples.reserve(256);
             current = enabled ? this : nullptr;
@@ -47,7 +48,7 @@ namespace PlutoGE::core
                   Clock::time_point now = Clock::now())
         {
             if (!m_enabled) return -1;
-            if (m_samples.size() >= MaxSamples) { ++m_dropped; return -1; }
+            if (m_samples.size() >= m_capacity) { ++m_dropped; return -1; }
             const int index = static_cast<int>(m_samples.size());
             const int depth = m_parent < 0 ? 0 : m_samples[m_parent].depth + 1;
             m_samples.push_back({std::string(name.substr(0, MaxLabelLength)),
@@ -72,6 +73,7 @@ namespace PlutoGE::core
         Clock::time_point m_origin;
         CpuTrace *m_previous;
         bool m_enabled;
+        std::size_t m_capacity;
         std::vector<CpuSample> m_samples;
         int m_parent = -1;
         std::uint32_t m_dropped = 0;

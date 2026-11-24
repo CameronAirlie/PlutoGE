@@ -12,6 +12,7 @@
 #include <PlutoGE/render/Texture.h>
 #include "PlutoGE/render/TextureManager.h"
 #include "PlutoGE/core/Engine.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include <PlutoGE/render/Material.h>
 #include <PlutoGE/render/ShaderGraph.h>
 
@@ -202,6 +203,7 @@ namespace PlutoGE::assets
     render::Texture *AssetManager::LoadTextureResource(const char *path, render::TextureColorSpace colorSpace)
     {
         if (!path || !*path) return nullptr;
+        const core::CpuScope scope("Texture load");
         if (UsesSharedAssets(path)) return m_ownedResources->sharedAssets->LoadTextureResource(path, colorSpace);
         return m_ownedResources ? m_ownedResources->textureReader.LoadTextureFromFile(path, colorSpace)
                                 : render::Texture::LoadFromFile(path, colorSpace);
@@ -713,6 +715,7 @@ namespace PlutoGE::assets
 
     render::Mesh *AssetManager::LoadMeshAsset(const std::string &assetReference)
     {
+        const core::CpuScope scope("Mesh asset load");
         if (const auto *alias = FindRetainedAlias(assetReference)) return alias->empty() ? nullptr : LoadMeshAsset(*alias);
         if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->LoadMeshAsset(assetReference);
         if (m_ownedResources && m_storage)
@@ -2353,6 +2356,7 @@ namespace PlutoGE::assets
 
     render::Material *AssetManager::LoadMaterialAsset(const std::string &assetReference, bool reload)
     {
+        const core::CpuScope scope("Material load");
         if (UsesSharedAssets(assetReference)) return m_ownedResources->sharedAssets->LoadMaterialAsset(assetReference, reload);
         if (assetReference.empty())
         {

@@ -1389,7 +1389,12 @@ namespace PlutoGE::assets
             }
 
             ProjectAssetEntry entry;
-            entry.reference = MakeAssetReference(iterator->path());
+            // Found under the asset directory (the walk does not follow links out of it), so its reference is its
+            // lexical path there: no canonicalisation, which costs file-system calls per asset.
+            const auto relative = iterator->path().lexically_relative(assetDirectoryPath);
+            entry.reference = !relative.empty() && *relative.begin() != ".."
+                ? std::string(kProjectAssetScheme) + PathToGenericUtf8String(relative)
+                : MakeAssetReference(iterator->path());
             entry.size = iterator->file_size(errorCode);
             entry.type = GetAssetTypeForReference(entry.reference);
             if (!entry.reference.empty())

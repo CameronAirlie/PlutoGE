@@ -1,5 +1,6 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
 #include "PlutoGE/platform/LoadingWork.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/scene/components/SequencerComponent.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/components/CameraRigComponent.h"
@@ -1017,6 +1018,8 @@ namespace PlutoGE::scene
                                     ": construct " + componentContext);
                         const bool allowed = !geometryPreview || activeComponent->typeName == "MeshComponent" ||
                                              activeComponent->typeName == "ColliderComponent";
+                        // Named by type in load profiles; the label is only built while a trace records.
+                        const core::CpuScope componentScope(core::CpuTrace::current ? "Deserialize " + activeComponent->typeName : std::string{});
                         auto component = allowed ? CreateComponentForType(activeComponent->typeName) : nullptr;
                         if (component)
                         {
@@ -1093,6 +1096,7 @@ namespace PlutoGE::scene
                     }
                 }
             }
+            std::optional<core::CpuScope> stage(std::in_place, "Scene hierarchy");
             for (const auto &pendingParent : pendingParents)
             {
                 platform::LoadingWork::Checkpoint();
@@ -1117,6 +1121,7 @@ namespace PlutoGE::scene
             for (auto &instance : instances)
                 if (!scene->InstallStaticModelInstance(std::move(instance), errorMessage)) return nullptr;
 
+            stage.emplace("Scene environment and probes");
             if (!geometryPreview && bakedProbeVolume.IsValid())
             {
                 scene->SetBakedProbeVolume(std::move(bakedProbeVolume));

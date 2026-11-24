@@ -6,6 +6,8 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <functional>
+#include <span>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -27,6 +29,9 @@ namespace PlutoGE::render
             std::uint32_t width = 0, height = 0;
             TextureSemantic semantic = TextureSemantic::Color;
             rhi::Format format = rhi::Format::Undefined;
+            // Called (on the encoding thread) once the chain is in the store, with its key and the source texels: the
+            // renderer records what became of a source file (TextureSourceIndex). Optional.
+            std::function<void(const content::ContentDigest &entry, std::span<const std::byte> rgba8)> stored;
         };
         struct Result
         {

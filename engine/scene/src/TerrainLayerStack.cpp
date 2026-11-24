@@ -265,6 +265,16 @@ namespace PlutoGE::scene
         const auto load = [&](const std::string &reference, render::TextureColorSpace space) -> const render::Texture * {
             return reference.empty() || !m_services.loadTexture ? nullptr : m_services.loadTexture(reference, space);
         };
+        // The layers' maps decode side by side rather than in turn (layer arrays need their texels: none are skipped).
+        if (m_services.prefetchTextures)
+        {
+            std::vector<std::string> references;
+            for (const auto &layer : m_layers)
+                for (const auto *reference : {&layer.albedoMap, &layer.normalMap, &layer.roughnessMap, &layer.heightMap})
+                    if (!reference->empty())
+                        references.push_back(*reference);
+            m_services.prefetchTextures(references);
+        }
         for (const auto &layer : m_layers)
         {
             render::TerrainLayerSurface surface;

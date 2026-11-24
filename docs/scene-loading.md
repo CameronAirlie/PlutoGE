@@ -1,5 +1,7 @@
 # Responsive scene transitions
 
+(For where launch and load time goes, and how to measure it, see [Load times](LOAD_TIMES.md).)
+
 Full runtime transitions now go through `core::SceneLoading`. The standalone
 startup path, script-requested scene changes in both hosts, and editor Play
 activation use the same loading lifecycle. Existing `SceneManager.LoadScene`

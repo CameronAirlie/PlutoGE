@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -22,6 +23,7 @@ namespace PlutoGE::render
     };
 
     class Texture;
+    class TextureSourceIndex;
     class TextureManager
     {
     public:
@@ -38,9 +40,13 @@ namespace PlutoGE::render
         // Starts decoding image files that are about to be loaded (a material's textures) on worker threads, so they
         // decode side by side; LoadTextureFromFile then takes each result. Files already loaded are skipped.
         void PrefetchTextureFiles(std::span<const std::string> filePaths);
-        // Decodes off the owner thread: a prefetched decode when there is one, else through LoadingWork (so a loading
-        // screen keeps presenting). Returns the complete texture, as before.
+        // A file the source index has compressed copies of loads without decoding: its size comes from the index, the
+        // renderers upload the stored copies, and its pixels decode only when CPU code reads them. Any other file
+        // decodes off the owner thread: a prefetched decode when there is one, else through LoadingWork (so a loading
+        // screen keeps presenting).
         Texture *LoadTextureFromFile(const char *filePath, TextureColorSpace colorSpace = TextureColorSpace::Linear);
+        // The index file loads consult (Engine::SetTextureCompression); null loads every file by decoding it.
+        void SetSourceIndex(std::shared_ptr<const TextureSourceIndex> index) { m_sourceIndex = std::move(index); }
         Texture *LoadTextureFromMemory(const std::string &cacheKey, const unsigned char *pixels, int width, int height, int channels);
         Texture *LoadEnvironmentTextureFromFile(const char *filePath);
 
@@ -57,6 +63,7 @@ namespace PlutoGE::render
 
         std::unordered_map<std::string, Texture *> m_textureCache;
         TextureDecodeQueue m_decodes;
+        std::shared_ptr<const TextureSourceIndex> m_sourceIndex;
         TexturePixelRetention m_pixelRetention = TexturePixelRetention::Keep;
         bool m_ownResources = false;
     };

@@ -3,6 +3,7 @@
 #include "CompressedTextureStore.h"
 #include "TextureCompressionQueue.h"
 #include "PlutoGE/render/Texture.h"
+#include "PlutoGE/render/TextureCooking.h"
 #include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <algorithm>
@@ -18,7 +19,15 @@ namespace PlutoGE::render
             m_supported[format] = device.SupportsSampledFormat(format);
         if (!m_settings.enabled)
             return;
-        m_store = std::make_shared<CompressedTextureStore>(m_settings.cacheDirectory, m_settings.cookedDirectories);
+        m_policy = TextureCompressionPolicy(m_settings, [&](rhi::Format format) {
+            const auto found = m_supported.find(format);
+            return found != m_supported.end() && found->second;
+        });
+        std::vector<std::filesystem::path> cookedStores;
+        for (const auto &root : m_settings.cookedRoots)
+            cookedStores.push_back(root / kCookedTextureDirectory);
+        m_store = std::make_shared<CompressedTextureStore>(m_settings.cacheDirectory, std::move(cookedStores));
+        m_sourceIndex = TextureSourceIndex::ForSettings(m_settings);
         m_queue = std::make_unique<TextureCompressionQueue>(m_store, m_settings.workerCount);
     }
 
@@ -78,8 +87,46 @@ namespace PlutoGE::render
                                                   source.GetContentRevision(), rgba8.size()});
         m_pendingBytes += rgba8.size();
         m_queue->Submit({ticket, std::move(rgba8), static_cast<std::uint32_t>(source.GetWidth()),
-                         static_cast<std::uint32_t>(source.GetHeight()), SemanticFor(kind), format});
+                         static_cast<std::uint32_t>(source.GetHeight()), SemanticFor(kind), format,
+                         RecordingFor(source, kind, format)});
         return true;
+    }
+
+    std::function<void(const content::ContentDigest &, std::span<const std::byte>)>
+    RhiTextureCompression::RecordingFor(const Texture &source, TextureCacheKind kind, rhi::Format format) const
+    {
+        const auto version = source.GetFileVersion();
+        if (!m_sourceIndex || !version || source.GetFilePath().empty())
+            return {};
+        return [index = m_sourceIndex, file = std::filesystem::path(source.GetFilePath()), version = *version,
+                width = static_cast<std::uint32_t>(source.GetWidth()), height = static_cast<std::uint32_t>(source.GetHeight()),
+                channels = source.GetChannels(),
+                sampling = TextureSourceSampling{SemanticFor(kind), kind == TextureCacheKind::Srgb, m_policy, format, {}}]
+               (const content::ContentDigest &entry, std::span<const std::byte> rgba8) mutable
+        {
+            sampling.entry = entry;
+            (void)index->Record(file, version, width, height, channels, ComputeTextureMeans(rgba8), sampling);
+        };
+    }
+
+    std::optional<RhiTextureCompression::IndexedTexture> RhiTextureCompression::LoadIndexed(const Texture &source,
+                                                                                         TextureCacheKind kind) const
+    {
+        const auto version = source.GetFileVersion();
+        if (!m_store || !m_sourceIndex || !version || source.GetFilePath().empty())
+            return std::nullopt;
+        const auto width = static_cast<std::uint32_t>(std::max(source.GetWidth(), 0));
+        const auto height = static_cast<std::uint32_t>(std::max(source.GetHeight(), 0));
+        const auto record = m_sourceIndex->Find(source.GetFilePath(), *version);
+        if (!record || record->width != width || record->height != height)
+            return std::nullopt;
+        const auto *sampling = record->Find(SemanticFor(kind), kind == TextureCacheKind::Srgb, m_policy);
+        if (!sampling)
+            return std::nullopt;
+        auto encoded = m_store->Load(sampling->entry);
+        if (!encoded || encoded->format != sampling->format || encoded->width != width || encoded->height != height)
+            return std::nullopt;
+        return IndexedTexture{std::move(*encoded), record->means};
     }
 
     std::optional<EncodedTexture> RhiTextureCompression::EncodeNow(const Texture &source, TextureCacheKind kind,
@@ -89,7 +136,8 @@ namespace PlutoGE::render
             return std::nullopt;
         TextureCompressionQueue::Job job{0, std::vector<std::byte>(rgba8.begin(), rgba8.end()),
                                          static_cast<std::uint32_t>(source.GetWidth()),
-                                         static_cast<std::uint32_t>(source.GetHeight()), SemanticFor(kind), format};
+                                         static_cast<std::uint32_t>(source.GetHeight()), SemanticFor(kind), format,
+                                         RecordingFor(source, kind, format)};
         return TextureCompressionQueue::Run(job, m_store.get()).texture;
     }
 

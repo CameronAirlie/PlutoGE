@@ -64,7 +64,7 @@ namespace PlutoGE::assets
             }
         }
 
-        JobResult Cook(const TextureJob &job, const std::filesystem::path &store)
+        JobResult Cook(const TextureJob &job, const std::filesystem::path &store, const std::filesystem::path &projectRoot)
         {
             JobResult result;
             const auto image = render::DecodeImageFile(job.path);
@@ -72,9 +72,12 @@ namespace PlutoGE::assets
                 return result;
             result.readable = true;
             const auto rgba8 = std::as_bytes(std::span(image->rgba8));
+            // Recorded in the store's source index, so the game loads the texture without decoding it.
+            const render::TextureCookSource source{job.path, projectRoot, image->channels};
             for (const auto &[semantic, srgb] : job.samplings)
                 switch (render::CookCompressedTexture(store, rgba8, static_cast<std::uint32_t>(image->width),
-                                                      static_cast<std::uint32_t>(image->height), semantic, srgb))
+                                                      static_cast<std::uint32_t>(image->height), semantic, srgb, {},
+                                                      render::DesktopBlockCompressionSupport(), &source))
                 {
                 case render::TextureCookOutcome::Encoded: ++result.encoded; break;
                 case render::TextureCookOutcome::AlreadyCooked: ++result.alreadyCooked; break;
@@ -135,7 +138,7 @@ namespace PlutoGE::assets
                 collect(running.front());
                 running.erase(running.begin());
             }
-            running.push_back(std::async(std::launch::async, [&job, &store] { return Cook(job, store); }));
+            running.push_back(std::async(std::launch::async, [&job, &store, &projectRoot] { return Cook(job, store, projectRoot); }));
         }
         for (auto &future : running)
             collect(future);

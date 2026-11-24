@@ -1,5 +1,6 @@
 #include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/core/SceneLoading.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/scene/SceneSerializer.h"
@@ -8,6 +9,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 
 namespace PlutoGE::core
@@ -68,6 +70,7 @@ namespace PlutoGE::core
         m_status = {.stage = SceneLoadStage::Reading, .path = path};
         return Run([&]
         {
+            std::optional<CpuScope> stage(std::in_place, "Scene file read");
             auto text = platform::LoadingWork::Prepare([path]
             {
                 std::error_code error;
@@ -85,12 +88,14 @@ namespace PlutoGE::core
             });
             m_status.stage = SceneLoadStage::Constructing;
             platform::LoadingWork::Checkpoint(true);
+            stage.emplace("Scene construction");
             std::string error;
             auto candidate = scene::SceneSerializer::LoadFromString(text, &error);
             if (!candidate || !error.empty()) throw std::runtime_error(error.empty() ? "Scene construction failed" : error);
             candidate->SetFilePath(std::filesystem::absolute(path).lexically_normal().string());
             m_status.stage = SceneLoadStage::Activating;
             platform::LoadingWork::Checkpoint(true);
+            stage.emplace("Scene activation");
             activate(std::move(candidate));
         }, present);
     }

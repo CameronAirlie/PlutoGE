@@ -13,13 +13,22 @@
 #include "PlutoGE/assets/SceneFormat.h"
 #include "PlutoGE/assets/ModelGenerationSnapshot.h"
 #include "PlutoGE/platform/ContentPack.h"
+#include "PlutoGE/core/CpuTrace.h"
 
 #include <algorithm>
+#include <exception>
+#include <functional>
+#include <unordered_map>
+#include <thread>
+#include <chrono>
+#include <charconv>
+#include <atomic>
 #include <array>
 #include <cctype>
 #include <map>
 #include <fstream>
 #include <iomanip>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -29,6 +38,7 @@ namespace PlutoGE::assets
     namespace
     {
         constexpr std::string_view kCookHeader = "PLUTOCOOK\t1";
+        constexpr std::string_view kFileCheckHeader = "PLUTOFILECHECKS\t1";
 
         void SetError(std::string *output, std::string value)
         {
@@ -44,6 +54,21 @@ namespace PlutoGE::assets
                 if (occurrence.role == AssetReferenceRole::Runtime &&
                     (Project::IsProjectAssetReference(occurrence.reference) || occurrence.reference.starts_with("asset://"))) unique.insert(occurrence.reference);
             return {unique.begin(), unique.end()};
+        }
+
+        // Runs task(0) .. task(count - 1) on up to one thread per hardware thread (the caller included), for independent
+        // file reads and hashes.
+        void ForEachConcurrently(std::size_t count, const std::function<void(std::size_t)> &task)
+        {
+            std::atomic<std::size_t> next{0};
+            const auto work = [&]
+            {
+                for (std::size_t index; (index = next.fetch_add(1)) < count;) task(index);
+            };
+            const std::size_t workers = std::min<std::size_t>(count, std::max(1u, std::thread::hardware_concurrency()));
+            std::vector<std::jthread> threads;
+            for (std::size_t i = 1; i < workers; ++i) threads.emplace_back(work);
+            work();
         }
 
         bool ShouldCook(ProjectAssetType type, const CookOptions &options)
@@ -95,6 +120,100 @@ namespace PlutoGE::assets
         if (!content::HashFileContent(path, actual) || actual != expected) return false;
         std::lock_guard lock(m_mutex);
         m_entries[key] = {size, modified, actual};
+        ++m_revision;
+        return true;
+    }
+
+    void ImportedFileCheckCache::VerifyAll(std::span<const File> files)
+    {
+        // Hashing is CPU bound (SHA-256): one file per thread at a time.
+        ForEachConcurrently(files.size(), [&](std::size_t index) { (void)Verify(files[index].path, files[index].expected); });
+    }
+
+    void ImportedFileCheckCache::Load(const std::filesystem::path &file, const std::filesystem::path &directory)
+    {
+        std::ifstream input(file, std::ios::binary);
+        std::string line;
+        if (!std::getline(input, line)) return;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line != kFileCheckHeader) return;
+        // Rows: path relative to the directory, size, modification ticks, SHA-256. Any damage discards the file.
+        std::vector<std::pair<std::string, Entry>> loaded;
+        while (std::getline(input, line))
+        {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            std::array<std::string_view, 4> fields;
+            std::string_view rest(line);
+            for (std::size_t i = 0; i < fields.size(); ++i)
+            {
+                const auto tab = i + 1 < fields.size() ? rest.find('\t') : std::string_view::npos;
+                if (i + 1 < fields.size() && tab == std::string_view::npos) return;
+                fields[i] = rest.substr(0, tab);
+                rest = tab == std::string_view::npos ? std::string_view{} : rest.substr(tab + 1);
+            }
+            Entry entry;
+            long long ticks = 0;
+            const auto number = [](std::string_view text, auto &value)
+            {
+                const auto end = text.data() + text.size();
+                const auto [at, error] = std::from_chars(text.data(), end, value);
+                return error == std::errc{} && at == end;
+            };
+            // The same narrow encoding Save wrote (generic_string).
+            const std::filesystem::path relative{std::string(fields[0])};
+            if (fields[0].empty() || relative.is_absolute() || !number(fields[1], entry.size) || !number(fields[2], ticks) ||
+                !content::ParseContentDigest(fields[3], entry.digest))
+                return;
+            entry.modified = std::filesystem::file_time_type(std::filesystem::file_time_type::duration(ticks));
+            loaded.emplace_back((directory / relative).generic_string(), entry);
+        }
+        std::lock_guard lock(m_mutex);
+        // This session's own checks are at least as recent.
+        for (auto &[key, entry] : loaded) m_entries.try_emplace(std::move(key), entry);
+        m_savedRevisions[file.generic_string()] = m_revision;
+    }
+
+    bool ImportedFileCheckCache::Save(const std::filesystem::path &file, const std::filesystem::path &directory, std::string *errorMessage)
+    {
+        std::vector<std::pair<std::string, Entry>> rows;
+        std::uint64_t revision = 0;
+        {
+            std::lock_guard lock(m_mutex);
+            if (const auto saved = m_savedRevisions.find(file.generic_string()); saved != m_savedRevisions.end() && saved->second == m_revision)
+                return true;
+            revision = m_revision;
+            // Resolved directories can end in a separator ("Library/"); files under them are keyed "Library/x".
+            auto prefix = directory.generic_string();
+            while (prefix.ends_with('/')) prefix.pop_back();
+            prefix += '/';
+            for (const auto &[key, entry] : m_entries)
+                if (key.starts_with(prefix)) rows.emplace_back(key.substr(prefix.size()), entry);
+        }
+        std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) { return a.first < b.first; });
+        std::string text(kFileCheckHeader);
+        text += '\n';
+        for (const auto &[relative, entry] : rows)
+            text += relative + '\t' + std::to_string(entry.size) + '\t' +
+                std::to_string(static_cast<long long>(entry.modified.time_since_epoch().count())) + '\t' + content::DigestToHex(entry.digest) + '\n';
+        // Written aside and renamed over the old file, so a concurrent reader (another editor or a game) never sees half.
+        const auto temporary = file.parent_path() / (file.filename().string() + "." +
+            std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".tmp");
+        std::error_code error;
+        {
+            std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+            output << text;
+            if (!output) error = std::make_error_code(std::errc::io_error);
+        }
+        if (!error) std::filesystem::rename(temporary, file, error);
+        if (error)
+        {
+            std::filesystem::remove(temporary, error);
+            SetError(errorMessage, "Cannot save imported file checks to " + file.string());
+            return false;
+        }
+        std::lock_guard lock(m_mutex);
+        m_savedRevisions[file.generic_string()] = revision;
         return true;
     }
 
@@ -117,6 +236,7 @@ namespace PlutoGE::assets
         std::unordered_map<std::string, ModelAsset> sourcePackages;
         std::unordered_map<std::string, std::size_t> byId;
         std::unordered_map<std::string, std::size_t> byReference;
+        std::optional<core::CpuScope> stage(std::in_place, "Asset scan: registry");
         project.RefreshAssetRegistry();
         auto entries = project.GetManifest().assetEntries;
         // Model manifests are hidden from the editor registry, but runtime
@@ -134,11 +254,34 @@ namespace PlutoGE::assets
                 entries.push_back({project.MakeAssetReference(it->path()), it->file_size(), ProjectAssetType::Unknown});
         }
         if (scanError) { SetError(errorMessage, "Cannot enumerate model manifests: " + scanError.message()); return false; }
-        for (const auto &entry : entries)
+        stage.emplace("Asset scan: records");
+        // Every asset's sidecar metadata, read side by side: one small file per asset, the bulk of a scan's file access.
+        // The records are then built in order, exactly as from serial reads.
+        struct EntryFiles
         {
-            if (!Project::IsProjectAssetReference(entry.reference)) continue;
-            const auto path = project.ResolveAssetReference(entry.reference);
-            if (path.extension() == ".plutometa" || !std::filesystem::is_regular_file(path)) continue;
+            std::filesystem::path path;
+            bool asset = false;
+            AssetMetadataStatus metadataStatus = AssetMetadataStatus::Missing;
+            AssetMetadata metadata;
+            std::string metadataError;
+        };
+        std::vector<EntryFiles> entryFiles(entries.size());
+        ForEachConcurrently(entries.size(), [&](std::size_t index)
+        {
+            const auto &entry = entries[index];
+            if (!Project::IsProjectAssetReference(entry.reference)) return;
+            auto &files = entryFiles[index];
+            files.path = project.ResolveAssetReference(entry.reference);
+            std::error_code fileError;
+            files.asset = files.path.extension() != ".plutometa" && std::filesystem::is_regular_file(files.path, fileError);
+            if (files.asset) files.metadataStatus = LoadAssetMetadata(GetMetadataPath(files.path), files.metadata, &files.metadataError);
+        });
+        for (std::size_t entryIndex = 0; entryIndex < entries.size(); ++entryIndex)
+        {
+            const auto &entry = entries[entryIndex];
+            auto &files = entryFiles[entryIndex];
+            if (!files.asset) continue;
+            const auto &path = files.path;
 
             AssetRecord record;
             record.reference = entry.reference;
@@ -146,8 +289,9 @@ namespace PlutoGE::assets
             record.size = entry.size;
             record.contentHash = options.hashContent ? HashFile(path) : 0;
             const auto metadataPath = GetMetadataPath(path);
-            AssetMetadata metadata;
-            const auto metadataStatus = LoadAssetMetadata(metadataPath, metadata, errorMessage);
+            AssetMetadata metadata = std::move(files.metadata);
+            const auto metadataStatus = files.metadataStatus;
+            if (metadataStatus != AssetMetadataStatus::Success) SetError(errorMessage, std::move(files.metadataError));
             if (metadataStatus == AssetMetadataStatus::Missing && options.createMissingMetadata)
             {
                 metadata.id = GenerateAssetId();
@@ -219,6 +363,7 @@ namespace PlutoGE::assets
             if (!records[i].id.empty()) byId[records[i].id] = i;
             byReference[records[i].reference] = i;
         }
+        stage.emplace("Asset scan: objects");
         std::vector<AssetObjectDescriptor> objects;
         for (const auto &record : records)
         {
@@ -279,6 +424,7 @@ namespace PlutoGE::assets
         for (const auto &[ownerId, package] : sourcePackages)
             for (const auto &object : package.objects)
                 objects.push_back({{ownerId, object.localId}, object.type, AssetOwnership::Imported, object.name, object.reference});
+        stage.emplace("Asset scan: imported storage");
         if (!persistedStorage.empty() || (options.importedStorage && !options.importedStorage->GetEntries().empty()))
         {
             try
@@ -316,13 +462,9 @@ namespace PlutoGE::assets
                     return content::IsPathWithinDirectory(path, root);
                 };
                 if (!contained(libraryRoot, projectRoot)) throw std::runtime_error("Imported storage Library escapes the project root.");
-                std::map<std::string, std::shared_ptr<const ArtifactGenerationLock>> suppliedLeases;
-                for (const auto &storage : combinedStorage)
+                // Where a storage entry's bytes are, and whether that is inside the Library.
+                const auto locate = [&](const ImportedAssetStorage &storage) -> std::pair<std::filesystem::path, bool>
                 {
-                    auto normalized = storage;
-                    const auto imported = std::find_if(objects.begin(), objects.end(), [&](const auto &object)
-                        { return object.ownership == AssetOwnership::Imported && object.location == storage.reference; });
-                    if (imported == objects.end()) throw std::runtime_error("Storage override is not an imported object: " + storage.reference);
                     std::filesystem::path parent;
                     std::string locationError;
                     const bool resolved = content::ResolveDirectoryForCreation(storage.path.parent_path(), parent, &locationError);
@@ -337,6 +479,55 @@ namespace PlutoGE::assets
                             throw std::runtime_error("Imported storage escapes project Library: " + storage.reference);
                         physical = (libraryRoot / relative).lexically_normal();
                     }
+                    return {std::move(physical), inside};
+                };
+                // Every entry's location, resolved side by side (each costs file-system calls). A failure is kept and
+                // rethrown by the loop below, so errors are reported in the same order as before.
+                struct Location
+                {
+                    std::filesystem::path physical;
+                    bool inside = false;
+                    std::exception_ptr failure;
+                };
+                std::vector<Location> locations(combinedStorage.size());
+                ForEachConcurrently(combinedStorage.size(), [&](std::size_t index)
+                {
+                    try
+                    {
+                        auto [physical, inside] = locate(combinedStorage[index]);
+                        locations[index].physical = std::move(physical);
+                        locations[index].inside = inside;
+                    }
+                    catch (...) { locations[index].failure = std::current_exception(); }
+                });
+                // Trusted checks: earlier sessions' (persisted), then every file not yet trusted hashed side by side.
+                // The loop below asks the cache again, after taking its leases, and finds the answers ready.
+                const auto checkFile = libraryRoot / kImportedFileChecksFileName;
+                const bool persistChecks = options.importedFileChecks && options.importedFileCheckPersistence != ImportedFileCheckPersistence::None;
+                if (persistChecks) options.importedFileChecks->Load(checkFile, libraryRoot);
+                if (options.importedFileChecks)
+                {
+                    const core::CpuScope verifyScope("Asset scan: imported file verification");
+                    std::vector<ImportedFileCheckCache::File> files;
+                    files.reserve(combinedStorage.size());
+                    for (std::size_t index = 0; index < combinedStorage.size(); ++index)
+                        if (locations[index].inside) files.push_back({locations[index].physical, combinedStorage[index].digest});
+                    options.importedFileChecks->VerifyAll(files);
+                }
+                std::unordered_map<std::string_view, const AssetObjectDescriptor *> importedObjects;
+                for (const auto &object : objects)
+                    if (object.ownership == AssetOwnership::Imported) importedObjects.try_emplace(object.location, &object);
+                std::map<std::string, std::shared_ptr<const ArtifactGenerationLock>> suppliedLeases;
+                for (std::size_t storageIndex = 0; storageIndex < combinedStorage.size(); ++storageIndex)
+                {
+                    const auto &storage = combinedStorage[storageIndex];
+                    auto normalized = storage;
+                    const auto importedObject = importedObjects.find(storage.reference);
+                    if (importedObject == importedObjects.end()) throw std::runtime_error("Storage override is not an imported object: " + storage.reference);
+                    const auto *imported = importedObject->second;
+                    if (locations[storageIndex].failure) std::rethrow_exception(locations[storageIndex].failure);
+                    const auto &physical = locations[storageIndex].physical;
+                    const bool inside = locations[storageIndex].inside;
                     // Supplied storage can name an older generation independently
                     // of the active source package. Retain it before reading bytes.
                     bool leaseAvailable = true;
@@ -363,7 +554,8 @@ namespace PlutoGE::assets
                                 if (!lease)
                                 {
                                     auto acquired = std::make_shared<ArtifactGenerationLock>();
-                                    if (acquired->TryAcquire(projectRoot, key, ArtifactGenerationLockMode::SharedReader, &locationError)) lease = std::move(acquired);
+                                    std::string leaseError; // an unavailable lease marks the storage unavailable
+                                    if (acquired->TryAcquire(projectRoot, key, ArtifactGenerationLockMode::SharedReader, &leaseError)) lease = std::move(acquired);
                                 }
                                 normalized.generationLease = lease;
                                 leaseAvailable = static_cast<bool>(lease);
@@ -382,15 +574,16 @@ namespace PlutoGE::assets
                         contentMatches();
                     if (!available && !options.allowUnavailableImportedStorage)
                         throw std::runtime_error("Imported storage is missing, corrupt, or not an ordinary Library file: " + storage.reference);
-                    auto existing = std::find_if(records.begin(), records.end(), [&](const auto &record) { return record.reference == storage.reference; });
-                    if (existing == records.end())
+                    auto recordIndex = byReference.find(storage.reference);
+                    if (recordIndex == byReference.end())
                     {
                         AssetRecord record;
                         record.reference = storage.reference;
                         record.type = imported->type;
                         records.push_back(std::move(record));
-                        existing = std::prev(records.end());
+                        recordIndex = byReference.emplace(storage.reference, records.size() - 1).first;
                     }
+                    auto *existing = &records[recordIndex->second];
                     if (existing->ownership == AssetOwnership::Authored) throw std::runtime_error("Imported storage cannot override an authored file: " + storage.reference);
                     normalized.path = physical;
                     normalized.available = available;
@@ -404,6 +597,8 @@ namespace PlutoGE::assets
                         ? DiscoverDependencies(physical, project.GetAssetDirectoryPath(), existing->dependencyScanErrors) : std::vector<std::string>{};
                     if (!available) existing->dependencyScanErrors.push_back("Imported generation is unavailable: " + storage.reference);
                 }
+                if (persistChecks && options.importedFileCheckPersistence == ImportedFileCheckPersistence::ReadWrite)
+                    (void)options.importedFileChecks->Save(checkFile, libraryRoot); // a cache: failing to write it costs time only
                 auto replacement = std::make_shared<AssetStorageMap>();
                 if (!replacement->Replace(std::move(normalizedStorage), errorMessage)) return false;
                 validatedStorage = std::move(replacement);
@@ -418,6 +613,7 @@ namespace PlutoGE::assets
             }
             catch (const std::exception &exception) { SetError(errorMessage, exception.what()); return false; }
         }
+        stage.emplace("Asset scan: catalog");
         auto catalog = std::make_shared<AssetCatalog>();
         if (!catalog->Replace(std::move(objects), errorMessage)) return false;
         for (auto &record : records)

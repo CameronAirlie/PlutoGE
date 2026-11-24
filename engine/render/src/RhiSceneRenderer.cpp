@@ -2,6 +2,7 @@
 #include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/core/TaskPool.h"
 #include "PlutoGE/render/RhiSceneRenderer.h"
+#include "PlutoGE/render/TextureSourceIndex.h"
 
 #include "BasicDrawBatching.h"
 #include "CanonicalGeometry.h"
@@ -70,27 +71,6 @@ namespace PlutoGE::render
         std::atomic_uint64_t g_nextUpscalerContextId{1};
 
         // An ambient volume's live sky scale and reflection occlusion strength, as
-        // A texture's mean over at most about 65536 evenly strided texels (enough for a mean, and cheap for large
-        // textures), raw and with colour decoded from sRGB.
-        auto TextureMean(std::span<const std::byte> pixels)
-        {
-            const auto texels = pixels.size() / 4;
-            const std::size_t stride = std::max<std::size_t>(1, texels / 65536);
-            glm::dvec4 raw(0.0), srgb(0.0);
-            std::size_t count = 0;
-            const auto decode = [](double value)
-            { return value <= 0.04045 ? value / 12.92 : std::pow((value + 0.055) / 1.055, 2.4); };
-            for (std::size_t texel = 0; texel < texels; texel += stride, ++count)
-                for (int channel = 0; channel < 4; ++channel)
-                {
-                    const double value = static_cast<double>(std::to_integer<unsigned>(pixels[texel * 4 + channel])) / 255.0;
-                    raw[channel] += value;
-                    srgb[channel] += channel < 3 ? decode(value) : value;
-                }
-            const double scale = count ? 1.0 / static_cast<double>(count) : 0.0;
-            return std::pair{glm::vec4(raw * scale), glm::vec4(srgb * scale)};
-        }
-
         // AmbientProbeSampling.slang reads them (AmbientProbeVolumeParameters).
         glm::vec2 AmbientVolumeSky(const scene::BakedProbeVolume &volume)
         {
@@ -709,6 +689,19 @@ namespace PlutoGE::render
                 cache.erase(cached);
                 ++m_textureCache->residencyRevision;
             }
+            // A file texture compressed before (this session, an earlier one, or the game's cook): upload the stored chain
+            // without reading pixels. Its texture may not even have decoded them (TextureManager and TextureSourceIndex).
+            if (use == TextureUse::Compressible && m_textureCache->compression)
+                if (auto indexed = m_textureCache->compression->LoadIndexed(*source, kind))
+                    if (auto compressed = createCompressedTexture(indexed->texture, debugName))
+                    {
+                        m_textureCache->means[source] = {indexed->means.raw, indexed->means.srgb};
+                        ++m_timingStats.textureUploadCount;
+                        ++m_timingStats.compressedTextureUploads;
+                        const auto &stored = cache.insert_or_assign(source, std::move(*compressed)).first->second;
+                        settle(*source, stored);
+                        return stored.Get();
+                    }
             if (normalMap && m_normalMipJob.valid())
                 return {};
             core::CpuScope readScope("Texture pixel read", core::CpuCategory::Rendering);
@@ -721,8 +714,8 @@ namespace PlutoGE::render
                 return {};
             if (!m_textureCache->means.contains(source))
             {
-                const auto [raw, srgb] = TextureMean(pixels);
-                m_textureCache->means[source] = {raw, srgb};
+                const auto means = ComputeTextureMeans(pixels);
+                m_textureCache->means[source] = {means.raw, means.srgb};
             }
             const bool keepUncompressed = use == TextureUse::Exact;
             // Whether compression is settled for this upload (see CachedTexture::compressionDecided).

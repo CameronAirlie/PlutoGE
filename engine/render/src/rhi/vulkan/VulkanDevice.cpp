@@ -3,6 +3,7 @@
 #include "../HandleRegistry.h"
 #include "../NormalMipmaps.h"
 #include "../TextureUpdates.h"
+#include "VulkanPipelines.h"
 #include "PlutoGE/render/rhi/FormatInfo.h"
 
 #include <volk.h>
@@ -321,7 +322,10 @@ namespace PlutoGE::render::rhi::vulkan
 
         struct PipelineResource
         {
+            // Set once compiled: pipelines compile in the background (VulkanPipelineCompiler), so use Compiled or
+            // ResolvePipeline rather than reading this directly.
             VkPipeline pipeline = VK_NULL_HANDLE;
+            std::shared_ptr<VulkanPipelineCompiler::Job> compile;
             VkPipelineLayout layout = VK_NULL_HANDLE;
             std::vector<VkDescriptorSetLayout> setLayouts;
             // Sets allocated per draw from bound resources; setLayouts may append the bindless set after them.
@@ -334,6 +338,28 @@ namespace PlutoGE::render::rhi::vulkan
             std::vector<GraphicsPipelineDescriptor::ResourceBinding> resourceBindings;
             bool compute = false;
         };
+
+        // The driver pipeline, once its compile has finished (waiting for it, or compiling it here); VK_NULL_HANDLE
+        // when it failed.
+        VkPipeline CompiledPipeline(const PipelineResource &resource) noexcept
+        {
+            return resource.compile ? resource.compile->Resolve() : resource.pipeline;
+        }
+
+        // The pipeline to bind. Throws when its compile failed, as creating it did before compiles were deferred.
+        VkPipeline ResolvePipeline(const PipelineResource &resource)
+        {
+            if (!resource.compile)
+                return resource.pipeline;
+            std::optional<core::CpuScope> wait;
+            if (!resource.compile->IsDone() && core::CpuTrace::current)
+                wait.emplace("Pipeline compile wait: " + resource.descriptor.debugName, core::CpuCategory::Wait);
+            VkResult result = VK_SUCCESS;
+            if (const auto pipeline = resource.compile->Resolve(&result))
+                return pipeline;
+            throw std::runtime_error(std::string(resource.compute ? "vkCreateComputePipelines" : "vkCreateGraphicsPipelines") +
+                                     " failed for '" + resource.descriptor.debugName + "' (VkResult " + std::to_string(result) + ")");
+        }
 
         // A set keeps its prepared descriptors across a pipeline switch only when
         // both pipelines map the same RHI slots onto it.
@@ -1185,6 +1211,9 @@ namespace PlutoGE::render::rhi::vulkan
         } bindless;
         VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
         VkDevice device = VK_NULL_HANDLE;
+        // Pipelines compile through a cache kept on disk, on background workers (VulkanPipelines.h).
+        std::unique_ptr<VulkanPipelineCacheFile> pipelineCache;
+        std::unique_ptr<VulkanPipelineCompiler> pipelineCompiler;
         VkQueue queue = VK_NULL_HANDLE;
         VkQueue presentQueue = VK_NULL_HANDLE;
         std::uint32_t queueFamily = 0;
@@ -1570,7 +1599,7 @@ namespace PlutoGE::render::rhi::vulkan
             };
             collect(deferredPipelines, [&](auto &resource)
                     {
-                        if (resource.pipeline) vkDestroyPipeline(device, resource.pipeline, nullptr);
+                        if (const auto pipeline = CompiledPipeline(resource)) vkDestroyPipeline(device, pipeline, nullptr);
                         layoutCache.Release(device, resource);
                     });
             collect(deferredSamplers, [&](auto &resource)
@@ -1679,6 +1708,21 @@ namespace PlutoGE::render::rhi::vulkan
             idleUploads.push_back({oldest.command, oldest.fence});
             pendingUploads.pop_front();
             return true;
+        }
+
+        // Whether any submitted upload may still be running (finished ones are retired first). Takes queueMutex.
+        bool UploadsInFlight() noexcept
+        {
+            try
+            {
+                std::lock_guard queueLock(queueMutex);
+                while (RetireOldestUploadLocked(false)) {}
+                return !pendingUploads.empty();
+            }
+            catch (...)
+            {
+                return true; // unknown (a lost device): assume running, the conservative retirement
+            }
         }
 
         // Records and submits an upload that copies from `staging`, which it takes (and frees once the GPU is done).
@@ -2110,7 +2154,7 @@ namespace PlutoGE::render::rhi::vulkan
                 m_pipeline = pipeline;
                 vkCmdBindPipeline(CommandBuffer(), m_pipeline->compute ? VK_PIPELINE_BIND_POINT_COMPUTE
                                                                        : VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                  m_pipeline->pipeline);
+                                  ResolvePipeline(*m_pipeline));
             }
         }
         void BindVertexBuffer(BufferHandle handle, std::size_t offset) override
@@ -3557,8 +3601,10 @@ namespace PlutoGE::render::rhi::vulkan
 
         [[nodiscard]] std::uint64_t RetirementSubmission() const noexcept
         {
-            // A resource destroyed while an upload into it may still run waits for the frame that covers the upload.
-            return (std::max)(m_impl.lastSubmittedSubmission + (m_frameOpen ? 1u : 0u), m_impl.uploadRetirement.load(std::memory_order_acquire));
+            const auto frames = m_impl.lastSubmittedSubmission + (m_frameOpen ? 1u : 0u);
+            // A resource destroyed while an upload into it may still run waits for the frame that covers the upload;
+            // once every upload has finished, the frames alone decide.
+            return m_impl.UploadsInFlight() ? (std::max)(frames, m_impl.uploadRetirement.load(std::memory_order_acquire)) : frames;
         }
 
         [[nodiscard]] bool SupportsAsyncCompute() const noexcept override { return m_async != nullptr; }
@@ -4858,6 +4904,10 @@ namespace PlutoGE::render::rhi::vulkan
         descriptors.poolSizeCount = sizes.size();
         descriptors.pPoolSizes = sizes.data();
         Check(vkCreateDescriptorPool(m_impl->device, &descriptors, nullptr, &m_impl->descriptorPool), "vkCreateDescriptorPool");
+        m_impl->pipelineCache = std::make_unique<VulkanPipelineCacheFile>(m_impl->device, properties, VulkanPipelineCacheFile::DefaultPath());
+        m_impl->pipelineCompiler = std::make_unique<VulkanPipelineCompiler>(VulkanPipelineCompiler::DefaultWorkerCount());
+        // Persist new pipelines once a batch of compiles finishes, not only at a clean exit.
+        m_impl->pipelineCompiler->SetIdleCallback([cache = m_impl->pipelineCache.get()] { (void)cache->Save(); });
         m_impl->context = std::make_unique<VulkanCommandContext>(*m_impl);
     }
 
@@ -4875,6 +4925,8 @@ namespace PlutoGE::render::rhi::vulkan
         m_impl->fsr2Contexts.clear();
 #endif
         m_impl->context.reset();
+        // Finishes every compile still running or queued: its pipeline (and shader modules) belong to the device.
+        m_impl->pipelineCompiler.reset();
         m_impl->CollectDeferredResources(UINT64_MAX);
         // The device is idle: every upload finished. Command buffers go with their pool.
         for (auto &upload : m_impl->pendingUploads)
@@ -4898,8 +4950,16 @@ namespace PlutoGE::render::rhi::vulkan
             if (slot.commandPool)
                 vkDestroyCommandPool(m_impl->device, slot.commandPool, nullptr);
         }
+        // Every compile has finished (the compiler is gone); the cache then holds all of them.
         m_impl->pipelines.ForEach([&](auto &r)
-                                  { vkDestroyPipeline(m_impl->device, r.pipeline, nullptr); m_impl->layoutCache.Release(m_impl->device, r); });
+                                  { vkDestroyPipeline(m_impl->device, CompiledPipeline(r), nullptr); m_impl->layoutCache.Release(m_impl->device, r); });
+        if (m_impl->pipelineCache)
+        {
+            std::string cacheError;
+            if (!m_impl->pipelineCache->Save(&cacheError))
+                std::cerr << cacheError << std::endl;
+            m_impl->pipelineCache.reset();
+        }
         m_impl->samplers.ForEach([&](auto &r)
                                  { vkDestroySampler(m_impl->device, r.sampler, nullptr); });
         m_impl->textures.ForEach([&](auto &r)
@@ -5445,55 +5505,85 @@ namespace PlutoGE::render::rhi::vulkan
         }
         resource.layout = m_impl->layoutCache.AcquirePipelineLayout(m_impl->device, resource.setLayouts,
                                                                     "vkCreatePipelineLayout");
+        // The create info lives in storage the compile owns: it runs later, on a compiler worker.
+        struct Build
+        {
+            VkDevice device = VK_NULL_HANDLE;
+            const VulkanPipelineCacheFile *cache = nullptr;
+            VkShaderModule vertex = VK_NULL_HANDLE, fragment = VK_NULL_HANDLE, geometry = VK_NULL_HANDLE;
+            std::vector<VkPipelineShaderStageCreateInfo> stages;
+            std::vector<GraphicsPipelineDescriptor::SpecializationConstant> specializationConstants;
+            std::vector<VkSpecializationMapEntry> specializationEntries;
+            VkSpecializationInfo specialization{};
+            std::vector<VkVertexInputAttributeDescription> attributes;
+            VkVertexInputBindingDescription binding{};
+            VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+            VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+            VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+            VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+            std::vector<VkPipelineColorBlendAttachmentState> blendAttachments;
+            VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            std::array<VkDynamicState, 2> dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+            VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+            std::vector<VkFormat> colorFormats;
+            VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+            VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            // PLUTO_VULKAN_SHADER_STATS: logged once compiled.
+            std::optional<GraphicsPipelineDescriptor> statistics;
+        };
+        const auto build = std::make_shared<Build>();
+        build->device = m_impl->device;
+        build->cache = m_impl->pipelineCache.get();
+        build->vertex = vertex;
+        build->fragment = fragment;
+        build->geometry = geometry;
         // Slang emits the selected entry point as SPIR-V's canonical `main`.
-        std::vector<VkPipelineShaderStageCreateInfo> stages{
-            {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"}};
+        auto &stages = build->stages;
+        stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_VERTEX_BIT, vertex, "main"});
         if (geometry)
             stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                               VK_SHADER_STAGE_GEOMETRY_BIT, geometry, "main"});
         stages.push_back({VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                           VK_SHADER_STAGE_FRAGMENT_BIT, fragment, "main"});
-        std::vector<VkSpecializationMapEntry> specializationEntries;
-        for (std::size_t index = 0; index < descriptor.specializationConstants.size(); ++index)
-            specializationEntries.push_back({descriptor.specializationConstants[index].id,
+        build->specializationConstants = descriptor.specializationConstants;
+        for (std::size_t index = 0; index < build->specializationConstants.size(); ++index)
+            build->specializationEntries.push_back({build->specializationConstants[index].id,
                 static_cast<std::uint32_t>(index * sizeof(GraphicsPipelineDescriptor::SpecializationConstant) +
                     offsetof(GraphicsPipelineDescriptor::SpecializationConstant, value)), sizeof(std::uint32_t)});
-        const VkSpecializationInfo specialization{static_cast<std::uint32_t>(specializationEntries.size()),
-            specializationEntries.data(), descriptor.specializationConstants.size() * sizeof(GraphicsPipelineDescriptor::SpecializationConstant),
-            descriptor.specializationConstants.data()};
-        if (!specializationEntries.empty())
-            for (auto &stage : stages) stage.pSpecializationInfo = &specialization;
-        std::vector<VkVertexInputAttributeDescription> attributes;
+        build->specialization = {static_cast<std::uint32_t>(build->specializationEntries.size()),
+            build->specializationEntries.data(), build->specializationConstants.size() * sizeof(GraphicsPipelineDescriptor::SpecializationConstant),
+            build->specializationConstants.data()};
+        if (!build->specializationEntries.empty())
+            for (auto &stage : stages) stage.pSpecializationInfo = &build->specialization;
         for (const auto &a : descriptor.vertexLayout.attributes)
-            attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});
-        VkVertexInputBindingDescription binding{0, descriptor.vertexLayout.stride, VK_VERTEX_INPUT_RATE_VERTEX};
-        VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-        vertexInput.vertexBindingDescriptionCount = attributes.empty() ? 0u : 1u;
-        vertexInput.pVertexBindingDescriptions = attributes.empty() ? nullptr : &binding;
-        vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(attributes.size());
-        vertexInput.pVertexAttributeDescriptions = attributes.data();
-        VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        VkPipelineViewportStateCreateInfo viewport{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-        viewport.viewportCount = 1;
-        viewport.scissorCount = 1;
-        VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            build->attributes.push_back({a.location, 0, ToVkFormat(a.format), a.offset});
+        build->binding = {0, descriptor.vertexLayout.stride, VK_VERTEX_INPUT_RATE_VERTEX};
+        auto &vertexInput = build->vertexInput;
+        vertexInput.vertexBindingDescriptionCount = build->attributes.empty() ? 0u : 1u;
+        vertexInput.pVertexBindingDescriptions = build->attributes.empty() ? nullptr : &build->binding;
+        vertexInput.vertexAttributeDescriptionCount = static_cast<std::uint32_t>(build->attributes.size());
+        vertexInput.pVertexAttributeDescriptions = build->attributes.data();
+        build->assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+        build->viewport.viewportCount = 1;
+        build->viewport.scissorCount = 1;
+        auto &raster = build->raster;
         raster.polygonMode = VK_POLYGON_MODE_FILL;
         raster.cullMode = descriptor.cullMode == CullMode::None ? VK_CULL_MODE_NONE : descriptor.cullMode == CullMode::Front ? VK_CULL_MODE_FRONT_BIT
                                                                                                                              : VK_CULL_MODE_BACK_BIT;
         raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         raster.lineWidth = 1;
-        VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        build->multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        auto &depth = build->depth;
         depth.depthTestEnable = descriptor.depthTest;
         depth.depthWriteEnable = descriptor.depthWrite;
         depth.depthCompareOp = ToVkCompare(descriptor.depthCompare);
         const std::size_t colorAttachmentCount = descriptor.colorFormats.empty()
                                                      ? (descriptor.colorFormat == Format::Undefined ? 0u : 1u)
                                                      : descriptor.colorFormats.size();
-        std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(colorAttachmentCount);
-        for (auto &blend : blendAttachments)
+        build->blendAttachments.resize(colorAttachmentCount);
+        for (auto &blend : build->blendAttachments)
         {
             blend.colorWriteMask = 0xf;
             blend.blendEnable = descriptor.blend.enabled;
@@ -5504,49 +5594,50 @@ namespace PlutoGE::render::rhi::vulkan
             blend.dstAlphaBlendFactor = descriptor.blend.preserveDestinationAlpha ? VK_BLEND_FACTOR_ONE : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
             blend.alphaBlendOp = VK_BLEND_OP_ADD;
         }
-        VkPipelineColorBlendStateCreateInfo blending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-        blending.attachmentCount = static_cast<std::uint32_t>(blendAttachments.size());
-        blending.pAttachments = blendAttachments.data();
-        std::array dynamicStates{VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynamicState.dynamicStateCount = dynamicStates.size();
-        dynamicState.pDynamicStates = dynamicStates.data();
-        std::vector<VkFormat> colorFormats;
+        build->blending.attachmentCount = static_cast<std::uint32_t>(build->blendAttachments.size());
+        build->blending.pAttachments = build->blendAttachments.data();
+        build->dynamicState.dynamicStateCount = static_cast<std::uint32_t>(build->dynamicStates.size());
+        build->dynamicState.pDynamicStates = build->dynamicStates.data();
         if (descriptor.colorFormats.empty() && descriptor.colorFormat != Format::Undefined)
-            colorFormats.push_back(ToVkFormat(descriptor.colorFormat));
+            build->colorFormats.push_back(ToVkFormat(descriptor.colorFormat));
         else
             for (const auto format : descriptor.colorFormats)
-                colorFormats.push_back(ToVkFormat(format));
-        VkPipelineRenderingCreateInfo rendering{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        rendering.colorAttachmentCount = static_cast<std::uint32_t>(colorFormats.size());
-        rendering.pColorAttachmentFormats = colorFormats.data();
+                build->colorFormats.push_back(ToVkFormat(format));
+        auto &rendering = build->rendering;
+        rendering.colorAttachmentCount = static_cast<std::uint32_t>(build->colorFormats.size());
+        rendering.pColorAttachmentFormats = build->colorFormats.data();
         rendering.depthAttachmentFormat = descriptor.depthFormat == Format::Undefined ? VK_FORMAT_UNDEFINED : ToVkFormat(descriptor.depthFormat);
-        VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        info.pNext = &rendering;
-        info.stageCount = stages.size();
+        auto &info = build->info;
+        info.pNext = &build->rendering;
+        info.stageCount = static_cast<std::uint32_t>(stages.size());
         info.pStages = stages.data();
-        info.pVertexInputState = &vertexInput;
-        info.pInputAssemblyState = &assembly;
-        info.pViewportState = &viewport;
-        info.pRasterizationState = &raster;
-        info.pMultisampleState = &multisample;
-        info.pDepthStencilState = &depth;
-        info.pColorBlendState = &blending;
-        info.pDynamicState = &dynamicState;
+        info.pVertexInputState = &build->vertexInput;
+        info.pInputAssemblyState = &build->assembly;
+        info.pViewportState = &build->viewport;
+        info.pRasterizationState = &build->raster;
+        info.pMultisampleState = &build->multisample;
+        info.pDepthStencilState = &build->depth;
+        info.pColorBlendState = &build->blending;
+        info.pDynamicState = &build->dynamicState;
         info.layout = resource.layout;
-        const VkResult result = vkCreateGraphicsPipelines(m_impl->device, VK_NULL_HANDLE, 1, &info, nullptr, &resource.pipeline);
-        if (m_impl->shaderStatistics && result == VK_SUCCESS)
-            LogShaderStatistics(m_impl->device, resource.pipeline, descriptor);
-        vkDestroyShaderModule(m_impl->device, vertex, nullptr);
-        vkDestroyShaderModule(m_impl->device, fragment, nullptr);
-        if (geometry)
-            vkDestroyShaderModule(m_impl->device, geometry, nullptr);
-        if (result != VK_SUCCESS)
+        if (m_impl->shaderStatistics)
+            build->statistics = descriptor;
+        resource.compile = m_impl->pipelineCompiler->Submit([build](VkPipeline &pipeline)
+        {
+            const auto use = build->cache->Use();
+            const VkResult result = vkCreateGraphicsPipelines(build->device, build->cache->Get(), 1, &build->info, nullptr, &pipeline);
+            if (build->statistics && result == VK_SUCCESS)
+                LogShaderStatistics(build->device, pipeline, *build->statistics);
+            for (const auto module : {build->vertex, build->fragment, build->geometry})
+                if (module)
+                    vkDestroyShaderModule(build->device, module, nullptr);
+            return result;
+        });
+        // A serial compiler has already compiled it: report a failure now, as the device always did.
+        if (m_impl->pipelineCompiler->IsSerial() && !CompiledPipeline(resource))
         {
             m_impl->layoutCache.Release(m_impl->device, resource);
-            throw std::runtime_error(
-                "vkCreateGraphicsPipelines failed for '" + descriptor.debugName +
-                "' (VkResult " + std::to_string(result) + ")");
+            (void)ResolvePipeline(resource);
         }
         return m_impl->pipelines.Insert(std::move(resource));
     }
@@ -5601,14 +5692,25 @@ namespace PlutoGE::render::rhi::vulkan
         VkShaderModule module = VK_NULL_HANDLE;
         Check(vkCreateShaderModule(m_impl->device, &moduleInfo, nullptr, &module),
               "vkCreateShaderModule(compute)");
+        resource.descriptor.debugName = descriptor.debugName;
         VkComputePipelineCreateInfo info{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
         info.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0,
                       VK_SHADER_STAGE_COMPUTE_BIT, module, "main"};
         info.layout = resource.layout;
-        const VkResult result = vkCreateComputePipelines(m_impl->device, VK_NULL_HANDLE, 1,
-                                                         &info, nullptr, &resource.pipeline);
-        vkDestroyShaderModule(m_impl->device, module, nullptr);
-        Check(result, "vkCreateComputePipelines");
+        // The create info holds no pointers into this frame (the entry point is a literal): it is copied to the compile.
+        resource.compile = m_impl->pipelineCompiler->Submit(
+            [device = m_impl->device, cache = m_impl->pipelineCache.get(), info, module](VkPipeline &pipeline)
+            {
+                const auto use = cache->Use();
+                const VkResult result = vkCreateComputePipelines(device, cache->Get(), 1, &info, nullptr, &pipeline);
+                vkDestroyShaderModule(device, module, nullptr);
+                return result;
+            });
+        if (m_impl->pipelineCompiler->IsSerial() && !CompiledPipeline(resource))
+        {
+            m_impl->layoutCache.Release(m_impl->device, resource);
+            (void)ResolvePipeline(resource);
+        }
         return m_impl->pipelines.Insert(std::move(resource));
     }
 

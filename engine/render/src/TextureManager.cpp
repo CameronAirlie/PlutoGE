@@ -3,6 +3,8 @@
 #include "PlutoGE/platform/ContentPack.h"
 #include "PlutoGE/platform/ContentDigest.h"
 #include "PlutoGE/render/TextureManager.h"
+#include "PlutoGE/render/TextureSourceIndex.h"
+#include "PlutoGE/core/CpuTrace.h"
 #include "PlutoGE/render/RenderTexture.h"
 #include "PlutoGE/render/Texture.h"
 #include "PlutoGE/render/ImageDecoding.h"
@@ -219,6 +221,9 @@ namespace PlutoGE::render
                 texture->m_rgba8Pixels.swap(replacement->m_rgba8Pixels);
             }
             ++texture->m_contentRevision;
+            // The file's new version, as loaded.
+            texture->m_fileVersion = replacement->m_fileVersion;
+            texture->m_fileContentRevision = texture->m_contentRevision;
         }
         if (error) error->clear();
         return true;
@@ -244,22 +249,43 @@ namespace PlutoGE::render
             return it->second;
         }
 
+        TextureConfig config;
+        config.filePath = filePath;
+        // Read before decoding: the version the decoded pixels are (TextureSourceIndex records what became of it).
+        const auto version = TextureSourceIndex::CurrentVersion(sourcePath);
+        if (m_sourceIndex && version)
+            if (const auto record = m_sourceIndex->Find(sourcePath, *version); record && !record->samplings.empty())
+            {
+                // Its compressed copies exist: nothing to decode now. CPU readers decode the file on demand.
+                Texture *texture = new Texture(config);
+                texture->m_width = static_cast<int>(record->width);
+                texture->m_height = static_cast<int>(record->height);
+                texture->m_channels = record->channels;
+                texture->SetPixelSource(FilePixelSource(sourcePath));
+                texture->m_fileVersion = version;
+                texture->m_fileContentRevision = texture->m_contentRevision;
+                m_textureCache[cacheKey] = texture;
+                return texture;
+            }
+
         // A decode started ahead of time, else one now off this thread (the owner keeps presenting a loading screen).
+        core::CpuScope decodeScope("Texture file decode");
         auto decoded = m_decodes.Take(sourcePath);
         if (!decoded)
             decoded = platform::LoadingWork::Prepare([sourcePath] { return DecodeImageFile(sourcePath); });
+        decodeScope.End();
         if (!*decoded)
             return nullptr;
         auto &image = **decoded;
 
-        TextureConfig config;
-        config.filePath = filePath;
         Texture *texture = new Texture(config);
         texture->m_width = image.width;
         texture->m_height = image.height;
         texture->m_channels = image.channels;
         texture->ReplaceRgba8Pixels(std::move(image.rgba8));
         texture->SetPixelSource(FilePixelSource(sourcePath));
+        texture->m_fileVersion = version;
+        texture->m_fileContentRevision = texture->m_contentRevision;
 
         m_textureCache[cacheKey] = texture;
         return texture;
@@ -276,6 +302,10 @@ namespace PlutoGE::render
             if (m_textureCache.contains(BuildTextureCacheKey(path, TextureColorSpace::Linear)) ||
                 m_textureCache.contains(BuildTextureCacheKey(path, TextureColorSpace::SRGB)))
                 continue;
+            // Loads from its compressed copies: nothing to decode.
+            if (const auto version = m_sourceIndex ? TextureSourceIndex::CurrentVersion(path) : std::nullopt)
+                if (const auto record = m_sourceIndex->Find(path, *version); record && !record->samplings.empty())
+                    continue;
             m_decodes.Start(path);
         }
     }

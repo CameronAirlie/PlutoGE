@@ -57,9 +57,10 @@ namespace PlutoGE::render
         std::uint32_t minimumTexels = 128 * 128;
         // Encoded mip chains, keyed by content. Empty disables the cache (every texture is encoded each run).
         std::filesystem::path cacheDirectory;
-        // Read-only stores searched before the cache, through the content layer (so inside mounted content packs): the
-        // textures a game's export already encoded (TextureCooking.h). Entries here are never encoded at run time.
-        std::vector<std::filesystem::path> cookedDirectories;
+        // Content roots of exported games (the project root inside a mounted content pack) whose cooked textures are
+        // searched before the cache, read-only and through the content layer: the store and source index a game's export
+        // wrote under root / kCookedTextureDirectory (TextureCooking.h). Entries here are never encoded at run time.
+        std::vector<std::filesystem::path> cookedRoots;
         // Encoding threads for background compression (at least one).
         std::uint32_t workerCount = 2;
         // Source texels held by queued encodes. Textures beyond it keep their RGBA8 upload and are queued when

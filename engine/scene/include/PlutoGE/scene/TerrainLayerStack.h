@@ -8,6 +8,7 @@
 
 #include <array>
 #include <functional>
+#include <span>
 #include <future>
 #include <memory>
 #include <string>
@@ -48,6 +49,8 @@ namespace PlutoGE::scene
         struct Services
         {
             std::function<const render::Texture *(const std::string &reference, render::TextureColorSpace)> loadTexture;
+            // Starts decoding textures about to be loaded, side by side (optional).
+            std::function<void(std::span<const std::string> references)> prefetchTextures;
             // An asset reference or path to a file path (empty when it cannot be resolved).
             std::function<std::string(const std::string &reference)> resolvePath;
             // A file's bytes (content packs as well as loose files); false when missing.

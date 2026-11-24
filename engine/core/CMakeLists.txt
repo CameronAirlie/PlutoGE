@@ -1,6 +1,7 @@
 add_library(PlutoGECore
     src/Engine.cpp
     src/SceneLoading.cpp
+    src/LoadProfile.cpp
     src/LoadingScreenSession.cpp
     src/TaskPool.cpp
     src/FrameWorker.cpp

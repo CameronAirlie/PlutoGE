@@ -42,6 +42,7 @@ namespace PlutoGE::render
     class RhiRenderService;
     class TextureManager;
     struct AnimationClip;
+    struct TextureCompressionSettings;
 
     namespace rhi
     {
@@ -116,6 +117,10 @@ namespace PlutoGE::core
         FrameTiming BeginFrame();
         [[nodiscard]] FramePacer &GetFramePacer() noexcept { return m_framePacer; }
         [[nodiscard]] render::RhiRenderService &GetRhiRenderService() { return *m_rhiRenderService; }
+        // Material texture compression for every renderer, and the source index the texture manager loads through
+        // (TextureSourceIndex.h), together so both see the same stores. Initialize applies
+        // TextureCompressionSettings::FromEnvironment(); hosts call this to add an exported game's cooked textures.
+        void SetTextureCompression(const render::TextureCompressionSettings &settings);
         // The temporal upscaler frames render with: the host's (EngineConfig::temporalUpscaler) unless the running game
         // chose another (SetRuntimeTemporalUpscaler, from the player's settings). A game's choice lasts until the
         // runtime stops. Hosts that render the game with their own renderer (the editor's game view) apply

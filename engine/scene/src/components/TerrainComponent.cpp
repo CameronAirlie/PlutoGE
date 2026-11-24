@@ -1098,6 +1098,14 @@ namespace PlutoGE::scene
         services.loadTexture = [](const std::string &reference, render::TextureColorSpace colorSpace) -> const render::Texture * {
             return core::Engine::GetInstance().GetAssetManager().LoadTexture(reference.c_str(), colorSpace);
         };
+        services.prefetchTextures = [](std::span<const std::string> references) {
+            auto &assets = core::Engine::GetInstance().GetAssetManager();
+            std::vector<std::string> paths;
+            for (const auto &reference : references)
+                if (auto path = assets.ResolveAssetPath(reference); !path.empty())
+                    paths.push_back(std::move(path));
+            assets.PrefetchTextures(paths);
+        };
         services.resolvePath = [](const std::string &reference) {
             auto resolved = core::Engine::GetInstance().GetAssetManager().ResolveAssetPath(reference);
             return resolved.empty() ? reference : resolved;

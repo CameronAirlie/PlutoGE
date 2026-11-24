@@ -2433,8 +2433,10 @@ namespace PlutoGE::scene
             for (auto *child : entity->GetChildren())
                 self(child, self);
         };
+        std::optional<core::CpuScope> stage(std::in_place, "Navigation bake");
         for (auto *rootEntity : m_rootEntities)
             bakeNavigationMeshes(rootEntity, bakeNavigationMeshes);
+        stage.emplace("Script prepare");
 
         // OnCreate may request additive loads or query the scene generation.
         // Publish the runtime lifetime before invoking gameplay callbacks.
@@ -2454,6 +2456,7 @@ namespace PlutoGE::scene
                 scriptComponent->Prepare();
             }
         }
+        stage.emplace("Script start");
         for (const auto handle : scriptHandles)
         {
             auto *scriptComponent = m_runtimeComponents->Resolve(handle);
@@ -2462,6 +2465,7 @@ namespace PlutoGE::scene
             platform::LoadingWork::Checkpoint();
             scriptComponent->Start();
         }
+        stage.emplace("Audio preload");
 
         auto &engine = core::Engine::GetInstance();
         auto &audioSystem = engine.GetAudioSystem();

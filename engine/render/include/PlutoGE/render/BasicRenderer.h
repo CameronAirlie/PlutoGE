@@ -1084,6 +1084,9 @@ namespace PlutoGE::render
         // Steps each water pixel's screen-space reflection ray takes (RhiOcean; the shader keeps 8..64). Graphics tiers
         // without reflections trace fewer: each step is a dependent depth read.
         std::uint32_t waterReflectionSteps = 48;
+        // Terrain layers may tile stochastically (TerrainLayer::antiTiling, which fetches each map twice). Off, every
+        // layer tiles plainly whatever it asks for.
+        bool terrainAntiTiling = true;
     };
 
     struct BasicPostProcessEffect
@@ -1471,6 +1474,8 @@ namespace PlutoGE::render
         bool m_shadowMaskEnabled = true;
         // This frame's SurfaceFeature bits (src/SurfaceFeatures.h); all set is the general shader.
         std::uint32_t m_surfaceFeatures = ~0u;
+        // This frame's BasicLighting::terrainAntiTiling, for BindTerrainLayers.
+        bool m_terrainAntiTiling = true;
         std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
         std::array<std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2>, 2> m_compactFragments;
         std::array<rhi::GraphicsPipelineDescriptor::ShaderCode, 2> m_coverageFragments;

@@ -50,6 +50,7 @@ int main(int argc, char **argv)
             q.contactShadows = i % 2 == 0;
             q.tracedShadows = i % 2 != 0;
             q.foliageShadowSway = i % 2 == 0;
+            q.terrainAntiTiling = i % 2 != 0;
             q.grassDensity = 0.15f + 0.1234567f * static_cast<float>(i);
             q.grassDistance = 0.3f + 0.1765432f * static_cast<float>(i);
         }
@@ -146,6 +147,9 @@ int main(int argc, char **argv)
                   nineteenField->GetManifest().graphicsQualityPresets.tiers[2].foliageShadowSway &&
                   nineteenField->GetManifest().graphicsQualityPresets.tiers[0].tracedShadows,
               "A nineteen-field quality record did not take its tier's foliage-shadow-sway default");
+        Check(!nineteenField->GetManifest().graphicsQualityPresets.tiers[0].terrainAntiTiling &&
+                  nineteenField->GetManifest().graphicsQualityPresets.tiers[2].terrainAntiTiling,
+              "A record without terrain anti-tiling did not take its tier's default");
         if (argc > 1)
         {
             const auto activeProject = assets::Project::Load(argv[1], &error);

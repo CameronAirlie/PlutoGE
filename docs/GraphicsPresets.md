@@ -12,7 +12,7 @@ Engine defaults retain scene-authored quality. Presets survive scene loads witho
 
 | Tier | Cascaded directional shadow ceiling | Distance ceiling | Skipped effects | Foliage detail | Grass density / distance |
 | --- | --- | --- | --- | --- | --- |
-| Low | 512, 1 cascade; selects cascaded shadows | 40 | SSAO, GI, SSR, volumetric fog/clouds, bloom/lens flare, DOF, motion blur, contact shadows, traced shadows, foliage shadow sway | 60% | 40% / 50% |
+| Low | 512, 1 cascade; selects cascaded shadows | 40 | SSAO, GI, SSR, volumetric fog/clouds, bloom/lens flare, DOF, motion blur, contact shadows, traced shadows, foliage shadow sway, terrain anti-tiling | 60% | 40% / 50% |
 | Medium | 1024, 2 cascades; selects cascaded shadows | 80 | GI, SSR, volumetric fog/clouds, DOF, motion blur | 75% | 70% / 75% |
 | High | 2048, 4 cascades; authored method | 150 | DOF, motion blur | 100% | 100% / 100% |
 | Ultra | 4096, 4 cascades; authored method | 300 | None | 100% | 100% / 100% |
@@ -26,6 +26,10 @@ pages stay cached. Under a dense canopy, sway within the wind's Shadow Sway Dist
 frame: in SurvivalGame's LakeDistrict forest (Vega 8, 853x480) it kept about 216 pages dirty and VSM page rendering at
 5.2 ms; frozen, 4 pages and 0.25 ms. Lowering Shadow Sway Distance alone did not help there, because the few pages left
 dirty still held the whole per-frame triangle budget. The plants themselves still sway.
+
+**Terrain anti-tiling** (off on Low): terrain layers tile plainly instead of stochastically, so each layer map is
+fetched once rather than twice (1.3-1.45 ms of a 24 ms frame in the LakeDistrict forest on a Vega 8; repeats show on
+open ground). It is applied per frame (`BasicLighting::terrainAntiTiling`), so switching tiers takes effect at once.
 
 **Water reflections** follow the reflections flag: on tiers without screen-space reflections, water traces
 `GraphicsQuality::WaterReflectionStepsWithoutReflections` (16) steps per pixel instead of 48
@@ -49,7 +53,8 @@ GraphicsSettings.TryGetQuality(out var current);
 GraphicsSettings.TryResetQuality(); // Restore authored quality
 ```
 
-`QualitySupported` checks bridge availability. Unsupported calls return false; invalid enums, non-finite distances and out-of-range values throw argument exceptions before crossing the bridge. Native setters also validate. Call on the script/main thread. The 28-byte ABI (`GraphicsQualityNative`) holds two fixed-width integers, the shadow distance, twelve explicit flag bits (bit 9 is contact shadows, bit 10 traced shadows, bit 11 foliage shadow sway) and the foliage detail, grass density and grass distance floats; presets originate in the native project definitions, falling back to engine defaults. `GraphicsQuality` exposes the accepted ranges as constants (`MinGrassDensity`, `MaxShadowDistance`, ...) for settings menus.
+`QualitySupported` checks bridge availability. Unsupported calls return false; invalid enums, non-finite distances and out-of-range values throw argument exceptions before crossing the bridge. Native setters also validate. Call on the script/main thread. The 28-byte ABI (`GraphicsQualityNative`) holds two fixed-width integers, the shadow distance, thirteen explicit flag bits (bit 9 is contact shadows, bit 10 traced shadows, bit 11 foliage shadow sway, bit 12
+terrain anti-tiling) and the foliage detail, grass density and grass distance floats; presets originate in the native project definitions, falling back to engine defaults. `GraphicsQuality` exposes the accepted ranges as constants (`MinGrassDensity`, `MaxShadowDistance`, ...) for settings menus.
 
 Native hosts install project definitions with
 `RhiRenderService::SetGraphicsQualityPresets`, then pass
@@ -89,6 +94,7 @@ Each row is one ceiling and each column one tier:
 | Contact shadows | Allow screen-space contact shadows (sun and local lights) |
 | Traced shadows | Allow local lights without a shadow map to be traced against the world |
 | Foliage shadow sway | Allow swaying foliage to sway in the sun's virtual shadow maps (off: rest pose, cached pages) |
+| Terrain anti-tiling | Allow terrain layers' stochastic tiling (off: plain tiling, one fetch per map) |
 | Ambient occlusion / Global illumination / Screen-space reflections / Volumetrics | Allow SSAO; SSGI, DDGI and VCT GI; SSR; volumetric fog and clouds |
 | Bloom and lens flare / Depth of field / Motion blur | Allow the corresponding effects |
 | Foliage detail | 25–200%; caps instanced foliage detail |
@@ -112,9 +118,9 @@ extend the `QUALITY_PRESET` record and the scripting ABI.
 Project manifests serialize four `QUALITY_PRESET` records, indexed 0–3, with
 enabled, shadow resolution, cascade count, distance, the eight policy flags
 (cascaded method, AO, GI, reflections, volumetrics, bloom, DOF, motion blur),
-foliage detail, contact shadows, grass density, grass distance, traced shadows
-and foliage shadow sway (20 fields). Records of 14, 15, 18 or 19 fields from
-older projects load, taking the tier's engine defaults for the fields they
+foliage detail, contact shadows, grass density, grass distance, traced shadows,
+foliage shadow sway and terrain anti-tiling (21 fields). Records of 14, 15, 18,
+19 or 20 fields from older projects load, taking the tier's engine defaults for the fields they
 predate. Missing records retain engine defaults.
 Invalid records reject loading with an error; invalid in-memory tiers reject
 saving before opening the manifest for writing. Exports copy the definitions

@@ -52,6 +52,9 @@ namespace PlutoGE::ui
             Allow("bloom", "Bloom and lens flare", "Allows bloom and lens flare.", PostProcessing, &Q::bloom),
             Allow("depthOfField", "Depth of field", "Allows the depth-of-field effect.", PostProcessing, &Q::depthOfField),
             Allow("motionBlur", "Motion blur", "Allows the motion-blur effect.", PostProcessing, &Q::motionBlur),
+            Allow("terrainAntiTiling", "Terrain anti-tiling",
+                "Lets terrain layers tile stochastically, which hides repeats but fetches each layer map twice. Off, "
+                "they tile plainly.", Vegetation, &Q::terrainAntiTiling),
             QualityTierField{"foliageDetail", "Foliage detail",
                 "Caps instanced foliage detail. Below 100%, plants switch to coarser LODs, and trees to their impostors, "
                 "from nearer: 50% does so at twice the screen size.",

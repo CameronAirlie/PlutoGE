@@ -9,6 +9,7 @@
 #include "PlutoGE/scene/volume/VolumeMeshQueue.h"
 
 #include <cstdint>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -89,6 +90,9 @@ namespace PlutoGE::scene
         // Chunks meshed (and results applied) per frame.
         [[nodiscard]] int GetMeshesPerFrame() const { return m_meshesPerFrame; }
         void SetMeshesPerFrame(int meshes) { m_meshesPerFrame = meshes < 1 ? 1 : meshes; }
+        // Work out the terrain holes the volume cuts on a worker thread (a world's tiles: a tile's generated caves take
+        // several milliseconds to test). Flush still works them out at once.
+        void SetAsyncHoles(bool async) { m_asyncHoles = async; }
 
         // ---- editing ---------------------------------------------------------------------------------------------
         // Applies a world-space shape. Nothing happens without a terrain beside the component.
@@ -193,7 +197,10 @@ namespace PlutoGE::scene
         void QueueBaseFeatures();
         // The steps of an update.
         void FollowBase(TerrainComponent &terrain, bool immediately);
-        void RefreshHoles();
+        // With `wait`, a worker's result is waited for and new holes are worked out at once.
+        void RefreshHoles(bool wait);
+        // Takes newly worked-out holes: the chunks along cells whose cut changes are meshed again, then the holes apply.
+        void AcceptHoles(TerrainHoleMask holes);
         void ScheduleMeshing(std::size_t budget);
         void ApplyMeshes(std::vector<volume::VolumeMeshQueue::Result> results);
         void ApplyHolesWhenMeshed(TerrainComponent &terrain);
@@ -232,6 +239,9 @@ namespace PlutoGE::scene
         std::shared_ptr<const TerrainHoleMask> m_holes;
         std::shared_ptr<const TerrainHoleMask> m_pendingHoles;
         std::uint64_t m_holesVolumeRevision = 0;
+        bool m_asyncHoles = false;
+        // Holes being worked out on a worker, and the volume revision they are for.
+        std::future<std::pair<std::uint64_t, TerrainHoleMask>> m_holesJob;
 
         // Meshing.
         std::unique_ptr<volume::VolumeMeshQueue> m_queue;

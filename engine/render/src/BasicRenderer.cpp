@@ -2805,6 +2805,7 @@ namespace PlutoGE::render
         m_surfaceFeatures = m_surfaceSpecialization && m_device->GetApi() == rhi::GraphicsApi::Vulkan
             ? FrameSurfaceFeatures(frameParameters) : AllSurfaceFeatures;
         m_frameStats.surfaceFeatures = m_surfaceFeatures;
+        m_terrainAntiTiling = lighting.terrainAntiTiling;
         // The directional shadow is filtered once per pixel of the coverage depth when every condition for reading
         // it holds: a prepass, a shadow to filter, and no diagnostic output that needs the in-shader filter's taps.
         m_shadowMaskActive = m_shadowMask && m_shadowMaskEnabled && depthPrepassActive && frameParameters.shadowsEnabled != 0 &&
@@ -7045,6 +7046,9 @@ namespace PlutoGE::render
         BasicTerrainLayerParameters parameters;
         parameters.tiling = terrain.tiling;
         parameters.tint = terrain.tint;
+        if (!m_terrainAntiTiling)
+            for (auto &tint : parameters.tint)
+                tint.w = 0.0f;
         parameters.parameters = glm::vec4(float(terrain.layerCount), std::max(terrain.heightBlend, 0.0f),
                                           std::max(terrain.detailDistance, 0.0f), std::max(terrain.detailFade, 0.0f));
         parameters.mapping = glm::vec4(terrain.vertexLayers ? 1.0f : 0.0f, terrain.triplanar ? 1.0f : 0.0f,

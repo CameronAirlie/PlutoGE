@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <climits>
 #include <cmath>
 #include <fstream>
@@ -374,20 +375,25 @@ namespace PlutoGE::scene
 
     std::vector<unsigned char> TerrainLayerStack::MacroPixels(const render::TextureRect &rect)
     {
-        const int size = std::min(kMacroResolution, m_weights.GetResolution());
         std::vector<glm::vec3> colours(m_layers.size());
         for (std::size_t layer = 0; layer < m_layers.size(); ++layer)
             colours[layer] = MeanLinearColour(layer);
+        return MacroPixels(m_weights, colours, std::min(kMacroResolution, m_weights.GetResolution()), rect);
+    }
+
+    std::vector<unsigned char> TerrainLayerStack::MacroPixels(const TerrainWeightMap &weights, const std::vector<glm::vec3> &colours, int size,
+                                                              const render::TextureRect &rect)
+    {
         std::vector<unsigned char> pixels(static_cast<std::size_t>(rect.width) * rect.height * 4);
         auto *pixel = pixels.data();
         for (int y = rect.y; y < rect.y + rect.height; ++y)
             for (int x = rect.x; x < rect.x + rect.width; ++x, pixel += 4)
             {
                 const glm::vec2 uv = (glm::vec2(x, y) + 0.5f) / float(size);
-                const auto weights = m_weights.SampleWeights(uv);
+                const auto layerWeights = weights.SampleWeights(uv);
                 glm::vec3 colour(0.0f);
-                for (std::size_t layer = 0; layer < m_layers.size() && layer < weights.size(); ++layer)
-                    colour += colours[layer] * weights[layer];
+                for (std::size_t layer = 0; layer < colours.size() && layer < layerWeights.size(); ++layer)
+                    colour += colours[layer] * layerWeights[layer];
                 for (int channel = 0; channel < 3; ++channel)
                     pixel[channel] = static_cast<unsigned char>(std::lround(LinearToSrgb(colour[channel]) * 255.0f));
                 pixel[3] = 255;
@@ -399,10 +405,34 @@ namespace PlutoGE::scene
     {
         core::CpuScope scope("TerrainLayers.MacroAlbedo");
         const int size = std::min(kMacroResolution, m_weights.GetResolution());
+        if (m_macroBuild.valid())
+        {
+            // The previous texture (or none) until the worker's texels land.
+            if (m_macroBuild.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                return;
+            auto [builtSize, pixels] = m_macroBuild.get();
+            if (builtSize == size)
+            {
+                if (!m_macroAlbedo || m_macroAlbedo->GetWidth() != size || !m_macroAlbedo->SetRgba8Pixels(pixels))
+                    m_macroAlbedo = render::Texture::CreateRgba8(size, size, std::move(pixels), "Terrain macro albedo");
+            }
+            else
+                m_macroStale = true;
+            // Changes made while it ran (marked stale or dirty since) are applied below.
+        }
         if (m_macroStale || !m_macroAlbedo || m_macroAlbedo->GetWidth() != size)
         {
             const render::TextureRect whole{0, 0, size, size};
-            if (!m_macroAlbedo || m_macroAlbedo->GetWidth() != size || !m_macroAlbedo->SetRgba8Pixels(MacroPixels(whole)))
+            if (m_asyncMacroAlbedo)
+            {
+                std::vector<glm::vec3> colours(m_layers.size());
+                for (std::size_t layer = 0; layer < m_layers.size(); ++layer)
+                    colours[layer] = MeanLinearColour(layer);
+                m_macroBuild = std::async(std::launch::async, [weights = m_weights, colours = std::move(colours), size, whole] {
+                    return std::pair{size, MacroPixels(weights, colours, size, whole)};
+                });
+            }
+            else if (!m_macroAlbedo || m_macroAlbedo->GetWidth() != size || !m_macroAlbedo->SetRgba8Pixels(MacroPixels(whole)))
                 m_macroAlbedo = render::Texture::CreateRgba8(size, size, MacroPixels(whole), "Terrain macro albedo");
         }
         else if (!m_macroDirty.Empty())

@@ -8,6 +8,7 @@
 
 #include <array>
 #include <functional>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -110,6 +111,9 @@ namespace PlutoGE::scene
         // change in place).
         [[nodiscard]] std::shared_ptr<const render::TerrainLayerSet> GetRenderSet();
         [[nodiscard]] const render::Texture *GetMacroAlbedo();
+        // Rebuild the whole macro albedo on a worker thread (a world's tiles, whose biomes paint every texel at once):
+        // the previous one, or none, stays until the new texels land. Partial updates (painting) stay immediate.
+        void SetAsyncMacroAlbedo(bool async) { m_asyncMacroAlbedo = async; }
 
     private:
         void MarkLayersChanged();
@@ -120,6 +124,9 @@ namespace PlutoGE::scene
         void UpdateMacroAlbedo();
         // The macro albedo's texels in `macroRect`, packed.
         std::vector<unsigned char> MacroPixels(const render::TextureRect &macroRect);
+        // The same from copies (any thread): the weights, each layer's linear mean colour and the macro size.
+        static std::vector<unsigned char> MacroPixels(const TerrainWeightMap &weights, const std::vector<glm::vec3> &colours, int size,
+                                                      const render::TextureRect &macroRect);
         glm::vec3 MeanLinearColour(std::size_t layer);
 
         Services m_services;
@@ -139,5 +146,8 @@ namespace PlutoGE::scene
         TerrainWeightRect m_weightTexturesDirty;
         bool m_macroStale = true;
         TerrainWeightRect m_macroDirty;
+        bool m_asyncMacroAlbedo = false;
+        // A whole macro albedo being built on a worker: its size and texels.
+        std::future<std::pair<int, std::vector<unsigned char>>> m_macroBuild;
     };
 }

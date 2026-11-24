@@ -46,6 +46,9 @@ namespace PlutoGE::render
         // shadows hold the rest pose and stay cached: under a dense canopy that sway redraws most visible shadow pages
         // every frame (about 5 ms on an integrated GPU), while the plants themselves still sway.
         bool foliageShadowSway = true;
+        // Terrain layers may use stochastic anti-tiling, which fetches each layer map twice: off, they tile plainly
+        // (about 1.4 ms of a 24 ms frame in SurvivalGame's forest on a Vega 8; repeats show on open ground).
+        bool terrainAntiTiling = true;
         // Detail grass ceilings, as shares of each layer's authored values: density scales clumps per square metre,
         // distance scales its draw, full-density and LOD distances together.
         float grassDensity = 1.0f;
@@ -78,6 +81,7 @@ namespace PlutoGE::render
                 result.contactShadows = false;
                 result.tracedShadows = false;
                 result.foliageShadowSway = false;
+                result.terrainAntiTiling = false;
                 result.grassDensity = 0.4f; result.grassDistance = 0.5f;
                 break;
             case GraphicsPreset::Medium:
@@ -116,6 +120,7 @@ namespace PlutoGE::render
             // No caster's sway reaches this many texels on any level, so every page keeps the rest pose (an infinite
             // value would read as "sway at every level").
             if (!foliageShadowSway) lighting.wind.shadowSwayMinTexels = std::numeric_limits<float>::max();
+            if (!terrainAntiTiling) lighting.terrainAntiTiling = false;
         }
 
         // Local lights carry their own contact-shadow length; scale it by this (0 or 1).

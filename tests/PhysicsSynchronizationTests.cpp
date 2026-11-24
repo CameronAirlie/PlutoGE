@@ -190,7 +190,8 @@ namespace
 
         world.terrain->SetHole(20, 20, true); // world x and z 4..5
         auto edited = world.Sync();
-        Require(edited.queryBodiesCreated == 2, "A shape edit recreates the collider bodies");
+        // Signatures carry the geometry revisions, so only the edited collider gets a new body; the rock keeps its own.
+        Require(edited.queryBodiesCreated == 1, "A shape edit recreates only the edited collider's body");
         Require(edited.collisionShapesBuilt == 1, "Only the edited terrain is rebuilt; the rock comes from the cache");
         Require(std::isnan(world.GroundHeight(4.5f, 4.5f)), "A ray through the new hole hits nothing");
         Require(Near(world.GroundHeight(3.5f, 4.5f), 0.0f), "The ground beside the hole is still solid");

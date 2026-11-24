@@ -47,6 +47,18 @@ int main()
         authored.Apply(swaying);
         Check(swaying.wind.shadowSwayMinTexels == 1.0f);
     }
+    // Terrain anti-tiling: off on Low, kept above it and by disabled tiers.
+    {
+        auto terrain = source;
+        low.Apply(terrain);
+        Check(!low.terrainAntiTiling && !terrain.terrainAntiTiling);
+        terrain = source;
+        GraphicsQuality::FromPreset(GraphicsPreset::Medium).Apply(terrain);
+        Check(terrain.terrainAntiTiling);
+        terrain = source;
+        authored.Apply(terrain);
+        Check(terrain.terrainAntiTiling);
+    }
     // Water reflections: tiers without screen-space reflections trace fewer steps.
     {
         auto water = source;

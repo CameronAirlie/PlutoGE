@@ -264,8 +264,6 @@ namespace PlutoGE
                 else if (positional++ == 0) result.frames = count(value, false);
                 else result.warmup = count(value, true);
             }
-            if (result.geometryDiagnostic != render::GeometryDiagnosticMode::None && !result.frozenRender)
-                throw std::invalid_argument("Geometry diagnostic comparisons require --frozen-render");
             if (result.foliageDetail && !result.quality)
                 throw std::invalid_argument("--foliage-detail replaces a tier's value and requires --quality");
             if (result.output.extension() != ".csv")

@@ -26,9 +26,23 @@ namespace PlutoGE::render
         if (terrains.empty() || !(directionToSun.y > 0.0f))
             return nullptr;
 
-        if (terrains != m_terrains)
+        // A change waits until the set has settled, while the previous heights keep the fog shadowed.
+        bool resample = false;
+        if (terrains == m_terrains)
+            m_pendingTerrains.clear();
+        else if (!m_shadow)
+            resample = true;
+        else if (terrains != m_pendingTerrains)
+        {
+            m_pendingTerrains = terrains;
+            m_pendingFrames = 0;
+        }
+        else
+            resample = ++m_pendingFrames >= kSettleFrames;
+        if (resample)
         {
             core::CpuScope scope("Fog terrain shadow heights", core::CpuCategory::Rendering);
+            m_pendingTerrains.clear();
             m_terrains = terrains;
             // The terrains' world XZ footprint, and the finest of their cells.
             glm::vec2 lower(std::numeric_limits<float>::max()), upper(std::numeric_limits<float>::lowest());

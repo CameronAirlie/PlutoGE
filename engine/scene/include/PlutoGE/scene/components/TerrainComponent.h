@@ -146,9 +146,14 @@ namespace PlutoGE::scene
         // terrains seen from far away raise it so ridgelines keep their shape; dense small ones lower it.
         void SetLodDistanceScale(float scale);
         float GetLodDistanceScale() const { return m_lodDistanceScale; }
-        // Build the mesh on a worker thread (a world's tiles): the previous mesh, or none, draws until the new one
-        // lands, a frame or two later. Off by default: a terrain changed in a frame draws changed in that frame.
-        void SetAsyncMeshBuild(bool async) { m_asyncMeshBuild = async; }
+        // Build the mesh (and the layers' macro albedo) on worker threads (a world's tiles): the previous ones, or none,
+        // draw until the new ones land, a frame or two later. Off by default: a terrain changed in a frame draws
+        // changed in that frame.
+        void SetAsyncMeshBuild(bool async)
+        {
+            m_asyncMeshBuild = async;
+            m_layers.SetAsyncMacroAlbedo(async);
+        }
         // Whether a mesh has been built and can draw.
         [[nodiscard]] bool HasMesh() const { return m_mesh != nullptr; }
         // Brings the mesh up to date now (waiting for a worker build), as a loading screen wants.

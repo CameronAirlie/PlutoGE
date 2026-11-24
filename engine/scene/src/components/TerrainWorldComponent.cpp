@@ -714,6 +714,7 @@ namespace PlutoGE::scene
         // A tile with a volume (its source has a TerrainVolumeComponent) keeps its stored chunks in its own file.
         if (auto *terrainVolume = entity->GetComponent<TerrainVolumeComponent>())
         {
+            terrainVolume->SetAsyncHoles(true);
             terrainVolume->SetVolumeFile(TileVolumeFile(coord));
             // Edits made since the file was read (the tile streamed out after digging) win over the file.
             if (const auto kept = m_volumeEdits.find(coord); kept != m_volumeEdits.end())

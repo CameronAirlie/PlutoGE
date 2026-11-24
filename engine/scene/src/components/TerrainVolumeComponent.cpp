@@ -15,6 +15,7 @@
 #include "PlutoGE/scene/volume/VolumeFile.h"
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -558,6 +559,7 @@ namespace PlutoGE::scene
 
     void TerrainVolumeComponent::ResetVolume()
     {
+        m_holesJob = {}; // waits for a running one; its result is for the old volume
         m_queue->Clear();
         m_toMesh.clear();
         DestroyChunkEntities();
@@ -588,6 +590,7 @@ namespace PlutoGE::scene
         if (IsEnabled() || !m_volume)
             return;
         // Disabled: the terrain shows its own ground again. The volume and its edits stay; enabling meshes them again.
+        m_holesJob = {};
         m_queue->Clear();
         m_toMesh.clear();
         DestroyChunkEntities();
@@ -609,7 +612,7 @@ namespace PlutoGE::scene
         if (!m_volume)
             return true;
         const auto *terrain = FindTerrain();
-        return m_toMesh.empty() && m_queue->Idle() && !m_pendingHoles && m_volume->GetDirtyChunks().empty() &&
+        return m_toMesh.empty() && m_queue->Idle() && !m_pendingHoles && !m_holesJob.valid() && m_volume->GetDirtyChunks().empty() &&
                m_holesVolumeRevision == m_volume->GetRevision() && (!terrain || CurrentBaseInputs(*terrain) == m_baseInputs);
     }
 
@@ -633,7 +636,7 @@ namespace PlutoGE::scene
         { core::CpuScope scope("TerrainVolume.FollowBase"); FollowBase(*terrain, unbudgeted); }
         for (const auto chunk : m_volume->TakeDirtyChunks())
             m_toMesh.insert(chunk);
-        { core::CpuScope scope("TerrainVolume.RefreshHoles"); RefreshHoles(); }
+        { core::CpuScope scope("TerrainVolume.RefreshHoles"); RefreshHoles(unbudgeted); }
         const std::size_t budget = unbudgeted ? std::numeric_limits<std::size_t>::max() : static_cast<std::size_t>(m_meshesPerFrame);
         { core::CpuScope scope("TerrainVolume.ScheduleMeshing"); ScheduleMeshing(budget); }
         { core::CpuScope scope("TerrainVolume.ApplyMeshes"); ApplyMeshes(m_queue->Collect(budget, unbudgeted)); }
@@ -670,12 +673,38 @@ namespace PlutoGE::scene
         m_holesVolumeRevision = kHolesStale;
     }
 
-    void TerrainVolumeComponent::RefreshHoles()
+    void TerrainVolumeComponent::RefreshHoles(bool wait)
     {
+        if (m_holesJob.valid())
+        {
+            if (!wait && m_holesJob.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+                return;
+            auto [revision, holes] = m_holesJob.get();
+            // Unless the volume or its base changed while the worker ran (both reset m_holesVolumeRevision or move
+            // the volume's revision), these are the holes; otherwise they are worked out again below.
+            if (revision == m_holesVolumeRevision && revision == m_volume->GetRevision())
+            {
+                AcceptHoles(std::move(holes));
+                return;
+            }
+        }
         if (m_holesVolumeRevision == m_volume->GetRevision())
             return;
         m_holesVolumeRevision = m_volume->GetRevision();
-        auto holes = volume::ComputeVolumeHoles(*m_volume, *m_surface, m_coupling);
+        if (m_asyncHoles && !wait)
+        {
+            // A copy of the volume (its stored chunks and its immutable base) and the surface snapshot.
+            m_holesJob = std::async(std::launch::async, [snapshot = *m_volume, surface = m_surface, coupling = m_coupling,
+                                                         revision = m_holesVolumeRevision] {
+                return std::pair{revision, volume::ComputeVolumeHoles(snapshot, *surface, coupling)};
+            });
+            return;
+        }
+        AcceptHoles(volume::ComputeVolumeHoles(*m_volume, *m_surface, m_coupling));
+    }
+
+    void TerrainVolumeComponent::AcceptHoles(TerrainHoleMask holes)
+    {
         const auto &target = m_pendingHoles ? *m_pendingHoles : *m_holes;
         if (holes == target)
             return;

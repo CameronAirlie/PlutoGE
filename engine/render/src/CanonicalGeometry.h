@@ -33,10 +33,7 @@ namespace PlutoGE::render
         const auto combine = [](std::size_t &hash, std::size_t value) {
             hash ^= value + 0x9e3779b9u + (hash << 6) + (hash >> 2);
         };
-        std::vector<std::size_t> vertexHashes;
-        vertexHashes.reserve(data.vertices.size());
-        for (const auto &vertex : data.vertices)
-        {
+        const auto hashVertex = [&](const BasicVertex &vertex) {
             std::size_t hash = 0;
             const auto add = [&](const auto &attribute) {
                 for (float value : attribute)
@@ -48,34 +45,61 @@ namespace PlutoGE::render
             add(vertex.uv2);
             add(vertex.tangent);
             add(vertex.previousPosition);
-            vertexHashes.push_back(hash);
-        }
+            return hash;
+        };
+        const auto validRange = [&](GeometryRange range) {
+            if (range.indexCount == 0 || std::uint64_t(range.firstIndex) + range.indexCount > data.indices.size())
+                return false;
+            for (std::uint32_t i = 0; i < range.indexCount; ++i)
+                if (data.indices[range.firstIndex + i] >= data.vertices.size())
+                    return false;
+            return true;
+        };
+        // Equal ranges have equal index counts and equal first triangles. A range whose count and first triangle no
+        // other range shares is its own canonical range, so only the others are hashed in full. Generated meshes (a
+        // terrain's chunks and LODs) have no duplicates, and skip hashing every vertex and index of the mesh.
+        const auto quickKey = [&](GeometryRange range) {
+            std::size_t hash = range.indexCount;
+            for (std::uint32_t i = 0; i < std::min<std::uint32_t>(range.indexCount, 3u); ++i)
+                combine(hash, hashVertex(data.vertices[data.indices[range.firstIndex + i]]));
+            return hash;
+        };
+        std::unordered_map<std::size_t, std::size_t> quickCounts;
+        std::vector<std::size_t> quickKeys(ranges.size(), 0);
+        for (std::size_t index = 0; index < ranges.size(); ++index)
+            if (validRange(ranges[index]))
+                ++quickCounts[quickKeys[index] = quickKey(ranges[index])];
+        std::vector<std::size_t> vertexHashes;
+        const auto fullHashes = [&]() -> const std::vector<std::size_t> & {
+            if (vertexHashes.empty())
+            {
+                vertexHashes.reserve(data.vertices.size());
+                for (const auto &vertex : data.vertices)
+                    vertexHashes.push_back(hashVertex(vertex));
+            }
+            return vertexHashes;
+        };
         const auto sameVertex = [](const BasicVertex &a, const BasicVertex &b) {
             return a.position == b.position && a.normal == b.normal && a.uv == b.uv && a.tangent == b.tangent &&
                    a.previousPosition == b.previousPosition && a.uv2 == b.uv2;
         };
         std::unordered_map<std::size_t, std::vector<GeometryRange>> buckets;
         std::unordered_map<std::uint64_t, std::uint32_t> result;
-        for (const auto range : ranges)
+        for (std::size_t index = 0; index < ranges.size(); ++index)
         {
+            const auto range = ranges[index];
             const auto key = GeometryRangeKey(range);
-            if (result.contains(key) || range.indexCount == 0 ||
-                std::uint64_t(range.firstIndex) + range.indexCount > data.indices.size())
+            if (result.contains(key) || !validRange(range))
                 continue;
-            std::size_t hash = range.indexCount;
-            bool valid = true;
-            for (std::uint32_t i = 0; i < range.indexCount; ++i)
+            if (quickCounts[quickKeys[index]] < 2)
             {
-                const auto vertexIndex = data.indices[range.firstIndex + i];
-                if (vertexIndex >= vertexHashes.size())
-                {
-                    valid = false;
-                    break;
-                }
-                combine(hash, vertexHashes[vertexIndex]);
-            }
-            if (!valid)
+                result.emplace(key, range.firstIndex);
                 continue;
+            }
+            const auto &hashes = fullHashes();
+            std::size_t hash = range.indexCount;
+            for (std::uint32_t i = 0; i < range.indexCount; ++i)
+                combine(hash, hashes[data.indices[range.firstIndex + i]]);
             auto &candidates = buckets[hash];
             auto canonical = range.firstIndex;
             bool found = false;

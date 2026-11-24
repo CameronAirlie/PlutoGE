@@ -27,7 +27,11 @@ int main() try
     const std::array diagnostic{"game.plutoproject", "results.csv", "--frozen-render", "--geometry-diagnostic=material-only"};
     if (ProjectBenchmarkOptions::Parse(diagnostic).geometryDiagnostic != render::GeometryDiagnosticMode::MaterialOnly)
         throw std::runtime_error("Geometry diagnostic option lost");
-    for (const auto *bad : {"--unknown", "--scalar-shadows", "--geometry-diagnostic=material-only"})
+    // Live (streaming) runs take diagnostics too: a still camera compares like a frozen one.
+    const std::array liveDiagnostic{"game.plutoproject", "results.csv", "--geometry-diagnostic=minimal-shading"};
+    if (ProjectBenchmarkOptions::Parse(liveDiagnostic).geometryDiagnostic != render::GeometryDiagnosticMode::MinimalShading)
+        throw std::runtime_error("Live geometry diagnostic option lost");
+    for (const auto *bad : {"--unknown"})
     {
         bool rejected = false;
         try { const std::array args{"game.plutoproject", "results.csv", bad}; ProjectBenchmarkOptions::Parse(args); }

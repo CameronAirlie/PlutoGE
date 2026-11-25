@@ -10,6 +10,8 @@ namespace PlutoGE::ui
     {
         std::string name;
         bool openByDefault = true;
+        // Content fills the window edge to edge (viewports, previews).
+        bool noWindowPadding = false;
     };
 
     class Panel

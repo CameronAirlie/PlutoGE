@@ -7,6 +7,8 @@
 #include "GeometryArena.h"
 #include "ObjectStream.h"
 #include "OpaqueShadowBatches.h"
+#include "ClipFrustum.h"
+#include "PlutoGE/render/ShadowCasterLods.h"
 #include "SurfaceFeatures.h"
 #include "DirectionalShadowMask.h"
 #include "DeferredLocalLights.h"
@@ -585,6 +587,41 @@ namespace PlutoGE::render
                 HashVctValue(hash, lighting.shadowCasterDistance);
             }
             return hash;
+        }
+
+        // The voxel cascade's injection shadow (UpdateVoxelScene): fitted to the cascade's volume and reaching
+        // toward the sun by the shadow caster distance.
+        glm::mat4 VctInjectionShadowMatrix(glm::vec3 origin, float size, const BasicLighting &lighting)
+        {
+            const float radius = size * 0.8660254f;
+            const float casterReach = std::max(lighting.shadowCasterDistance, radius * 2.0f);
+            const glm::vec3 center = origin + glm::vec3(size * 0.5f);
+            const glm::vec3 direction = glm::normalize(lighting.directionalDirection);
+            const glm::vec3 up = std::abs(direction.y) < 0.99f ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+            return glm::orthoRH_ZO(-radius, radius, -radius, radius, 0.01f, radius * 2.0f + casterReach) *
+                   glm::lookAtRH(center - direction * (radius + casterReach), center, up);
+        }
+
+        // The LOD an instanced draw is voxelized at in a cascade of `voxelSize` voxels: the one its shadow caster LOD
+        // chain gives a shadow level of that texel size (SelectShadowCasterLodVariants), never finer than the draw's
+        // own. A voxel holds no more of a tree than a shadow texel of its size, and LOD0 forests took the per-frame
+        // triangle budget for thousands of frames.
+        void ApplyVctInstanceLod(BasicDraw &draw, float voxelSize)
+        {
+            const auto *chain = draw.shadowCasterLods.get();
+            if (!chain || chain->lods.size() < 2 || !(draw.maxInstanceRadius > 0.0f))
+                return;
+            std::uint32_t drawLod = 0;
+            while (drawLod < chain->lods.size() && chain->lods[drawLod].firstIndex != draw.firstIndex) ++drawLod;
+            if (drawLod == chain->lods.size())
+                return;
+            const float texels[] = {voxelSize};
+            const auto variants = SelectShadowCasterLodVariants(*chain, drawLod, draw.maxInstanceRadius, texels);
+            if (variants.empty())
+                return;
+            const auto &lod = chain->lods[variants.back().lod];
+            draw.firstIndex = lod.firstIndex;
+            draw.indexCount = lod.indexCount;
         }
 
         BasicLighting VctRelevantLighting(const BasicLighting &lighting, glm::vec3 origin, float size, float gain)
@@ -6233,6 +6270,10 @@ namespace PlutoGE::render
                 cascade.pendingDraws.clear();
                 cascade.pendingMeshes.clear();
                 cascade.pendingTextures.clear();
+                // Both passes only draw what reaches the cascade: casters in its injection shadow, which covers its
+                // volume. Streamed worlds hold hundreds of thousands of foliage instances, almost all outside it.
+                const ClipFrustum queueFrustum(VctInjectionShadowMatrix(desired, size, currentLighting));
+                const float voxelSize = size / static_cast<float>(std::max(resolution, 1u));
                 if (geometryChanged || shadowChanged) for (const auto &draw : draws)
                 {
                     // This queue survives across frames. Animated meshes are
@@ -6240,21 +6281,36 @@ namespace PlutoGE::render
                     // including for the GI injection shadow pass. Use the same
                     // eligibility as the content signature and voxelization.
                     if (!draw.contributesToGi || draw.surfaceType == 1 || draw.alphaMode == 2 ||
-                        !draw.mesh || !draw.mesh->IsValid())
+                        !draw.mesh || !draw.mesh->IsValid() || !queueFrustum.Intersects(draw))
                         continue;
                     cascade.pendingMeshes.emplace_back(draw.mesh, draw.mesh->GetRevision());
                     ForEachDrawTexture(draw, [&](rhi::TextureHandle texture) {
                         cascade.pendingTextures.push_back(VctTextureKey(texture));
                     });
                     if (draw.instanceModels && !draw.instanceModels->empty())
+                    {
+                        // An instance's bounding sphere lies within one radius of its origin (the mesh origin is
+                        // inside its bounds), so a sphere of twice that radius about the origin holds it.
+                        const float reach = draw.maxInstanceRadius > 0.0f ? draw.maxInstanceRadius * 2.0f : -1.0f;
+                        auto lodDraw = draw;
+                        ApplyVctInstanceLod(lodDraw, voxelSize);
                         for (const auto &model : *draw.instanceModels)
                         {
-                            auto instance = draw; instance.model = model;
+                            if (reach > 0.0f)
+                            {
+                                BasicDraw bounds;
+                                bounds.shadowBoundsCenter = glm::vec3(model[3]);
+                                bounds.shadowBoundsRadius = reach;
+                                if (!queueFrustum.Intersects(bounds))
+                                    continue;
+                            }
+                            auto instance = lodDraw; instance.model = model;
                             instance.instanceModels.reset();
-                            // A batch bound is not an individual instance bound.
-                            instance.shadowBoundsRadius = -1.0f;
+                            instance.shadowBoundsCenter = glm::vec3(model[3]);
+                            instance.shadowBoundsRadius = reach;
                             cascade.pendingDraws.push_back(std::move(instance));
                         }
+                    }
                     else cascade.pendingDraws.push_back(draw);
                 }
                 cascade.pendingLighting = std::move(currentLighting);
@@ -6296,11 +6352,15 @@ namespace PlutoGE::render
         for (std::uint32_t step = 0; step < workSteps; ++step)
         {
             rebuildIndex = cascadeCount;
-            // Round-robin publication prevents a moving near field starving the cache source.
-            for (std::uint32_t offset = 0; offset < cascadeCount; ++offset)
+            // Cascades that never published go first, finest first: the GI reads cascades from the finest outward
+            // and has none until the finest is valid. Afterwards round-robin publication prevents a moving near field
+            // starving the cache source.
+            for (std::uint32_t index = 0; index < cascadeCount && rebuildIndex == cascadeCount; ++index)
+                if (m_vctCascades[index].rebuilding && !m_vctCascades[index].valid) rebuildIndex = index;
+            for (std::uint32_t offset = 0; offset < cascadeCount && rebuildIndex == cascadeCount; ++offset)
             {
                 const auto index = (m_vctNextCascade + offset) % cascadeCount;
-                if (m_vctCascades[index].rebuilding) { rebuildIndex = index; break; }
+                if (m_vctCascades[index].rebuilding) rebuildIndex = index;
             }
             // Cached first-bounce relighting takes precedence over geometry and
             // secondary refinement. It never writes the shared staging field.
@@ -6331,16 +6391,8 @@ namespace PlutoGE::render
                          rhi::TextureUsage::ColorAttachment, "VCT world shadow color", true}));
                 }
                 if (cascade.nextShadowDraw == 0 && cascade.nextShadowIndex == 0)
-                {
-                    const float radius = cascade.pendingSize * 0.8660254f;
-                    const float casterReach = std::max(cascade.pendingLighting.shadowCasterDistance, radius * 2.0f);
-                    const glm::vec3 center = cascade.pendingOrigin + glm::vec3(cascade.pendingSize * 0.5f);
-                    const glm::vec3 direction = glm::normalize(cascade.pendingLighting.directionalDirection);
-                    const glm::vec3 up = std::abs(direction.y) < 0.99f ? glm::vec3(0,1,0) : glm::vec3(1,0,0);
-                    cascade.pendingShadowMatrix = glm::orthoRH_ZO(-radius, radius, -radius, radius,
-                        0.01f, radius * 2.0f + casterReach) *
-                        glm::lookAtRH(center - direction * (radius + casterReach), center, up);
-                }
+                    cascade.pendingShadowMatrix = VctInjectionShadowMatrix(cascade.pendingOrigin, cascade.pendingSize,
+                                                                           cascade.pendingLighting);
                 auto &cameraBuffer = AcquireVctBuffer(m_vctBufferCursor++);
                 m_device->UpdateBuffer(cameraBuffer.Get(), 0, Bytes(cascade.pendingShadowMatrix));
                 rhi::RenderingInfo shadow;

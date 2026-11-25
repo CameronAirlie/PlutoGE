@@ -97,7 +97,11 @@ namespace PlutoGE::ui
         // Restoring: the panel's own window reappears in its dock node; give it focus back.
         if (std::exchange(m_fullscreenChanged, false))
             ImGui::SetNextWindowFocus();
+        if (m_config.noWindowPadding)
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         const bool shouldRender = ImGui::Begin(m_config.name.c_str(), &m_isOpen, ImGuiWindowFlags_None);
+        if (m_config.noWindowPadding)
+            ImGui::PopStyleVar();
         ApplyFloatingWindowState();
         DrawFloatingWindowControls();
         return shouldRender;

@@ -100,8 +100,17 @@ namespace PlutoGE::ui
         std::vector<const render::RenderCommand *> combinedCommands;
     };
 
+    namespace
+    {
+        PanelConfig WithoutWindowPadding(PanelConfig config)
+        {
+            config.noWindowPadding = true;
+            return config;
+        }
+    }
+
     ViewportPanel::ViewportPanel(const ViewportPanelConfig &config, EditorSceneRenderService *renderService)
-        : Panel(config), m_config(config), m_placement(std::make_unique<PlacementState>()), m_rhiRenderService(renderService)
+        : Panel(WithoutWindowPadding(config)), m_config(config), m_placement(std::make_unique<PlacementState>()), m_rhiRenderService(renderService)
     {
     }
 

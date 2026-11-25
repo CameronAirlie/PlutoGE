@@ -51,23 +51,48 @@ void stateMain(uint3 id : SV_DispatchThreadID)
     const float spacing = ddgiSpacing(ddgiCascadeOf(probe));
     uint backfaces = 0;
     float closestBackface = 1e30, closestFrontface = 1e30;
-    float3 backfaceDirection = 0.0, frontfaceDirection = 0.0;
+    float3 frontfaceDirection = 0.0;
     for (uint ray = 0; ray < ddgiRays.x; ++ray)
     {
         const float distance = rayTexture.Load(int3(int(ray), int(id.x), 0)).a;
-        const float3 direction = ddgiRayDirection(ray);
         if (distance < 0.0)
         {
             ++backfaces;
-            if (-distance < closestBackface) { closestBackface = -distance; backfaceDirection = direction; }
+            closestBackface = min(closestBackface, -distance);
         }
         else if (distance < closestFrontface)
         {
             closestFrontface = distance;
-            frontfaceDirection = direction;
+            frontfaceDirection = ddgiRayDirection(ray);
         }
     }
     const bool inside = float(backfaces) > 0.25 * float(ddgiRays.x);
+
+    // The way out of geometry. Ray sources place exits only as finely as their surfaces (ddgiBias.z is one and a half
+    // times that), so a probe in a floor finds the ways up and down equally short, and taking the first one listed sent
+    // about half of such probes out of the bottom of the floor. Among the ways out about as short as the shortest, take
+    // the one with the most open space beyond (fixed backface rays report it in r, up to their reach): a probe needs
+    // room on the side it leaves by. Equal room favours leaving upwards, where a floor's walkable side is.
+    float3 backfaceDirection = 0.0;
+    float exitDistance = closestBackface;
+    if (inside)
+    {
+        float bestScore = -1e30;
+        for (uint ray = 0; ray < ddgiRays.x; ++ray)
+        {
+            const float4 sample = rayTexture.Load(int3(int(ray), int(id.x), 0));
+            if (sample.a >= 0.0 || -sample.a > closestBackface + ddgiBias.z)
+                continue;
+            const float3 direction = ddgiRayDirection(ray);
+            const float score = sample.r - (-sample.a) + direction.y * ddgiBias.z;
+            if (score > bestScore)
+            {
+                bestScore = score;
+                backfaceDirection = direction;
+                exitDistance = -sample.a;
+            }
+        }
+    }
 
     float3 offset = 0.0;
     uint moves = (flags >> PLUTO_DDGI_RELOCATION_SHIFT) & PLUTO_DDGI_MAX_RELOCATIONS;
@@ -86,17 +111,20 @@ void stateMain(uint3 id : SV_DispatchThreadID)
         if (inside)
         {
             if (closestBackface > thinSurface)
-                move = backfaceDirection * (closestBackface + minimumFrontface * 0.5) / spacing;
+                move = backfaceDirection * (exitDistance + minimumFrontface * 0.5) / spacing;
         }
         else if (closestFrontface < minimumFrontface)
             move = -frontfaceDirection * (minimumFrontface - closestFrontface) / spacing;
-        // A probe makes at most PLUTO_DDGI_MAX_RELOCATIONS moves until it is reset, then stays where it is. Settling
-        // can take a few moves that reverse each other (out through the far side of a thin floor, then back up through
-        // it), but near some thin surfaces the moves never settled: the probe moved and snapped back at every update.
-        if (any(move != 0.0) && moves < PLUTO_DDGI_MAX_RELOCATIONS)
+        // A probe outside geometry makes at most PLUTO_DDGI_MAX_RELOCATIONS moves until it is reset, then stays where
+        // it is: near some thin surfaces those moves never settled, and the probe moved and snapped back at every
+        // update. A probe inside geometry always keeps trying to leave it. It is inactive and lights nothing, and the
+        // surfaces it sees change: a probe far from the camera reads coarse voxels it cannot leave within its cell,
+        // then finer ones as the camera nears. Capped, it stayed inside, inactive, once it had spent its moves there.
+        if (any(move != 0.0) && (inside || moves < PLUTO_DDGI_MAX_RELOCATIONS))
         {
             offset = clamp(offset + move, -0.45, 0.45);
-            ++moves;
+            if (!inside)
+                ++moves;
         }
     }
 

@@ -51,9 +51,14 @@ Other controls:
   and 5% with it. Costs about 0.08 ms at Medium (1920 x 1080).
 - **Probe Relocation** moves probes out of walls and away from nearby surfaces, by up to 0.45 spacings. A probe
   inside a surface thinner than one and a half voxels (a thin roof or wall) stays there, inactive: either side is as
-  near, and probes moved out through it made the join of that surface and the ones beneath it flicker. A probe moves
-  at most seven times, then stays where it is until it scrolls out of the volume or the volume resets: near some thin
-  surfaces probes never settled and moved and snapped back at every update.
+  near, and probes moved out through it made the join of that surface and the ones beneath it flicker. A probe inside
+  geometry leaves by the shortest way out with the most open space beyond it, upwards when the room is equal, so a
+  probe in a floor rises into the room rather than dropping under it. Outside geometry a probe moves at most seven
+  times, then stays where it is until it scrolls out of the volume or the volume resets: near some thin surfaces
+  probes never settled and moved and snapped back at every update. A probe inside geometry is not capped: it is
+  inactive and lights nothing, and it keeps trying to leave. Far from the camera the voxels are coarser than 0.45
+  spacings can clear, so a floor's probes there stay inside until the camera nears; capped, they once stayed inactive
+  for good (in Basin's hall mezzanine, red probes along the far end that never recovered).
 - **Relocate From Thin Surfaces** (off by default) moves those probes out as well. The voxel scene holds surfaces,
   not solids, so this covers any probe within about a voxel of a surface, such as a whole probe layer lying in a floor
   at a multiple of the probe spacing (shown as red probes in the Probes view). Off, surfaces near them use the next

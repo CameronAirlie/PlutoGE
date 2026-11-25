@@ -4,7 +4,8 @@
 // One thread per ray: dispatch (ceil(traced rays / group), probes listed). Output texel (ray, list slot):
 //   rgb  radiance arriving along the ray
 //   a    distance to the first solid surface (foliage does not count: see traceRay), PLUTO_DDGI_MISS_DISTANCE for a miss,
-//        or minus the distance needed to leave geometry when the probe starts inside it (a backface hit).
+//        or minus the distance needed to leave geometry when the probe starts inside it (a backface hit). A fixed ray's
+//        backface hit carries the open space beyond that exit in r (rays inside geometry are not blended).
 // Inactive probes trace only the fixed rays, which classification and relocation read.
 //
 // visibilityMain traces the probe occlusion volume (DdgiVisibilityInputs): whether each listed probe can see the
@@ -116,15 +117,40 @@ float4 traceRay(float3 origin, float3 direction, float reach)
     {
         // Inside geometry: report how far this direction must travel to leave it.
         float exitDistance = voxelSize;
+        bool left = false;
         for (uint step = 0; step < 16; ++step)
         {
             float exitCovered, exitVoxel;
-            if (sampleScene(origin + direction * exitDistance, direction, 0.0, exitCovered, exitVoxel).a <= 0.5 ||
-                exitCovered <= 0.0)
+            const float exitOpacity = sampleScene(origin + direction * exitDistance, direction, 0.0, exitCovered, exitVoxel).a;
+            if (exitOpacity <= 0.5 || exitCovered <= 0.0)
+            {
+                left = true;
                 break;
+            }
             exitDistance += exitVoxel;
         }
-        return float4(0.0, 0.0, 0.0, -exitDistance);
+        // Fixed rays also report the open space beyond the exit (r), up to their reach: relocation leaves by the side
+        // with room for the probe, not by whichever way out its fixed rays list first (DDGIProbeUpdate.slang).
+        float open = 0.0;
+        if (fixedRay && left)
+        {
+            float beyond = exitDistance;
+            for (uint step = 0; step < 48 && beyond - exitDistance < reach; ++step)
+            {
+                float openCovered, openVoxel;
+                const float openOpacity = sampleScene(origin + direction * beyond, direction, 0.0, openCovered, openVoxel).a;
+                if (openCovered <= 0.0)
+                {
+                    beyond = exitDistance + reach;
+                    break;
+                }
+                if (openOpacity > 0.5)
+                    break;
+                beyond += openVoxel;
+            }
+            open = min(beyond - exitDistance, reach);
+        }
+        return float4(open, 0.0, 0.0, -exitDistance);
     }
     float distance = voxelSize, previousDistance = 0.0;
     float transmission = 1.0;

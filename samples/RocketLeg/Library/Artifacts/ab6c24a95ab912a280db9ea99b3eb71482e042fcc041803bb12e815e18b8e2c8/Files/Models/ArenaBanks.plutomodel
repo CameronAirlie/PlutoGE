@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/ArenaBanks.glb
+SOURCE_ID	5767150a46c3a136d3d6cdfdd6d1d8bb
+SOURCE_HASH	5290012824579050720
+IMPORTER_VERSION	10
+OBJECT	1857842327201837512	Material	M_ArenaBanks_0	project://Models/M_ArenaBanks_0.plutomaterial
+OBJECT	11878177363532187811	Mesh	ArenaBanks	project://Models/ArenaBanks.plutomesh

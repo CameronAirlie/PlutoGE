@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace PlutoGE::scene
 {
@@ -98,14 +99,11 @@ namespace PlutoGE::scene
         MarkDirty();
     }
 
-    void LightComponent::SetStatic(bool isStatic)
+    void LightComponent::SetBakeMode(render::LightBakeMode mode)
     {
-        if (m_config.isStatic == isStatic)
-        {
+        if (m_config.bakeMode == mode)
             return;
-        }
-
-        m_config.isStatic = isStatic;
+        m_config.bakeMode = mode;
         MarkDirty();
     }
 
@@ -175,7 +173,7 @@ namespace PlutoGE::scene
             {"CastsShadows", PropertyType::Bool, m_config.castsShadows ? "true" : "false"},
             {"Direction", PropertyType::Vec3, std::to_string(m_config.direction.x) + "," + std::to_string(m_config.direction.y) + "," + std::to_string(m_config.direction.z)},
             {"LightType", PropertyType::Enum, std::to_string(static_cast<int>(m_config.type)), {"Point", "Directional", "Spot", "Rect"}},
-            {"Static", PropertyType::Bool, m_config.isStatic ? "true" : "false"},
+            {"Mode", PropertyType::Enum, std::to_string(static_cast<int>(m_config.bakeMode)), {"Realtime", "Mixed", "Baked"}},
         };
 
         if (m_config.type == LightType::Spot)
@@ -281,9 +279,16 @@ namespace PlutoGE::scene
                 std::sscanf(property.value.c_str(), "%d", &type);
                 m_config.type = static_cast<LightType>(type);
             }
+            else if (property.name == "Mode")
+            {
+                const int mode = std::atoi(property.value.c_str());
+                m_config.bakeMode = mode >= 0 && mode <= static_cast<int>(render::LightBakeMode::Baked)
+                    ? static_cast<render::LightBakeMode>(mode) : render::LightBakeMode::Realtime;
+            }
             else if (property.name == "Static")
             {
-                m_config.isStatic = (property.value == "true");
+                // Before light modes: a static light baked its bounce and stayed realtime, which is Mixed.
+                m_config.bakeMode = property.value == "true" ? render::LightBakeMode::Mixed : render::LightBakeMode::Realtime;
             }
             else if (property.name == "Shadow Distance (0 = Camera Far)")
             {

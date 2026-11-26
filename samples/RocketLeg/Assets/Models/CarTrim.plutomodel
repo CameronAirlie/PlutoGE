@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/CarTrim.glb
+SOURCE_ID	9e8e5ddebb7597de2165e62cb02f76d9
+SOURCE_HASH	4206588249291942400
+IMPORTER_VERSION	10
+OBJECT	17672168682178592114	Material	M_CarTrim_0	project://Models/M_CarTrim_0.plutomaterial
+OBJECT	82335095761038921	Mesh	CarTrim	project://Models/CarTrim.plutomesh

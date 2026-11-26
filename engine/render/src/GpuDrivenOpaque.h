@@ -49,8 +49,9 @@ namespace PlutoGE::render
         glm::mat4 previousModel{1.0f};
         glm::vec4 debugParameters{0.0f};
         glm::uvec4 material{0u};
+        glm::vec4 lightmapScaleOffset{0.0f}; // BasicDraw::lightmap
     };
-    static_assert(sizeof(BindlessInstanceRecord) == 160);
+    static_assert(sizeof(BindlessInstanceRecord) == 176);
 
     // Textures standing in for a material's absent maps, and the sampler every material texture uses.
     struct BindlessMaterialFallbacks
@@ -128,6 +129,7 @@ namespace PlutoGE::render
             glm::mat4 model{1.0f}, previousModel{1.0f};
             glm::vec4 debugParameters{0.0f};
             rhi::PipelineHandle pipeline;
+            glm::vec4 lightmapScaleOffset{0.0f};
         };
         struct Stats
         {

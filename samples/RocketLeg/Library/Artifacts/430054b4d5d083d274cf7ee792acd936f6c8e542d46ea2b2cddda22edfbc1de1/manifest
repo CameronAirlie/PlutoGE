@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 430054b4d5d083d274cf7ee792acd936f6c8e542d46ea2b2cddda22edfbc1de1
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" 81927541796598894f028efd54817dd31f036b0ba62229d8f1f1833c7f0b2c3e
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/CarTrim.glb" 28af13111b1133a26448e043050afcf686ca4de483c95410c691685e2869fceb
+OUTPUT "Models/CarTrim.plutomesh" e1b76644bb0704c2103a9229759e028e92469311e945e7804807c8564ea84287
+OUTPUT "Models/CarTrim.plutomodel" bf6edc7151c647667f89a4ce4d237cf7ee4556d8c8b57a984ba0773cd9307e93
+OUTPUT "Models/M_CarTrim_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

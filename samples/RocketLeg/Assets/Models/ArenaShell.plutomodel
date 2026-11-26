@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/ArenaShell.glb
+SOURCE_ID	ced5d715f340732b2ce83e28d85f270a
+SOURCE_HASH	14761979091263730560
+IMPORTER_VERSION	10
+OBJECT	16871811326955592645	Material	M_ArenaShell_0	project://Models/M_ArenaShell_0.plutomaterial
+OBJECT	5454700918482814286	Mesh	ArenaShell	project://Models/ArenaShell.plutomesh

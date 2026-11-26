@@ -181,7 +181,8 @@ namespace PlutoGE::render
                 a.lodDistanceScale != b.lodDistanceScale ||
                 a.terrainGeomorph != b.terrainGeomorph || a.foliageWind != b.foliageWind ||
                 a.impostor != b.impostor || a.impostorOwner != b.impostorOwner;
-            materialChanged |= a.material != b.material;
+            // A lightmap rect is shading data: it splits batches and changes what the draw samples.
+            materialChanged |= a.material != b.material || a.lightmap != b.lightmap;
             transformChanged |= a.model != b.model || a.previousModel != b.previousModel ||
                 a.worldBounds.center != b.worldBounds.center || a.worldBounds.radius != b.worldBounds.radius ||
                 a.previousWorldBounds.center != b.previousWorldBounds.center || a.previousWorldBounds.radius != b.previousWorldBounds.radius;

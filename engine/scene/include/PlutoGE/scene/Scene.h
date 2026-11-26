@@ -30,6 +30,7 @@ namespace PlutoGE::scene
     class UISystem;
     class Component;
     class AmbientLightVolumeComponent;
+    class BakedLightingComponent;
     class RuntimeComponentIndex;
     class AnimationPoseBatch;
     namespace detail
@@ -341,6 +342,9 @@ namespace PlutoGE::scene
         void SetPreviewLightingEnabled(bool enabled);
         [[nodiscard]] bool IsPreviewLightingEnabled() const { return m_previewLight != nullptr; }
         const std::vector<PhysicalSkyComponent *> &GetPhysicalSkyComponents() const;
+        // The scene's baked lighting (lightmaps and the runtime lighting mode): the first enabled component on an
+        // active entity, or null.
+        BakedLightingComponent *GetBakedLighting() const;
         const std::vector<VolumetricCloudComponent *> &GetVolumetricCloudComponents() const;
         // Every WindComponent in hierarchy order; the renderer takes the first enabled one on an active entity.
         const std::vector<WindComponent *> &GetWindComponents() const;
@@ -395,6 +399,7 @@ namespace PlutoGE::scene
         mutable bool m_environmentComponentsDirty = true;
         mutable std::vector<LightComponent *> m_environmentLights;
         mutable std::vector<PhysicalSkyComponent *> m_physicalSkies;
+        mutable std::vector<BakedLightingComponent *> m_bakedLighting;
         mutable std::vector<VolumetricCloudComponent *> m_volumetricClouds;
         mutable std::vector<WindComponent *> m_winds;
         mutable std::vector<WeatherComponent *> m_weathers;

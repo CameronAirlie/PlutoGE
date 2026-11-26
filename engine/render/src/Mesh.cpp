@@ -1,7 +1,37 @@
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/LightmapUvs.h"
 
 namespace PlutoGE::render
 {
+    Mesh *Mesh::WithGeneratedLightmapUvs(MeshConfig config)
+    {
+        GenerateLightmapUvs(config.data, std::span<const Submesh>(config.submeshes));
+        config.hasLightmapUvs = true;
+        config.lightmapUvsFollowScale = true;
+        return new Mesh(config);
+    }
+
+    bool Mesh::CanFitLightmapUvsToScale() const
+    {
+        if (!m_config.lightmapUvsFollowScale || HasSkeleton())
+            return false;
+        // LOD index ranges would keep the old vertices' uv2.
+        return std::ranges::none_of(m_config.submeshes, [](const Submesh &submesh) { return !submesh.lods.empty(); });
+    }
+
+    std::unique_ptr<Mesh> Mesh::CreateScaleFittedLightmapUvs(const glm::vec3 &scale) const
+    {
+        if (!CanFitLightmapUvsToScale())
+            return nullptr;
+        MeshConfig config = m_config;
+        config.data = m_meshData;
+        LightmapUvSettings settings;
+        settings.positionScale = scale;
+        GenerateLightmapUvs(config.data, std::span<const Submesh>(config.submeshes), settings);
+        config.hasLightmapUvs = true;
+        return std::make_unique<Mesh>(config);
+    }
+
     void Mesh::FreezeGeometry()
     {
         m_geometryImmutable=true;

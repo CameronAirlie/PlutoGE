@@ -8,6 +8,7 @@
 #include "PlutoGE/scene/Scene.h"
 #include "PlutoGE/scene/components/ActiveRagdollComponent.h"
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/scene/components/AnimationComponent.h"
 #include "PlutoGE/scene/components/AudioEnvironmentVolumeComponent.h"
 #include "PlutoGE/scene/components/CameraComponent.h"
@@ -281,6 +282,7 @@ namespace PlutoGE::scene
         void RegisterEnvironment(ComponentRegistry &registry)
         {
             registry.Register<AmbientLightVolumeComponent>("AmbientLightVolumeComponent", "Ambient Light Volume");
+            registry.Register<BakedLightingComponent>("BakedLightingComponent", "Baked Lighting");
             registry.Register<IblCaptureComponent>("IblCaptureComponent", "IBL Capture Component");
             registry.Register<PhysicalSkyComponent>("PhysicalSkyComponent", "Physical Sky Component");
             registry.Register<VolumetricCloudComponent>("VolumetricCloudComponent", "Volumetric Cloud Component");
@@ -288,6 +290,7 @@ namespace PlutoGE::scene
             registry.Register<WeatherComponent>("WeatherComponent", "Weather Component");
 
             registry.AddMenuItem<AmbientLightVolumeComponent>("Environment/Ambient Light Volume");
+            registry.AddMenuItem<BakedLightingComponent>("Environment/Baked Lighting");
             registry.AddMenuItem<IblCaptureComponent>("Environment/IBL Capture");
             registry.AddMenuItem<PhysicalSkyComponent>("Environment/Physical Sky");
             registry.AddMenuItem<VolumetricCloudComponent>("Environment/Volumetric Cloud");

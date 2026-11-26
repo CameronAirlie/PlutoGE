@@ -199,6 +199,9 @@ namespace PlutoGE::render
         MeshData data;
         std::vector<Submesh> submeshes;
         bool hasLightmapUvs = false;
+        // The lightmap UVs may be regenerated for an instance's scale (Mesh::CreateScaleFittedLightmapUvs): set for
+        // shapes whose uv2 is a generated layout rather than authored data. Built-in shapes set it.
+        bool lightmapUvsFollowScale = false;
         Skeleton skeleton;
         std::vector<AnimationNode> animationNodes;
         std::vector<AnimationClip> animations;
@@ -318,6 +321,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
             config.hasLightmapUvs = true;
+            config.lightmapUvsFollowScale = true;
 
             return new Mesh(config);
         }
@@ -343,7 +347,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            return new Mesh(config);
+            return WithGeneratedLightmapUvs(std::move(config));
         }
 
         static Mesh *Plane()
@@ -408,7 +412,7 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            return new Mesh(config);
+            return WithGeneratedLightmapUvs(std::move(config));
         }
 
         static Mesh *Cylinder(unsigned int segments = 32)
@@ -475,8 +479,19 @@ namespace PlutoGE::render
             MeshConfig config;
             config.data = std::move(meshData);
 
-            return new Mesh(config);
+            return WithGeneratedLightmapUvs(std::move(config));
         }
+
+        // A built-in shape with generated lightmap UVs (LightmapUvs.h): its material UVs wrap or overlap.
+        static Mesh *WithGeneratedLightmapUvs(MeshConfig config);
+
+        // Whether CreateScaleFittedLightmapUvs can refit this mesh's lightmap UVs (no skeleton or LODs, and the
+        // layout opted in through MeshConfig::lightmapUvsFollowScale).
+        bool CanFitLightmapUvsToScale() const;
+        // A copy whose lightmap UVs are unwrapped at a per-axis scale, so an instance stretched by that scale keeps an
+        // even lightmap texel density. Same geometry and submeshes (vertices may be split at new chart seams). Null
+        // when CanFitLightmapUvsToScale is false.
+        std::unique_ptr<Mesh> CreateScaleFittedLightmapUvs(const glm::vec3 &scale) const;
 
         static Mesh *FromConfig(MeshConfig config)
         {

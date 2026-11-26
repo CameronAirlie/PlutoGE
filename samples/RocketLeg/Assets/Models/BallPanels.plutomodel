@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/BallPanels.glb
+SOURCE_ID	f2b8bd99296a725a08bc9e60add30e68
+SOURCE_HASH	10865622630158891308
+IMPORTER_VERSION	10
+OBJECT	2606650373949080196	Material	M_BallPanels_0	project://Models/M_BallPanels_0.plutomaterial
+OBJECT	17490262567002479447	Mesh	BallPanels	project://Models/BallPanels.plutomesh

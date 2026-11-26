@@ -1,5 +1,5 @@
 PostProcessPresetVersion 1 13
-Effect "SSR" 1 11
+Effect "SSR" 0 11
 Parameter 0 "Intensity" "0.800000" 0
 Parameter 0 "Max Ray Distance" "30.000000" 0
 Parameter 0 "Thickness" "0.350000" 0
@@ -11,7 +11,7 @@ Parameter 3 "Adaptive Rays" "true" 0
 Parameter 0 "Edge Fade" "0.120000" 0
 Parameter 0 "Max Roughness" "0.600000" 0
 Parameter 4 "Technique" "0" 2 "Stochastic" "Reference"
-Effect "SSAO" 1 11
+Effect "SSAO" 1 12
 Parameter 0 "Radius" "0.850000" 0
 Parameter 0 "Bias" "0.080000" 0
 Parameter 0 "Intensity" "1.250000" 0
@@ -22,23 +22,30 @@ Parameter 0 "History Normal Threshold" "0.850000" 0
 Parameter 1 "Samples" "16" 0
 Parameter 1 "Blur Radius" "1" 0
 Parameter 3 "Half Resolution" "true" 0
+Parameter 0 "Specular Occlusion" "1.000000" 0
 Parameter 3 "AO Only" "false" 0
-Effect "DDGI" 1 25
+Effect "DDGI" 0 31
 Parameter 4 "Quality" "4" 5 "Low" "Medium" "High" "Ultra" "Custom"
-Parameter 0 "Intensity" "4.000000" 0
+Parameter 0 "Intensity" "1.000000" 0
 Parameter 1 "Probe Count X" "24" 0
 Parameter 1 "Probe Count Y" "12" 0
 Parameter 1 "Probe Count Z" "24" 0
 Parameter 0 "Probe Spacing" "2.000000" 0
+Parameter 1 "Probe Cascades" "3" 0
 Parameter 1 "Rays Per Probe" "96" 0
 Parameter 1 "Probes Per Frame" "1152" 0
 Parameter 0 "Hysteresis" "0.900000" 0
+Parameter 0 "Stable Hysteresis" "0.980000" 0
 Parameter 0 "Normal Bias" "0.200000" 0
 Parameter 0 "View Bias" "0.300000" 0
+Parameter 0 "Leak Reduction" "0.300000" 0
 Parameter 3 "Probe Relocation" "true" 0
+Parameter 3 "Relocate From Thin Surfaces" "false" 0
 Parameter 3 "Probe Classification" "true" 0
+Parameter 4 "Ray Source" "0" 3 "Auto" "Voxels" "Hardware"
 Parameter 3 "Multiple Bounces" "true" 0
 Parameter 0 "Brightness Clamp" "32.000000" 0
+Parameter 0 "Reflection Occlusion" "1.000000" 0
 Parameter 4 "Voxel Resolution" "0" 2 "64" "128"
 Parameter 1 "Voxel Cascades" "3" 0
 Parameter 0 "Voxel Volume Size" "48.000000" 0
@@ -47,7 +54,7 @@ Parameter 3 "Inject Local Lights" "true" 0
 Parameter 0 "Local Light Bounce" "1.000000" 0
 Parameter 0 "Secondary Bounce" "1.000000" 0
 Parameter 1 "Voxelization Budget" "8" 0
-Parameter 4 "Debug View" "0" 4 "None" "Irradiance" "Indirect Lighting" "Probes"
+Parameter 4 "Debug View" "0" 6 "None" "Irradiance" "Indirect Lighting" "Probes" "Sky Visibility" "Reflections"
 Parameter 0 "Probe Debug Radius" "0.150000" 0
 Effect "SSGI" 1 11
 Parameter 0 "Intensity" "1.000000" 0
@@ -65,7 +72,10 @@ Effect "VolumetricFog" 0 22
 Parameter 0 "Density" "0.015000" 0
 Parameter 0 "Height Falloff" "0.050000" 0
 Parameter 0 "Height Offset" "-3.000000" 0
-Parameter 0 "Shadow Detail Distance" "5000.000000" 0
+Parameter 0 "Max Opacity" "0.920000" 0
+Parameter 0 "Color R" "1.000000" 0
+Parameter 0 "Color G" "1.000000" 0
+Parameter 0 "Color B" "1.000000" 0
 Parameter 0 "Scattering" "0.650000" 0
 Parameter 0 "Anisotropy" "0.200000" 0
 Parameter 0 "Ambient Contribution" "0.000000" 0
@@ -77,13 +87,10 @@ Parameter 0 "Noise Strength" "0.500000" 0
 Parameter 0 "Noise Scale" "40.000000" 0
 Parameter 0 "Noise Wind X" "1.500000" 0
 Parameter 0 "Noise Wind Z" "0.500000" 0
-Parameter 0 "Max Opacity" "0.920000" 0
+Parameter 0 "Shadow Detail Distance" "5000.000000" 0
 Parameter 1 "Step Count" "32" 0
 Parameter 1 "Shadow Step Stride" "2" 0
 Parameter 3 "Half Resolution" "true" 0
-Parameter 0 "Color R" "1.000000" 0
-Parameter 0 "Color G" "1.000000" 0
-Parameter 0 "Color B" "1.000000" 0
 Effect "Bloom" 1 5
 Parameter 0 "Intensity" "0.050000" 0
 Parameter 0 "Threshold" "2.000000" 0
@@ -110,15 +117,18 @@ Parameter 0 "Intensity" "0.100000" 0
 Parameter 0 "Threshold" "2.000000" 0
 Parameter 0 "Scale" "1.000000" 0
 Parameter 0 "Ghost Dispersal" "0.550000" 0
-Effect "AutoExposure" 1 5
+Effect "AutoExposure" 1 7
 Parameter 0 "Key Value" "0.200000" 0
 Parameter 0 "Min Exposure" "0.100000" 0
 Parameter 0 "Max Exposure" "1.500000" 0
 Parameter 0 "Adapt Up" "0.180000" 0
 Parameter 0 "Adapt Down" "0.060000" 0
-Effect "ToneMapping" 1 2
+Parameter 0 "Low Light EV" "0.000000" 0
+Parameter 0 "Low Light Darkening" "0.000000" 0
+Effect "ToneMapping" 1 3
 Parameter 0 "Exposure" "1.000000" 0
 Parameter 0 "Gamma" "2.200000" 0
+Parameter 4 "Curve" "0" 3 "ACES" "AgX" "PBR Neutral"
 Effect "TAA" 0 11
 Parameter 4 "Quality" "0" 2 "Balanced" "High"
 Parameter 0 "History Weight" "0.900000" 0

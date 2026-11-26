@@ -28,8 +28,9 @@ resizing the box invalidates its old bake until rebaked.
 **Scene > Lighting > Bake Ambient Grid...** bakes all enabled, active volume components. If none
 exist, the first bake creates an **Ambient Light Volume** object fitted to static
 geometry. Old scene-level grids are migrated into this component when loaded.
-Mark bake geometry **Static**. Lightmap baking was removed; scene bakes produce
-only probe volumes and reflection captures.
+Mark bake geometry **Static**. **Bake Lighting** also bakes lightmaps for static
+meshes ([BAKED_LIGHTING.md](BAKED_LIGHTING.md)); probes then carry Baked lights'
+direct light to moving objects.
 
 Vulkan/OpenGL RHI supports eight active baked volumes. In overlaps, the volume with
 the smallest actual maximum cell dimension supplies ambient lighting. A small,

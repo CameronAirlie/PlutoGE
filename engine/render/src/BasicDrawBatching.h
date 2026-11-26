@@ -115,7 +115,7 @@ namespace PlutoGE::render
                     std::uint64_t(previous.firstIndex) + previous.indexCount == draw.firstIndex &&
                     std::uint64_t(previous.indexCount) + draw.indexCount <= std::numeric_limits<std::uint32_t>::max() &&
                     previous.model == draw.model && previous.previousModel == draw.previousModel &&
-                    SameBasicDrawSurface(previous, draw))
+                    previous.lightmap == draw.lightmap && SameBasicDrawSurface(previous, draw))
                 {
                     previous.indexCount += draw.indexCount;
                     // Aggregates no longer describe an immutable source packet.
@@ -282,7 +282,8 @@ namespace PlutoGE::render
             // Existing instances, skinned sources and order-dependent surfaces
             // keep their original packets. Explicit history is required: draw
             // index history would be invalid after compaction.
-            if (draw.mesh && draw.surfaceType == 0 && draw.alphaMode != 2 &&
+            // Lightmapped draws each sample their own texels (BasicDraw::lightmap).
+            if (draw.mesh && draw.surfaceType == 0 && draw.alphaMode != 2 && !draw.lightmap.IsValid() &&
                 draw.contributesToGi && !draw.instanceModels && draw.previousModel)
             {
                 std::size_t hash = 0;

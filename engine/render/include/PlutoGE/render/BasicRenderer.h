@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/render/AmbientProbeConfig.h"
+#include "PlutoGE/render/BakedLighting.h"
 #include "PlutoGE/render/RayTracedGeometryDetail.h"
 #include "PlutoGE/render/CloudOcclusion.h"
 #include "PlutoGE/render/GeometryDiagnostics.h"
@@ -815,6 +816,9 @@ namespace PlutoGE::render
         // The mean of the base colour's alpha (masked surfaces' open share of a card); negative when unknown.
         float meanCoverage = -1.0f;
         float normalizedLod = 0.0f;
+        // Where the draw's uv2 lands in BasicLighting::bakedLighting's atlas; invalid when not lightmapped. Object data,
+        // not material: lightmapped draws keep their own object parameters and never merge into instanced batches.
+        LightmapRect lightmap;
         std::shared_ptr<const std::vector<glm::mat4>> instanceModels;
         std::shared_ptr<const std::vector<glm::mat4>> previousInstanceModels;
         // With instanceModels: per-chunk LOD selection in the camera passes (shadows keep firstIndex/indexCount).
@@ -997,6 +1001,17 @@ namespace PlutoGE::render
         std::array<BasicIblCapture, 4> iblCaptures{};
         bool localIblEnabled = true;
         rhi::TextureHandle diffuseProbeAtlas;
+        // Lightmaps (render/BakedLighting.h, docs/BAKED_LIGHTING.md). Lightmapped draws sample the atlas while
+        // `active`; the directional light's realtime direct light is left out when it is Baked, and its shadow takes
+        // the atlas' static shadow mask too when `directionalShadowMask`.
+        struct BakedLightingFrame
+        {
+            bool active = false;
+            rhi::TextureHandle atlas;
+            glm::uvec2 atlasSize{0};
+            LightBakeMode directionalMode = LightBakeMode::Realtime;
+            bool directionalShadowMask = false;
+        } bakedLighting;
         glm::vec3 diffuseProbeOrigin{0}, diffuseProbeSize{1};
         glm::ivec3 diffuseProbeResolution{0};
         int diffuseProbeVolumeCount = 0, diffuseProbeAtlasWidth = 0;
@@ -1258,6 +1273,9 @@ namespace PlutoGE::render
         static constexpr std::uint32_t SurfaceTextureSlot = 33;
         // The rectangle-light LTC table (LtcAreaLights.slang ltcTable, set 0 binding 8).
         static constexpr std::uint32_t LtcTableSlot = 8;
+        // The lightmap atlas (LightmapSampling.slang lightmapAtlas, set 0 binding 39; OpenGL texture unit 39).
+        static constexpr std::uint32_t LightmapAtlasSlot = 42;
+        static constexpr std::uint32_t LightmapAtlasBinding = 39;
         // Instanced draws' records (BasicLit.slang instanceRecords, set 3 binding 1; OpenGL storage binding 1).
         static constexpr std::uint32_t InstanceRecordSlot = 1;
         // Instanced draws' per-instance LOD bins (BasicLit.slang instanceIndices, set 3 binding 2; OpenGL binding 2).

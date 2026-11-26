@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 912fa333b5a205cb2bfefcbff3eede5eef79a7299774d3d05564b5fd9895ed17
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" a62284a065e00d7651a4b4f39d1233b83f01129d2e98f43567f3654a745f2ef5
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/CarGlass.glb" da7a894483c3264e32005c6062524abe5ebc844195cc018f21b554d63e9407e8
+OUTPUT "Models/CarGlass.plutomesh" c9065e9127881c328dca9cf4edf738787981548b7497028759058c0bea81476e
+OUTPUT "Models/CarGlass.plutomodel" 515615fade9d6ad71c0b2b30760cfda032298a7aeb4d65cc35c680f2e14e888f
+OUTPUT "Models/M_CarGlass_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

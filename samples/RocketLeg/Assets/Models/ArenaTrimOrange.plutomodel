@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/ArenaTrimOrange.glb
+SOURCE_ID	dd02083e023f4f325133e25f11405774
+SOURCE_HASH	18203677777134926314
+IMPORTER_VERSION	10
+OBJECT	17986009749900872065	Material	M_ArenaTrimOrange_0	project://Models/M_ArenaTrimOrange_0.plutomaterial
+OBJECT	9485455208190425586	Mesh	ArenaTrimOrange	project://Models/ArenaTrimOrange.plutomesh

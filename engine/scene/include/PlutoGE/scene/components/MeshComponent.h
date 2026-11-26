@@ -71,6 +71,13 @@ namespace PlutoGE::scene
         render::Mesh *GetMesh() const { return m_mesh; }
         bool UsesRetainedGeometry(const render::Mesh *baseline) const { return m_mesh == baseline; }
         void NotifyMeshDataChanged() { MarkRenderCommandsDirty(); }
+        // A lightmap bake changed: static draws rebuild their commands with their new lightmap rects.
+        void NotifyBakedLightingChanged() { MarkRenderCommandsDirty(); }
+        // The mesh lightmapped, drawn and baked for this instance. A static mesh whose lightmap UVs can follow scale
+        // (built-in shapes) and whose world scale stretches it unevenly gets its own copy unwrapped at that scale, so a
+        // cube stretched into a floor keeps an even texel density; otherwise this is GetMesh(). Only scenes with a
+        // Baked Lighting component use copies, so scenes without lightmaps keep sharing (and instancing) one mesh.
+        render::Mesh *GetLightmapMesh();
         // Script-built geometry (vision cones, trails) owned by this component.
         // Later calls replace it in place; an empty triangle list draws nothing.
         // Clearing restores the mesh the component had before. Not serialized.
@@ -185,6 +192,11 @@ namespace PlutoGE::scene
         const std::string &GetSourceMeshPath() const { return GetMeshAssetReference(); }
         void SetUseGeneratedLods(bool useGeneratedLods) { m_useGeneratedLods = useGeneratedLods; }
         bool GetUseGeneratedLods() const { return m_useGeneratedLods; }
+        // Source-imported meshes (a model file referenced directly, as UseGeneratedLods applies to): import them with
+        // generated lightmap UVs (MeshImportOptions::generateLightmapUvs), so a static instance can be lightmapped.
+        // Models imported through the model pipeline take the model's import setting instead. Applies at the next load.
+        void SetGenerateLightmapUvs(bool generate) { m_generateLightmapUvs = generate; }
+        bool GetGenerateLightmapUvs() const { return m_generateLightmapUvs; }
         void SetMeshPositionOffset(const glm::vec3 &offset);
         const glm::vec3 &GetMeshPositionOffset() const;
         void SetMeshRotationOffset(const glm::vec3 &offset);
@@ -373,6 +385,11 @@ namespace PlutoGE::scene
         std::size_t m_coveredTriangles = 0;
         bool m_coveredDirty = false;
         render::Mesh *DrawnMesh();
+        // Scale-fitted lightmap copy (GetLightmapMesh), rebuilt when the source or the quantised scale changes.
+        std::unique_ptr<render::Mesh> m_scaleFittedMesh;
+        const render::Mesh *m_scaleFittedSource = nullptr;
+        std::uint64_t m_scaleFittedSourceRevision = 0;
+        glm::ivec3 m_scaleFittedKey{0};
         bool m_isStatic = false;
         bool m_renderCommandCacheDirty = true;
         render::RenderObjectIdentity m_renderObjectIdentity;
@@ -395,6 +412,7 @@ namespace PlutoGE::scene
         int m_submeshCount = 1;
         bool m_visible = true;
         bool m_useGeneratedLods = false;
+        bool m_generateLightmapUvs = false;
         int m_minShadowLod = 0;
         render::FoliageWindResponse m_wind{};
         bool m_hasAnimatedNodeSubmeshes = false;

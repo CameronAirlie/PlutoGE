@@ -289,9 +289,12 @@ namespace PlutoGE::render
             glm::vec4 surfaceWeather{0.0f};
             // Light visibility mask slot per light id (MakeLightVisibilitySlotTable; 0 none, else slot + 1).
             LightVisibilitySlotTable lightVisibilitySlots{};
+            // Lightmaps (LightmapSampling.slang): x lightmaps active, y directional mode (LightBakeMode), z 1 when the
+            // atlas' alpha is the directional light's static shadow mask, w reserved.
+            glm::vec4 bakedLighting{0.0f};
         };
         static_assert(sizeof(BasicFrameParameters) ==
-                      6784 + 16 * PLUTO_LIGHT_VISIBILITY_ID_ROWS + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+                      6800 + 16 * PLUTO_LIGHT_VISIBILITY_ID_ROWS + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         // The SurfaceFeature bits whose BasicLit paths this frame's parameters can reach (SurfaceFeatures.slang states
@@ -313,6 +316,7 @@ namespace PlutoGE::render
             glm::mat4 model{1.0f};
             glm::mat4 previousModel{1.0f};
             glm::vec4 debugParameters{0.0f}; // normalized LOD
+            glm::vec4 lightmapScaleOffset{0.0f}; // LightmapRect::Packed; zero scale: not lightmapped
         };
         constexpr std::size_t kMaxInstancesPerDraw = 64;
         static_assert(OpaqueShadowBatches::Capacity == kMaxInstancesPerDraw);
@@ -868,6 +872,7 @@ namespace PlutoGE::render
                 {DirectionalShadowMask::MaskSlot, 0, DirectionalShadowMask::MaskBinding, rhi::ResourceBindingType::SampledTexture,
                  rhi::ShaderStageMask::Fragment},
                 {LtcTableSlot, 0, 8, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
+                {LightmapAtlasSlot, 0, LightmapAtlasBinding, rhi::ResourceBindingType::SampledTexture, rhi::ShaderStageMask::Fragment},
                 {1, 0, 1, rhi::ResourceBindingType::UniformBuffer, rhi::ShaderStageMask::Fragment},
                 {LightClusterGrid::MasksSlot, 0, 4, rhi::ResourceBindingType::StorageBuffer, rhi::ShaderStageMask::Fragment},
                 // Object parameters stay last: the instanced variant replaces them.
@@ -2732,6 +2737,13 @@ namespace PlutoGE::render
             frameParameters.skyIrradiance[0].w = 1.0f;
         }
         frameParameters.surfaceWeather = glm::vec4(std::clamp(lighting.weather.wetness, 0.0f, 1.0f), 0.0f, 0.0f, 0.0f);
+        {
+            const auto &baked = lighting.bakedLighting;
+            const bool active = baked.active && baked.atlas;
+            frameParameters.bakedLighting = glm::vec4(active ? 1.0f : 0.0f,
+                active ? static_cast<float>(baked.directionalMode) : 0.0f,
+                active && baked.directionalShadowMask ? 1.0f : 0.0f, 0.0f);
+        }
         // Clouds shade the directional light through a map traced into the sky atlas before any receiver reads it.
         const CloudShadowMap cloudShadow = m_cloudShadowPipeline && m_cloudNoise && geometryMode != GeometryDiagnosticMode::ReferenceSky
             ? BuildCloudShadowMap(postProcessEffects, lighting.cameraPosition, -lighting.directionalDirection)
@@ -3904,6 +3916,8 @@ namespace PlutoGE::render
             commands.BindStorageBuffer(LightClusterGrid::MasksSlot, m_lightClusters->Masks());
             commands.BindTexture(31, lighting.diffuseProbeAtlas ? lighting.diffuseProbeAtlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
             commands.BindTexture(LtcTableSlot, m_ltcTable.Get(), m_screenSampler.Get());
+            commands.BindTexture(LightmapAtlasSlot, lighting.bakedLighting.active && lighting.bakedLighting.atlas
+                ? lighting.bakedLighting.atlas : m_fallbackTexture.Get(), m_screenSampler.Get());
             for (std::size_t i = 0; i < lighting.iblCaptures.size(); ++i)
                 commands.BindTexture(27 + static_cast<unsigned>(i), lighting.iblCaptures[i].atlas ? lighting.iblCaptures[i].atlas : m_fallbackTexture.Get(), m_vctVolumeSampler.Get());
         };
@@ -3985,7 +3999,8 @@ namespace PlutoGE::render
                 const BasicObjectParameters objectParameters{
                     model,
                     m_hasPreviousFrame ? previousModel : model,
-                    glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, draw.probeDebug.x, draw.probeDebug.y)};
+                    glm::vec4(draw.normalizedLod, draw.outlinePass ? draw.outlineWidth : 0.0f, draw.probeDebug.x, draw.probeDebug.y),
+                    draw.lightmap.Packed()};
                 // Submeshes of one object share transforms and often LOD data.
                 // Compare previous transforms too: motion vectors must retain
                 // each draw's history even when current transforms match.
@@ -4390,7 +4405,8 @@ namespace PlutoGE::render
                     sources.push_back({&draw, index, model, m_hasPreviousFrame ? previousModel : model,
                                        glm::vec4(draw.normalizedLod, 0.0f, draw.probeDebug.x, draw.probeDebug.y),
                                        BindlessGeometryPipeline(draw, geometryLayout,
-                                                                depthPrepassActive && prepassEligible(draw))});
+                                                                depthPrepassActive && prepassEligible(draw)),
+                                       draw.lightmap.Packed()});
                 }
             }
             m_gpuDriven->Prepare(*m_device, sources, draws.size());

@@ -25,6 +25,7 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/CameraTagFilter.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
 #include "RhiDetailGrass.h"
@@ -364,6 +365,33 @@ namespace PlutoGE::render
         m_upscalerHistoryValid = false;
         m_upscalerStatus = {};
         m_upscalerContextId = 0;
+    }
+
+    void RhiSceneRenderer::UploadLightmapAtlas(const scene::Scene *scene, BasicLighting &lighting)
+    {
+        auto &baked = lighting.bakedLighting;
+        const auto *component = scene && baked.active ? scene->GetBakedLighting() : nullptr;
+        if (!component || !component->IsActive())
+        {
+            baked.active = false;
+            baked.atlas = {};
+            return;
+        }
+        if (!m_lightmapAtlas || m_lightmapScene != scene || m_lightmapRevision != component->GetRevision())
+        {
+            const auto &atlas = *component->GetBake().atlas;
+            rhi::TextureDescriptor descriptor;
+            descriptor.width = atlas.width;
+            descriptor.height = atlas.height;
+            descriptor.format = rhi::Format::R16G16B16A16Float;
+            // No mips: charts are padded for bilinear reads at full resolution only.
+            descriptor.mipLevels = 1;
+            descriptor.debugName = "Lightmap atlas";
+            m_lightmapAtlas = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, std::as_bytes(std::span(atlas.texels))));
+            m_lightmapScene = scene;
+            m_lightmapRevision = component->GetRevision();
+        }
+        baked.atlas = m_lightmapAtlas.Get();
     }
 
     std::optional<RhiSceneRenderer::PreparedFrame> RhiSceneRenderer::Prepare(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,
@@ -1485,6 +1513,7 @@ namespace PlutoGE::render
                 draw.mesh = renderMesh;
                 draw.model = command.model;
                 draw.probeDebug = command.probeDebug;
+                draw.lightmap = command.lightmap;
                 if (command.probeDebug.x > 0) draw.contributesToGi = false;
                 draw.castsShadow = draw.castsShadow && command.castsShadow;
                 draw.foliageWind = command.foliageWind;
@@ -1713,6 +1742,9 @@ namespace PlutoGE::render
             {
                 if (!light || light->intensity <= 0 || light->GetRange() <= 0 || light->type == scene::LightType::Directional)
                     continue;
+                // Baked lights reach surfaces only through lightmaps and ambient volumes.
+                if (effectiveLighting.bakedLighting.active && light->bakeMode == LightBakeMode::Baked)
+                    continue;
                 const auto type = light->type == scene::LightType::Point ? LocalLightCandidate::Type::Point
                                 : light->type == scene::LightType::Spot ? LocalLightCandidate::Type::Spot
                                                                        : LocalLightCandidate::Type::Rect;
@@ -1753,6 +1785,7 @@ namespace PlutoGE::render
             effectiveLighting.diffuseProbeVolumesPrepared = false;
             effectiveLighting.diffuseProbeReflections = false;
         }
+        UploadLightmapAtlas(scene, effectiveLighting);
         // One scene walk: HasBakedProbeVolume() would collect the same volumes again.
         auto volumes = scene && effectiveLighting.localIblEnabled
             ? scene->GetBakedProbeVolumes() : decltype(scene->GetBakedProbeVolumes()){};

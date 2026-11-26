@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/BallAccents.glb
+SOURCE_ID	8dd3c430cd221d4ed83b487322f76dc8
+SOURCE_HASH	11413222017343062281
+IMPORTER_VERSION	10
+OBJECT	9611201547182769500	Material	M_BallAccents_0	project://Models/M_BallAccents_0.plutomaterial
+OBJECT	1044871682649168551	Mesh	BallAccents	project://Models/BallAccents.plutomesh

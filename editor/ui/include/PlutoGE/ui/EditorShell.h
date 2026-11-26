@@ -556,6 +556,9 @@ namespace PlutoGE::ui
         std::vector<scene::EntityID> m_entityClipboardRootIds;
         std::unique_ptr<scene::SceneBakeTask> m_activeBakeTask;
         scene::SceneBakeSettings m_customBakeSettings = scene::SceneBakeSettings::Final();
+        // Writes the scene's new lightmap atlas into the project (Assets/Lightmaps/<scene>.plutolightmap) and points the
+        // Baked Lighting component at it.
+        void SaveBakedLightmaps();
         std::vector<scene::EntityID> m_pendingIblCaptureEntities;
         bool m_generateAmbientReflections = false;
         bool m_saveAfterAmbientCaptures = false;

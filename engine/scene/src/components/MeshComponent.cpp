@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/MeshComponent.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/assets/Project.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/Scene.h"
@@ -1116,6 +1117,9 @@ namespace PlutoGE::scene
             {"PivotOffset", PropertyType::Vec3, SerializeVec3(m_pivotOffset)},
             {"MeshRotationOffset", PropertyType::Vec3, SerializeVec3(m_meshRotationOffset)},
         };
+        // Written only when set, so scenes without it are unchanged.
+        if (m_generateLightmapUvs)
+            properties.push_back({"GenerateLightmapUvs", PropertyType::Bool, "true"});
         // Written only when set, so ordinary meshes serialize as before.
         if (!m_cameraHiddenJoints.empty())
             properties.push_back({"Camera Hidden Joints", PropertyType::String, CameraTagFilter::FormatTagList(m_cameraHiddenJoints)});
@@ -1264,6 +1268,10 @@ namespace PlutoGE::scene
                 serializedAssetMaterialReferences = sourceMeshPath.empty()
                                                         ? nullptr
                                                         : &manager.GetMeshAssetMaterialReferences(sourceMeshPath);
+            }
+            else if (property.name == "GenerateLightmapUvs")
+            {
+                m_generateLightmapUvs = property.value == "true" || property.value == "1";
             }
             else if (property.name == "UseGeneratedLods")
             {
@@ -1424,7 +1432,10 @@ namespace PlutoGE::scene
             {
                 if (!allowSourceImport) throw std::runtime_error("Accepted linked model mesh cannot be loaded from its private generation.");
                 const std::string resolvedMeshPath = manager.ResolveMeshAssetSourcePath(sourceMeshPath);
-                auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath) : engine.ImportMeshAsset(resolvedMeshPath);
+                assetimport::MeshImportOptions importOptions;
+                importOptions.generateLightmapUvs = m_generateLightmapUvs;
+                auto importedMeshAsset = useGeneratedLods ? engine.GenerateMeshAssetLods(resolvedMeshPath, importOptions)
+                                                          : engine.ImportMeshAsset(resolvedMeshPath, importOptions);
                 if (importedMeshAsset.mesh)
                 {
                     SetMesh(importedMeshAsset.mesh);
@@ -1801,6 +1812,54 @@ namespace PlutoGE::scene
         MarkRenderCommandsDirty();
     }
 
+    namespace
+    {
+        // Lightmap layouts are refitted in 2% steps of each axis' stretch relative to the longest axis, so small edits
+        // do not rebuild them and the bake and the renderer always agree on one layout. Key zero: evenly scaled.
+        const float kLightmapScaleStep = std::log(1.02f);
+
+        glm::ivec3 LightmapScaleKey(const glm::mat4 &transform)
+        {
+            const glm::vec3 scale(glm::length(glm::vec3(transform[0])), glm::length(glm::vec3(transform[1])),
+                                  glm::length(glm::vec3(transform[2])));
+            const float longest = std::max({scale.x, scale.y, scale.z});
+            if (!(longest > 0.0f) || !std::isfinite(longest))
+                return glm::ivec3(0);
+            glm::ivec3 key;
+            for (int axis = 0; axis < 3; ++axis)
+                key[axis] = static_cast<int>(std::lround(std::log(std::max(scale[axis] / longest, 1.0e-4f)) / kLightmapScaleStep));
+            return key;
+        }
+
+        glm::vec3 LightmapScaleFromKey(const glm::ivec3 &key)
+        {
+            return glm::exp(glm::vec3(key) * kLightmapScaleStep);
+        }
+    }
+
+    render::Mesh *MeshComponent::GetLightmapMesh()
+    {
+        const auto *owner = GetOwner();
+        const auto *scene = owner ? owner->GetScene() : nullptr;
+        const bool canFit = m_isStatic && m_mesh && scene && scene->GetBakedLighting() && m_mesh->CanFitLightmapUvsToScale();
+        const glm::ivec3 key = canFit ? LightmapScaleKey(owner->GetWorldTransform() * GetMeshOffsetTransform()) : glm::ivec3(0);
+        if (key == glm::ivec3(0))
+        {
+            m_scaleFittedMesh.reset();
+            m_scaleFittedSource = nullptr;
+            return m_mesh;
+        }
+        if (!m_scaleFittedMesh || m_scaleFittedSource != m_mesh || m_scaleFittedSourceRevision != m_mesh->GetContentRevision() ||
+            m_scaleFittedKey != key)
+        {
+            m_scaleFittedMesh = m_mesh->CreateScaleFittedLightmapUvs(LightmapScaleFromKey(key));
+            m_scaleFittedSource = m_mesh;
+            m_scaleFittedSourceRevision = m_mesh->GetContentRevision();
+            m_scaleFittedKey = key;
+        }
+        return m_scaleFittedMesh ? m_scaleFittedMesh.get() : m_mesh;
+    }
+
     render::Mesh *MeshComponent::DrawnMesh()
     {
         if (m_coveredJoints.empty() || !m_mesh || !m_mesh->HasSkeleton())
@@ -1808,7 +1867,7 @@ namespace PlutoGE::scene
             if (m_coveredMesh)
                 m_coveredMesh.reset();
             m_coveredTriangles = 0;
-            return m_mesh;
+            return GetLightmapMesh();
         }
         if (m_coveredDirty || m_coveredSource != m_mesh || m_coveredSourceRevision != m_mesh->GetContentRevision())
         {
@@ -1950,6 +2009,9 @@ namespace PlutoGE::scene
 
             // Covered skin draws a copy without the covered triangles (same vertices, skeleton and submeshes).
             render::Mesh *drawnMesh = DrawnMesh();
+            // Static draws carry their lightmap rects; a new bake marks them dirty (NotifyBakedLightingChanged).
+            const auto *scene = entity->GetScene();
+            const BakedLightingComponent *bakedLighting = m_isStatic && scene ? scene->GetBakedLighting() : nullptr;
             for (size_t submeshIndex = submeshBegin; submeshIndex < submeshEnd; ++submeshIndex)
             {
                 auto *material = GetMaterialForSubmesh(submeshIndex);
@@ -2002,6 +2064,8 @@ namespace PlutoGE::scene
                 command.submeshIndex = static_cast<uint32_t>(submeshIndex);
                 command.minShadowLodIndex = static_cast<uint32_t>(m_minShadowLod);
                 command.isStatic = m_isStatic;
+                if (m_isStatic && bakedLighting)
+                    command.lightmap = bakedLighting->FindRect(entity->GetID(), static_cast<std::uint32_t>(submeshIndex));
                 command.foliageWind = m_wind;
                 // Swaying geometry reaches beyond its rest bounds; grow them so culling stays conservative.
                 if (const float sway = render::FoliageWindMaxDisplacement(m_wind); sway > 0.0f)

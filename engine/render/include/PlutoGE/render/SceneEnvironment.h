@@ -17,6 +17,9 @@ namespace PlutoGE::render
 {
     // Shared scene lighting and atmosphere preparation for editor and built games.
     BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene);
+    // Fills lighting.bakedLighting (all but the atlas texture, which the scene renderer uploads) from the scene's
+    // Baked Lighting component and the directional light BuildSceneLighting chose. BuildSceneLighting calls it.
+    void ResolveBakedLighting(BasicLighting &lighting, const scene::Scene *scene, const scene::Light *directional);
     // As above, but only `lights` illuminate the view (for tag-filtered cameras).
     // The scene still supplies sky and atmosphere.
     BasicLighting BuildSceneLighting(const CameraData &cameraData, const scene::Scene *scene,

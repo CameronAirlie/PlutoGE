@@ -21,8 +21,14 @@ namespace PlutoGE::assetimport
         // Bakes an octahedral impostor of the finest LOD (ImpostorBaker.h) as two atlas textures beside the mesh, so
         // instanced foliage draws its distant instances as camera-facing cards.
         bool bakeImpostor = false;
+        // Replaces the secondary UVs with a generated lightmap layout (render/LightmapUvs.h): every submesh gets its
+        // own non-overlapping charts, so static instances can be lightmapped. For models without authored lightmap UVs.
+        bool generateLightmapUvs = false;
 
-        static constexpr std::uint32_t FlagMask = 31u;
+        static constexpr std::uint32_t FlagMask = 63u;
+        // Part of the artifact settings of models with generated lightmap UVs: bump whenever the generator's output
+        // changes, so their cached imports are rebuilt.
+        static constexpr std::uint32_t LightmapUvVersion = 1;
         // Part of the artifact settings of models with vegetation LODs: bump whenever the vegetation LOD chain's output
         // changes, so their cached imports are rebuilt (other models are unaffected).
         static constexpr std::uint32_t VegetationLodVersion = 5;
@@ -33,13 +39,14 @@ namespace PlutoGE::assetimport
                    (optimizeVertexCache ? 2u : 0u) |
                    (optimizeOverdraw ? 4u : 0u) |
                    (vegetationLods ? 8u : 0u) |
-                   (bakeImpostor ? 16u : 0u);
+                   (bakeImpostor ? 16u : 0u) |
+                   (generateLightmapUvs ? 32u : 0u);
         }
 
         [[nodiscard]] static MeshImportOptions FromFlags(std::uint32_t flags, std::uint32_t triangleBudget = 0)
         {
             return {(flags & 1u) != 0, (flags & 2u) != 0, (flags & 4u) != 0, (flags & 8u) != 0, triangleBudget,
-                    (flags & 16u) != 0};
+                    (flags & 16u) != 0, (flags & 32u) != 0};
         }
 
         bool operator==(const MeshImportOptions &) const = default;

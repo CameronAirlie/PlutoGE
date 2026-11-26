@@ -49,6 +49,7 @@ namespace PlutoGE::assetimport
         if (options.triangleBudget != 0)
             field("triangle-budget:" + std::to_string(options.triangleBudget) + ":" + std::to_string(assetimport::TriangleBudgetVersion));
         if (options.bakeImpostor) field("impostor:" + std::to_string(assetimport::ImpostorBakeVersion));
+        if (options.generateLightmapUvs) field("lightmap-uvs:" + std::to_string(MeshImportOptions::LightmapUvVersion));
         if (options.generateLods && options.vegetationLods)
             field("vegetation-lods:" + std::to_string(MeshImportOptions::VegetationLodVersion));
         field(sourceReference);

@@ -293,7 +293,7 @@ namespace PlutoGE::render
                 m_buckets.push_back({entry.source->pipeline, draw.mesh->VertexBuffer(), draw.mesh->IndexBuffer(), command, 0});
             ++m_buckets.back().commandCount;
             m_instanceRecords.push_back({entry.source->model, entry.source->previousModel, entry.source->debugParameters,
-                                         glm::uvec4(entry.material, 0u, 0u, 0u)});
+                                         glm::uvec4(entry.material, 0u, 0u, 0u), entry.source->lightmapScaleOffset});
             // The instance count comes from RecordVisibility.
             m_commandWords.insert(m_commandWords.end(), {entry.indexCount, 1u, entry.firstIndex, 0u, command});
             m_occlusionIndices.push_back(static_cast<std::uint32_t>(entry.source->drawIndex));

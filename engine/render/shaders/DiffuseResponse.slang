@@ -13,6 +13,8 @@
 // channel; the geometry pass's own direct and sky light use the exact colour.
 static const float FoliageTransmittanceRange = 8.0;
 // The indirect target's alpha on translucent surfaces: lit (above one half), and half strength for screen-space AO.
+// Every code: 0 unlit or glass; 0.375 lightmapped (LightmapSampling.slang BakedIndirectAlpha: DDGI and SSGI keep it,
+// full AO); 0.75 translucent; 1 ordinary lit surfaces.
 static const float FoliageIndirectAlpha = 0.75;
 
 float encodeFoliageTransmittance(float3 transmittance, float3 albedo)

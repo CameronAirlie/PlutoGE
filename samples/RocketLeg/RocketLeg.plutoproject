@@ -3,32 +3,32 @@ NAME	RocketLeg
 ASSET_DIR	Assets
 STARTUP_SCENE	project://Scenes/Main.plutoscene
 BUILD_USED_ASSETS_ONLY	0
+BUILD_PROFILE	Development
+BUILD_ALWAYS_INCLUDE	project://Lightmaps/Main.plutolightmap
 SERVER_SCENE	
 SERVER_OUTPUT	Build/Server/GameServer.exe
 SERVER_TICK_RATE	60
 SCRIPT_ASSEMBLY	project://Managed/RocketLeg.Scripts.dll
 LOADING_ACCENT	0.65	0.68	0.72
-QUALITY_PRESET	0	1	512	1	40	1	0	0	0	0	0	0	0
-QUALITY_PRESET	1	1	1024	2	80	1	1	0	0	0	1	0	0
-QUALITY_PRESET	2	1	2048	4	150	0	1	1	1	1	1	0	0
-QUALITY_PRESET	3	1	4096	4	300	0	1	1	1	1	1	1	1
+QUALITY_PRESET	0	1	512	1	40	1	0	0	0	0	0	0	0	0.600000024	0	0.400000006	0.5	0	0	0
+QUALITY_PRESET	1	1	1024	2	80	1	1	0	0	0	1	0	0	0.75	1	0.699999988	0.75	1	1	1
+QUALITY_PRESET	2	1	2048	4	150	0	1	1	1	1	1	0	0	1	1	1	1	1	1	1
+QUALITY_PRESET	3	1	4096	4	300	0	1	1	1	1	1	1	1	1	1	1	1	1	1	1
 WINDOW_TITLE	RocketLeg - Two Player Arena
 WINDOW_SIZE	1600	900
 VSYNC	0
+MAX_FRAME_RATE	0
 GRAPHICS_API	Vulkan
 RUNTIME_UPSCALER	FSR2
 RUNTIME_UPSCALER_QUALITY	Quality
 OCCLUSION_CULLING	Off
+RETAIN_SHADOW_CASCADES	1
+SHADOW_CASTER_MIN_TEXELS	1
+RAY_TRACED_MIN_INSTANCE_RADIUS	0.5
+TRACED_SHADOW_LIGHTS	8
+RAY_TRACED_GEOMETRY_DETAIL	CoarsestLod
 RUNTIME_RENDER_SCALE	1
 RUNTIME_UPSCALE_SHARPNESS	1
-EDITOR_FONT_SIZE	16.1
-EDITOR_FONT	Georama
-EDITOR_CAMERA_POSITION	-15.6428	11.9652	10.4928
-EDITOR_CAMERA_SPEED	12
-EDITOR_CAMERA_RUNTIME_UI	0
-EDITOR_CAMERA_ROTATION	282.357	-2.40026
-EDITOR_CAMERA_LENS	70	0.1	500
-EDITOR_CAMERA_POST_PROCESS_PRESET	project://PostProcessing/main.plutopostprocess
 ASSET	engine://builtin/material/default	0	Material
 ASSET	engine://builtin/material/default-shaded	0	Material
 ASSET	engine://builtin/mesh/cube	0	Mesh
@@ -36,20 +36,23 @@ ASSET	engine://builtin/mesh/cylinder	0	Mesh
 ASSET	engine://builtin/mesh/plane	0	Mesh
 ASSET	engine://builtin/mesh/quad	0	Mesh
 ASSET	engine://builtin/mesh/sphere	0	Mesh
+ASSET	engine://builtin/particles/water-splash	0	Particle System
 ASSET	engine://builtin/shadergraph/default-lit	0	Shader Graph
 ASSET	engine://builtin/shadergraph/default-unlit	0	Shader Graph
-ASSET	project://Effects/BoostFlame.plutoparticles	731	Particle System
+ASSET	project://Effects/BoostFlame.plutoparticles	693	Particle System
 ASSET	project://Effects/DemolitionBurst.plutoparticles	740	Particle System
-ASSET	project://Effects/GoalExplosion.plutoparticles	729	Particle System
+ASSET	project://Effects/GoalExplosion.plutoparticles	691	Particle System
 ASSET	project://Effects/SupersonicTrail.plutoparticles	739	Particle System
-ASSET	project://Input/RocketLeg.plutoinput	8385	Input Mapping
+ASSET	project://Input/RocketLeg.plutoinput	8827	Input Mapping
+ASSET	project://Lightmaps/Main.plutolightmap	13937880	Unknown
 ASSET	project://Managed/PlutoGE.ScriptCore.deps.json	446	Unknown
-ASSET	project://Managed/PlutoGE.ScriptCore.dll	449536	Assembly
-ASSET	project://Managed/PlutoGE.ScriptCore.pdb	147656	Unknown
+ASSET	project://Managed/PlutoGE.ScriptCore.dll	542720	Assembly
+ASSET	project://Managed/PlutoGE.ScriptCore.pdb	173228	Unknown
 ASSET	project://Managed/PlutoGE.ScriptCore.runtimeconfig.json	369	Unknown
+ASSET	project://Managed/PlutoGE.ScriptCore.xml	162622	Unknown
 ASSET	project://Managed/RocketLeg.Scripts.deps.json	862	Unknown
-ASSET	project://Managed/RocketLeg.Scripts.dll	76800	Assembly
-ASSET	project://Managed/RocketLeg.Scripts.pdb	36004	Unknown
+ASSET	project://Managed/RocketLeg.Scripts.dll	78336	Assembly
+ASSET	project://Managed/RocketLeg.Scripts.pdb	36044	Unknown
 ASSET	project://Materials/Arena.plutomaterial	649	Material
 ASSET	project://Materials/Ball.plutomaterial	645	Material
 ASSET	project://Materials/BallAccents.plutomaterial	200	Material
@@ -78,7 +81,7 @@ ASSET	project://Materials/PulsingRim.plutomaterial	107	Material
 ASSET	project://Materials/Rim.plutomaterial	198	Material
 ASSET	project://Materials/SceneTint.plutomaterial	105	Material
 ASSET	project://Materials/ScrollingTexture.plutomaterial	113	Material
-ASSET	project://Materials/StadiumGlass.plutomaterial	671	Material
+ASSET	project://Materials/StadiumGlass.plutomaterial	1073	Material
 ASSET	project://Materials/TV.plutomaterial	690	Material
 ASSET	project://Materials/Toon.plutomaterial	118	Material
 ASSET	project://Materials/TrimBlue.plutomaterial	196	Material
@@ -86,55 +89,75 @@ ASSET	project://Materials/TrimOrange.plutomaterial	197	Material
 ASSET	project://Materials/Tyre.plutomaterial	183	Material
 ASSET	project://Materials/Wall.plutomaterial	652	Material
 ASSET	project://Materials/glass Copy.plutosurface	138	Surface Response
-ASSET	project://Models/.plutoge-cache/meshes/10395308676437891733-0.pmesh	24156	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/13937070634038667684-0.pmesh	76781	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/13939623376548672384-0.pmesh	406917	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/13939623376548672384-1.pmesh	490421	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/13939623376548672384.pmesh	406917	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/14309152129990098965-0.pmesh	8367	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/16720986234934671008-0.pmesh	39942	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/17896232467591007287-0.pmesh	66696	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/2536444352417480490-0.pmesh	39948	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/3026617556041971237-0.pmesh	132933	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/4325362142289142181-0.pmesh	20748	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/5322404488168526833-0.pmesh	380805	Unknown
-ASSET	project://Models/.plutoge-cache/meshes/5322404488168526833.pmesh	380797	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/10938780324775375337-0.pmesh	133024	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/12523575219657658152-0.pmesh	76872	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/13402041503469509545-0.pmesh	24247	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/13475323819795608846-0.pmesh	40039	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/15039821112959503139-0.pmesh	66787	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/15808001681031898425-0.pmesh	20839	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/18273343946606919020-0.pmesh	40033	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/2430424986271609557-0.pmesh	380896	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/2430424986271609557.pmesh	380808	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/5896394395798800673-0.pmesh	8458	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/7220158127216076340-0.pmesh	406936	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/7220158127216076340-1.pmesh	490512	Unknown
+ASSET	project://Models/.plutoge-cache/meshes/7220158127216076340.pmesh	406928	Unknown
 ASSET	project://Models/ArenaBanks.glb	161496	Model
+ASSET	project://Models/ArenaBanks.plutomesh	472569	Mesh
 ASSET	project://Models/ArenaShell.glb	174228	Model
+ASSET	project://Models/ArenaShell.plutomesh	509697	Mesh
 ASSET	project://Models/ArenaTrimBlue.glb	13392	Model
+ASSET	project://Models/ArenaTrimBlue.plutomesh	39509	Mesh
 ASSET	project://Models/ArenaTrimOrange.glb	13392	Model
+ASSET	project://Models/ArenaTrimOrange.plutomesh	39517	Mesh
 ASSET	project://Models/BallAccents.glb	21024	Model
+ASSET	project://Models/BallAccents.plutomesh	22917	Mesh
 ASSET	project://Models/BallPanels.glb	41180	Model
+ASSET	project://Models/BallPanels.plutomesh	49217	Mesh
 ASSET	project://Models/CarBody.glb	8344	Model
+ASSET	project://Models/CarBody.plutomesh	24869	Mesh
 ASSET	project://Models/CarGlass.glb	3304	Model
+ASSET	project://Models/CarGlass.plutomesh	8801	Mesh
 ASSET	project://Models/CarTrim.glb	7244	Model
+ASSET	project://Models/CarTrim.plutomesh	20661	Mesh
 ASSET	project://Models/FieldLines.glb	25132	Model
-ASSET	project://PostProcessing/main.plutopostprocess	6456	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	15672740	Scene
+ASSET	project://Models/FieldLines.plutomesh	44665	Mesh
+ASSET	project://Models/M_ArenaBanks_0.plutomaterial	1027	Material
+ASSET	project://Models/M_ArenaShell_0.plutomaterial	1027	Material
+ASSET	project://Models/M_ArenaTrimBlue_0.plutomaterial	1027	Material
+ASSET	project://Models/M_ArenaTrimOrange_0.plutomaterial	1027	Material
+ASSET	project://Models/M_BallAccents_0.plutomaterial	1027	Material
+ASSET	project://Models/M_BallPanels_0.plutomaterial	1027	Material
+ASSET	project://Models/M_CarBody_0.plutomaterial	1027	Material
+ASSET	project://Models/M_CarGlass_0.plutomaterial	1027	Material
+ASSET	project://Models/M_CarTrim_0.plutomaterial	1027	Material
+ASSET	project://Models/M_FieldLines_0.plutomaterial	1027	Material
+ASSET	project://PostProcessing/main.plutopostprocess	6818	Post Process Preset
+ASSET	project://Scenes/Main.plutoscene	14640730	Scene
 ASSET	project://Scripts/Arena/BoostPad.cs	4449	Script
-ASSET	project://Scripts/Ball/BallMarker.cs	2172	Script
-ASSET	project://Scripts/Ball/GoalExplosion.cs	1776	Script
-ASSET	project://Scripts/Ball/RocketBall.cs	6031	Script
+ASSET	project://Scripts/Ball/BallMarker.cs	2122	Script
+ASSET	project://Scripts/Ball/GoalExplosion.cs	1727	Script
+ASSET	project://Scripts/Ball/RocketBall.cs	5890	Script
 ASSET	project://Scripts/Camera/RocketChaseCamera.cs	9349	Script
-ASSET	project://Scripts/Car/ArcadeCarController.cs	41782	Script
-ASSET	project://Scripts/Car/CarHandling.cs	4531	Script
-ASSET	project://Scripts/Car/CarVisuals.cs	6374	Script
-ASSET	project://Scripts/Core/ArenaLayout.cs	3808	Script
-ASSET	project://Scripts/Core/Gravity.cs	539	Script
-ASSET	project://Scripts/Core/Team.cs	753	Script
-ASSET	project://Scripts/Match/KickoffLayout.cs	2040	Script
-ASSET	project://Scripts/Match/MatchTypes.cs	1678	Script
+ASSET	project://Scripts/Car/ArcadeCarController.cs	40962	Script
+ASSET	project://Scripts/Car/CarHandling.cs	4446	Script
+ASSET	project://Scripts/Car/CarVisuals.cs	6228	Script
+ASSET	project://Scripts/Core/ArenaLayout.cs	3727	Script
+ASSET	project://Scripts/Core/Gravity.cs	524	Script
+ASSET	project://Scripts/Core/Team.cs	732	Script
+ASSET	project://Scripts/Match/KickoffLayout.cs	1989	Script
+ASSET	project://Scripts/Match/MatchTypes.cs	1635	Script
 ASSET	project://Scripts/Match/RocketLegMatch.cs	9582	Script
 ASSET	project://Scripts/UI/BannerView.cs	2955	Script
 ASSET	project://Scripts/UI/BoostMeterView.cs	3272	Script
-ASSET	project://Scripts/UI/EventFeedView.cs	2281	Script
-ASSET	project://Scripts/UI/HelpPanelView.cs	1992	Script
-ASSET	project://Scripts/UI/HudText.cs	478	Script
-ASSET	project://Scripts/UI/Kit/HudNode.cs	8251	Script
-ASSET	project://Scripts/UI/Kit/HudScreen.cs	2218	Script
-ASSET	project://Scripts/UI/MatchResultView.cs	3459	Script
+ASSET	project://Scripts/UI/EventFeedView.cs	2222	Script
+ASSET	project://Scripts/UI/HelpPanelView.cs	1952	Script
+ASSET	project://Scripts/UI/HudText.cs	468	Script
+ASSET	project://Scripts/UI/Kit/HudNode.cs	8022	Script
+ASSET	project://Scripts/UI/Kit/HudScreen.cs	2169	Script
+ASSET	project://Scripts/UI/MatchResultView.cs	3397	Script
 ASSET	project://Scripts/UI/RocketLegHud.cs	4928	Script
-ASSET	project://Scripts/UI/ScoreboardView.cs	3333	Script
+ASSET	project://Scripts/UI/ScoreboardView.cs	3266	Script
 ASSET	project://Shaders/DynamicWaves.plutoshadergraph	719	Shader Graph
 ASSET	project://Shaders/LayeredRim.plutoshadergraph	259	Shader Graph
 ASSET	project://Shaders/Outline.plutoshadergraph	234	Shader Graph

@@ -310,7 +310,7 @@ int main(int argc, char **argv) try
     sun->GetLight().type = scene::LightType::Directional;
     sun->GetLight().intensity = 5;
     sun->GetLight().castsShadows = false;
-    sun->GetLight().isStatic = false;
+    sun->GetLight().bakeMode = render::LightBakeMode::Realtime;
     sunEntity->SetRotation({-90,0,0});
     sealed.AddEntity(std::move(sunEntity));
     auto roomVolume = std::make_unique<scene::Entity>();
@@ -344,7 +344,7 @@ int main(int argc, char **argv) try
     daylightComponent->GetLight().type = scene::LightType::Directional;
     daylightComponent->GetLight().intensity = 5;
     daylightComponent->GetLight().castsShadows = false;
-    daylightComponent->GetLight().isStatic = false;
+    daylightComponent->GetLight().bakeMode = render::LightBakeMode::Realtime;
     daylight->SetRotation({-90,0,0});
     sunlit.AddEntity(std::move(daylight));
     if (!scene::SceneBaker().Bake(sunlit,settings).succeeded)
@@ -366,7 +366,7 @@ int main(int argc, char **argv) try
     auto *lamp = bulb->CreateComponent<scene::LightComponent>();
     lamp->GetLight().type = scene::LightType::Point;
     lamp->GetLight().intensity = 5;
-    lamp->GetLight().isStatic = false;
+    lamp->GetLight().bakeMode = render::LightBakeMode::Realtime;
     lamplit.AddEntity(std::move(bulb));
     if (!scene::SceneBaker().Bake(lamplit,settings).succeeded)
         throw std::runtime_error("Point light ambient bake failed");

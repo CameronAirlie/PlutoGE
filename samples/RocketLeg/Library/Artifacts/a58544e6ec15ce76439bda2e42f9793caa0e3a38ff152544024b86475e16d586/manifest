@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY a58544e6ec15ce76439bda2e42f9793caa0e3a38ff152544024b86475e16d586
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" e9d9ddd9993c81821cb81fe44a0c1201197242ba5f9afe93a40a7d6eaeac56b7
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/ArenaShell.glb" f71394b82fd019ffcb49a85feab252c0fe58ff05af4e9f8327efe3dfcdedcc6f
+OUTPUT "Models/ArenaShell.plutomesh" 29f8767b601ade1f96f310042e4d0a896d76402d97e4a4e1a41e4c0dba5d5614
+OUTPUT "Models/ArenaShell.plutomodel" 9dc679e0ca135dee3ecf5db9fd4599a19d545dc195ec37e9e00b4e95a6076c66
+OUTPUT "Models/M_ArenaShell_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

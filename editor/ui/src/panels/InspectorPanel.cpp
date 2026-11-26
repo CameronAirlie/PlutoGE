@@ -51,6 +51,7 @@
 #include "PlutoGE/scene/components/ColliderComponent.h"
 #include "PlutoGE/scene/components/DecalComponent.h"
 #include "PlutoGE/scene/components/IblCaptureComponent.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/PhysicalSkyComponent.h"
 #include "PlutoGE/scene/components/ParticleSystemComponent.h"
@@ -2669,7 +2670,8 @@ namespace PlutoGE::ui
                         }
                         else if (dynamic_cast<scene::LightComponent *>(componentPtr))
                         {
-                            ImGui::TextDisabled("Only lights marked Static contribute to Bake Scene.");
+                            ImGui::TextDisabled("Mode: Realtime is not baked. Mixed stays realtime and bakes its bounce\n"
+                                                "(and the sun's static shadows). Baked moves all of it into the bake.");
                         }
                         else if (auto *volume = dynamic_cast<scene::AmbientLightVolumeComponent *>(componentPtr)) {
                             properties=volume->SerializeEditableProperties(); propertiesProvided=true;
@@ -2694,6 +2696,29 @@ namespace PlutoGE::ui
                             if (ImGui::Button("Bake Volume")) editorShell.RequestAmbientBake(entity->GetID());
                             ImGui::SameLine();
                             if (ImGui::Button("Clear Bake")) { volume->ClearBake(); editorShell.MarkSceneDirty(); }
+                        }
+                        else if (auto *bakedLighting = dynamic_cast<scene::BakedLightingComponent *>(componentPtr))
+                        {
+                            properties = bakedLighting->SerializeEditableProperties();
+                            propertiesProvided = true;
+                            const auto &bake = bakedLighting->GetBake();
+                            if (bakedLighting->HasBake())
+                            {
+                                ImGui::Text("Lightmaps: %zu draw(s) in a %ux%u atlas", bake.rects.size(), bake.atlas->width, bake.atlas->height);
+                                ImGui::Text("Sun shadow mask: %s", bake.hasShadowMask ? "baked" : "none (no Mixed directional light)");
+                                if (bake.atlasReference.empty())
+                                    ImGui::TextWrapped("Not saved yet: save the scene inside a project to keep this bake.");
+                            }
+                            else if (!bake.atlasReference.empty())
+                                ImGui::TextWrapped("Lightmap file missing or unreadable: %s. Rebake lighting.", bake.atlasReference.c_str());
+                            else
+                                ImGui::TextUnformatted("Lightmaps: not baked (Scene > Lighting > Bake Lighting)");
+                            ImGui::TextWrapped(bakedLighting->GetLightingMode() == scene::SceneLightingMode::Baked
+                                ? "Baked: static meshes use their lightmaps and each light follows its Mode. Mixed lights keep realtime "
+                                  "shadows for moving objects."
+                                : "Realtime: lightmaps are ignored and every light is realtime.");
+                            ImGui::TextWrapped("Static meshes need lightmap UVs: authored, or Generate lightmap UVs in the model's import settings.");
+                            if (ImGui::Button("Clear Lightmaps")) { bakedLighting->ClearBake(); editorShell.MarkSceneDirty(); }
                         }
                         else if (auto *iblCaptureComponent = dynamic_cast<scene::IblCaptureComponent *>(componentPtr))
                         {
@@ -3715,6 +3740,21 @@ namespace PlutoGE::ui
         ImGui::SameLine();
         renderFlag("Generated LODs", meshComponent.GetUseGeneratedLods(),
                    [&](bool value) { meshComponent.SetUseGeneratedLods(value); }, "UseGeneratedLods");
+        if (meshComponent.IsStatic() && mesh && !mesh->HasLightmapUvs() && !meshComponent.GetMeshAssetReference().empty())
+        {
+            // Reload through the component's own data, so the source import runs with the new option.
+            renderFlag("Generate Lightmap UVs", meshComponent.GetGenerateLightmapUvs(), [&](bool value) {
+                meshComponent.SetGenerateLightmapUvs(value);
+                meshComponent.Deserialize(meshComponent.Serialize());
+            }, "GenerateLightmapUvs");
+            ImGui::SetItemTooltip("This mesh has no lightmap UVs, so lighting bakes skip it. Generates them on import.\n"
+                                  "For models imported through the model pipeline, use the model's import settings instead.");
+        }
+        else if (meshComponent.GetGenerateLightmapUvs())
+            renderFlag("Generate Lightmap UVs", true, [&](bool value) {
+                meshComponent.SetGenerateLightmapUvs(value);
+                meshComponent.Deserialize(meshComponent.Serialize());
+            }, "GenerateLightmapUvs");
         if (mesh && mesh->HasSkeleton())
         {
             renderFlag("Follow Parent Skeleton", meshComponent.GetFollowParentSkeleton(),

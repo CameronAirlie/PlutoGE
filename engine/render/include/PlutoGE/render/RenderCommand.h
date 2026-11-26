@@ -1,4 +1,5 @@
 #pragma once
+#include "PlutoGE/render/BakedLighting.h"
 #include "PlutoGE/render/FoliageWind.h"
 #include "PlutoGE/render/LodDistanceScale.h"
 #include "PlutoGE/render/Mesh.h"
@@ -39,6 +40,8 @@ namespace PlutoGE::render
         const MeshImpostor *impostor = nullptr;
         bool impostorOwner = false;
         bool isStatic = false;
+        // Where the draw's secondary UVs land in the scene's lightmap atlas; invalid when it is not lightmapped.
+        LightmapRect lightmap;
         bool castsShadow = true;
         // Drawn only into shadow maps (and GI's scene list), never by a camera: RhiSceneRenderer drops it from the camera
         // list (CameraCommandSelection). A mesh hiding joints from cameras casts its full shadow this way.

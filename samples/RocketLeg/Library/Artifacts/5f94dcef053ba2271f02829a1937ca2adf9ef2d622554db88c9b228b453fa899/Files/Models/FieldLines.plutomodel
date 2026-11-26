@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/FieldLines.glb
+SOURCE_ID	8a41292dfededcf853cd8d26709a6548
+SOURCE_HASH	679740596012743632
+IMPORTER_VERSION	10
+OBJECT	9705949375047680317	Material	M_FieldLines_0	project://Models/M_FieldLines_0.plutomaterial
+OBJECT	6189393579368786982	Mesh	FieldLines	project://Models/FieldLines.plutomesh

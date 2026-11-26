@@ -69,6 +69,10 @@ add_library(PlutoGEScene
     src/RagdollJoints.cpp
     src/RagdollProfile.cpp
     src/SceneBaker.cpp
+    src/bake/BakeKernel.cpp
+    src/lightmap/LightmapFile.cpp
+    src/lightmap/LightmapBake.cpp
+    src/components/BakedLightingComponent.cpp
     src/MapBake.cpp
     src/SceneSerializer.cpp
     src/UISystem.cpp
@@ -137,17 +141,18 @@ add_library(PlutoGEScene
 # Scene baking performs millions of BVH, spatial-hash, and image-filter
 # operations. Keeping this translation unit unoptimized makes editor Debug
 # bakes orders of magnitude slower, particularly generated-UV seam stitching.
-# Optimize only the baker while retaining Debug symbols and Debug behavior for
-# the rest of the scene module.
+# Optimize only the bake sources (SceneBaker and its stages) while retaining
+# Debug symbols and Debug behavior for the rest of the scene module.
+set(PLUTO_SCENE_BAKE_SOURCES src/SceneBaker.cpp src/bake/BakeKernel.cpp src/lightmap/LightmapBake.cpp)
 if(MSVC)
-    # This file uses different optimization/runtime-check flags from the PCH.
-    set_source_files_properties(src/SceneBaker.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
-    set_property(SOURCE src/SceneBaker.cpp APPEND PROPERTY
+    # These files use different optimization/runtime-check flags from the PCH.
+    set_source_files_properties(${PLUTO_SCENE_BAKE_SOURCES} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+    set_property(SOURCE ${PLUTO_SCENE_BAKE_SOURCES} APPEND PROPERTY
         COMPILE_FLAGS "$<$<CONFIG:Debug>:/O2 /Ob2>")
-    set_property(SOURCE src/SceneBaker.cpp APPEND PROPERTY
+    set_property(SOURCE ${PLUTO_SCENE_BAKE_SOURCES} APPEND PROPERTY
         VS_SETTINGS "$<$<CONFIG:Debug>:BasicRuntimeChecks=Default>")
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set_property(SOURCE src/SceneBaker.cpp APPEND PROPERTY
+    set_property(SOURCE ${PLUTO_SCENE_BAKE_SOURCES} APPEND PROPERTY
         COMPILE_OPTIONS "$<$<CONFIG:Debug>:-O3>")
 endif()
 

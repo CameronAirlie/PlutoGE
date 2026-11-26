@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 1db37c74921bf6b7984c951c169f86d165f6db150bb9e11af4892e793919221c
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" dae85391f6b9b1082f9cadb750523a03c51473fcc5d7209cf60b570ffad5626d
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/CarBody.glb" a01b1c7ac98b7a4945130f36b165acd6a9284df72e0cbd630934aa8cb24796f2
+OUTPUT "Models/CarBody.plutomesh" 39fb138b0d673b5681f9cfb816554f80beb61e8e2930f1357724cb152b842dae
+OUTPUT "Models/CarBody.plutomodel" c0229e172b167ba6bfd577cecffaf97d21f82ab519f5b3175b7c5bd97492efb0
+OUTPUT "Models/M_CarBody_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

@@ -14,9 +14,9 @@ All three are on by default. They need no post-processing effect, so they work o
 Low, which disables SSAO, GI and SSR. For a low-end target, combine them with material ambient occlusion maps and
 contact shadows. SSAO and DDGI can be enabled on higher presets and work alongside them.
 
-Probe volumes and reflection captures are the only baked lighting. Lightmap baking was removed: **Scene > Lighting >
-Bake Lighting** bakes probes, and saved scenes that still reference lightmaps load without them. Meshes keep their
-secondary UV channel (`uv2`) as ordinary geometry.
+Static geometry can also be lightmapped, with baked shadows and bounce light, while lights choose Realtime, Mixed or
+Baked modes: see [BAKED_LIGHTING.md](BAKED_LIGHTING.md). **Scene > Lighting > Bake Lighting** bakes lightmaps and
+ambient volumes together. Moving objects take baked light from the ambient volumes described here.
 
 ## Using it
 

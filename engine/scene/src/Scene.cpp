@@ -1,4 +1,5 @@
 #include "PlutoGE/scene/components/AmbientLightVolumeComponent.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/platform/LoadingWork.h"
 #include "RuntimeComponentIndex.h"
 #include "AnimationPoseBatch.h"
@@ -2690,6 +2691,7 @@ namespace PlutoGE::scene
             return;
         m_environmentLights.clear();
         m_physicalSkies.clear();
+        m_bakedLighting.clear();
         m_volumetricClouds.clear();
         m_winds.clear();
         m_weathers.clear();
@@ -2703,6 +2705,8 @@ namespace PlutoGE::scene
                 m_environmentLights.push_back(light);
             for (auto *sky : entity->GetComponents<PhysicalSkyComponent>())
                 m_physicalSkies.push_back(sky);
+            for (auto *baked : entity->GetComponents<BakedLightingComponent>())
+                m_bakedLighting.push_back(baked);
             for (auto *cloud : entity->GetComponents<VolumetricCloudComponent>())
                 m_volumetricClouds.push_back(cloud);
             for (auto *wind : entity->GetComponents<WindComponent>())
@@ -2719,6 +2723,15 @@ namespace PlutoGE::scene
         for (auto *root : m_rootEntities)
             collect(collect, root);
         m_environmentComponentsDirty = false;
+    }
+
+    BakedLightingComponent *Scene::GetBakedLighting() const
+    {
+        RefreshEnvironmentComponents();
+        for (auto *baked : m_bakedLighting)
+            if (baked->IsEnabled() && baked->GetOwner() && baked->GetOwner()->IsActive())
+                return baked;
+        return nullptr;
     }
 
     const std::vector<PhysicalSkyComponent *> &Scene::GetPhysicalSkyComponents() const

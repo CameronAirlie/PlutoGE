@@ -1,0 +1,8 @@
+PLUTOASSET	1
+ID	32d301b41b6eb97004e870f5183a0164
+IMPORTER_VERSION	1
+IMPORT_STATE	1
+SOURCE	project://Models/CarBody.glb
+GENERATION	1db37c74921bf6b7984c951c169f86d165f6db150bb9e11af4892e793919221c
+INPUT	"source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/CarBody.glb" a01b1c7ac98b7a4945130f36b165acd6a9284df72e0cbd630934aa8cb24796f2
+INPUT	"source-metadata" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/CarBody.glb.plutometa" 35c5fa70bb14f337c545e917ddb0bb15718f5c58b0de0ce179d022078b331154

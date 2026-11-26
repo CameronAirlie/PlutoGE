@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PlutoGE/scene/components/Component.h"
+#include "PlutoGE/render/BakedLighting.h"
 #include "PlutoGE/render/LocalLight.h"
 #include "PlutoGE/render/ShadowMethod.h"
 #include <cstdint>
@@ -86,7 +87,9 @@ namespace PlutoGE::scene
         bool tracedShadows = true;
         DirectionalShadowSettings directionalShadowSettings{};
         bool castsShadows = false;   // Whether the light casts shadows
-        bool isStatic = false;       // Static lights only refresh shadow data when dirty
+        // How the light takes part in baked lighting (render/BakedLighting.h). Saved as "Mode"; older scenes' "Static"
+        // flag loads as Mixed (true) or Realtime (false).
+        render::LightBakeMode bakeMode = render::LightBakeMode::Realtime;
         bool isDirty = true;         // Dirty lights need their shadow data refreshed
     };
 
@@ -101,7 +104,8 @@ namespace PlutoGE::scene
         void SetIntensity(float intensity);
         void SetSpotCone(float innerAngle, float outerAngle);
         void SetDirection(const glm::vec3 &direction);
-        void SetStatic(bool isStatic);
+        void SetBakeMode(render::LightBakeMode mode);
+        [[nodiscard]] render::LightBakeMode GetBakeMode() const { return m_config.bakeMode; }
         void SetCastsShadows(bool castsShadows);
         void SetSourceShape(float radius, float length);
         void SetRectSize(float width, float height);

@@ -15,6 +15,7 @@ add_library(PlutoGERender
     src/ParallelRecording.cpp
     src/GeometryArena.cpp
     src/SceneEnvironment.cpp
+    src/LightmapUvs.cpp
     src/SceneOutline.cpp
     src/FoliageWind.cpp
     src/PhysicalSkyModel.cpp
@@ -161,9 +162,14 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightVisibilityConfig.h")
         endif()
-        if (MODULE MATCHES "^BasicLit" OR MODULE STREQUAL "Glass" OR MODULE STREQUAL "ParticleBoundary")
+        # Every module whose source includes BasicLit.slang (directly or through BasicLitStandard.slang): its object
+        # and vertex layouts must rebuild with it, or depth and shading passes disagree about them.
+        if (MODULE MATCHES "^(BasicLit|GeometryDepth|DeferredLocalLights|DirectionalShadowMask)" OR MODULE STREQUAL "Glass" OR
+            MODULE STREQUAL "ParticleBoundary")
             set(material_dependencies
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLit.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BasicLitStandard.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightmapSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/TerrainLayers.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/LightClusters.slang"

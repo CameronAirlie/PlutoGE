@@ -4,6 +4,7 @@
 #include "PlutoGE/import/FoliageCards.h"
 #include "PlutoGE/import/MeshTriangleBudget.h"
 #include "PlutoGE/import/MaterialUvSets.h"
+#include "PlutoGE/render/LightmapUvs.h"
 #include "SimplificationSeamLocks.h"
 #include "SkinWeightAttributeSlots.h"
 
@@ -234,6 +235,7 @@ namespace PlutoGE::assetimport
             bool optimizeOverdraw = false;
             bool assimpQualityPostProcess = false;
             bool vegetationLods = false;
+            bool generateLightmapUvs = false;
             uint32_t triangleBudget = 0; // MeshImportOptions::triangleBudget; part of the cache key, not the flags
 
             uint32_t ToFlags() const
@@ -245,6 +247,7 @@ namespace PlutoGE::assetimport
                 flags |= generateTangents ? 8u : 0u;
                 flags |= optimizeVertexCache ? 16u : 0u;
                 flags |= vegetationLods ? 32u : 0u;
+                flags |= generateLightmapUvs ? 64u : 0u;
                 return flags;
             }
 
@@ -277,8 +280,24 @@ namespace PlutoGE::assetimport
                 .optimizeOverdraw = requested.optimizeOverdraw || ReadBooleanEnvironmentFlag("PLUTOGE_OPTIMIZE_MESH_OVERDRAW", false),
                 .assimpQualityPostProcess = ReadBooleanEnvironmentFlag("PLUTOGE_ASSIMP_QUALITY_POSTPROCESS", false),
                 .vegetationLods = requested.vegetationLods,
+                .generateLightmapUvs = requested.generateLightmapUvs,
                 .triangleBudget = requested.triangleBudget,
             };
+        }
+
+        // Before LODs and cache optimisation: chart seams add vertices, which LODs and the vertex order then include.
+        template <typename Asset>
+        void ApplyGeneratedLightmapUvs(Asset &asset, const MeshCookOptions &cookOptions)
+        {
+            if (!cookOptions.generateLightmapUvs || asset.meshData.indices.empty())
+                return;
+            std::vector<render::LightmapUvRange> ranges;
+            for (const auto &submesh : asset.submeshes)
+                ranges.push_back({submesh.indexOffset, submesh.indexCount});
+            if (ranges.empty())
+                ranges.push_back({0u, static_cast<std::uint32_t>(asset.meshData.indices.size())});
+            render::GenerateLightmapUvs(asset.meshData, ranges);
+            asset.hasLightmapUvs = true;
         }
 
         bool IsMeshDiskCacheEnabled()
@@ -4905,6 +4924,7 @@ namespace PlutoGE::assetimport
             }
             GenerateMissingTangents(asset.meshData);
             ApplyCookTriangleBudget(asset.meshData, asset.submeshes, asset.materials, cookOptions);
+            ApplyGeneratedLightmapUvs(asset, cookOptions);
             const auto optimizeStart = ImportClock::now();
             OptimizeMeshData(asset.meshData, asset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, profile);
             if (profile && profile->enabled)
@@ -5162,6 +5182,7 @@ namespace PlutoGE::assetimport
             const auto optimizeStart = ImportClock::now();
             GenerateMissingTangents(parsedMeshAsset.meshData);
             ApplyCookTriangleBudget(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, parsedMeshAsset.materials, cookOptions);
+            ApplyGeneratedLightmapUvs(parsedMeshAsset, cookOptions);
             OptimizeMeshData(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.optimizeVertexCache, cookOptions.optimizeOverdraw, &profile);
             GenerateSubmeshLods(parsedMeshAsset.meshData, parsedMeshAsset.submeshes, cookOptions.generateLods,
                                 cookOptions.vegetationLods ? LodProfile::Vegetation : LodProfile::Standard,

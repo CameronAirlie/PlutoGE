@@ -2443,6 +2443,10 @@ namespace PlutoGE::ui
                 ImGui::Checkbox("Bake impostor", &m_modelSettingsDraft.bakeImpostor);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("Bakes view cards of the model so distant foliage instances draw as impostors.");
+                ImGui::Checkbox("Generate lightmap UVs", &m_modelSettingsDraft.generateLightmapUvs);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Replaces the secondary UVs with a generated layout so static instances can be lightmapped. "
+                                      "Use it for models without authored lightmap UVs.");
                 ImGui::EndDisabled();
                 const bool settingsChanged = m_modelSettingsDraft != m_modelSettingsCommitted;
                 ImGui::BeginDisabled(importRunning || !m_modelSettingsValid || !settingsChanged);

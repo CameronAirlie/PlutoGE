@@ -1,3 +1,4 @@
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/PhysicalSkyModel.h"
 #include "PlutoGE/render/SkyIrradiance.h"
@@ -153,9 +154,11 @@ namespace PlutoGE::render
         lighting.ambientIntensity = scene && scene->IsPreviewLightingEnabled() ? 0.55f : 0.0f;
         lighting.directionalIntensity = 0.0f;
         lighting.directionalDirection = -glm::normalize(glm::vec3(0.25f, 0.8f, 0.4f));
+        const scene::Light *directional = nullptr;
         for (const auto *light : lights)
             if (light && light->type == scene::LightType::Directional)
             {
+                directional = light;
                 lighting.directionalDirection = light->direction;
                 lighting.directionalColor = light->color;
                 lighting.directionalIntensity = light->intensity;
@@ -188,7 +191,30 @@ namespace PlutoGE::render
 
         lighting.wind = BuildSceneWind(scene);
         lighting.weather = BuildSceneWeather(scene);
+        ResolveBakedLighting(lighting, scene, directional);
         return lighting;
+    }
+
+    void ResolveBakedLighting(BasicLighting &lighting, const scene::Scene *scene, const scene::Light *directional)
+    {
+        auto &baked = lighting.bakedLighting;
+        baked = {};
+        const auto *component = scene ? scene->GetBakedLighting() : nullptr;
+        if (!component || !component->IsActive())
+            return;
+        baked.active = true;
+        baked.atlasSize = {component->GetBake().atlas->width, component->GetBake().atlas->height};
+        if (!directional)
+            return;
+        baked.directionalMode = directional->bakeMode;
+        // The mask is this light's static shadow only while it shines from where it was baked: a turned sun, or the
+        // moon a physical sky substitutes at night, would be shadowed by the wrong silhouettes.
+        const auto &bake = component->GetBake();
+        constexpr float kMaskDirectionTolerance = 0.99985f; // about one degree
+        baked.directionalShadowMask = bake.hasShadowMask && directional->bakeMode == LightBakeMode::Mixed &&
+                                      directional->castsShadows && !lighting.directionalIsMoon &&
+                                      glm::dot(glm::normalize(directional->direction), glm::normalize(bake.shadowMaskDirection)) >
+                                          kMaskDirectionTolerance;
     }
 
     SceneWindSettings BuildSceneWind(const scene::Scene *scene)

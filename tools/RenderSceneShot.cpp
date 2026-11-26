@@ -1,3 +1,5 @@
+#include "PlutoGE/scene/LightmapFile.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/assets/AssetDatabase.h"
 #include "PlutoGE/assets/AssetManager.h"
 #include "PlutoGE/assets/Json.h"
@@ -40,6 +42,7 @@
 // copy. Managed scripts, physics, UI and audio do not run.
 //   PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--time seconds] [--size WxH]
 //   PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>
+//   PlutoGERenderSceneShot <project-root> <scene> --bake-lighting <output.plutoscene>   (lightmaps + ambient volumes)
 //   PlutoGERenderSceneShot <project-root> <scene> <output.tga|ppm> --top-down <layout.plutomap> [--size N]
 // --top-down renders a north-up orthographic view of exactly the square a baked .plutomap covers,
 // for a photographic map image that lines up with the outline bake and MapLayout projection.
@@ -53,6 +56,7 @@ int main(int argc, char **argv) try
     using namespace PlutoGE;
     if (argc < 5)
         throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--time seconds] [--size WxH]\n"
+                                    "       PlutoGERenderSceneShot <project-root> <scene> --bake-lighting <output.plutoscene>\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> <output.tga|ppm> --top-down <layout.plutomap> [--size N]");
     auto &assets = core::Engine::GetInstance().GetAssetManager();
@@ -82,6 +86,27 @@ int main(int argc, char **argv) try
     auto world = scene::SceneSerializer::Load(std::filesystem::absolute(argv[2]).string(), &error);
     if (!world) throw std::runtime_error(error);
 
+    if (std::string_view(argv[3]) == "--bake-lighting")
+    {
+        // A full bake as the editor's Bake Lighting runs it: lightmaps and ambient volumes. The atlas is written beside
+        // the output scene (<output>.plutolightmap), which references it by path.
+        auto settings = scene::SceneBakeSettings::Final();
+        const auto result = scene::SceneBaker().Bake(*world, settings);
+        std::cout << result.message << '\n';
+        if (auto *baked = world->GetBakedLighting(); baked && baked->GetBake().atlas && result.lightmappedDrawCount > 0)
+        {
+            auto atlasPath = std::filesystem::absolute(argv[4]);
+            atlasPath.replace_extension(scene::kLightmapFileExtension);
+            if (!scene::WriteLightmapFile(atlasPath, *baked->GetBake().atlas, &error))
+                throw std::runtime_error(error);
+            baked->SetAtlasReference(atlasPath.generic_string());
+            std::cout << "Saved lightmap atlas " << atlasPath.string() << '\n';
+        }
+        if (!scene::SceneSerializer::Save(*world, std::filesystem::absolute(argv[4]).string(), &error))
+            throw std::runtime_error(error);
+        std::cout << "Saved baked scene " << argv[4] << '\n';
+        return result.succeeded ? 0 : 2;
+    }
     if (std::string_view(argv[3]) == "--bake-ambient")
     {
         auto settings = scene::SceneBakeSettings::Final();
@@ -153,8 +178,9 @@ int main(int argc, char **argv) try
     const auto visit = [&](auto &&self, scene::Entity *entity) -> void {
         if (!entity->IsActiveInHierarchy()) return;
         for (auto *light : entity->GetComponents<scene::LightComponent>()) light->Update(0);
+        // Lab scenes prefix their shot cameras; game scenes name cameras plainly (the prefixed one wins).
         if (auto *candidate = entity->GetComponent<scene::CameraComponent>();
-            candidate && entity->GetName() == std::string("CAMERA - ") + argv[4])
+            candidate && (entity->GetName() == std::string("CAMERA - ") + argv[4] || (!camera && entity->GetName() == argv[4])))
             camera = candidate;
         auto *component = entity->GetComponent<scene::MeshComponent>();
         // A map shows level geometry only: characters, weapons and other dynamic or unresolved
@@ -177,7 +203,7 @@ int main(int argc, char **argv) try
         }
         if (component)
         {
-            auto *mesh = component->GetMesh();
+            auto *mesh = component->GetLightmapMesh(); // as MeshComponent draws it (scale-fitted lightmap UVs)
             if (!mesh) throw std::runtime_error("Missing mesh: " + entity->GetName());
             // Entities split from a model draw only their own submesh range.
             const int first = component->GetSubmeshIndex();
@@ -201,6 +227,9 @@ int main(int argc, char **argv) try
                     glm::length(glm::vec3(draw.model[1])), glm::length(glm::vec3(draw.model[2]))});
                 draw.previousWorldBounds = draw.worldBounds;
                 draw.isStatic = true;
+                // Lightmap rects as MeshComponent::SubmitRenderCommands looks them up.
+                if (const auto *baked = world->GetBakedLighting(); baked && component->IsStatic())
+                    draw.lightmap = baked->FindRect(entity->GetID(), static_cast<std::uint32_t>(index));
                 draws.push_back(draw);
             }
         }
@@ -346,6 +375,7 @@ int main(int argc, char **argv) try
     const auto &stats = renderer.GetTimingStats();
     std::cout << "Directional shadows: " << stats.directionalShadowStatus << " (" << stats.shadowCandidateCount
               << " casters; " << stats.rigidShadowCastersOutOfReach << " rigid out of reach)\n";
+    std::cout << "Draws: " << stats.visibleDrawCount << " visible packets, " << stats.visibleInstanceCount << " instances\n";
     const auto image = device.ReadTextureRgba8(renderer.GetColorTexture());
     const std::filesystem::path output(argv[3]);
     if (output.has_parent_path()) std::filesystem::create_directories(output.parent_path());

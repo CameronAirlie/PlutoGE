@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 801b8de2ad10bee9fb487d68a38a8a8b6511738beb922a5539e146199f236cde
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" fa1ad264ee732d9b00202b4148fab78bba0864d8658283bfb35de6591b004ae1
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/BallPanels.glb" bb59d2f563c6303a5481ebf217d6e5306967a8b684ff9ff8e7f1adb6d9455271
+OUTPUT "Models/BallPanels.plutomesh" e85559d6f120fd9acacacb98d6eb203935a279ff5121d8c8262929f44820bad5
+OUTPUT "Models/BallPanels.plutomodel" dea00b5b9e0750e50e4383c71f4996bd3eef9c168b6e4a3f9ea32fc939ccc960
+OUTPUT "Models/M_BallPanels_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

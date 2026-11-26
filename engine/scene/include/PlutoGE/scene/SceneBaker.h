@@ -27,6 +27,9 @@ namespace PlutoGE::scene
         // renderer applies the current physical sky. Ignored without a physical sky.
         bool probeLiveSky = true;
         bool probesOnly = false;
+        // Lightmaps for static meshes with lightmap UVs, with the scene's Baked Lighting settings (created when the
+        // scene has none). Ignored by probe-only bakes.
+        bool bakeLightmaps = true;
         bool logProbeDiagnostics = false; // Read-only source attribution for bake troubleshooting.
         float probeBounceStrength = 0.65f;
 
@@ -37,6 +40,7 @@ namespace PlutoGE::scene
     {
         bool succeeded = false;
         int bakedProbeCount = 0;
+        int lightmappedDrawCount = 0;
         std::string message;
     };
 

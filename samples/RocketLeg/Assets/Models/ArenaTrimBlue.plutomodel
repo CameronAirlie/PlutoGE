@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/ArenaTrimBlue.glb
+SOURCE_ID	1120db5ee47715627116ae0facab877f
+SOURCE_HASH	9096144889182479809
+IMPORTER_VERSION	10
+OBJECT	14948470241971365015	Material	M_ArenaTrimBlue_0	project://Models/M_ArenaTrimBlue_0.plutomaterial
+OBJECT	5435276673855391956	Mesh	ArenaTrimBlue	project://Models/ArenaTrimBlue.plutomesh

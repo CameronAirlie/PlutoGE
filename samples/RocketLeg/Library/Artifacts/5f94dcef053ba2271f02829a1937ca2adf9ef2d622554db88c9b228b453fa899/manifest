@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 5f94dcef053ba2271f02829a1937ca2adf9ef2d622554db88c9b228b453fa899
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" 33fadd882dc0580900fb151fa2eb32ecaa31e20da6f52ee576bc72ea7587a808
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/FieldLines.glb" 2a2f58cf524272817202353cb177138d3025acc0b4c25ac6b9fe901545a557bb
+OUTPUT "Models/FieldLines.plutomesh" 34cab3263b69b8aecaf33b70a2744ba1b303a8c42469c97d66cde66c8bc0b9a6
+OUTPUT "Models/FieldLines.plutomodel" 867790aef9efa06807505ee5dcc49251424b12352138c1c7363595d9ab0e9a79
+OUTPUT "Models/M_FieldLines_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

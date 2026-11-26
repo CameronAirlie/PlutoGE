@@ -91,6 +91,8 @@ struct VertexOutput
 #endif
     // LOD crossfade (instanceLodFade): 0 drawn whole, f > 0 the finer side, -f the coarser side of a switch.
     nointerpolation float lodFade : TEXCOORD10;
+    // The lightmap atlas coordinate, z 1 when the draw is lightmapped (LightmapSampling.slang lightmapCoordinate).
+    float3 lightmapUv : TEXCOORD12;
 #ifdef PLUTO_DETAIL_GRASS
     // Detail grass (BasicLitGrass.slang): rgb multiplies the albedo, a the material occlusion.
     float4 grassTint : TEXCOORD11;
@@ -111,6 +113,7 @@ struct FragmentOutput
 
 
 #include "AmbientProbeSampling.slang"
+#include "LightmapSampling.slang"
 #include "BakedEnvironment.slang"
 
 float3 sampleIblRoughnessLevel(int index, int face, float2 faceUV, float level)
@@ -167,6 +170,7 @@ cbuffer ObjectParameters : register(b0, space2)
     column_major float4x4 model;
     column_major float4x4 previousModel;
     float4 objectDebugParameters;
+    float4 objectLightmapScaleOffset; // BasicDraw::lightmap; zero scale when not lightmapped
 };
 
 struct InstanceObjectParameters
@@ -174,6 +178,7 @@ struct InstanceObjectParameters
     column_major float4x4 model;
     column_major float4x4 previousModel;
     float4 debugParameters;
+    float4 lightmapScaleOffset;
 };
 
 // Streamed objects and transient instance chunks: up to 64 per block, selected by the instance index.
@@ -225,6 +230,8 @@ InstanceObjectParameters instanceObject(uint instanceId)
     result.model = record.model;
     result.previousModel = record.previousModel;
     result.debugParameters = instanceDebugParameters;
+    // Storage-instanced draws (foliage, scattered models) are never lightmapped.
+    result.lightmapScaleOffset = float4(0.0, 0.0, 0.0, 0.0);
     return result;
 }
 
@@ -1147,7 +1154,7 @@ float4 graphWorldPosition(float4x4 transform, float3 position, float3 normal, fl
 // The vertex transform every lit entry point shares; they differ only in where object parameters come from.
 [ForceInline]
 VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, float4x4 objectPreviousModel,
-                                    float4 debugParameters)
+                                    float4 debugParameters, float4 lightmapScaleOffset)
 {
     VertexOutput output;
     const FoliageWindParameters wind = materialFoliageWind();
@@ -1192,6 +1199,7 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
     output.worldNormal = normalize(mul((float3x3)objectModel, input.normal));
     output.uv = input.uv;
     output.uv2 = input.uv2;
+    output.lightmapUv = lightmapCoordinate(input.uv2, lightmapScaleOffset);
     output.worldPosition = worldPosition.xyz;
     output.worldTangent = float4(normalize(mul((float3x3)objectModel, localTangent)), input.tangent.w == 0.0 ? 1.0 : input.tangent.w);
     output.lodFade = 0.0;
@@ -1204,7 +1212,7 @@ VertexOutput transformSurfaceVertex(VertexInput input, float4x4 objectModel, flo
 [shader("vertex")]
 VertexOutput vertexMain(VertexInput input)
 {
-    return transformSurfaceVertex(input, model, previousModel, objectDebugParameters);
+    return transformSurfaceVertex(input, model, previousModel, objectDebugParameters, objectLightmapScaleOffset);
 }
 
 [shader("vertex")]
@@ -1213,7 +1221,8 @@ VertexOutput vertexMain(VertexInput input)
 VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
     const InstanceObjectParameters instance = instanceObject(instanceId);
-    VertexOutput output = transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
+    VertexOutput output = transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters,
+                                                 instance.lightmapScaleOffset);
     output.lodFade = instanceLodFade(instanceId);
     return output;
 }
@@ -1224,7 +1233,8 @@ VertexOutput instancedVertexMain(VertexInput input, uint instanceId : SV_VulkanI
 VertexOutput bindlessVertexMain(VertexInput input, uint instanceId : SV_VulkanInstanceID)
 {
     const BindlessInstance instance = bindlessInstances[instanceId];
-    VertexOutput output = transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters);
+    VertexOutput output = transformSurfaceVertex(input, instance.model, instance.previousModel, instance.debugParameters,
+                                                 instance.lightmapScaleOffset);
     output.materialIndex = instance.material.x;
     return output;
 }
@@ -1693,6 +1703,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     }
     const bool transmits = any(diffuseTransmittance > 0.0);
     const float3 lightDirection = normalize(-directionalDirectionIntensity.xyz);
+    // Baked lighting (LightmapSampling.slang): a Baked directional light reaches surfaces only through lightmaps and
+    // ambient volumes, and a lightmapped surface takes its ambient light (and the sun's static shadows) from its texels.
+    const float sunIntensity = directionalLightBaked() ? 0.0 : directionalDirectionIntensity.w;
+    const LightmapSample lightmap = sampleLightmap(input.lightmapUv);
     const float3 viewDirection = normalize(cameraPositionAmbient.xyz - input.worldPosition);
     const float ndotl = saturate(dot(normal, lightDirection));
     const float dielectricF0 = pow((glassParameters.z - 1.0) / (glassParameters.z + 1.0), 2.0);
@@ -1705,7 +1719,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     float3 directDiffuse, specular;
     brdfEvaluate(brdf, brdfPointLight(lightDirection), ndotl, directDiffuse, specular);
     layersEvaluate(brdf, layers, brdfPointLight(lightDirection), ndotl, directDiffuse, specular);
-    const float3 direct = (directDiffuse + specular) * directionalColor.rgb * directionalDirectionIntensity.w;
+    const float3 direct = (directDiffuse + specular) * directionalColor.rgb * sunIntensity;
     float3 pointLighting = 0.0;
     float3 pointSpecularLighting = 0.0;
     // Evaluate geometry derivatives before divergent per-light/face selection.
@@ -1734,13 +1748,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
                                   lerp(8.0, 1.5, saturate(subsurfaceRadius * 0.1)));
     const float3 subsurfaceLighting = sampledColor.rgb * max(subsurfaceColorStrength.rgb, 0.0) *
                                       (wrappedNdotL * 0.65 + backScatter * 0.35) *
-                                      directionalColor.rgb * directionalDirectionIntensity.w * subsurfaceStrength;
+                                      directionalColor.rgb * sunIntensity * subsurfaceStrength;
     const float3 unshadowedDirectionalLighting = direct * (1.0 - subsurfaceStrength) + subsurfaceLighting;
     // Sun through a thin surface. Its near side faces away from the sun, so the camera-facing shadow (the mask, or the
     // filter below) would find the surface's own entry in the map: the lookup moves to the side the sun reaches, where
     // other leaves and branches still shade it. Either ndotl or this is zero, so one lookup serves both.
-    const float farSunNdotL = transmits && directionalDirectionIntensity.w > 0.0 ? saturate(-dot(normal, lightDirection)) : 0.0;
-    const float3 transmittedSun = diffuseTransmittance / PI * farSunNdotL * directionalColor.rgb * directionalDirectionIntensity.w;
+    const float farSunNdotL = transmits && sunIntensity > 0.0 ? saturate(-dot(normal, lightDirection)) : 0.0;
+    const float3 transmittedSun = diffuseTransmittance / PI * farSunNdotL * directionalColor.rgb * sunIntensity;
     const bool needsDirectionalShadow = customLighting || geometryParameters.x > 0.5 || farSunNdotL > 0.0 ||
                                         any(unshadowedDirectionalLighting != float3(0.0));
     float shadowVisibility = 1.0;
@@ -1785,6 +1799,10 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
             normalizedCascade = directional.level;
         }
     }
+    // A lightmapped surface's static occluders are also in its baked shadow mask, which stays sharp beyond the realtime
+    // shadow distance and when realtime shadows are off. Dynamic casters only exist in the realtime shadow.
+    if (lightmap.present)
+        shadowVisibility = min(shadowVisibility, lightmap.shadowMask);
     // Contact shadows (the light visibility mask) and micro-shadowing concern the near side, and do not apply to light
     // from the far side.
     const float farSunVisibility = shadowVisibility;
@@ -1831,11 +1849,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     const int gridVolume = kSurfaceDiffuseVolumes && (transparentPass || pointParameters.w != 12.0)
         ? selectDiffuseVolume(input.worldPosition) : -1;
     const bool gridCovered = gridVolume >= 0;
-    const bool gridDeferred = gridCovered && !transparentPass && probeAtlasParameters.w > 0.5;
+    // Lightmapped surfaces take diffuse light from their texels; the grid still occludes their sky reflections.
+    const bool gridDeferred = gridCovered && !lightmap.present && !transparentPass && probeAtlasParameters.w > 0.5;
     DiffuseGridSample ambientGrid = emptyDiffuseGridSample();
     if (gridCovered && !gridDeferred)
         ambientGrid = sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal);
     const float3 gridDiffuse = ambientGrid.irradiance * diffuseResponse;
+    const float3 lightmapDiffuse = lightmap.radiance * diffuseResponse;
     const float3 reflectionDirection = reflect(-viewDirection, normal);
     float3 ambient = 0.0;
     float3 environmentSpecular = 0.0;
@@ -1845,7 +1865,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     {
         const bool skyLighting = physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0);
         const float3 overcastIrradiance = cloudOvercastRadiance(cloudLighting.overcast, normal) * diffuseResponse;
-        if (gridCovered)
+        if (lightmap.present)
+            ambient = lightmapDiffuse;
+        else if (gridCovered)
             ambient = gridDiffuse;
         else if (skyLighting)
             ambient = cloudySky(samplePhysicalSkyIrradiance(normal) * diffuseResponse * physicalSkySettings.z,
@@ -1877,7 +1899,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         for (int i = 0; i < 4; ++i)
         {
             if (captureWeights[i] <= 0) continue;
-            const float3 diffuse = gridCovered ? gridDiffuse : iblDiffuse(i, normal) * diffuseResponse;
+            const float3 diffuse = lightmap.present ? lightmapDiffuse
+                : gridCovered ? gridDiffuse : iblDiffuse(i, normal) * diffuseResponse;
             float3 specular = iblRadiance(i, input.worldPosition, reflectionDirection, materialRoughness) *
                               iblSpecularResponse(f0, materialRoughness, ndotv) * layerBaseScale;
             if (layers.clearCoatActive)
@@ -1931,9 +1954,9 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     if(customLighting)
     {
         directionalLighting=float3(0.0);
-        if(directionalDirectionIntensity.w>0.0)
+        if(sunIntensity>0.0)
             directionalLighting=evaluateShaderGraphLighting(shaderGraph,graphState,lightDirection,
-                directionalColor.rgb*directionalDirectionIntensity.w,1.0,shadowVisibility);
+                directionalColor.rgb*sunIntensity,1.0,shadowVisibility);
     }
     FragmentOutput output = (FragmentOutput)0;
     output.color = float4(ambient + pointLighting + directionalLighting + surfaceEmission,
@@ -1977,8 +2000,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         environment = lerp(environment, screenReflection.rgb,
             saturate(screenReflection.a * glassReflectionTrace.x * (1.0 - materialRoughness)));
         const float3 surfaceDiffuse = sampledColor.rgb * (cameraPositionAmbient.w +
-            directionalColor.rgb * directionalDirectionIntensity.w * ndotl * shadowVisibility / PI);
-        const float3 directSpecular = specular * directionalColor.rgb * directionalDirectionIntensity.w *
+            directionalColor.rgb * sunIntensity * ndotl * shadowVisibility / PI);
+        const float3 directSpecular = specular * directionalColor.rgb * sunIntensity *
                                       shadowVisibility;
         const float3 transmissionWeight = (1.0 - viewFresnel) * transmission * absorption * saturate(sampledColor.rgb);
         const float3 surface = (1.0 - viewFresnel) * (1.0 - transmission) * surfaceDiffuse +
@@ -2004,7 +2027,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Above one half, it is also how much screen-space AO applies (SSAOUpsample.slang): overlapping leaves are not the
     // closed creases AO darkens, and light reaches them through each other.
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0)
-        : float4(max(ambient - environmentSpecular, 0.0), transmits ? FoliageIndirectAlpha : 1.0);
+        : float4(max(ambient - environmentSpecular, 0.0),
+                 lightmap.present ? BakedIndirectAlpha : transmits ? FoliageIndirectAlpha : 1.0);
     // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
     // Alpha below one half marks deferred probe irradiance; 0.25 and 0.75 also mark local lights the deferred pass adds
     // (encodeSurfaceNormalMarks).

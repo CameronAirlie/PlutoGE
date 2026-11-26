@@ -1,0 +1,7 @@
+PLUTOMODEL	1
+SOURCE	project://Models/CarGlass.glb
+SOURCE_ID	9770612b26a1e7c61c174e942be062ef
+SOURCE_HASH	16710109969164608145
+IMPORTER_VERSION	10
+OBJECT	8357649158818462024	Material	M_CarGlass_0	project://Models/M_CarGlass_0.plutomaterial
+OBJECT	2560507712007002891	Mesh	CarGlass	project://Models/CarGlass.plutomesh

@@ -63,6 +63,8 @@
 #include "PlutoGE/scripting/ScriptEngine.h"
 #include "PlutoGE/scripting/ScriptLogging.h"
 #include "PlutoGE/scene/SceneBaker.h"
+#include "PlutoGE/scene/LightmapFile.h"
+#include "PlutoGE/scene/components/BakedLightingComponent.h"
 #include "PlutoGE/scene/MapBake.h"
 #include "PlutoGE/scene/SceneSerializer.h"
 #include "PlutoGE/ui/SceneSnapshots.h"
@@ -124,6 +126,32 @@ namespace PlutoGE::ui
         if (!postProcess.IsOutOfDate(assets))
             return false;
         return postProcess.Refresh(assets);
+    }
+
+    void EditorShell::SaveBakedLightmaps()
+    {
+        auto *bakedLighting = m_scene ? m_scene->GetBakedLighting() : nullptr;
+        if (!bakedLighting || !bakedLighting->GetBake().atlas)
+            return;
+        if (!m_project)
+        {
+            m_statusMessage += " Lightmaps were not saved: no project is open.";
+            return;
+        }
+        // One atlas per scene, named after it, beside the project's other baked data.
+        const std::filesystem::path scenePath = m_scene->GetFilePath();
+        const std::string name = scenePath.empty() ? std::string("Untitled") : scenePath.stem().string();
+        std::string error;
+        if (const auto reference = scene::SaveLightmapAsset(*m_project, *bakedLighting->GetBake().atlas, name, "Lightmaps", &error))
+        {
+            bakedLighting->SetAtlasReference(*reference);
+            MarkSceneDirty();
+        }
+        else
+        {
+            m_statusMessage += " Lightmaps were not saved: " + error;
+            Log(ConsoleSeverity::Error, "Lightmaps were not saved: " + error);
+        }
     }
 
     void EditorShell::GenerateAmbientReflectionCaptures()
@@ -4130,6 +4158,8 @@ namespace PlutoGE::ui
                 m_generateAmbientReflections = false;
                 m_statusMessage = bakeResult.message;
                 std::cout << bakeResult.message << std::endl;
+                if (bakeResult.lightmappedDrawCount > 0)
+                    SaveBakedLightmaps();
 
                 if (bakeResult.succeeded && !m_engine.IsRuntimeRunning() && !m_scene->GetFilePath().empty())
                 {
@@ -4823,7 +4853,34 @@ namespace PlutoGE::ui
                     {
                         if (ImGui::MenuItem("Bake Lighting"))
                             runBake(scene::SceneBakeSettings::Final());
-                        ImGui::SetItemTooltip("Bake the probe volume from static lights.");
+                        ImGui::SetItemTooltip("Bakes lightmaps for static meshes and the ambient light volumes for moving\n"
+                                              "objects, from Mixed and Baked lights and the sky.");
+                        {
+                            auto *bakedLighting = m_scene->GetBakedLighting();
+                            const bool baked = !bakedLighting || bakedLighting->GetLightingMode() == scene::SceneLightingMode::Baked;
+                            if (ImGui::BeginMenu("Lighting Mode"))
+                            {
+                                const auto setMode = [&](scene::SceneLightingMode mode)
+                                {
+                                    if (!bakedLighting)
+                                    {
+                                        auto entity = std::make_unique<scene::Entity>();
+                                        entity->SetName("Baked Lighting");
+                                        bakedLighting = entity->CreateComponent<scene::BakedLightingComponent>();
+                                        m_scene->AddEntity(std::move(entity));
+                                    }
+                                    bakedLighting->SetLightingMode(mode);
+                                    MarkSceneDirty();
+                                };
+                                if (ImGui::MenuItem("Realtime", nullptr, !baked))
+                                    setMode(scene::SceneLightingMode::Realtime);
+                                ImGui::SetItemTooltip("Every light is realtime and lightmaps are ignored. Use dynamic GI (DDGI, SSGI) for bounce light.");
+                                if (ImGui::MenuItem("Baked", nullptr, baked))
+                                    setMode(scene::SceneLightingMode::Baked);
+                                ImGui::SetItemTooltip("Static meshes use their lightmaps; each light follows its Mode (Realtime, Mixed or Baked).");
+                                ImGui::EndMenu();
+                            }
+                        }
                         if (ImGui::MenuItem("Bake Ambient Grid..."))
                             shouldOpenBakeSceneCustomPopup = true;
                         ImGui::Separator();
@@ -4833,8 +4890,15 @@ namespace PlutoGE::ui
                         {
                             const bool hadProbeVolume = m_scene->HasBakedProbeVolume();
                             m_scene->ClearBakedProbeVolume();
+                            auto *bakedLighting = m_scene->GetBakedLighting();
+                            const bool hadLightmaps = bakedLighting && bakedLighting->HasBake();
+                            if (bakedLighting)
+                                bakedLighting->ClearBake();
                             MarkSceneDirty();
-                            m_statusMessage = hadProbeVolume ? "Cleared the baked probe volume." : "No baked lighting to clear.";
+                            m_statusMessage = hadProbeVolume || hadLightmaps
+                                ? std::string("Cleared ") + (hadLightmaps ? "the lightmaps" : "") + (hadProbeVolume && hadLightmaps ? " and " : "") +
+                                      (hadProbeVolume ? "the baked probe volume" : "") + "."
+                                : "No baked lighting to clear.";
                             Log(ConsoleSeverity::Info, m_statusMessage);
                         }
                         ImGui::EndMenu();
@@ -5600,6 +5664,11 @@ namespace PlutoGE::ui
                 ImGui::DragFloat("Surface Clearance", &m_customBakeSettings.probeSurfaceClearance, 0.01f, 0.01f, 2.0f);
                 ImGui::InputInt("Probe Budget", &m_customBakeSettings.maxProbeCount);
                 ImGui::SliderFloat("Probe Bounce Strength", &m_customBakeSettings.probeBounceStrength, 0.0f, 4.0f, "%.2f");
+
+                ImGui::SeparatorText("Lightmaps");
+                ImGui::Checkbox("Bake Lightmaps", &m_customBakeSettings.bakeLightmaps);
+                ImGui::SetItemTooltip("Static meshes with lightmap UVs get baked shadows and bounce light. Density, sampling and the\n"
+                                      "lighting mode are on the scene's Baked Lighting object (created by the first bake).");
 
                 ImGui::SeparatorText("Reflection Captures");
                 ImGui::Checkbox("Automatic Reflection Captures", &m_autoAmbientReflections);

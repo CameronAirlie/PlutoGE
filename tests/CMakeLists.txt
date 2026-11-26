@@ -894,6 +894,10 @@ add_executable(PlutoGEPhysicalSkyModelTests PhysicalSkyModelTests.cpp)
 pluto_link_engine(PlutoGEPhysicalSkyModelTests)
 add_test(NAME PlutoGEPhysicalSkyModelTests COMMAND PlutoGEPhysicalSkyModelTests)
 
+add_executable(PlutoGEBakedLightingTests BakedLightingTests.cpp)
+pluto_link_engine(PlutoGEBakedLightingTests)
+add_test(NAME PlutoGEBakedLightingTests COMMAND PlutoGEBakedLightingTests)
+
 add_executable(PlutoGEBakedEnvironmentLightingTests BakedEnvironmentLightingTests.cpp)
 pluto_link_engine(PlutoGEBakedEnvironmentLightingTests)
 add_test(NAME PlutoGEBakedEnvironmentLightingTests COMMAND PlutoGEBakedEnvironmentLightingTests)

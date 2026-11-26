@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 13ddc1d09cbd434b4fdb15373c1aecf54255b0a1508fef56ec31ed258d6b1ceb
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" aa2d35ba397bf55141ed9f6fc485f81de8afe27b3013cc689dbf45220a8f2fb1
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/ArenaTrimBlue.glb" f049723e609eb1b763fe405adb97316d6bee6daee51acfa7d55f421355bf1755
+OUTPUT "Models/ArenaTrimBlue.plutomesh" a475bd46c535290cc4485cdf6fa6da65fb240e05a907385d4cd8c51b40f5e02f
+OUTPUT "Models/ArenaTrimBlue.plutomodel" 62cce64a5815abe7238538217df85dd638760d86ffc4b19476873682d86a9054
+OUTPUT "Models/M_ArenaTrimBlue_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

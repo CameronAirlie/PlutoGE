@@ -32,6 +32,7 @@ struct BindlessInstance
     column_major float4x4 previousModel;
     float4 debugParameters;
     uint4 material;
+    float4 lightmapScaleOffset; // BasicDraw::lightmap
 };
 
 static const uint BindlessMaterialHasNormal = 1;

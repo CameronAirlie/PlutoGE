@@ -176,6 +176,23 @@ works for every component, not only UI.
   padding and child slots, and the safe area; the palette adds widgets under
   the selection; the align buttons anchor the selection within its parent.
   Edits are undoable.
+- **Designer visibility** (never saved, and the game is unaffected): the
+  designer draws only the canvas picked in its toolbar (*Overlays > Other
+  canvases* draws them all). The eye on each canvas-tree row hides an element
+  from the designer (H; Alt+H shows all). Its right-click menu adds *Hide
+  Siblings* and *Isolate*. **Isolate** (crosshairs button, I) draws only the
+  selection's branch: the selection, its children and its ancestors, with
+  every sibling along the way hidden. A breadcrumb bar shows the path, and Esc
+  exits. Use it for screens whose panels stack, such as a pause menu's main,
+  settings and confirm panels. Hidden elements keep their layout slot, so
+  their siblings don't move. A selected inactive element, such as a drag ghost
+  that a script shows, is drawn as if active
+  (*Overlays > Preview inactive selection*).
+- **Picking**: a click selects the topmost visible element under the cursor.
+  An empty container or a transparent element loses to a visible one, so a
+  full-screen layer does not take every click. A click on a child of the
+  selection selects the child; Alt+click keeps the selection, to drag a
+  parent by its children.
 - The inspector has an anchor-preset grid, mode-aware layout fields and a
   multiline text editor with an alignment grid. Style-driven properties are
   marked, with override and revert actions.
@@ -357,7 +374,7 @@ post-processing, below RmlUi.
 | `PlutoGENativeUICoreTests` | UTF-8, rich text, SDF atlas, line breaking, alignment, ellipsis, draw lists, painter |
 | `PlutoGENativeUILayoutTests` | Anchors, flex (grow/shrink/wrap/justify/align), grid, content sizing |
 | `PlutoGEVulkanNativeUIRender`, `PlutoGEOpenGLNativeUIRender` | GPU output: shapes, blending, borders, clips, gradients, images, glyphs, deferred replay |
-| `PlutoGENativeUISceneTests` | Hierarchy layout, legacy layout groups, transforms, clipping, canvas order, buttons, property animation, themes and styles on elements |
+| `PlutoGENativeUISceneTests` | Hierarchy layout, legacy layout groups, transforms, clipping, canvas order, buttons, the preview visibility filter, property animation, themes and styles on elements |
 | `PlutoGENativeUIThemeTests` | Theme model edits, text format, inheritance, variables, layering, error reporting, style catalog |
 | `PlutoGEUIThemeEditorTests` | Theme documents (undo, saving, routed edits) and the editor views in a hidden window; pass a path prefix to capture images |
 | `PlutoGENativeUIControlsTests` | Toggles, sliders, scroll views, input fields, dropdowns, navigation, pointer capture, drag and drop (event order, related elements, canvas-unit positions on a scaled canvas) |

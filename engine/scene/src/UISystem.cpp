@@ -166,10 +166,15 @@ namespace PlutoGE::scene
 
     void UISystem::Collect(Entity *entity, std::uint32_t canvas, std::uint32_t parentElement, std::uint32_t parentNode,
                            const glm::vec2 &viewportSize, const UICameraInfo *camera, const UIMeasureContext &measure,
-                           const UIResolvedTheme *theme)
+                           const UIResolvedTheme *theme, bool hidden)
     {
-        if (!entity || !entity->IsActive())
+        if (!entity)
             return;
+        const UIPreviewVisibility visibility = m_visibilityFilter ? m_visibilityFilter(*entity) : UIPreviewVisibility::Default;
+        // Collection starts at the roots, so an inactive ancestor has already stopped it: the entity's own flag decides.
+        if (visibility != UIPreviewVisibility::Shown && !entity->IsSelfActive())
+            return;
+        hidden |= visibility == UIPreviewVisibility::Hidden;
         // Theme components cache their resolved theme, so the pointer outlives this frame.
         if (const auto *ownTheme = entity->GetComponent<UIThemeComponent>(); ownTheme && ownTheme->IsEnabled())
             theme = ownTheme->Resolve(theme).get();
@@ -225,6 +230,8 @@ namespace PlutoGE::scene
             m_elements.push_back({.entity = entity,
                                   .sortingOrder = m_canvases[canvas].sortingOrder,
                                   .raycastTarget = rect->GetRaycastTarget() && drawsSomething,
+                                  .hidden = hidden,
+                                  .drawsGraphic = drawsSomething,
                                   .canvas = canvas,
                                   .parent = parentElement});
             m_links.push_back(std::move(links));
@@ -236,7 +243,8 @@ namespace PlutoGE::scene
         }
 
         for (auto *child : entity->GetChildren())
-            Collect(child, canvas, element != kNoUIElement ? element : parentElement, node, viewportSize, camera, measure, theme);
+            Collect(child, canvas, element != kNoUIElement ? element : parentElement, node, viewportSize, camera, measure, theme,
+                    hidden);
     }
 
     void UISystem::SortCanvases()
@@ -287,7 +295,7 @@ namespace PlutoGE::scene
             const ui::Rect effective = inherited.Intersect(bounds);
             element.rect = ToLegacy(bounds);
             element.clipRect = ToLegacy(inherited);
-            element.clipped = !canvas.visible || effective.IsEmpty();
+            element.clipped = element.hidden || !canvas.visible || effective.IsEmpty();
             childClips[index] = rect->GetClipChildren() ? effective : inherited;
         }
 
@@ -328,7 +336,7 @@ namespace PlutoGE::scene
         const UIMeasureContext measure{ui::FontLibrary::Get(), *m_textures};
         m_collecting = true;
         for (auto *root : scene.GetRootEntities())
-            Collect(root, kNoUIElement, kNoUIElement, 0, viewportSize, camera, measure, nullptr);
+            Collect(root, kNoUIElement, kNoUIElement, 0, viewportSize, camera, measure, nullptr, false);
         m_collecting = false;
         for (const auto &layout : m_canvasLayouts)
             m_layout.Compute(layout.rootNode, layout.rootRect);
@@ -341,8 +349,8 @@ namespace PlutoGE::scene
     void UISystem::PaintElement(std::uint32_t index, ui::DrawList &list, ui::FontLibrary &fonts)
     {
         const UIResolvedElement &element = m_elements[index];
-        if (element.opacity <= 0.0f)
-            return; // opacity multiplies down the tree: nothing below is visible
+        if (element.opacity <= 0.0f || element.hidden)
+            return; // opacity multiplies down the tree, and hiding covers the subtree: nothing below is visible
         list.SetTransform(element.toPixels);
         if (!element.clipped)
         {
@@ -391,7 +399,7 @@ namespace PlutoGE::scene
             for (std::uint32_t element = 0; element < m_elements.size(); ++element)
             {
                 const auto *popup = m_links[element].popup;
-                if (m_elements[element].canvas != index || !popup || !popup->IsPopupOpen())
+                if (m_elements[element].canvas != index || m_elements[element].hidden || !popup || !popup->IsPopupOpen())
                     continue;
                 frame.drawList.SetTransform(m_elements[element].toPixels);
                 UIPaintContext context{.list = frame.drawList,

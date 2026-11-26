@@ -191,6 +191,67 @@ namespace
         Require(!buttonComponent->IsHovered(), "Pointer elsewhere must not hover the button");
     }
 
+    // The designer's preview filter: hidden elements keep their layout slot but
+    // are neither painted nor hit; shown ones are collected though inactive.
+    void TestPreviewVisibilityFilter()
+    {
+        Scene scene;
+        auto *canvas = AddCanvas(scene);
+        auto *row = Add(scene, "Row", canvas);
+        AddRect(row, {0, 0}, UIAnchorPreset::Stretch);
+        row->CreateComponent<UILayoutComponent>()->SetDirection(ui::FlexDirection::Row);
+        auto *first = Add(scene, "First", row);
+        AddRect(first, {100, 50});
+        first->CreateComponent<UIShapeComponent>();
+        auto *firstChild = Add(scene, "First Child", first);
+        AddRect(firstChild, {0, 0}, UIAnchorPreset::Stretch);
+        firstChild->CreateComponent<UIShapeComponent>();
+        auto *second = Add(scene, "Second", row);
+        AddRect(second, {100, 50});
+        second->CreateComponent<UIShapeComponent>();
+        auto *ghost = Add(scene, "Ghost", canvas);
+        AddRect(ghost, {40, 40}, UIAnchorPreset::BottomLeft);
+        ghost->CreateComponent<UIShapeComponent>();
+        auto *ghostChild = Add(scene, "Ghost Child", ghost);
+        AddRect(ghostChild, {10, 10});
+        ghost->SetActive(false);
+
+        UISystem ui;
+        ui.RebuildLayout(scene, kViewport);
+        const auto secondBefore = ui.FindElement(second->GetID())->rect;
+        Require(ui.FindElement(ghost->GetID()) == nullptr, "An inactive element must not be collected by default");
+        const auto vertices = [&]()
+        {
+            const auto &canvases = ui.BuildDrawLists(scene, kViewport);
+            return canvases.empty() ? std::size_t{0} : canvases[0].drawList.GetVertices().size();
+        };
+        const std::size_t all = vertices();
+
+        ui.SetVisibilityFilter([&](const Entity &entity)
+        {
+            if (&entity == first) return UIPreviewVisibility::Hidden;
+            if (&entity == ghost) return UIPreviewVisibility::Shown;
+            return UIPreviewVisibility::Default;
+        });
+        const std::size_t filtered = vertices();
+        const auto *hidden = ui.FindElement(first->GetID());
+        Require(hidden && hidden->hidden && hidden->clipped, "A hidden element is still laid out, marked hidden and clipped");
+        Require(ui.FindElement(firstChild->GetID())->hidden, "Hiding covers the subtree");
+        const auto secondAfter = ui.FindElement(second->GetID())->rect;
+        Require(Near(secondAfter.min.x, secondBefore.min.x) && Near(secondAfter.max.x, secondBefore.max.x),
+                "A hidden element keeps its slot, so its siblings do not move: " + Describe(secondAfter));
+        Require(ui.FindElement(ghost->GetID()) != nullptr, "A shown element is collected though inactive");
+        Require(ui.FindElement(ghostChild->GetID()) != nullptr, "The active children of a shown element are collected");
+        Require(filtered < all && filtered > 0, "Painting must skip the hidden element and draw the shown one");
+        const glm::vec2 firstCentre = (hidden->rect.min + hidden->rect.max) * 0.5f;
+        const auto *hit = ui.HitTest(firstCentre);
+        Require(!hit || (hit->entity != first && hit->entity != firstChild), "A hidden element is not hit");
+        Require(!ghost->IsSelfActive(), "The filter must not change the scene");
+
+        ui.SetVisibilityFilter(nullptr);
+        Require(vertices() == all && ui.FindElement(ghost->GetID()) == nullptr, "Clearing the filter restores the default");
+    }
+
     void TestPropertyAnimation()
     {
         Scene scene;
@@ -389,6 +450,7 @@ int main()
         TestLegacyLayoutGroup();
         TestTransformsAndClipping();
         TestCanvasOrderAndButtons();
+        TestPreviewVisibilityFilter();
         TestComponentRoundTrips();
         TestPropertyAnimation();
         TestThemes();

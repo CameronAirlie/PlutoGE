@@ -50,6 +50,8 @@ namespace PlutoGE::scene
         std::uint64_t paintOrder = 0;
         bool raycastTarget = false;
         bool clipped = false;
+        bool hidden = false;           // hidden by a preview's visibility filter (also sets clipped)
+        bool drawsGraphic = false;     // has a graphic component (an empty container has none)
 
         ui::Rect localRect;            // layout rect in canvas units
         ui::Transform2D toPixels;      // canvas units to target pixels (includes rotation and scale)
@@ -86,6 +88,14 @@ namespace PlutoGE::scene
     // model; each frame the system resolves them:
     //   rect drivers -> collect (hierarchy) -> layout (ui::LayoutTree)
     //   -> transforms and clips -> paint (IUIGraphic) / input and events.
+    // A preview's say over one entity (see UISystem::SetVisibilityFilter).
+    enum class UIPreviewVisibility : std::uint8_t
+    {
+        Default, // follow the entity's active flag
+        Hidden,  // laid out (keeps its slot) but neither painted nor hit, with its subtree
+        Shown,   // collected even when inactive (a hidden ancestor still hides it)
+    };
+
     class UISystem final : public UIEventContext
     {
     public:
@@ -130,6 +140,10 @@ namespace PlutoGE::scene
         // scene. Preview systems that only observe a scene (editor designers)
         // turn them off.
         void SetRectDriversEnabled(bool enabled) { m_rectDriversEnabled = enabled; }
+        // Lets a preview (the UI designer) hide or reveal entities without
+        // touching the scene. Called for every entity collected; null for none.
+        using VisibilityFilter = std::function<UIPreviewVisibility(const Entity &)>;
+        void SetVisibilityFilter(VisibilityFilter filter) { m_visibilityFilter = std::move(filter); }
 
         // UIEventContext
         [[nodiscard]] Entity *FindEntity(UIEntityID entity) const override;
@@ -164,7 +178,7 @@ namespace PlutoGE::scene
 
         void Collect(Entity *entity, std::uint32_t canvas, std::uint32_t parentElement, std::uint32_t parentNode,
                      const glm::vec2 &viewportSize, const UICameraInfo *camera, const UIMeasureContext &measure,
-                     const UIResolvedTheme *theme);
+                     const UIResolvedTheme *theme, bool hidden);
         std::uint32_t BeginCanvas(Entity &entity, const CanvasComponent &canvas, const glm::vec2 &viewportSize,
                                   const UICameraInfo *camera);
         void SortCanvases();
@@ -199,6 +213,7 @@ namespace PlutoGE::scene
         std::unordered_map<std::uint32_t, std::size_t> m_previousByEntity;
         bool m_collecting = false;
         bool m_rectDriversEnabled = true;
+        VisibilityFilter m_visibilityFilter;
         ui::LayoutTree m_layout;
         std::shared_ptr<IUITextureInfo> m_textures;
 

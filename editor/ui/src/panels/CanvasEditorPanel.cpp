@@ -7,7 +7,10 @@
 #include "PlutoGE/scene/UISystem.h"
 #include "PlutoGE/scene/components/UIComponent.h"
 #include "PlutoGE/scene/components/UILayoutComponents.h"
+#include "PlutoGE/ui/EditorIcons.h"
 #include "PlutoGE/ui/EditorShell.h"
+#include "PlutoGE/ui/EditorTheme.h"
+#include "PlutoGE/ui/EditorWidgets.h"
 #include "PlutoGE/ui/PanelManager.h"
 #include "PlutoGE/ui/hierarchy/HierarchyEntityPresets.h"
 #include "PlutoGE/ui/hierarchy/UIWidgetPresets.h"
@@ -94,24 +97,54 @@ namespace PlutoGE::ui
             }
         }
 
-        void DrawEntityTree(scene::Entity *entity, EditorShell &shell)
+        bool IsSelfOrDescendant(const scene::Entity *entity, const scene::Entity *ancestor)
         {
-            if (!entity)
-                return;
-            const bool selected = shell.GetSelectedEntity() == entity;
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
-            if (selected) flags |= ImGuiTreeNodeFlags_Selected;
-            if (entity->GetChildren().empty()) flags |= ImGuiTreeNodeFlags_Leaf;
-            const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<uintptr_t>(entity->GetID())),
-                                                flags, "%s", entity->GetName().c_str());
-            if (ImGui::IsItemClicked())
-                shell.SetSelectedEntity(entity);
-            if (open)
+            for (auto *current = entity; current; current = current->GetParent())
+                if (current == ancestor)
+                    return true;
+            return false;
+        }
+
+        bool IsNativeCanvas(const scene::Entity &entity)
+        {
+            const auto *canvas = entity.GetComponent<scene::CanvasComponent>();
+            return canvas && canvas->GetBackend() == scene::UIRenderBackend::Native;
+        }
+
+        // Every native canvas in the scene, in hierarchy order.
+        std::vector<scene::Entity *> FindNativeCanvases(scene::Scene &scene)
+        {
+            std::vector<scene::Entity *> canvases;
+            std::vector<scene::Entity *> stack(scene.GetRootEntities().rbegin(), scene.GetRootEntities().rend());
+            while (!stack.empty())
             {
-                for (auto *child : entity->GetChildren())
-                    DrawEntityTree(child, shell);
-                ImGui::TreePop();
+                auto *entity = stack.back();
+                stack.pop_back();
+                if (IsNativeCanvas(*entity))
+                    canvases.push_back(entity);
+                stack.insert(stack.end(), entity->GetChildren().rbegin(), entity->GetChildren().rend());
             }
+            return canvases;
+        }
+
+        // The editor-only visibility toggle of a tree row, drawn like the hierarchy's toggles.
+        bool EyeToggle(const void *id, bool visible, bool emphasised)
+        {
+            const float size = ImGui::GetFrameHeight();
+            ImGui::PushID(id);
+            const bool clicked = ImGui::InvisibleButton("##eye", ImVec2(size, ImGui::GetTextLineHeight()));
+            ImGui::PopID();
+            const char *icon = visible ? icons::View : icons::Hidden;
+            const bool strong = ImGui::IsItemHovered() || emphasised;
+            const ImVec2 iconSize = ImGui::CalcTextSize(icon);
+            const ImVec2 min = ImGui::GetItemRectMin();
+            const ImVec2 max = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddText(ImVec2(std::round(min.x + (max.x - min.x - iconSize.x) * 0.5f),
+                                                       std::round(min.y + (max.y - min.y - iconSize.y) * 0.5f)),
+                                                GetEditorColorU32(strong ? EditorColor::Text : EditorColor::TextMuted, strong ? 1.0f : 0.7f),
+                                                icon);
+            ImGui::SetItemTooltip("%s", visible ? "Hide in the designer (H). The game is unaffected." : "Show in the designer (H)");
+            return clicked;
         }
 
         // Canvas units to preview pixels for the canvas containing `entity`.
@@ -133,6 +166,30 @@ namespace PlutoGE::ui
     CanvasEditorPanel::CanvasEditorPanel(PanelConfig config)
         : Panel(std::move(config)), m_preview(std::make_unique<render::NativeUIPreview>())
     {
+        // Only the preview's own UI system is filtered: the scene and the game view are untouched.
+        m_preview->GetUISystem().SetVisibilityFilter([this](const scene::Entity &entity)
+        {
+            using Visibility = scene::UIPreviewVisibility;
+            const auto id = entity.GetID();
+            if (m_hiddenIds.contains(id))
+                return Visibility::Hidden;
+            // Other canvases, unless they hold (or are inside) the edited one.
+            if (!m_showOtherCanvases && id != m_canvasId && entity.GetComponent<scene::CanvasComponent>() &&
+                !m_canvasAncestors.contains(id))
+            {
+                bool inside = false;
+                for (const auto *parent = entity.GetParent(); parent && !inside; parent = parent->GetParent())
+                    inside = parent->GetID() == m_canvasId;
+                if (!inside)
+                    return Visibility::Hidden;
+            }
+            // Isolation: siblings of the isolated element and of each of its ancestors are hidden.
+            if (m_isolatedId != 0 && !m_isolationPath.contains(id))
+                if (const auto *parent = entity.GetParent();
+                    parent && parent->GetID() != m_isolatedId && m_isolationPath.contains(parent->GetID()))
+                    return Visibility::Hidden;
+            return m_forceShown.contains(id) ? Visibility::Shown : Visibility::Default;
+        });
     }
 
     CanvasEditorPanel::~CanvasEditorPanel() = default;
@@ -196,6 +253,7 @@ namespace PlutoGE::ui
             return;
         m_canvasId = canvasRoot->GetID();
         m_previewSize = PreviewResolution(*canvas);
+        UpdatePreviewVisibility(canvasRoot, shell.GetSelectedEntity());
         try
         {
             if (!m_preview->Render(*scene, *device, static_cast<int>(m_previewSize.x), static_cast<int>(m_previewSize.y),
@@ -215,6 +273,222 @@ namespace PlutoGE::ui
             shell.GetPanelManager().UpdateTexture(m_texture, descriptor);
         else
             m_texture = shell.GetPanelManager().RegisterTexture(descriptor);
+    }
+
+    void CanvasEditorPanel::UpdatePreviewVisibility(scene::Entity *canvasRoot, scene::Entity *selected)
+    {
+        auto *scene = EditorShell::GetInstance().GetScene();
+        // Isolation ends when its element is gone or the selection moves to UI outside it.
+        auto *isolated = scene && m_isolatedId != 0 ? scene->FindEntityByID(m_isolatedId) : nullptr;
+        if (isolated && (FindCanvasRoot(isolated) != canvasRoot ||
+                         (selected && FindCanvasRoot(selected) && !IsSelfOrDescendant(selected, isolated))))
+            isolated = nullptr;
+        m_isolatedId = isolated ? isolated->GetID() : 0;
+
+        m_isolationPath.clear();
+        for (auto *current = isolated; current; current = current->GetParent())
+        {
+            m_isolationPath.insert(current->GetID());
+            if (current == canvasRoot)
+                break;
+        }
+        m_canvasAncestors.clear();
+        for (auto *current = canvasRoot ? canvasRoot->GetParent() : nullptr; current; current = current->GetParent())
+            m_canvasAncestors.insert(current->GetID());
+        // Inactive entities from the scene root down to the selection (or the
+        // isolated element, or the canvas itself) are previewed as if active.
+        m_forceShown.clear();
+        if (m_previewInactiveSelection)
+            for (auto *start : {selected && FindCanvasRoot(selected) == canvasRoot ? selected : nullptr, isolated, canvasRoot})
+                for (auto *current = start; current; current = current->GetParent())
+                    if (!current->IsSelfActive())
+                        m_forceShown.insert(current->GetID());
+    }
+
+    void CanvasEditorPanel::SetIsolated(scene::Entity *entity)
+    {
+        m_isolatedId = entity && !entity->GetComponent<scene::CanvasComponent>() ? entity->GetID() : 0;
+    }
+
+    void CanvasEditorPanel::ToggleHidden(const scene::Entity &entity)
+    {
+        if (!m_hiddenIds.erase(entity.GetID()))
+            m_hiddenIds.insert(entity.GetID());
+    }
+
+    void CanvasEditorPanel::HandleShortcuts(scene::Entity *selected)
+    {
+        const auto &io = ImGui::GetIO();
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || io.WantTextInput || io.KeyCtrl || io.KeySuper)
+            return;
+        if (ImGui::IsKeyPressed(ImGuiKey_H, false))
+        {
+            if (io.KeyAlt)
+                m_hiddenIds.clear();
+            else if (selected && FindCanvasRoot(selected))
+                ToggleHidden(*selected);
+        }
+        if (ImGui::IsKeyPressed(ImGuiKey_I, false))
+            SetIsolated(m_isolatedId == 0 ? selected : nullptr);
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && m_isolatedId != 0)
+            m_isolatedId = 0;
+    }
+
+    void CanvasEditorPanel::DrawEntityTree(scene::Entity *entity, bool parentHidden)
+    {
+        if (!entity)
+            return;
+        auto &shell = EditorShell::GetInstance();
+        const auto id = entity->GetID();
+        const bool ownHidden = m_hiddenIds.contains(id);
+        const auto *element = m_preview->GetUISystem().FindElement(id);
+        // Not drawn by the preview, for whatever reason (eye, isolation, inactive).
+        const bool previewHidden = parentHidden || !element || element->hidden;
+        if (EyeToggle(entity, !ownHidden, ownHidden))
+            ToggleHidden(*entity);
+        ImGui::SameLine(0.0f, 2.0f);
+
+        const bool selected = shell.GetSelectedEntity() == entity;
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_DefaultOpen;
+        if (selected) flags |= ImGuiTreeNodeFlags_Selected;
+        if (entity->GetChildren().empty()) flags |= ImGuiTreeNodeFlags_Leaf;
+        const bool inactive = !entity->IsSelfActive();
+        if (previewHidden || inactive)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+        const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<uintptr_t>(id)), flags, "%s%s",
+                                            entity->GetName().c_str(), inactive ? "  (inactive)" : "");
+        if (previewHidden || inactive)
+            ImGui::PopStyleColor();
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+            shell.SetSelectedEntity(entity);
+        if (ImGui::BeginPopupContextItem())
+        {
+            if (ImGui::MenuItem(ownHidden ? "Show in Designer" : "Hide in Designer", "H"))
+                ToggleHidden(*entity);
+            if (ImGui::MenuItem("Hide Siblings in Designer", nullptr, false, entity->GetParent() != nullptr))
+                for (auto *sibling : entity->GetParent()->GetChildren())
+                    if (sibling != entity)
+                        m_hiddenIds.insert(sibling->GetID());
+            const bool isCanvas = entity->GetComponent<scene::CanvasComponent>() != nullptr;
+            if (ImGui::MenuItem("Isolate", "I", m_isolatedId == id, !isCanvas))
+            {
+                SetIsolated(m_isolatedId == id ? nullptr : entity);
+                if (m_isolatedId != 0)
+                    shell.SetSelectedEntity(entity);
+            }
+            if (ImGui::MenuItem("Show All in Designer", "Alt+H", false, !m_hiddenIds.empty()))
+                m_hiddenIds.clear();
+            ImGui::EndPopup();
+        }
+        if (open)
+        {
+            for (auto *child : entity->GetChildren())
+                DrawEntityTree(child, previewHidden);
+            ImGui::TreePop();
+        }
+    }
+
+    void CanvasEditorPanel::RenderCanvasPicker(scene::Entity *canvasRoot)
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *scene = shell.GetScene();
+        if (!scene)
+            return;
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::BeginCombo("##Canvas", canvasRoot ? canvasRoot->GetName().c_str() : "No canvas"))
+        {
+            for (auto *entity : FindNativeCanvases(*scene))
+            {
+                ImGui::PushID(static_cast<int>(entity->GetID()));
+                const auto *canvas = entity->GetComponent<scene::CanvasComponent>();
+                const std::string label = entity->GetName() + (entity->IsActive() ? "" : "  (inactive)");
+                if (ImGui::Selectable(label.c_str(), entity == canvasRoot))
+                {
+                    m_canvasId = entity->GetID();
+                    m_isolatedId = 0;
+                    shell.SetSelectedEntity(entity);
+                    m_pan = {};
+                    m_zoom = 0.0f;
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("order %d", canvas->GetSortingOrder());
+                ImGui::PopID();
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SetItemTooltip("The canvas being designed. Other canvases are hidden unless Overlays > Other canvases is on.");
+    }
+
+    void CanvasEditorPanel::RenderVisibilityBar(scene::Entity *canvasRoot, scene::Entity *selected)
+    {
+        auto &shell = EditorShell::GetInstance();
+        auto *scene = shell.GetScene();
+        auto *isolated = scene && m_isolatedId != 0 ? scene->FindEntityByID(m_isolatedId) : nullptr;
+        const bool inactiveSelection = m_previewInactiveSelection && selected && FindCanvasRoot(selected) == canvasRoot &&
+                                       !selected->IsActive();
+        if (!isolated && m_hiddenIds.empty() && !inactiveSelection)
+            return;
+        bool first = true;
+        const auto spacer = [&first]()
+        {
+            if (!first)
+                ImGui::SameLine(0.0f, 18.0f);
+            first = false;
+        };
+        if (isolated)
+        {
+            spacer();
+            // The isolated element's path, from the canvas down; a click isolates that level.
+            std::vector<scene::Entity *> path;
+            for (auto *current = isolated; current; current = current->GetParent())
+            {
+                path.push_back(current);
+                if (current == canvasRoot)
+                    break;
+            }
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(icons::Crosshairs);
+            ImGui::SameLine();
+            ImGui::TextUnformatted("Isolated:");
+            for (auto it = path.rbegin(); it != path.rend(); ++it)
+            {
+                ImGui::SameLine();
+                if (it != path.rbegin())
+                {
+                    ImGui::TextDisabled("/");
+                    ImGui::SameLine();
+                }
+                ImGui::PushID(static_cast<int>((*it)->GetID()));
+                if (ImGui::SmallButton((*it)->GetName().c_str()))
+                {
+                    shell.SetSelectedEntity(*it);
+                    SetIsolated(*it); // the canvas itself ends isolation
+                }
+                ImGui::PopID();
+            }
+            ImGui::SameLine();
+            if (widgets::IconButton("##ExitIsolation", icons::Close, "Exit isolation (Esc)"))
+                m_isolatedId = 0;
+        }
+        if (!m_hiddenIds.empty())
+        {
+            spacer();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(icons::Hidden);
+            ImGui::SameLine();
+            ImGui::Text("%zu hidden in the designer", m_hiddenIds.size());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Show All"))
+                m_hiddenIds.clear();
+        }
+        if (inactiveSelection)
+        {
+            spacer();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(icons::Info);
+            ImGui::SameLine();
+            ImGui::TextDisabled("Previewing an inactive element: the game shows it only once a script activates it.");
+        }
     }
 
     void CanvasEditorPanel::BeginDrag(scene::Entity &entity, scene::RectTransformComponent &rect,
@@ -407,6 +681,20 @@ namespace PlutoGE::ui
 
     void CanvasEditorPanel::RenderToolbar(scene::Entity *selected)
     {
+        RenderCanvasPicker(ActiveCanvas(selected));
+        ImGui::SameLine();
+        {
+            const bool isolating = m_isolatedId != 0;
+            if (isolating) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            const bool canIsolate = isolating || (selected && FindCanvasRoot(selected) && !selected->GetComponent<scene::CanvasComponent>());
+            ImGui::BeginDisabled(!canIsolate);
+            if (widgets::IconButton("##Isolate", icons::Crosshairs,
+                                    isolating ? "Exit isolation (I / Esc)" : "Isolate the selection: draw only its branch (I)"))
+                SetIsolated(isolating ? nullptr : selected);
+            ImGui::EndDisabled();
+            if (isolating) ImGui::PopStyleColor();
+        }
+        ImGui::SameLine();
         const char *toolLabels[] = {"Select", "Move", "Resize", "Rotate", "Pivot", "Anchors"};
         for (int index = 0; index < IM_ARRAYSIZE(toolLabels); ++index)
         {
@@ -446,6 +734,11 @@ namespace PlutoGE::ui
             ImGui::Checkbox("Layout padding and gaps", &m_showLayout);
             ImGui::Checkbox("Safe area (90%)", &m_showSafeArea);
             ImGui::Checkbox("Canvas hierarchy", &m_showHierarchy);
+            ImGui::Separator();
+            ImGui::Checkbox("Other canvases", &m_showOtherCanvases);
+            ImGui::SetItemTooltip("Draw every canvas in the scene, not just the one being designed");
+            ImGui::Checkbox("Preview inactive selection", &m_previewInactiveSelection);
+            ImGui::SetItemTooltip("Draw a selected inactive element (and its inactive parents) as if active");
             ImGui::EndCombo();
         }
         ImGui::TextDisabled("Align:");
@@ -523,7 +816,9 @@ namespace PlutoGE::ui
             return;
         }
         auto *selectedEntity = shell.GetSelectedEntity();
+        HandleShortcuts(selectedEntity);
         RenderToolbar(selectedEntity);
+        RenderVisibilityBar(ActiveCanvas(selectedEntity), selectedEntity);
         ImGui::Separator();
 
         scene::Entity *canvasRoot = ActiveCanvas(selectedEntity);
@@ -560,7 +855,7 @@ namespace PlutoGE::ui
             ImGui::Spacing();
             ImGui::TextUnformatted("Canvas");
             ImGui::Separator();
-            DrawEntityTree(canvasRoot, shell);
+            DrawEntityTree(canvasRoot, false);
         }
         ImGui::EndChild();
         ImGui::SameLine();
@@ -616,18 +911,30 @@ namespace PlutoGE::ui
         const glm::vec2 mousePreview = mapping.ToPreview(mouseScreen);
         if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_drag.active)
         {
-            // The topmost element under the cursor in this canvas.
+            // The topmost element under the cursor in this canvas (in the isolated branch while isolating).
+            auto *isolated = m_isolatedId != 0 ? scene->FindEntityByID(m_isolatedId) : nullptr;
+            // Visible elements win over empty containers and invisible ones, so a
+            // full-screen layer does not take every click from what it holds.
             const scene::UIResolvedElement *hit = nullptr;
+            const auto rank = [](const scene::UIResolvedElement &element) { return element.drawsGraphic && element.opacity > 0.0f; };
             for (const auto &element : elements)
                 if (element.entity && element.entity != canvasRoot && FindCanvasRoot(element.entity) == canvasRoot &&
-                    !element.clipped && ui.ContainsPoint(element, mousePreview) && (!hit || element.paintOrder > hit->paintOrder))
+                    (!isolated || IsSelfOrDescendant(element.entity, isolated)) && !element.clipped &&
+                    ui.ContainsPoint(element, mousePreview) &&
+                    (!hit || rank(element) > rank(*hit) || (rank(element) == rank(*hit) && element.paintOrder > hit->paintOrder)))
                     hit = &element;
             auto *current = shell.GetSelectedEntity();
             const auto *currentElement = current ? ui.FindElement(current->GetID()) : nullptr;
-            // Clicking inside the selection keeps it so it can be dragged.
-            const bool keepSelection = currentElement && m_tool != Tool::Select && ui.ContainsPoint(*currentElement, mousePreview);
+            // Clicking inside the selection keeps it so it can be dragged, unless the
+            // click lands on one of its children: that drills down to the child (the
+            // canvas or a full-screen panel would otherwise keep every click). Alt
+            // keeps the selection anyway, to drag a parent by its children.
+            const bool onChild = hit && current && hit->entity != current && IsSelfOrDescendant(hit->entity, current);
+            const bool keepSelection = currentElement && m_tool != Tool::Select && ui.ContainsPoint(*currentElement, mousePreview) &&
+                                       (!onChild || ImGui::GetIO().KeyAlt);
+            // Empty space selects the isolated element, so isolation survives a stray click.
             if (!keepSelection)
-                shell.SetSelectedEntity(hit ? hit->entity : canvasRoot);
+                shell.SetSelectedEntity(hit ? hit->entity : (isolated ? isolated : canvasRoot));
             selectedEntity = shell.GetSelectedEntity();
         }
 

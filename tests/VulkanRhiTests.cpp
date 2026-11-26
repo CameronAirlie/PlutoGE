@@ -26,6 +26,7 @@
 #include "CloudTransformChecks.h"
 #include "Fsr2RenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
+#include "LightmapDebugViewChecks.h"
 #include "GlassRenderingChecks.h"
 #include "TransparencyDepthRenderingChecks.h"
 #include "EmissionTextureRenderingChecks.h"
@@ -779,6 +780,9 @@ int main(int argc, char **argv)
             return 0;
         CheckAreaLights(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         if (argc > 1 && std::string_view(argv[1]) == "--area-lights")
+            return 0;
+        CheckLightmapDebugViews(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
+        if (argc > 1 && std::string_view(argv[1]) == "--lightmap-debug-views")
             return 0;
         CheckMaterialOcclusion(renderer, device, [&](auto texture) { return device.ReadTextureRgba8(texture); });
         CheckTwoSidedShading(renderer, [&](auto texture) { return device.ReadTextureRgba8(texture); });

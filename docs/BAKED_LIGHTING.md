@@ -70,6 +70,23 @@ of each other form a chart, each chart is projected onto its mean plane in world
 bounding box and packed with gutters. Hard-surface and architectural meshes unwrap well; dense organic meshes produce
 many small charts.
 
+## Debugging
+
+The viewport's debug view menu (Post Process, Quadrants, ... ) has two baked lighting views:
+
+| View | Shows |
+| --- | --- |
+| **Lightmap** | The lightmap's baked light alone, untextured and through a simple tone curve. Surfaces without lightmap texels are dark grey. Look here for noise, light leaking under walls, dark seams between charts and blocky low-resolution shadows. |
+| **Lightmap Coverage** | **Green**: lightmapped. **Yellow**: has lightmap texels but the scene's Lighting Mode is Realtime. **Red**: a static mesh the bake left out (no lightmap UVs, unusable UVs, or not baked since it became static). **Grey**: lit without lightmaps (moving objects, terrain, scattered foliage), which take baked light from ambient volumes. |
+
+What the Lightmap view holds depends on the lights' modes: with a Mixed sun it is the bounce and sky light (the sun's
+direct light stays realtime); with a Baked sun it includes the sun's direct light and shadows. To see the baked
+lighting as players will, set the sun to Baked temporarily: moving objects then lose their realtime sun shadows.
+
+Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling.slang` `lightmapDebugColor`, chosen by
+`geometryParameters.y`) and shown by `DisplayOutput.slang`. Static meshes mark their draws with
+`LightmapRect::staticReceiver`, which reaches the shader as z = -1 in the draw's lightmap constant.
+
 ## Settings (Baked Lighting object)
 
 | Setting | Default | Meaning |
@@ -113,7 +130,7 @@ many small charts.
 
 - Each draw carries its rect (`RenderCommand::lightmap`, then `BasicDraw::lightmap`), which reaches the shader in its
   object constants: bound, streamed, or the bindless instance record.
-- The atlas is one RGBA16F texture bound per pass (set 0 binding 39). `BuildSceneLighting` decides whether baked
+- The atlas is one RGBA16F texture bound per pass (set 0 binding 42, OpenGL unit 42). `BuildSceneLighting` decides whether baked
   lighting is active, the sun's mode and whether the mask applies.
 - `BasicLit.slang` (`LightmapSampling.slang`) uses the lightmap in place of the ambient grid and sky diffuse light,
   takes the darker of the realtime shadow and the mask, and leaves out a Baked sun.
@@ -155,4 +172,7 @@ many small charts.
   - a Baked sun's direct light (3/π on open ground);
   - reports of meshes without lightmap UVs.
 - `PlutoGEVulkanRhiTests` checks that streamed and bound recording still match, with the new object constants.
+- `PlutoGEVulkanRhiTests` and `PlutoGEOpenGLRhiTests` (`--lightmap-debug-views` runs only this check) render a
+  lightmapped, a missing and a moving quad through both debug views (`tests/LightmapDebugViewChecks.h`). It is also the
+  only render check that samples a lightmap atlas, so it covers the atlas binding on both backends.
 - `PlutoGERenderSceneShot --bake-lighting`, then a render of the saved scene, checks lightmaps end to end.

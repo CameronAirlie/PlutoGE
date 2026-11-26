@@ -1273,9 +1273,11 @@ namespace PlutoGE::render
         static constexpr std::uint32_t SurfaceTextureSlot = 33;
         // The rectangle-light LTC table (LtcAreaLights.slang ltcTable, set 0 binding 8).
         static constexpr std::uint32_t LtcTableSlot = 8;
-        // The lightmap atlas (LightmapSampling.slang lightmapAtlas, set 0 binding 39; OpenGL texture unit 39).
+        // The lightmap atlas (LightmapSampling.slang lightmapAtlas, set 0 binding 42). OpenGL binds textures to the unit
+        // named by the logical slot and keeps set-0 bindings as units, so the binding must equal the slot (units 33..39
+        // hold material textures there).
         static constexpr std::uint32_t LightmapAtlasSlot = 42;
-        static constexpr std::uint32_t LightmapAtlasBinding = 39;
+        static constexpr std::uint32_t LightmapAtlasBinding = 42;
         // Instanced draws' records (BasicLit.slang instanceRecords, set 3 binding 1; OpenGL storage binding 1).
         static constexpr std::uint32_t InstanceRecordSlot = 1;
         // Instanced draws' per-instance LOD bins (BasicLit.slang instanceIndices, set 3 binding 2; OpenGL binding 2).

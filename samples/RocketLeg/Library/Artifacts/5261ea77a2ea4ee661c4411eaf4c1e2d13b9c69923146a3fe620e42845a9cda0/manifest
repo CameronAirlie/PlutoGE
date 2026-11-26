@@ -1,0 +1,7 @@
+PLUTOARTIFACT	1
+KEY 5261ea77a2ea4ee661c4411eaf4c1e2d13b9c69923146a3fe620e42845a9cda0
+RECIPE "PlutoGE/model-legacy-layout" 10 "portable-native-v1" e09e4dc99ba682005687e5dfb06a3a48fb71cfe94b88ad4415ae15d28d9a57c2
+INPUT "source" "C:/Users/Cameron.Airlie/dev/PlutoGE/samples/RocketLeg/Assets/Models/BallAccents.glb" 4fcbf0f5b06035832c436dc19dbbc8786ae28a9eff31b6e743d0eb3dca4f920f
+OUTPUT "Models/BallAccents.plutomesh" bdaa1879e3b2c228ce1f7f2c703a5a48f1475fd18e9b7c3b49461a3d289fb1ac
+OUTPUT "Models/BallAccents.plutomodel" fe3c59aab92d9dfc697a7b2cf6776ee78c409932f8905780b0d3dfcc9e6745b1
+OUTPUT "Models/M_BallAccents_0.plutomaterial" 770f1f26a61a02e587b7c07858812df8887e30936d9d83610affad4766006720

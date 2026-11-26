@@ -2770,6 +2770,9 @@ namespace PlutoGE::render
             deferProbeIrradiance ? 1.0f : 0.0f);
         frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
         frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
+        // LightmapSampling.slang lightmapDebugColor writes these views into the albedo target.
+        frameParameters.geometryParameters.y = debugView == PostProcessDebugView::Lightmap ? 1.0f
+            : debugView == PostProcessDebugView::LightmapCoverage ? 2.0f : 0.0f;
         std::size_t pointShadowCount = 0;
         constexpr glm::vec3 directions[] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
         constexpr glm::vec3 ups[] = {{0, -1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}, {0, -1, 0}, {0, -1, 0}};

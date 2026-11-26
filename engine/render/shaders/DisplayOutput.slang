@@ -59,6 +59,8 @@ float3 debugSample(uint mode, float2 uv)
     if (mode == 7) return debugData.zzz;
     if (mode == 8) return debugData.www;
     if (mode == 9) return lodColor(debugData.x);
+    // Lightmap and Lightmap Coverage: BasicLit writes them over the albedo (LightmapSampling.slang lightmapDebugColor).
+    if (mode == 10 || mode == 11) return depth <= 0.000001 ? float3(0.0) : albedoTexture.Sample(uv).rgb;
     return sceneTexture.Sample(uv).rgb;
 }
 

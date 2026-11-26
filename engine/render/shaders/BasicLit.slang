@@ -2046,6 +2046,8 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     output.albedo = float4(sampledColor.rgb, encodeFoliageTransmittance(diffuseTransmittance, sampledColor.rgb));
     output.debug = float4(saturate(input.objectDebug), normalizedCascade,
                           rawShadowVisibility, shadowVisibility);
+    if (geometryParameters.y > 0.5)
+        output.albedo = float4(lightmapDebugColor(geometryParameters.y, input.lightmapUv, lightmap, saturate(ndotv)), output.albedo.a);
     return output;
 }
 

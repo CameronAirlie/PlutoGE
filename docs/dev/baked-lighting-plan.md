@@ -75,7 +75,7 @@ Seams that keep features modular:
   (also the object stream / instanced block) and `BindlessInstanceRecord`. Lightmapped draws never merge into instanced
   batches (the rect is part of `SameBasicDrawShading`); storage-instanced draws are never lightmapped.
 - Per frame: `bakedLighting` (x lightmaps on, y directional mode, zw atlas size) in `BasicFrameParameters`; the atlas
-  at logical slot 42, set 0 binding 39 (OpenGL unit 39).
+  at logical slot 42, set 0 binding 42 (OpenGL unit 42: the GL backend binds textures to the unit named by the slot).
 - Stored value: cosine-weighted mean radiance (irradiance / pi), the convention every ambient layer in
   `BasicLit.slang` multiplies by `diffuseResponse`.
 - Indirect target alpha `BakedIndirectAlpha` (0.375): DDGI and SSGI keep the baked light (they replace only >= 0.5),

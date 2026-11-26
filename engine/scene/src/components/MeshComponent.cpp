@@ -2066,6 +2066,7 @@ namespace PlutoGE::scene
                 command.isStatic = m_isStatic;
                 if (m_isStatic && bakedLighting)
                     command.lightmap = bakedLighting->FindRect(entity->GetID(), static_cast<std::uint32_t>(submeshIndex));
+                command.lightmap.staticReceiver = m_isStatic;
                 command.foliageWind = m_wind;
                 // Swaying geometry reaches beyond its rest bounds; grow them so culling stays conservative.
                 if (const float sway = render::FoliageWindMaxDisplacement(m_wind); sway > 0.0f)

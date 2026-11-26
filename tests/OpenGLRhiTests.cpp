@@ -23,6 +23,7 @@
 #include "CloudTransformChecks.h"
 #include "OcclusionRenderingChecks.h"
 #include "GeometryDiagnosticChecks.h"
+#include "LightmapDebugViewChecks.h"
 #include "SkyQuadratureChecks.h"
 #include "NightSkyChecks.h"
 #include "ShaderGraphRenderingChecks.h"
@@ -1033,6 +1034,9 @@ void main() { outputColor = vec4(vertexColor, 1.0); auxiliaryColor = vec4(1.0 - 
             glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
             return pixels;
         };
+        CheckLightmapDebugViews(basicRenderer, device, readOpenGLPixels);
+        if (argc > 1 && std::string_view(argv[1]) == "--lightmap-debug-views")
+            return 0;
         CheckMaterialOcclusion(basicRenderer, device, readOpenGLPixels);
         CheckTwoSidedShading(basicRenderer, readOpenGLPixels);
         if (argc > 1 && std::string_view(argv[1]) == "--material-occlusion")

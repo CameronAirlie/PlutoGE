@@ -55,7 +55,7 @@ int main(int argc, char **argv) try
 {
     using namespace PlutoGE;
     if (argc < 5)
-        throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--time seconds] [--size WxH]\n"
+        throw std::invalid_argument("Usage: PlutoGERenderSceneShot <project-root> <scene> <output.ppm> <camera-name> [--simulate seconds] [--time seconds] [--size WxH] [--debug-view lightmap|lightmap-coverage]\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> --bake-lighting <output.plutoscene>\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> --bake-ambient <output.plutoscene>\n"
                                     "       PlutoGERenderSceneShot <project-root> <scene> <output.tga|ppm> --top-down <layout.plutomap> [--size N]");
@@ -123,6 +123,7 @@ int main(int argc, char **argv) try
     }
 
     float simulateSeconds = 0, shaderTime = 0, poseSeconds = -1;
+    render::PostProcessDebugView debugView = render::PostProcessDebugView::None;
     int settleFrames = 16; // --frames: raise it for virtual shadow pages and DDGI to converge in large scenes
     unsigned width = 1280, height = 800;
     const bool topDown = std::string_view(argv[4]) == "--top-down";
@@ -143,6 +144,14 @@ int main(int argc, char **argv) try
         else if (option == "--frames" && argument + 1 < argc) settleFrames = std::max(1, std::stoi(argv[++argument]));
         else if (option == "--time" && argument + 1 < argc) shaderTime = std::stof(argv[++argument]);
         else if (option == "--pose" && argument + 1 < argc) poseSeconds = std::max(0.0f, std::stof(argv[++argument]));
+        else if (option == "--debug-view" && argument + 1 < argc)
+        {
+            // Baked lighting checks (docs/BAKED_LIGHTING.md): the viewport's Lightmap and Lightmap Coverage views.
+            const std::string_view view(argv[++argument]);
+            if (view == "lightmap") debugView = render::PostProcessDebugView::Lightmap;
+            else if (view == "lightmap-coverage") debugView = render::PostProcessDebugView::LightmapCoverage;
+            else throw std::invalid_argument("--debug-view takes lightmap or lightmap-coverage");
+        }
         else if (option == "--size" && argument + 1 < argc)
         {
             const std::string size(argv[++argument]);
@@ -230,6 +239,7 @@ int main(int argc, char **argv) try
                 // Lightmap rects as MeshComponent::SubmitRenderCommands looks them up.
                 if (const auto *baked = world->GetBakedLighting(); baked && component->IsStatic())
                     draw.lightmap = baked->FindRect(entity->GetID(), static_cast<std::uint32_t>(index));
+                draw.lightmap.staticReceiver = component->IsStatic();
                 draws.push_back(draw);
             }
         }
@@ -369,7 +379,7 @@ int main(int argc, char **argv) try
         if (simulateSeconds > 0)
             for (auto *system : world->GetParticleSystemComponents()) system->Update(step);
         if (!renderer.Render(width, height, view, lighting, visible, casters, effects,
-                             atmosphere, pixels, render::PostProcessDebugView::None, true, world.get()))
+                             atmosphere, pixels, debugView, true, world.get()))
             throw std::runtime_error("Scene render failed");
     }
     const auto &stats = renderer.GetTimingStats();

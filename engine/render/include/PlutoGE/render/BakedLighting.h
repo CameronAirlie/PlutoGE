@@ -31,8 +31,17 @@ namespace PlutoGE::render
     {
         glm::vec2 scale{0.0f};
         glm::vec2 offset{0.0f};
+        // The draw is a static mesh, which a bake lightmaps when it has lightmap UVs (MeshComponent sets it whether or
+        // not the draw has texels yet). Not stored with the bake: the Lightmap Coverage debug view uses it to mark
+        // static meshes missing from the bake.
+        bool staticReceiver = false;
         [[nodiscard]] bool IsValid() const noexcept { return scale.x > 0.0f && scale.y > 0.0f; }
-        [[nodiscard]] glm::vec4 Packed() const noexcept { return {scale, offset}; }
+        // The draw's object constant (LightmapSampling.slang lightmapCoordinate): scale and offset when lightmapped;
+        // otherwise zero, with z -1 for a static receiver.
+        [[nodiscard]] glm::vec4 Packed() const noexcept
+        {
+            return IsValid() ? glm::vec4(scale, offset) : glm::vec4(0.0f, 0.0f, staticReceiver ? -1.0f : 0.0f, 0.0f);
+        }
         bool operator==(const LightmapRect &) const = default;
     };
 

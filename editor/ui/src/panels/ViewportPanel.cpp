@@ -142,7 +142,11 @@ namespace PlutoGE::ui
             "Shadow Mask Raw",
             "Shadow Mask Filtered",
             "LOD",
+            "Lightmap",
+            "Lightmap Coverage (Green Baked, Yellow Off, Red Missing, Grey Unbaked)",
         };
+        static_assert(std::size(kDebugViewLabels) == static_cast<std::size_t>(render::PostProcessDebugView::LightmapCoverage) + 1,
+                      "Every PostProcessDebugView needs a viewport label");
 
         const char *TemporalUpscalerLabel(render::rhi::TemporalUpscaler technology)
         {

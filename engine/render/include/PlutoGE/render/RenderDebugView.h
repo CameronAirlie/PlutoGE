@@ -19,5 +19,11 @@ namespace PlutoGE::render
         DirectionalShadowMaskRaw,
         DirectionalShadowMaskFiltered,
         Lod,
+        // Baked lighting (docs/BAKED_LIGHTING.md): the lightmap's baked light alone, untextured; surfaces without
+        // lightmap texels are dark grey.
+        Lightmap,
+        // Which surfaces are lightmapped: green lightmapped, yellow lightmapped while the scene's lighting is Realtime,
+        // red static meshes the bake left out, grey surfaces lit without lightmaps (moving objects, terrain, foliage).
+        LightmapCoverage,
     };
 }

@@ -136,6 +136,18 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
   takes the darker of the realtime shadow and the mask, and leaves out a Baked sun.
 - Lightmapped pixels write indirect alpha 0.375, so DDGI and SSGI keep the baked light; SSAO still applies.
 - Baked local lights are not submitted.
+- A Baked sun costs no realtime shadow work: `ResolveBakedLighting` clears `BasicLighting::shadowsEnabled`, which skips its
+  virtual shadow maps or cascades, the directional shadow mask pass and its contact shadow (local lights keep theirs).
+  Realtime GI (VCT injection, ray-traced DDGI) leaves it out too (`BakedLightingFrame::DirectionalBaked`), since its
+  bounce is already in the lightmaps and probes.
+- Lightmapped pixels never defer to the screen-space probe resolve (`DeferredProbeIrradiance`), so it runs only over
+  32-pixel tiles touched by unlightmapped opaque draws (`DeferredProbePixelRegion`, per instance through
+  `BasicDraw::localBoundingSphere`), and not at all when there are none. Wind-animated draws, detail grass and draws
+  without bounds fall back to the whole view. The profiler shows the covered pixels as "RHI deferred probe resolve".
+
+**Performance.** What baking saves depends on the lights' modes. A Mixed sun keeps all of its realtime cost (shadow
+maps, shadow mask, contact shadows, direct shading): only the ambient term changes source, so a scene whose realtime
+ambient was a probe grid renders at about the same speed. The saving comes from Baked lights, the sun especially.
 
 ## Limits and next steps
 

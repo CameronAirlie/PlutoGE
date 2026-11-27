@@ -207,6 +207,10 @@ namespace PlutoGE::render
         if (!directional)
             return;
         baked.directionalMode = directional->bakeMode;
+        // A Baked sun casts no realtime shadow: its static shadows are in the lightmaps, and dynamic objects take its
+        // light from the probes. Clearing the flag skips the shadow maps, the shadow mask and its contact shadow.
+        if (baked.DirectionalBaked())
+            lighting.shadowsEnabled = false;
         // The mask is this light's static shadow only while it shines from where it was baked: a turned sun, or the
         // moon a physical sky substitutes at night, would be shadowed by the wrong silhouettes.
         const auto &bake = component->GetBake();

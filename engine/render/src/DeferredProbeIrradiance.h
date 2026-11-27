@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <span>
 
 namespace PlutoGE::render
 {
@@ -39,6 +40,10 @@ namespace PlutoGE::render
             // Optional environment reflection (rgb, a sky share) to adjust.
             rhi::TextureHandle environmentSpecular;
             std::uint32_t width = 0, height = 0;
+            // Disjoint rectangles holding every pixel that can be pending (DeferredProbePixelRegion); none means the
+            // whole target. The trace and the composite run only there, except the reflections composite, which
+            // writes every pixel of its new reflection target.
+            std::span<const rhi::Scissor> regions;
             glm::mat4 inverseViewProjection{1.0f};
             bool flipY = false, zeroToOneDepth = false;
         };

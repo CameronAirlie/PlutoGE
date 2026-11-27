@@ -1560,8 +1560,17 @@ namespace PlutoGE::render
                 // is a caching hint rather than a requirement for contributing to GI. Skinned
                 // geometry remains excluded until the voxelizer supports joint transforms.
                 draw.contributesToGi = draw.contributesToGi && (!command.jointMatrices || command.jointMatrices->empty());
+                if (!deformed && command.submeshIndex < command.mesh->GetSubmeshCount())
+                {
+                    const auto &local = command.mesh->GetSubmesh(command.submeshIndex).bounds;
+                    if (local.radius > 0.0f)
+                        draw.localBoundingSphere = glm::vec4(local.center, local.radius);
+                }
                 if (draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.z > 0)
+                {
                     draw.shadowBoundsRadius = -1.0f;
+                    draw.localBoundingSphere.w = -1.0f;
+                }
                 draw.previousModel = command.previousModel;
                 draw.instanceModels = command.instanceModels;
                 draw.previousInstanceModels = command.previousInstanceModels;
@@ -2697,6 +2706,7 @@ namespace PlutoGE::render
             ? "Cascaded shadow maps (fallback: more casters in reach than VSM accepts)"
             : frameStats.directionalShadowStatus;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
+        m_timingStats.deferredProbePixels = frameStats.deferredProbePixels;
         m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();
         m_timingStats.renderRecordingMs = frame.recordingSetupMs + millisecondsBetween(recordStart, renderEnd);

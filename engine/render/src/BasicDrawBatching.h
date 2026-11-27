@@ -128,6 +128,13 @@ namespace PlutoGE::render
                         previous.shadowBoundsRadius = -1;
                     previous.maxInstanceRadius = previous.maxInstanceRadius >= 0 && draw.maxInstanceRadius >= 0
                         ? std::max(previous.maxInstanceRadius, draw.maxInstanceRadius) : -1.0f;
+                    // Both ranges share the model, so their local spheres share a space.
+                    if (previous.localBoundingSphere.w >= 0 && draw.localBoundingSphere.w >= 0)
+                        previous.localBoundingSphere.w = std::max(previous.localBoundingSphere.w,
+                            glm::length(glm::vec3(draw.localBoundingSphere - previous.localBoundingSphere)) +
+                                draw.localBoundingSphere.w);
+                    else
+                        previous.localBoundingSphere.w = -1.0f;
                     // The aggregate sphere is conservative; the first object's
                     // tight AABB is no longer a valid bound for the merged draw.
                     previous.occlusionBoundsExtents = glm::vec3(-1);
@@ -329,6 +336,13 @@ namespace PlutoGE::render
                         first.shadowBoundsRadius = -1;
                     first.maxInstanceRadius = first.maxInstanceRadius >= 0 && draw.maxInstanceRadius >= 0
                         ? std::max(first.maxInstanceRadius, draw.maxInstanceRadius) : -1.0f;
+                    // Instances share the mesh, so their local spheres share its space.
+                    if (first.localBoundingSphere.w >= 0 && draw.localBoundingSphere.w >= 0)
+                        first.localBoundingSphere.w = std::max(first.localBoundingSphere.w,
+                            glm::length(glm::vec3(draw.localBoundingSphere - first.localBoundingSphere)) +
+                                draw.localBoundingSphere.w);
+                    else
+                        first.localBoundingSphere.w = -1.0f;
                     continue;
                 }
                 groups.push_back({output, head, {}, {}});

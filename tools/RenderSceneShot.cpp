@@ -385,6 +385,7 @@ int main(int argc, char **argv) try
     const auto &stats = renderer.GetTimingStats();
     std::cout << "Directional shadows: " << stats.directionalShadowStatus << " (" << stats.shadowCandidateCount
               << " casters; " << stats.rigidShadowCastersOutOfReach << " rigid out of reach)\n";
+    std::cout << "Deferred probe resolve: " << stats.deferredProbePixels << " pixels\n";
     std::cout << "Draws: " << stats.visibleDrawCount << " visible packets, " << stats.visibleInstanceCount << " instances\n";
     const auto image = device.ReadTextureRgba8(renderer.GetColorTexture());
     const std::filesystem::path output(argv[3]);

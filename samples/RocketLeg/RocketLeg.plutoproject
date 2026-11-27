@@ -19,7 +19,7 @@ WINDOW_SIZE	1600	900
 VSYNC	0
 MAX_FRAME_RATE	0
 GRAPHICS_API	Vulkan
-RUNTIME_UPSCALER	FSR2
+RUNTIME_UPSCALER	None
 RUNTIME_UPSCALER_QUALITY	Quality
 OCCLUSION_CULLING	Off
 RETAIN_SHADOW_CASCADES	1
@@ -135,7 +135,7 @@ ASSET	project://Models/M_CarGlass_0.plutomaterial	1027	Material
 ASSET	project://Models/M_CarTrim_0.plutomaterial	1027	Material
 ASSET	project://Models/M_FieldLines_0.plutomaterial	1027	Material
 ASSET	project://PostProcessing/main.plutopostprocess	6818	Post Process Preset
-ASSET	project://Scenes/Main.plutoscene	14773619	Scene
+ASSET	project://Scenes/Main.plutoscene	8480172	Scene
 ASSET	project://Scripts/Arena/BoostPad.cs	4449	Script
 ASSET	project://Scripts/Ball/BallMarker.cs	2122	Script
 ASSET	project://Scripts/Ball/GoalExplosion.cs	1727	Script

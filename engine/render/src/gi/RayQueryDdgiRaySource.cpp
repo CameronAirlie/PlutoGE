@@ -29,7 +29,8 @@ namespace PlutoGE::render
         {
             RayTracedLighting packed;
             const float directionLength = glm::length(lighting.directionalDirection);
-            if (lighting.directionalIntensity > 0.0f && directionLength > 1.e-6f)
+            // A Baked sun's bounce is already in the lightmaps and probes.
+            if (lighting.directionalIntensity > 0.0f && directionLength > 1.e-6f && !lighting.bakedLighting.DirectionalBaked())
             {
                 packed.sunDirectionIntensity = {-lighting.directionalDirection / directionLength, lighting.directionalIntensity};
                 packed.sunColor = {lighting.directionalColor, lighting.shadowsEnabled ? 1.0f : 0.0f};

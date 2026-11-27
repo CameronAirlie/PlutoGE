@@ -33,6 +33,7 @@
 #include "GlassSnapshotBounds.h"
 #include "SnapshotDamageTracker.h"
 #include "DecalRasterBounds.h"
+#include "DeferredProbeCoverage.h"
 #include "BasicDrawBatching.h"
 #include "PersistentParameterCache.h"
 #include "MaterialPreparationCache.h"
@@ -499,7 +500,9 @@ namespace PlutoGE::render
             voxel.volumeSize = size;
             voxel.resolution = resolution;
             const auto &injectionLight = lighting;
-            voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f ? 1u : 0u;
+            // A Baked sun's bounce is already in the lightmaps and probes.
+            voxel.hasDirectionalLight = injectionLight.directionalIntensity > 0.0f &&
+                !injectionLight.bakedLighting.DirectionalBaked() ? 1u : 0u;
             voxel.lightDirectionIntensity = glm::vec4(glm::normalize(injectionLight.directionalDirection), injectionLight.directionalIntensity);
             voxel.lightColor = glm::vec4(injectionLight.directionalColor, 1.0f);
             if (injectLocalLights)
@@ -4719,7 +4722,15 @@ namespace PlutoGE::render
         // Before decals, which relight from the composed surface colour.
         // With reflections, it returns the adjusted environment reflection later passes read.
         rhi::TextureHandle deferredEnvironmentSpecular;
-        if (deferProbeIrradiance)
+        // Lightmapped surfaces never defer, so a baked scene's resolve runs only around its unlightmapped draws.
+        // Detail grass is generated here, with no draw bounds of its own: it needs the whole target.
+        const DeferredProbeRegion deferredProbeRegion = !deferProbeIrradiance ? DeferredProbeRegion{}
+            : m_frameStats.detailGrassFields > 0 ? DeferredProbeRegion{{rhi::Scissor{0, 0, m_width, m_height}}}
+            : DeferredProbePixelRegion(draws, viewProjection, m_width, m_height,
+                                       m_device->GetApi() == rhi::GraphicsApi::Vulkan,
+                                       lighting.bakedLighting.active && lighting.bakedLighting.atlas);
+        m_frameStats.deferredProbePixels = deferredProbeRegion.PixelCount();
+        if (deferProbeIrradiance && !deferredProbeRegion.Empty())
             deferredEnvironmentSpecular = m_deferredProbeIrradiance->Record({
                 .sceneParameters = m_cameraBuffer.Get(),
                 .probeAtlas = lighting.diffuseProbeAtlas, .probeSampler = m_vctVolumeSampler.Get(), .screenSampler = m_screenSampler.Get(),
@@ -4727,7 +4738,8 @@ namespace PlutoGE::render
                 .material = m_materialTarget.Get(), .indirect = m_indirectTarget.Get(), .color = m_colorTarget.Get(),
                 .environmentSpecular = lighting.diffuseProbeReflections && geometryLayout == GeometryOutputLayout::SurfaceReflections
                     ? m_environmentSpecularTarget.Get() : rhi::TextureHandle{},
-                .width = m_width, .height = m_height, .inverseViewProjection = m_inverseViewProjection,
+                .width = m_width, .height = m_height, .regions = deferredProbeRegion.rectangles,
+                .inverseViewProjection = m_inverseViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});
         // Temporal reconstruction reads motion for every pixel, including background.
         if (m_backgroundMotion && m_motionTarget && (upscalerFrame || taaEffect != postProcessEffects.end()))

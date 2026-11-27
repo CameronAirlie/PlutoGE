@@ -56,7 +56,7 @@ Parameter 0 "Secondary Bounce" "1.000000" 0
 Parameter 1 "Voxelization Budget" "8" 0
 Parameter 4 "Debug View" "0" 6 "None" "Irradiance" "Indirect Lighting" "Probes" "Sky Visibility" "Reflections"
 Parameter 0 "Probe Debug Radius" "0.150000" 0
-Effect "SSGI" 1 11
+Effect "SSGI" 0 11
 Parameter 0 "Intensity" "1.000000" 0
 Parameter 0 "Ray Distance" "4.000000" 0
 Parameter 0 "Thickness" "0.450000" 0

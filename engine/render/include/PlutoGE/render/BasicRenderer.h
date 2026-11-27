@@ -804,6 +804,9 @@ namespace PlutoGE::render
         // size-based culling: casters too small for a shadow cascade's texels, instances too small to matter to
         // ray-traced GI. Negative when unknown, which never culls.
         float maxInstanceRadius = -1.0f;
+        // The geometry's bounding sphere in the space `model`, or each of instanceModels, transforms (xyz centre,
+        // w radius; w negative when unknown). Bounds each instance where shadowBoundsCenter/Radius bound the group.
+        glm::vec4 localBoundingSphere{0.0f, 0.0f, 0.0f, -1.0f};
         std::uint32_t firstIndex = 0;
         std::uint32_t indexCount = 0;
         bool contributesToGi = true;
@@ -1011,6 +1014,12 @@ namespace PlutoGE::render
             glm::uvec2 atlasSize{0};
             LightBakeMode directionalMode = LightBakeMode::Realtime;
             bool directionalShadowMask = false;
+            // The directional light is Baked: its light, shadows included, lives only in lightmaps and probes, so no
+            // realtime pass (direct light, shadow maps, contact shadows, realtime GI) adds any of it.
+            [[nodiscard]] bool DirectionalBaked() const noexcept
+            {
+                return active && directionalMode == LightBakeMode::Baked;
+            }
         } bakedLighting;
         glm::vec3 diffuseProbeOrigin{0}, diffuseProbeSize{1};
         glm::ivec3 diffuseProbeResolution{0};
@@ -1203,6 +1212,8 @@ namespace PlutoGE::render
         // Detail grass this frame: fields generated and the candidates their lattices dispatched; and the latest
         // generated clumps per LOD read back (an earlier frame's; DetailGrassStats).
         std::size_t detailGrassFields = 0, detailGrassCandidates = 0;
+        // Pixels the deferred probe resolve covered this frame (DeferredProbePixelBounds); zero when it was skipped.
+        std::uint64_t deferredProbePixels = 0;
         DetailGrassStats detailGrass;
         // Whether GPU instance culling ran its second occlusion phase (GpuInstanceCulling::TwoPhase), and its latest
         // diagnostics (an earlier frame's).

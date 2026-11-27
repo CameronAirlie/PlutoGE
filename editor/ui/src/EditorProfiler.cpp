@@ -508,6 +508,7 @@ namespace PlutoGE::ui
                << " beyond the probe volume's reach; top level "
                << (rhiScene.rayTracedSceneRebuilt ? "rebuilt" : "reused") << "\n";
         report << "RHI directional shadows: " << rhiScene.directionalShadowStatus << "\n";
+        report << "RHI deferred probe resolve: " << rhiScene.deferredProbePixels << " pixels (lightmapped surfaces excluded)\n";
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;

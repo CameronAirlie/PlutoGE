@@ -1,6 +1,7 @@
 #include "DeferredProbeIrradiance.h"
 #include "PostProcessParameterBlock.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <span>
 
@@ -123,6 +124,21 @@ namespace PlutoGE::render
                                     static_cast<float>(reducedWidth), static_cast<float>(reducedHeight)};
         m_device->UpdateBuffer(m_parameters.Get(), 0, std::as_bytes(std::span(&parameters, 1)));
 
+        // Only the regions' pixels can be pending. Each composite pixel upsamples the reduced cells around it (up to
+        // one beyond its own 2x2 block), so the trace covers one reduced texel more on every side. Trace rectangles
+        // may then overlap: the trace stores, so a cell written twice holds the same value.
+        const rhi::Scissor fullRegion{0, 0, frame.width, frame.height};
+        const std::span<const rhi::Scissor> regions = frame.regions.empty() ? std::span<const rhi::Scissor>(&fullRegion, 1) : frame.regions;
+        const auto traceRegion = [&](const rhi::Scissor &region)
+        {
+            const std::int32_t lowX = std::max(region.x / 2 - 1, 0), lowY = std::max(region.y / 2 - 1, 0);
+            const std::int32_t highX = std::min(static_cast<std::int32_t>((region.x + region.width + 1) / 2 + 1),
+                                                static_cast<std::int32_t>(reducedWidth));
+            const std::int32_t highY = std::min(static_cast<std::int32_t>((region.y + region.height + 1) / 2 + 1),
+                                                static_cast<std::int32_t>(reducedHeight));
+            return rhi::Scissor{lowX, lowY, static_cast<std::uint32_t>(highX - lowX), static_cast<std::uint32_t>(highY - lowY)};
+        };
+
         auto &commands = m_device->GetImmediateContext();
         const auto bindInputs = [&]
         {
@@ -154,7 +170,12 @@ namespace PlutoGE::render
                 commands.BindTexture(ReducedSkyVisibilitySlot, frame.depth, frame.screenSampler);
                 commands.BindTexture(EnvironmentSpecularSlot, frame.environmentSpecular, frame.screenSampler);
             }
-            commands.Draw(3);
+            for (const auto &region : regions)
+            {
+                commands.SetScissor(traceRegion(region));
+                commands.Draw(3);
+            }
+            commands.SetScissor({0, 0, reducedWidth, reducedHeight});
             commands.EndRendering();
             commands.EndGpuScope();
         }
@@ -187,7 +208,14 @@ namespace PlutoGE::render
                 commands.BindTexture(ReducedSkyVisibilitySlot, m_reducedSkyVisibility.Get(), frame.screenSampler);
                 commands.BindTexture(EnvironmentSpecularSlot, frame.environmentSpecular, frame.screenSampler);
             }
-            commands.Draw(3);
+            // The reflections composite writes the whole new reflection target; the plain one only adds where pending,
+            // once per disjoint region (its blending adds).
+            for (const auto &region : reflections ? std::span<const rhi::Scissor>(&fullRegion, 1) : regions)
+            {
+                commands.SetScissor(region);
+                commands.Draw(3);
+            }
+            commands.SetScissor(fullRegion);
             commands.EndRendering();
             commands.EndGpuScope();
         }

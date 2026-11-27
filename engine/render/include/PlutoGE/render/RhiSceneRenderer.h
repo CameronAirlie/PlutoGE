@@ -143,6 +143,8 @@ namespace PlutoGE::render
         VirtualShadowStats virtualShadows;
         bool virtualShadowsActive = false;
         std::string directionalShadowStatus = "Disabled";
+        // Pixels the deferred probe resolve covered (BasicFrameStats::deferredProbePixels); zero when it was skipped.
+        std::uint64_t deferredProbePixels = 0;
         std::array<std::size_t, 4> recordedShadowDrawsByCascade{};
     };
 

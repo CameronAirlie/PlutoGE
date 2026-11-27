@@ -25,6 +25,15 @@ namespace PlutoGE::render
 
     [[nodiscard]] constexpr bool ContributesToBake(LightBakeMode mode) noexcept { return mode != LightBakeMode::Realtime; }
 
+    // A baked sun shadow (the lightmap's mask, the probes' sun visibility) matches the sun while the cosine between
+    // the sun's direction now and at bake time stays above this: about one degree.
+    inline constexpr float kBakedSunDirectionTolerance = 0.99985f;
+    [[nodiscard]] inline bool SameBakedSunDirection(const glm::vec3 &current, const glm::vec3 &baked) noexcept
+    {
+        const float lengths = glm::length(current) * glm::length(baked);
+        return lengths > 0.0f && glm::dot(current, baked) / lengths > kBakedSunDirectionTolerance;
+    }
+
     // The texels a draw's secondary UVs map to: atlas UV = uv2 * scale + offset. A zero scale means the draw is not
     // lightmapped.
     struct LightmapRect

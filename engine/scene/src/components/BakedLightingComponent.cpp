@@ -5,7 +5,9 @@
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/FastTextNumbers.h"
 #include "PlutoGE/scene/LightmapFile.h"
+#include "PlutoGE/scene/BakedProbeVolume.h"
 #include "PlutoGE/scene/Scene.h"
+#include "PlutoGE/scene/components/LightComponent.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 
 #include <algorithm>
@@ -122,6 +124,14 @@ namespace PlutoGE::scene
         Touch(false);
     }
 
+    void BakedLightingComponent::SetMixedShadows(MixedShadowMode mode)
+    {
+        if (mode == m_mixedShadows)
+            return;
+        m_mixedShadows = mode;
+        Touch(false);
+    }
+
     void BakedLightingComponent::SetBakeSettings(LightmapBakeSettings settings)
     {
         SanitizeLightmapBakeSettings(settings);
@@ -214,6 +224,8 @@ namespace PlutoGE::scene
     {
         return {
             {"Lighting Mode", PropertyType::Enum, std::to_string(static_cast<int>(m_mode)), {"Realtime", "Baked"}},
+            {"Mixed Shadows", PropertyType::Enum, std::to_string(static_cast<int>(m_mixedShadows)),
+             {"All Realtime", "Moving Objects Only (Shadowmask)"}},
             {"Texels Per Unit", PropertyType::Float, std::to_string(m_settings.texelsPerUnit)},
             {"Max Atlas Size", PropertyType::Int, std::to_string(m_settings.maxAtlasSize)},
             {"Chart Padding", PropertyType::Int, std::to_string(m_settings.padding)},
@@ -247,12 +259,21 @@ namespace PlutoGE::scene
         auto settings = m_settings;
         std::string atlasReference;
         std::optional<LightmapBakeOutput> bake;
+        bool sawLightingMode = false, sawMixedShadows = false;
         for (const auto &property : properties)
         {
             try
             {
                 if (property.name == "Lighting Mode")
+                {
+                    sawLightingMode = true;
                     SetLightingMode(std::stoi(property.value) == 0 ? SceneLightingMode::Realtime : SceneLightingMode::Baked);
+                }
+                else if (property.name == "Mixed Shadows")
+                {
+                    sawMixedShadows = true;
+                    SetMixedShadows(std::stoi(property.value) == 0 ? MixedShadowMode::Realtime : MixedShadowMode::Shadowmask);
+                }
                 else if (property.name == "Texels Per Unit") settings.texelsPerUnit = std::stof(property.value);
                 else if (property.name == "Max Atlas Size") settings.maxAtlasSize = std::stoi(property.value);
                 else if (property.name == "Chart Padding") settings.padding = std::stoi(property.value);
@@ -274,6 +295,9 @@ namespace PlutoGE::scene
                 // Keep the previous value on malformed text.
             }
         }
+        // A complete property set without the setting was saved before it existed, when every caster was realtime.
+        if (sawLightingMode && !sawMixedShadows)
+            SetMixedShadows(MixedShadowMode::Realtime);
         SetBakeSettings(settings);
         if (bake && !atlasReference.empty())
         {
@@ -285,5 +309,52 @@ namespace PlutoGE::scene
             std::string ignored;
             LoadAtlas(&ignored);
         }
+    }
+
+    MixedShadowsStatus DescribeMixedShadows(const Scene &scene)
+    {
+        const auto *baked = scene.GetBakedLighting();
+        if (!baked)
+            return {false, false, "Mixed lights' static shadows are realtime until lighting is baked."};
+        if (baked->GetMixedShadows() == MixedShadowMode::Realtime)
+            return {false, false, "Every object casts realtime shadows from Mixed lights. Moving Objects Only is faster: "
+                                  "static shadows come from the bake."};
+        if (baked->GetLightingMode() != SceneLightingMode::Baked)
+            return {false, false, "No effect while Lighting Mode is Realtime."};
+        if (!baked->HasBake())
+            return {false, true, "Bake lighting (Scene > Lighting > Bake Lighting) to bake static shadows."};
+
+        // The renderer's sun: the first directional light.
+        const Light *sun = nullptr;
+        for (const auto *light : scene.GetLights())
+            if (light && light->type == LightType::Directional)
+            {
+                sun = light;
+                break;
+            }
+        if (!sun)
+            return {false, false, "No directional light: only a Mixed sun's static shadows are baked."};
+        if (sun->bakeMode == render::LightBakeMode::Baked)
+            return {false, false, "The sun is Baked: all of its light and shadows come from the bake already."};
+        if (sun->bakeMode != render::LightBakeMode::Mixed || !sun->castsShadows)
+            return {false, true, "Set the sun's Mode to Mixed, with Casts Shadows on, and bake lighting to bake its "
+                                 "static shadows."};
+        const auto &bake = baked->GetBake();
+        if (!bake.hasShadowMask)
+            return {false, true, "The bake has no sun shadows (the sun was not Mixed when baked): bake lighting again."};
+        if (!render::SameBakedSunDirection(sun->direction, bake.shadowMaskDirection))
+            return {false, true, "The sun has turned since the bake, so every object casts realtime shadows until you "
+                                 "bake lighting again."};
+
+        bool probesHaveSun = false;
+        for (const auto *volume : scene.GetBakedProbeVolumes())
+            probesHaveSun |= volume && volume->HasSunVisibility() &&
+                             render::SameBakedSunDirection(sun->direction, volume->sunVisibilityDirection);
+        if (!probesHaveSun)
+            return {true, true, "Static shadows are baked; only moving objects cast realtime shadows. Moving objects and "
+                                "surfaces without lightmaps are not shadowed by static geometry yet: bake lighting again "
+                                "so the ambient volume records the sun."};
+        return {true, false, "Static shadows are baked; only moving objects cast realtime shadows. Moving objects take "
+                             "static shadows from the ambient volume."};
     }
 }

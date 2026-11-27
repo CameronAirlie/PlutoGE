@@ -854,6 +854,8 @@ namespace
         bake.visibilityNormals.resize(2);
         bake.skyVisibility = {{0.1f, 0.2f, 0.3f, 0.4f}, {0.5f, 0.6f, 0.7f, 0.8f}};
         bake.skyIrradianceScale = 0.25f;
+        bake.sunVisibility = {0.25f, 1.0f};
+        bake.sunVisibilityDirection = {-0.5f, -0.7f, 0.5f};
         bake.sphericalHarmonics[1][3] = {0.5f, 1.0f / 3.0f, -2.0f};
         bake.visibility[1][7] = 12.5f;
         bake.visibilityNormals[0][2] = {0.0f, 1.0f, 0.0f};
@@ -872,8 +874,10 @@ namespace
         Require(bake.irradiance == expected.irradiance && bake.positions == expected.positions &&
                 bake.sphericalHarmonics == expected.sphericalHarmonics && bake.visibility == expected.visibility &&
                 bake.visibilityNormals == expected.visibilityNormals && bake.skyVisibility == expected.skyVisibility &&
-                bake.skyIrradianceScale == expected.skyIrradianceScale && bake.origin == expected.origin,
+                bake.skyIrradianceScale == expected.skyIrradianceScale && bake.origin == expected.origin &&
+                bake.sunVisibility == expected.sunVisibility && bake.sunVisibilityDirection == expected.sunVisibilityDirection,
                 "A bake should round-trip exactly");
+        Require(bake.HasSunVisibility(), "A bake keeps the sun's visibility for shadowmask");
 
         // The formats older files hold, as the stream encoder wrote them.
         Entity oldEntity;
@@ -885,6 +889,9 @@ namespace
         // A truncated bake keeps the previous result.
         old->Deserialize({{"Baked Data", PropertyType::String, "3 1 2 3 2 2 2 1 0 0 0 1 0 0 0 1 2 1 1 0 0 0 0 1 "}});
         Require(old->GetBakedVolume().irradiance[0].x == 7.0f, "A truncated bake should be ignored");
+        old->Deserialize({{"Baked Data", PropertyType::String, "3 0 0 0 1 1 1 1 0 0 0 1 0 0 0 1 1 1 1 0 0 0 0 5 6 7 "}});
+        Require(old->GetBakedVolume().irradiance[0].x == 5.0f && !old->GetBakedVolume().HasSunVisibility(),
+                "A version 3 bake should still read, without sun visibility");
 
         // A light property write keeps the bake and its text.
         const auto revision = volume->GetHeavyDataRevision();
@@ -895,7 +902,7 @@ namespace
         Require(volume->GetHeavyDataRevision() == revision, "Blend distance is not part of the encoded bake");
         volume->ClearBake();
         Require(volume->GetHeavyDataRevision() != revision, "Clearing a bake should move its revision");
-        Require(PropertyText(*restored, "Baked Data").starts_with("3 "), "Bakes are written as version 3");
+        Require(PropertyText(*restored, "Baked Data").starts_with("4 "), "Bakes are written as version 4");
     }
 
     void TestTerrainHeavyData()

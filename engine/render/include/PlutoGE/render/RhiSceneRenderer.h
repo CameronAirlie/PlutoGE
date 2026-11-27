@@ -145,6 +145,11 @@ namespace PlutoGE::render
         std::string directionalShadowStatus = "Disabled";
         // Pixels the deferred probe resolve covered (BasicFrameStats::deferredProbePixels); zero when it was skipped.
         std::uint64_t deferredProbePixels = 0;
+        // Shadowmask (Shadowmask.h): whether it is on, why static casters stayed in the realtime shadow maps (null when
+        // they left), and the pixels the realtime sun shadow was filtered over (zero when the pass was skipped).
+        bool shadowmask = false;
+        const char *shadowmaskStaticCastersKept = nullptr;
+        std::uint64_t realtimeShadowPixels = 0;
         std::array<std::size_t, 4> recordedShadowDrawsByCascade{};
     };
 

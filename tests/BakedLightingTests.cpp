@@ -4,7 +4,9 @@
 #include "PlutoGE/render/LightmapUvs.h"
 #include "PlutoGE/render/Material.h"
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/SceneEnvironment.h"
 #include "PlutoGE/render/SkylinePacker.h"
+#include "PlutoGE/scene/BakedProbeVolume.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/LightmapFile.h"
 #include "PlutoGE/scene/Scene.h"
@@ -421,6 +423,66 @@ namespace
                 "A mesh without lightmap UVs is not reported: " + result.message);
         std::cout << "PASS unusable lightmap targets reported\n";
     }
+    // Shadowmask (Mixed Shadows: Moving Objects Only): the probes record the Mixed sun's static shadow for moving
+    // objects, and the renderer and the editor's status agree on when it applies.
+    void CheckShadowmaskBake()
+    {
+        ShadowScene shadow(render::LightBakeMode::Mixed);
+        Require(!scene::DescribeMixedShadows(shadow.scene).shadowmask, "Shadowmask needs a bake");
+        auto settings = scene::SceneBakeSettings::Final();
+        settings.probeSpacing = 0.5f;
+        const auto result = scene::SceneBaker().Bake(shadow.scene, settings);
+        Require(result.succeeded, "Shadowmask bake failed: " + result.message);
+
+        const auto volumes = shadow.scene.GetBakedProbeVolumes();
+        Require(!volumes.empty() && volumes.front()->HasSunVisibility(), "The probe bake has no sun visibility");
+        const auto &volume = *volumes.front();
+        float underBox = 1.0f, open = 0.0f;
+        for (std::size_t i = 0; i < volume.positions.size(); ++i)
+        {
+            const glm::vec4 probe = volume.positions[i];
+            if (probe.w < 0.5f || probe.y < 0.15f || probe.y > 1.0f) continue;
+            if (std::abs(probe.x) < 0.6f && std::abs(probe.z) < 0.6f) underBox = std::min(underBox, volume.sunVisibility[i]);
+            if (std::abs(probe.x) > 3.0f && std::abs(probe.z) > 3.0f) open = std::max(open, volume.sunVisibility[i]);
+        }
+        Require(underBox < 0.1f, "A probe under the box should be in the sun's static shadow: " + std::to_string(underBox));
+        Require(open > 0.9f, "A probe in the open should see the sun: " + std::to_string(open));
+
+        auto *baked = shadow.scene.GetBakedLighting();
+        Require(baked && baked->GetMixedShadows() == scene::MixedShadowMode::Shadowmask, "New scenes should default to shadowmask");
+        render::CameraData camera;
+        Require(render::BuildSceneLighting(camera, &shadow.scene).bakedLighting.shadowmask, "The renderer does not apply shadowmask");
+        const auto status = scene::DescribeMixedShadows(shadow.scene);
+        Require(status.shadowmask && !status.warning, "The editor should report shadowmask as working: " + status.message);
+
+        // A turned sun no longer matches the bake: every caster is realtime again, and the editor says why.
+        shadow.sun->GetOwner()->SetRotation({-60.0f, 0.0f, 0.0f});
+        Require(!render::BuildSceneLighting(camera, &shadow.scene).bakedLighting.shadowmask, "A turned sun must not use the old bake");
+        Require(scene::DescribeMixedShadows(shadow.scene).warning, "The editor should ask for a rebake after the sun turns");
+        shadow.sun->GetOwner()->SetRotation({-90.0f, 0.0f, 0.0f});
+
+        baked->SetMixedShadows(scene::MixedShadowMode::Realtime);
+        Require(!render::BuildSceneLighting(camera, &shadow.scene).bakedLighting.shadowmask, "All Realtime must turn shadowmask off");
+        std::cout << "PASS shadowmask bake\n";
+    }
+
+    void CheckMixedShadowsSetting()
+    {
+        scene::BakedLightingComponent component;
+        component.SetMixedShadows(scene::MixedShadowMode::Realtime);
+        scene::BakedLightingComponent loaded;
+        loaded.Deserialize(component.Serialize());
+        Require(loaded.GetMixedShadows() == scene::MixedShadowMode::Realtime, "Mixed Shadows does not persist");
+        component.SetMixedShadows(scene::MixedShadowMode::Shadowmask);
+        loaded.Deserialize(component.Serialize());
+        Require(loaded.GetMixedShadows() == scene::MixedShadowMode::Shadowmask, "Shadowmask does not persist");
+        // Scenes saved before the setting rendered every caster in realtime, and keep doing so.
+        scene::BakedLightingComponent legacy;
+        legacy.Deserialize({{"Lighting Mode", scene::PropertyType::Enum, "1"}});
+        Require(legacy.GetMixedShadows() == scene::MixedShadowMode::Realtime, "Older scenes should load as All Realtime");
+        std::cout << "PASS mixed shadows setting\n";
+    }
+
 }
 
 int main()
@@ -437,6 +499,8 @@ int main()
         CheckBakePersistence();
         CheckStretchedFloorDensity();
         CheckUnusableTargetsReported();
+        CheckMixedShadowsSetting();
+        CheckShadowmaskBake();
     }
     catch (const std::exception &error)
     {

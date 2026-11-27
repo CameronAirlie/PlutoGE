@@ -72,7 +72,8 @@ cbuffer CameraParameters : register(b0, space0)
     // (LightVisibilityConfig.h; local lights by index, the directional light PLUTO_LIGHT_VISIBILITY_DIRECTIONAL).
     uint4 lightVisibilitySlots[PLUTO_LIGHT_VISIBILITY_ID_ROWS];
     // Lightmaps (LightmapSampling.slang): x lightmaps active, y the directional light's mode (0 Realtime, 1 Mixed,
-    // 2 Baked), z 1 when the atlas' alpha is its static shadow mask, w reserved.
+    // 2 Baked), z 1 when the atlas' alpha is its static shadow mask, w 1 under shadowmask (static geometry's sun
+    // shadow is baked: the realtime one holds moving casters only, see Shadowmask.h).
     float4 bakedLighting;
 };
 

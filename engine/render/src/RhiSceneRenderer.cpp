@@ -31,6 +31,7 @@
 #include "RhiDetailGrass.h"
 #include "RhiFogTerrainShadow.h"
 #include "RhiDrawPreparationCache.h"
+#include "Shadowmask.h"
 #include "PlutoGE/render/VctSceneSelection.h"
 #include "PlutoGE/render/DdgiConfig.h"
 #include "PlutoGE/render/DdgiPacket.h"
@@ -1516,6 +1517,7 @@ namespace PlutoGE::render
                 draw.lightmap = command.lightmap;
                 if (command.probeDebug.x > 0) draw.contributesToGi = false;
                 draw.castsShadow = draw.castsShadow && command.castsShadow;
+                draw.staticGeometry = command.isStatic;
                 draw.foliageWind = command.foliageWind;
                 draw.shadowBoundsCenter = command.worldBounds.center;
                 draw.shadowBoundsRadius = command.worldBounds.radius;
@@ -1838,6 +1840,9 @@ namespace PlutoGE::render
                         // evaluateProbeLighting): share, then gradient. Without it: fully open.
                         const glm::vec4 visible=skyVisibility ? volume.skyVisibility[i] : glm::vec4(0,0,0,1);
                         at(base+i,2).w=visible.w; at(base+i,3).w=visible.x; at(base+i,4).w=visible.y; at(base+i,5).w=visible.z;
+                        // The Mixed sun's baked visibility in SH row 6's .w (AmbientProbeSampling.slang
+                        // probeSunVisibility, for shadowmask). Without it: lit, as before shadowmask.
+                        at(base+i,6).w=volume.HasSunVisibility() ? volume.sunVisibility[i] : 1.0f;
                         for (int t=0;t<PLUTO_AMBIENT_PROBE_VISIBILITY_ROWS;++t)
                         {
                             const float depth = directional ? volume.visibility[i][t] : glm::length(volume.size);
@@ -2112,6 +2117,11 @@ namespace PlutoGE::render
             }
         }
         std::erase_if(basicEffects, [&](const auto &effect) { return !m_graphicsQuality.Allows(effect.type); });
+        // Whether static casters can leave the sun's realtime shadow maps depends on what else reads them.
+        PlanShadowmask(effectiveLighting, basicEffects);
+        m_timingStats.shadowmask = effectiveLighting.bakedLighting.shadowmask;
+        m_timingStats.shadowmaskStaticCastersKept = effectiveLighting.bakedLighting.shadowmask
+            ? StaticShadowCastersNeeded(effectiveLighting, basicEffects) : nullptr;
         for (auto &effect : basicEffects)
             // Atmosphere packets own lane 5 (sky night parameters, the cloud light source).
             if (HasInput(InputsFor(effect.type), BasicPostProcessInput::Depth) &&
@@ -2707,6 +2717,7 @@ namespace PlutoGE::render
             : frameStats.directionalShadowStatus;
         m_timingStats.recordedShadowDrawsByCascade = frameStats.shadowDrawsByCascade;
         m_timingStats.deferredProbePixels = frameStats.deferredProbePixels;
+        m_timingStats.realtimeShadowPixels = frameStats.realtimeShadowPixels;
         m_drawCount = frameStats.geometryDraws;
         const auto renderEnd = std::chrono::steady_clock::now();
         m_timingStats.renderRecordingMs = frame.recordingSetupMs + millisecondsBetween(recordStart, renderEnd);

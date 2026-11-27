@@ -798,6 +798,9 @@ namespace PlutoGE::render
         std::uint32_t roughnessChannel = 0;
         bool flipNormalY = false;
         bool castsShadow = true;
+        // Static geometry (RenderCommand::isStatic): an occluder in lighting bakes, so under shadowmask its sun shadow
+        // is already baked (BakedLightingFrame::shadowmask).
+        bool staticGeometry = false;
         glm::vec3 shadowBoundsCenter{0.0f};
         float shadowBoundsRadius = -1.0f;
         // World bounding-sphere radius of the draw's largest instance (of the draw itself when not instanced), for
@@ -1014,6 +1017,13 @@ namespace PlutoGE::render
             glm::uvec2 atlasSize{0};
             LightBakeMode directionalMode = LightBakeMode::Realtime;
             bool directionalShadowMask = false;
+            // Shadowmask (Mixed Shadows: Moving Objects Only; Shadowmask.h): static geometry's sun shadow comes from
+            // the bake alone (the lightmap mask, or ambient volumes' sun visibility for unlightmapped surfaces), so
+            // the realtime shadow is filtered only where moving objects' shadows can fall. Implies the mask.
+            bool shadowmask = false;
+            // Under shadowmask, whether static casters also leave the realtime shadow maps. Decided per frame by
+            // PlanShadowmask: kept while spot shadows, volumetric fog or water read the same maps.
+            bool excludeStaticCasters = false;
             // The directional light is Baked: its light, shadows included, lives only in lightmaps and probes, so no
             // realtime pass (direct light, shadow maps, contact shadows, realtime GI) adds any of it.
             [[nodiscard]] bool DirectionalBaked() const noexcept
@@ -1214,6 +1224,9 @@ namespace PlutoGE::render
         std::size_t detailGrassFields = 0, detailGrassCandidates = 0;
         // Pixels the deferred probe resolve covered this frame (DeferredProbePixelBounds); zero when it was skipped.
         std::uint64_t deferredProbePixels = 0;
+        // Pixels the directional shadow mask filtered (Shadowmask.h RealtimeShadowRegion); the whole view without
+        // shadowmask, zero when the mask pass did not run.
+        std::uint64_t realtimeShadowPixels = 0;
         DetailGrassStats detailGrass;
         // Whether GPU instance culling ran its second occlusion phase (GpuInstanceCulling::TwoPhase), and its latest
         // diagnostics (an earlier frame's).
@@ -1662,6 +1675,9 @@ namespace PlutoGE::render
         std::array<rhi::GraphicsPipeline, 2> m_fogFroxelMarchPipelines; // full resolution, trace
         // Whether this frame's prepassed shading pipelines read m_shadowMask (BasicRenderer::Render).
         bool m_shadowMaskActive = false;
+        // Under shadowmask, the rectangles the directional shadow mask filters this frame (Shadowmask.h
+        // RealtimeShadowRegion); empty optional for the whole view.
+        std::optional<std::vector<rhi::Scissor>> m_realtimeShadowRectangles;
         std::unique_ptr<DdgiVolume> m_ddgi;
         std::unique_ptr<VoxelDdgiRaySource> m_ddgiRays;
         // Hardware ray tracing (DdgiRaySource::Hardware): the traced scene and its DDGI source, when the device has it.

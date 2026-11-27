@@ -29,6 +29,11 @@ namespace PlutoGE::scene
         // adds skyIrradianceScale * visibility * the current sky's irradiance instead,
         // so the volume follows time of day. Zero keeps the sky as baked.
         float skyIrradianceScale = 0.0f;
+        // Optional: the share of the Mixed directional light that static geometry lets through to each probe (1 lit,
+        // 0 shadowed), traced toward sunVisibilityDirection. Shadowmask's static shadow on surfaces without lightmaps
+        // (render/Shadowmask.h); bakes without it leave them lit.
+        std::vector<float> sunVisibility;
+        glm::vec3 sunVisibilityDirection{0.0f};
         // Authoring settings mirrored from the owning component, not bake output:
         // world distance over which this volume fades into the next one, and how
         // strongly its sky visibility occludes reflections of the sky.
@@ -40,6 +45,7 @@ namespace PlutoGE::scene
         }
         bool HasSkyVisibility() const { return HasDirectionalData() && skyVisibility.size() == irradiance.size(); }
         bool HasLiveSky() const { return HasSkyVisibility() && skyIrradianceScale > 0.0f; }
+        bool HasSunVisibility() const { return HasDirectionalData() && sunVisibility.size() == irradiance.size(); }
 
         [[nodiscard]] bool IsValid() const
         {

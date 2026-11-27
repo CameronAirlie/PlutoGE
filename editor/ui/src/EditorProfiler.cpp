@@ -509,6 +509,14 @@ namespace PlutoGE::ui
                << (rhiScene.rayTracedSceneRebuilt ? "rebuilt" : "reused") << "\n";
         report << "RHI directional shadows: " << rhiScene.directionalShadowStatus << "\n";
         report << "RHI deferred probe resolve: " << rhiScene.deferredProbePixels << " pixels (lightmapped surfaces excluded)\n";
+        if (rhiScene.shadowmask)
+            report << "RHI shadowmask: realtime sun shadow filtered over " << rhiScene.realtimeShadowPixels
+                   << " pixels; static casters "
+                   << (rhiScene.shadowmaskStaticCastersKept
+                           ? std::string("kept in the realtime maps (") + rhiScene.shadowmaskStaticCastersKept + ")"
+                           : std::string("baked only")) << "\n";
+        else
+            report << "RHI shadowmask: off\n";
         if (rhiScene.virtualShadowsActive)
         {
             const auto &pages = rhiScene.virtualShadows;

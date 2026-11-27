@@ -24,11 +24,13 @@ namespace PlutoGE::scene
             const bool directional = baked.HasDirectionalData();
             const bool normals = baked.visibilityNormals.size() == baked.irradiance.size();
             const bool sky = baked.HasSkyVisibility();
+            const bool sun = baked.HasSunVisibility();
             constexpr std::size_t kTypicalProbeBytes = 8192;
             std::string out;
             out.reserve(baked.irradiance.size() * (directional ? kTypicalProbeBytes : 64) + 256);
-            // Version 3 appends sky visibility and the live sky scale; 1 and 2 remain readable.
-            WriteNumber(out, 3);
+            // Version 4 appends the Mixed sun's visibility, 3 sky visibility and the live sky scale; 1 to 3 remain
+            // readable.
+            WriteNumber(out, 4);
             WriteVec3(out, baked.origin);
             WriteVec3(out, baked.size);
             for (int axis = 0; axis < 3; ++axis) WriteVec3(out, baked.gridBasis[axis]);
@@ -39,6 +41,8 @@ namespace PlutoGE::scene
             WriteNumber(out, normals ? 1 : 0);
             WriteNumber(out, sky ? 1 : 0);
             WriteNumber(out, sky ? baked.skyIrradianceScale : 0.0f);
+            WriteNumber(out, sun ? 1 : 0);
+            WriteVec3(out, sun ? baked.sunVisibilityDirection : glm::vec3(0.0f));
             for (std::size_t i = 0; i < baked.irradiance.size(); ++i)
             {
                 WriteVec3(out, baked.irradiance[i]);
@@ -53,6 +57,7 @@ namespace PlutoGE::scene
                     WriteVec3(out, glm::vec3(baked.skyVisibility[i]));
                     WriteNumber(out, baked.skyVisibility[i].w);
                 }
+                if (sun) WriteNumber(out, baked.sunVisibility[i]);
             }
             return out;
         }
@@ -192,13 +197,14 @@ namespace PlutoGE::scene
                 else if (p.name=="Sky Lighting") m_skyLighting=std::stoi(p.value)==1 ? AmbientSkyLighting::Baked : AmbientSkyLighting::Live;
                 else if (p.name=="Reflection Occlusion") SetReflectionOcclusion(std::stof(p.value));
                 else if (p.name=="Baked Data") {
-                    BakeReader in(p.Text()); BakedProbeVolume v; int version=0; bool directional=false,normals=false,sky=false;
+                    BakeReader in(p.Text()); BakedProbeVolume v; int version=0; bool directional=false,normals=false,sky=false,sun=false;
                     in >> version >> v.origin >> v.size;
                     if (version>=2) for (int axis=0;axis<3;++axis) in >> v.gridBasis[axis];
                     in >> v.resolution.x >> v.resolution.y >> v.resolution.z >> directional >> normals;
                     if (version>=3) in >> sky >> v.skyIrradianceScale;
+                    if (version>=4) in >> sun >> v.sunVisibilityDirection;
                     const auto r=v.resolution;
-                    if (!in || version<1 || version>3 || glm::any(glm::lessThan(r,glm::ivec3(1))) || glm::any(glm::greaterThan(r,glm::ivec3(128)))) continue;
+                    if (!in || version<1 || version>4 || glm::any(glm::lessThan(r,glm::ivec3(1))) || glm::any(glm::greaterThan(r,glm::ivec3(128)))) continue;
                     const std::size_t count=std::size_t(r.x)*r.y*r.z;
                     if (count>16384) continue;
                     sky=sky && directional;
@@ -206,6 +212,8 @@ namespace PlutoGE::scene
                     v.irradiance.resize(count);
                     if (directional) { v.positions.resize(count); v.sphericalHarmonics.resize(count); v.visibility.resize(count); if(normals) v.visibilityNormals.resize(count); }
                     if (sky) v.skyVisibility.resize(count);
+                    sun=sun && directional;
+                    if (sun) v.sunVisibility.resize(count);
                     for (std::size_t i=0;i<count;++i) {
                         in >> v.irradiance[i]; if (!directional) continue;
                         glm::vec3 position; in >> position; float valid=0; in >> valid; v.positions[i]=glm::vec4(position,valid);
@@ -213,6 +221,7 @@ namespace PlutoGE::scene
                         for (float &d:v.visibility[i]) in >> d;
                         if (normals) for (auto &n:v.visibilityNormals[i]) in >> n;
                         if (sky) { glm::vec3 gradient; in >> gradient; float share=0; in >> share; v.skyVisibility[i]=glm::vec4(gradient,share); }
+                        if (sun) in >> v.sunVisibility[i];
                     }
                     if (in) SetBakedVolume(std::move(v));
                 }

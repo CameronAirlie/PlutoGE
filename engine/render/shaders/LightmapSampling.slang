@@ -70,6 +70,12 @@ float3 lightmapDebugColor(float mode, float3 coordinate, LightmapSample lightmap
     return tint * shape;
 }
 
+// Shadowmask (Shadowmask.h): static geometry's sun shadow is baked, and the realtime shadow holds moving casters only.
+bool bakedShadowmask()
+{
+    return bakedLighting.x > 0.5 && bakedLighting.w > 0.5;
+}
+
 // The directional light is Baked: lightmaps and ambient volumes hold all of its light, so surfaces add none of it.
 bool directionalLightBaked()
 {

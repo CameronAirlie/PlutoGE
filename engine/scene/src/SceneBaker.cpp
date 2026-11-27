@@ -40,6 +40,8 @@ namespace PlutoGE::scene
         using namespace bake;
 
         constexpr std::size_t kMinProbeCellsPerBakeWorker = 1;
+        // Shadow rays per probe toward the Mixed sun: soft, as its probe shadow is interpolated between probes anyway.
+        constexpr int kSunVisibilitySamples = 16;
 
         struct ProbeBakeRequest { EntityID entity; SceneBakeSettings settings; };
 
@@ -81,7 +83,9 @@ namespace PlutoGE::scene
             long long elapsedMs = 0;
         };
 
-        BakedProbeVolume BuildProbeVolume(const std::vector<BakeLight> &lights,
+        // `sun` is the Mixed directional light whose static shadows are baked (FindShadowMaskLight), or null: each
+        // probe records how much of it reaches the probe, shadowmask's static shadow for surfaces without lightmaps.
+        BakedProbeVolume BuildProbeVolume(const std::vector<BakeLight> &lights, const BakeLight *sun,
                                           const std::vector<BakeTriangle> &triangles,
                                           const BakeAccelerationStructure &acceleration,
                                           const SceneBakeSettings &settings,
@@ -127,6 +131,11 @@ namespace PlutoGE::scene
             probeVolume.visibility.resize(probeCount);
             probeVolume.visibilityNormals.resize(probeCount);
             probeVolume.skyVisibility.assign(probeCount, glm::vec4(0.0f));
+            if (sun)
+            {
+                probeVolume.sunVisibility.assign(probeCount, 1.0f);
+                probeVolume.sunVisibilityDirection = sun->direction;
+            }
             // A live sky leaves sky radiance out of the SH; the renderer adds the current
             // sky times the baked visibility (render/SkyIrradiance.h). The scale converts
             // mean radiance back to the irradiance these SH hold, bounce strength included.
@@ -278,6 +287,13 @@ namespace PlutoGE::scene
                     accumulatedIrradiance += radiance * (weight * settings.probeBounceStrength);
                     totalWeight += weight;
                 }
+                // How much of the Mixed sun static geometry lets through: soft, like the lightmap's shadow mask.
+                if (sun)
+                {
+                    const auto path = ResolveBakeLightPath(*sun, probePosition, clearance);
+                    probeVolume.sunVisibility[probeIndex] = TraceBakeLightVisibility(*sun, probePosition, path, triangles,
+                        acceleration, textureCache, kSunVisibilitySamples, false);
+                }
                 // Baked lights have no realtime contribution, so dynamic objects take their direct light from the
                 // probes: each adds its irradiance from one direction, projected as accumulateSh projects a quadrature
                 // sample (E0 * Y(l) * A, with no bounce scale).
@@ -341,6 +357,23 @@ namespace PlutoGE::scene
             return *component;
         }
 
+        // The light whose static shadows bakes record (the lightmap's shadow mask, the probes' sun visibility): the
+        // light the renderer treats as the sun, the scene's first enabled directional light (render/SceneEnvironment.cpp),
+        // when it is Mixed and casts shadows. An index into `lights`, or -1.
+        int FindShadowMaskLight(Scene &scene, const std::vector<BakeLight> &lights)
+        {
+            for (const auto &light : SnapshotStaticLights(scene, true))
+                if (light.type == LightType::Directional)
+                {
+                    if (light.mode == render::LightBakeMode::Mixed && light.castsShadows)
+                        for (std::size_t index = 0; index < lights.size(); ++index)
+                            if (lights[index].entity == light.entity)
+                                return static_cast<int>(index);
+                    return -1;
+                }
+            return -1;
+        }
+
         void PrepareLightmapStage(Scene &scene, PreparedSceneBake &preparedBake)
         {
             const auto start = std::chrono::steady_clock::now();
@@ -350,17 +383,6 @@ namespace PlutoGE::scene
             preparedBake.lightmapLayout = lightmap::LayoutTargets(preparedBake.lightmapTargets, preparedBake.lightmapSettings);
             if (!preparedBake.lightmapLayout)
                 preparedBake.lightmapTargets.clear();
-            // The static shadow mask belongs to the light the renderer treats as the sun: the scene's first enabled
-            // directional light (render/SceneEnvironment.cpp), when it is Mixed and casts shadows.
-            for (const auto &light : SnapshotStaticLights(scene, true))
-                if (light.type == LightType::Directional)
-                {
-                    if (light.mode == render::LightBakeMode::Mixed && light.castsShadows)
-                        for (std::size_t index = 0; index < preparedBake.lights.size(); ++index)
-                            if (preparedBake.lights[index].entity == light.entity)
-                                preparedBake.shadowMaskLight = static_cast<int>(index);
-                    break;
-                }
             LogBakeTiming("Lightmap layout", start);
             if (preparedBake.lightmapLayout)
                 LogBakeMessage("Lightmaps: " + std::to_string(preparedBake.lightmapTargets.size()) + " draw(s) in a " +
@@ -464,6 +486,7 @@ namespace PlutoGE::scene
                 LogBakeMessage("Probe volume disabled in bake settings.");
             }
 
+            preparedBake.shadowMaskLight = FindShadowMaskLight(scene, preparedBake.lights);
             if (settings.bakeLightmaps && !settings.probesOnly)
             {
                 PrepareLightmapStage(scene, preparedBake);
@@ -497,7 +520,9 @@ namespace PlutoGE::scene
                 const auto bakeVolume = [&](const SceneBakeSettings &settings) {
                     const auto environment=preparedBake.probeEnvironments.find(std::clamp(settings.probeDirectionCount,64,4096));
                     static const std::vector<glm::vec3> emptyEnvironment;
-                    return BuildProbeVolume(preparedBake.lights, preparedBake.triangles, preparedBake.acceleration,
+                    const BakeLight *sun = preparedBake.shadowMaskLight >= 0
+                        ? &preparedBake.lights[static_cast<std::size_t>(preparedBake.shadowMaskLight)] : nullptr;
+                    return BuildProbeVolume(preparedBake.lights, sun, preparedBake.triangles, preparedBake.acceleration,
                         settings, preparedBake.albedoTextureCache,
                         environment!=preparedBake.probeEnvironments.end() ? environment->second : emptyEnvironment, cancelRequested);
                 };

@@ -109,7 +109,8 @@ namespace PlutoGE::render
 
     void DirectionalShadowMask::Record(rhi::ICommandContext &commands, std::uint32_t features, rhi::TextureHandle depth,
                                        rhi::SamplerHandle depthSampler,
-                                       const std::function<void(rhi::ICommandContext &)> &bindShared)
+                                       const std::function<void(rhi::ICommandContext &)> &bindShared,
+                                       std::optional<std::span<const rhi::Scissor>> region)
     {
         const auto pipeline = Pipeline(features);
         if (!pipeline || !depth || !m_mask) return;
@@ -118,12 +119,28 @@ namespace PlutoGE::render
         info.width = m_width;
         info.height = m_height;
         info.clearDepth = false;
+        // Pixels outside the region read fully lit (1); the whole-target filter writes every pixel itself.
+        info.clearColor = region.has_value();
+        info.clearColorValue[0] = 1.0f;
         commands.BeginRendering(info);
-        commands.BindPipeline(pipeline);
-        bindShared(commands);
-        commands.BindTexture(DepthSlot, depth, depthSampler);
-        commands.BindUniformBuffer(ParametersSlot, m_parameters.Get());
-        commands.Draw(3);
+        if (!region || !region->empty())
+        {
+            commands.BindPipeline(pipeline);
+            bindShared(commands);
+            commands.BindTexture(DepthSlot, depth, depthSampler);
+            commands.BindUniformBuffer(ParametersSlot, m_parameters.Get());
+            if (!region)
+                commands.Draw(3);
+            else
+            {
+                for (const auto &rectangle : *region)
+                {
+                    commands.SetScissor(rectangle);
+                    commands.Draw(3);
+                }
+                commands.SetScissor({0, 0, m_width, m_height});
+            }
+        }
         commands.EndRendering();
     }
 }

@@ -2717,6 +2717,18 @@ namespace PlutoGE::ui
                                 ? "Baked: static meshes use their lightmaps and each light follows its Mode. Mixed lights keep realtime "
                                   "shadows for moving objects."
                                 : "Realtime: lightmaps are ignored and every light is realtime.");
+                            if (const auto *scene = entity->GetScene())
+                            {
+                                // Mixed Shadows: what it does now, or what it is waiting for.
+                                const auto status = scene::DescribeMixedShadows(*scene);
+                                ImGui::PushTextWrapPos(0.0f);
+                                if (status.warning)
+                                    ImGui::TextColored(GetEditorColor(EditorColor::Warning), "%s Mixed shadows: %s", icons::Info,
+                                                       status.message.c_str());
+                                else
+                                    ImGui::Text("Mixed shadows: %s", status.message.c_str());
+                                ImGui::PopTextWrapPos();
+                            }
                             ImGui::TextWrapped("Static meshes need lightmap UVs: authored, or Generate lightmap UVs in the model's import settings.");
                             if (ImGui::Button("Clear Lightmaps")) { bakedLighting->ClearBake(); editorShell.MarkSceneDirty(); }
                         }

@@ -7,6 +7,7 @@ objects keep realtime lighting and cast realtime shadows. Three settings decide 
 | --- | --- | --- |
 | **Lighting Mode** (per scene) | Scene > Lighting > Lighting Mode, or the scene's **Baked Lighting** object | **Realtime**: lightmaps are ignored and every light is realtime. **Baked**: static meshes use their lightmaps and each light follows its Mode. |
 | **Mode** (per light) | Light inspector | **Realtime**, **Mixed** or **Baked** (below) |
+| **Mixed Shadows** (per scene) | Scene > Lighting > Mixed Shadows, or the **Baked Lighting** object | **Moving Objects Only (Shadowmask)** (new scenes) or **All Realtime** ([below](#mixed-shadows)) |
 | **Static** (per mesh) | Mesh inspector | Static meshes with lightmap UVs are lightmapped; every static mesh occludes and bounces light in the bake. |
 
 ## Light modes
@@ -14,7 +15,7 @@ objects keep realtime lighting and cast realtime shadows. Three settings decide 
 | Mode | Static (lightmapped) surfaces | Moving objects | Shadows from moving objects |
 | --- | --- | --- | --- |
 | **Realtime** | Realtime light and shadows; nothing baked | Realtime | Yes |
-| **Mixed** | Realtime direct light; the shadow is the darker of the realtime shadow and the baked static shadow; bounce light baked | Realtime direct light and shadows; bounce from the ambient volume | Yes |
+| **Mixed** | Realtime direct light; static shadows baked (Mixed Shadows decides whether static objects also cast realtime ones); bounce light baked | Realtime direct light and shadows; bounce from the ambient volume | Yes |
 | **Baked** | Direct and bounce light from the lightmap, at no realtime cost | Direct and bounce light from the ambient volume | No |
 
 - Use **Mixed** for the sun and any light that must cast character shadows. Static geometry still gets soft baked
@@ -31,6 +32,29 @@ The baked static shadow mask belongs to the scene's first directional light when
 used only while that light shines from the direction it was baked from (within about a degree): turning the sun, or a
 physical sky's moon at night, switches it off until the next bake. Mixed point, spot and rect lights bake their bounce
 and keep realtime shadows only.
+
+## Mixed shadows
+
+A Mixed sun shadows static geometry in one of two ways:
+
+| Mixed Shadows | Static objects' shadows | Moving objects' shadows | Cost |
+| --- | --- | --- | --- |
+| **Moving Objects Only (Shadowmask)** | Baked: the lightmap's shadow mask on lightmapped surfaces, the ambient volume's sun visibility on everything else (moving objects, terrain, foliage) | Realtime, onto everything | The realtime shadow is filtered only where a moving object's shadow can fall, and static objects stay out of the shadow maps |
+| **All Realtime** | Realtime, sharpened by the bake beyond the realtime shadow distance | Realtime | Every pixel filters the realtime shadow every frame |
+
+New scenes use **Moving Objects Only**. Scenes saved before the setting existed load as **All Realtime**, so they look
+as they did. The Baked Lighting inspector and the Mixed Shadows menu say whether shadowmask is working, or what it is
+waiting for: a bake, a Mixed sun that casts shadows, or a rebake after the sun turned.
+
+Trade-offs of **Moving Objects Only**:
+
+- Static shadows are as sharp as the lightmap. Raise **Texels Per Unit** for crisper edges.
+- Static objects' shadows on moving objects and unlightmapped surfaces come from the ambient volume's probes, so they
+  are soft and coarse (the probe spacing). Bake an Ambient Light Volume around the play space.
+- The sun's realtime contact shadows are off; moving objects keep their shadow maps.
+- Static objects stay in the realtime shadow maps while something else reads them there: a shadowed spot light with
+  virtual shadow maps, volumetric fog, or water. The profiler's "RHI shadowmask" line says when this happens.
+- Like the shadow mask, it applies only while the sun shines from where it was baked.
 
 ## Baking
 
@@ -115,7 +139,9 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
   - cosine-weighted, stratified gather rays that read sky radiance when they escape. At surfaces they hit, they add that
     surface's emission and the direct light of every Mixed and Baked light, then bounce on.
 - The gathered light is denoised edge-aware within each draw, and each draw is dilated into its padding.
-- Probes (`BuildProbeVolume`) add the Baked lights' direct light, so moving objects receive it.
+- Probes (`BuildProbeVolume`) add the Baked lights' direct light, so moving objects receive it, and record how much of
+  the Mixed sun reaches each probe (`BakedProbeVolume::sunVisibility`, soft shadow rays), for shadowmask. The sun is the
+  one whose static shadow the lightmap's mask holds (`FindShadowMaskLight`).
 
 **Storage**:
 
@@ -124,6 +150,8 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
 - The atlas is a `.plutolightmap` file (`LightmapFile.h`): versioned, half-float RGBA in the `IrradianceShadowMask`
   encoding.
 - Rects are stored in the scene as compact text.
+- Ambient volumes store their probes as versioned text; version 4 adds the sun's visibility and its direction. Older
+  versions still load, without it.
 - Meshes look their rect up when they rebuild render commands, and a new bake marks them dirty.
 
 **Rendering**:
@@ -144,10 +172,23 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
   32-pixel tiles touched by unlightmapped opaque draws (`DeferredProbePixelRegion`, per instance through
   `BasicDraw::localBoundingSphere`), and not at all when there are none. Wind-animated draws, detail grass and draws
   without bounds fall back to the whole view. The profiler shows the covered pixels as "RHI deferred probe resolve".
+- Shadowmask (`render/src/Shadowmask.h`): `ResolveBakedLighting` turns it on when the setting asks for it and the mask
+  applies. Then:
+  - `RealtimeShadowRegion` sweeps each moving caster's bounds along the light until they leave the receivers' bounds,
+    and marks the screen tiles that sweep covers (`ScreenTileGrid`). The directional shadow mask pass filters only
+    those tiles and clears the rest to lit (Vulkan; OpenGL filters in the surface shader, as always).
+  - `PlanShadowmask` decides whether static casters (`BasicDraw::staticGeometry`, from the Static flag) leave the
+    cascades and virtual shadow maps (`CastsRealtimeDirectionalShadow`).
+  - `BasicLit.slang` takes the darker of the realtime shadow and the static one: the lightmap's mask, or
+    `probeSunVisibility` (`AmbientProbeSampling.slang`, the probes' sun visibility in SH row 6's .w).
+  - `SelectLightVisibilitySlots` leaves out the sun's contact slot.
+  - `DescribeMixedShadows` gives the editor the same decision with the reason it is off.
 
-**Performance.** What baking saves depends on the lights' modes. A Mixed sun keeps all of its realtime cost (shadow
-maps, shadow mask, contact shadows, direct shading): only the ambient term changes source, so a scene whose realtime
-ambient was a probe grid renders at about the same speed. The saving comes from Baked lights, the sun especially.
+**Performance.** What baking saves depends on the lights' modes and Mixed Shadows. With **All Realtime**, a Mixed sun
+keeps all of its realtime cost (shadow maps, shadow mask, contact shadows, direct shading): only the ambient term
+changes source. **Moving Objects Only** filters the realtime shadow over the screen near moving objects only and skips
+the sun's contact shadows; in RocketLeg's chase view that is 23% of the pixels. A Baked sun saves the most, at the
+cost of moving objects' realtime sun shadows.
 
 ## Limits and next steps
 
@@ -158,7 +199,9 @@ ambient was a probe grid renders at about the same speed. The saving comes from 
   their layout opt in through `MeshConfig::lightmapUvsFollowScale` (meshes without LODs or a skeleton).
 - **Terrain, foliage and instanced models** are not lightmapped. They occlude and bounce light in the bake and receive
   light from ambient volumes. Terrain's uv2 holds layer weights, so it needs a mapping of its own.
-- **One shadow-mask channel** (the sun). Mixed local lights keep realtime shadows only.
+- **One shadow-mask channel** (the sun). Mixed local lights keep realtime shadows only; Mixed Shadows applies to the sun.
+- **Shadowmask and scattering particles**: particles lit by the sun read the realtime shadow maps, which may hold moving
+  objects only, so static objects do not shade them.
 - **Non-directional lightmaps.** Normal maps on lightmapped surfaces see a flat baked bounce; direct light from Mixed
   lights keeps them.
 - **Chart seams** are not stitched, so a seam between charts can show a small discontinuity.
@@ -182,7 +225,13 @@ ambient was a probe grid renders at about the same speed. The saving comes from 
   - Baked Lighting persistence;
   - a Mixed sun's static shadow in the mask;
   - a Baked sun's direct light (3/π on open ground);
-  - reports of meshes without lightmap UVs.
+  - reports of meshes without lightmap UVs;
+  - shadowmask: the probes' sun visibility under and beside a box, the renderer's decision and the editor's status
+    (including after the sun turns), and Mixed Shadows persistence with older scenes loading as All Realtime.
+- `PlutoGEShadowmaskRenderTests` (CPU) covers the screen tile grid (disjoint rectangles, eye-plane and off-screen
+  cases), the realtime shadow region of moving casters, when static casters leave the shadow maps, and the sun's
+  contact slot.
+- `PlutoGESceneEditHistoryTests` round-trips ambient volume bakes, including version 4's sun visibility.
 - `PlutoGEVulkanRhiTests` checks that streamed and bound recording still match, with the new object constants.
 - `PlutoGEVulkanRhiTests` and `PlutoGEOpenGLRhiTests` (`--lightmap-debug-views` runs only this check) render a
   lightmapped, a missing and a moving quad through both debug views (`tests/LightmapDebugViewChecks.h`). It is also the

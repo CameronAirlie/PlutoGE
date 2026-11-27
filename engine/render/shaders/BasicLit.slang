@@ -1801,8 +1801,13 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     }
     // A lightmapped surface's static occluders are also in its baked shadow mask, which stays sharp beyond the realtime
     // shadow distance and when realtime shadows are off. Dynamic casters only exist in the realtime shadow.
+    // Under shadowmask the realtime shadow holds moving casters only (Shadowmask.h), so surfaces without lightmaps take
+    // static occluders' shadow from the ambient volumes' baked sun visibility.
     if (lightmap.present)
         shadowVisibility = min(shadowVisibility, lightmap.shadowMask);
+    else if (kSurfaceDiffuseVolumes && bakedShadowmask() && needsDirectionalShadow)
+        shadowVisibility = min(shadowVisibility, probeSunVisibility(input.worldPosition,
+            dot(pointReceiverNormal, toCamera) < 0.0 ? -pointReceiverNormal : pointReceiverNormal));
     // Contact shadows (the light visibility mask) and micro-shadowing concern the near side, and do not apply to light
     // from the far side.
     const float farSunVisibility = shadowVisibility;

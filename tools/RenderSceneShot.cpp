@@ -235,7 +235,8 @@ int main(int argc, char **argv) try
                 draw.worldBounds.radius *= std::max({glm::length(glm::vec3(draw.model[0])),
                     glm::length(glm::vec3(draw.model[1])), glm::length(glm::vec3(draw.model[2]))});
                 draw.previousWorldBounds = draw.worldBounds;
-                draw.isStatic = true;
+                // As MeshComponent submits it: shadowmask leaves static objects' sun shadows to the bake.
+                draw.isStatic = component->IsStatic();
                 // Lightmap rects as MeshComponent::SubmitRenderCommands looks them up.
                 if (const auto *baked = world->GetBakedLighting(); baked && component->IsStatic())
                     draw.lightmap = baked->FindRect(entity->GetID(), static_cast<std::uint32_t>(index));
@@ -261,7 +262,7 @@ int main(int argc, char **argv) try
                     draw.worldBounds.radius *= std::max({glm::length(glm::vec3(draw.model[0])),
                         glm::length(glm::vec3(draw.model[1])), glm::length(glm::vec3(draw.model[2]))});
                     draw.previousWorldBounds = draw.worldBounds;
-                    draw.isStatic = true;
+                    draw.isStatic = terrain->IsStatic();
                     draw.terrainGeomorph = true;
                     draws.push_back(draw);
                 }
@@ -386,6 +387,11 @@ int main(int argc, char **argv) try
     std::cout << "Directional shadows: " << stats.directionalShadowStatus << " (" << stats.shadowCandidateCount
               << " casters; " << stats.rigidShadowCastersOutOfReach << " rigid out of reach)\n";
     std::cout << "Deferred probe resolve: " << stats.deferredProbePixels << " pixels\n";
+    std::cout << "Shadowmask: " << (stats.shadowmask ? "on" : "off");
+    if (stats.shadowmask)
+        std::cout << ", realtime shadow over " << stats.realtimeShadowPixels << " pixels, static casters "
+                  << (stats.shadowmaskStaticCastersKept ? stats.shadowmaskStaticCastersKept : "baked only");
+    std::cout << '\n';
     std::cout << "Draws: " << stats.visibleDrawCount << " visible packets, " << stats.visibleInstanceCount << " instances\n";
     const auto image = device.ReadTextureRgba8(renderer.GetColorTexture());
     const std::filesystem::path output(argv[3]);

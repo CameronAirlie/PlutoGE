@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
+#include <span>
 #include <unordered_map>
 
 namespace PlutoGE::render
@@ -40,9 +42,11 @@ namespace PlutoGE::render
         [[nodiscard]] rhi::TextureHandle Mask() const noexcept { return m_mask.Get(); }
         // Records the pass outside rendering, after the shadow maps and the coverage depth are complete. `features`
         // are the frame's SurfaceFeature bits (the shadow method); `bindShared` binds what the geometry pipelines
-        // read.
+        // read. With `region`, only its rectangles are filtered and every other pixel is lit (shadowmask: the baked
+        // shadow covers them, Shadowmask.h); an empty region filters nothing.
         void Record(rhi::ICommandContext &commands, std::uint32_t features, rhi::TextureHandle depth,
-                    rhi::SamplerHandle depthSampler, const std::function<void(rhi::ICommandContext &)> &bindShared);
+                    rhi::SamplerHandle depthSampler, const std::function<void(rhi::ICommandContext &)> &bindShared,
+                    std::optional<std::span<const rhi::Scissor>> region = std::nullopt);
         void Shutdown();
 
     private:

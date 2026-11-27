@@ -53,9 +53,12 @@ namespace PlutoGE::render
         const auto full = [&] { return slots.size() == PLUTO_LIGHT_VISIBILITY_SLOTS; };
         const std::size_t contactBudget = std::min<std::size_t>(budget.contactLights, PLUTO_LIGHT_VISIBILITY_SLOTS);
 
-        // Contact: the directional light first, then the local lights around the camera.
+        // Contact: the directional light first, then the local lights around the camera. Under shadowmask the sun's
+        // static occlusion is baked and moving objects keep their shadow maps, so a full-screen march would only
+        // repeat them.
         const float directionLength = glm::length(lighting.directionalDirection);
-        if (contactBudget > 0 && lighting.shadowsEnabled && lighting.directionalIntensity > 0.0f &&
+        if (contactBudget > 0 && lighting.shadowsEnabled && !lighting.bakedLighting.shadowmask &&
+            lighting.directionalIntensity > 0.0f &&
             lighting.contactShadowLength > 0.0f &&
             std::isfinite(directionLength) && directionLength > 1.e-6f)
             slots.push_back({.kind = LightVisibilitySlot::Kind::Directional, .id = PLUTO_LIGHT_VISIBILITY_DIRECTIONAL,

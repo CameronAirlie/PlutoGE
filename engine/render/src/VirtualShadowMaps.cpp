@@ -1,6 +1,7 @@
 #include "PlutoGE/render/VirtualShadowMaps.h"
 #include "PlutoGE/render/BasicRenderer.h"
 #include "ChangedBufferRecords.h"
+#include "Shadowmask.h"
 #include "PlutoGE/core/FrameRetainedCache.h"
 #include <algorithm>
 #include <cmath>
@@ -464,7 +465,7 @@ namespace PlutoGE::render
             for (std::size_t index = 0; index < draws.size(); ++index)
             {
                 const auto &draw = draws[index];
-                const bool eligible = IsReceiver(draw) && (!shadow || draw.castsShadow);
+                const bool eligible = IsReceiver(draw) && (!shadow || CastsRealtimeDirectionalShadow(draw, lighting));
                 // Fixed-width entries preserve section boundaries even when
                 // filtering changes without changing the packet array sizes.
                 if (!eligible)
@@ -505,7 +506,7 @@ namespace PlutoGE::render
             for (std::size_t index = 0; index < casters.size(); ++index)
             {
                 const auto &draw = casters[index];
-                if (!IsReceiver(draw) || !draw.castsShadow) continue;
+                if (!IsReceiver(draw) || !CastsRealtimeDirectionalShadow(draw, lighting)) continue;
                 const auto available = draw.firstIndex < draw.mesh->GetIndexCount() ? draw.mesh->GetIndexCount() - draw.firstIndex : 0;
                 const auto count = std::min(draw.indexCount ? draw.indexCount : available, available);
                 auto &packet = m_casterPackets->Use(draw.preparationRevision ? draw.preparationRevision : TransientPacket | index).value;

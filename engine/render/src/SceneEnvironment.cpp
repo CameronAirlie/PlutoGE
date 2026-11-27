@@ -214,11 +214,12 @@ namespace PlutoGE::render
         // The mask is this light's static shadow only while it shines from where it was baked: a turned sun, or the
         // moon a physical sky substitutes at night, would be shadowed by the wrong silhouettes.
         const auto &bake = component->GetBake();
-        constexpr float kMaskDirectionTolerance = 0.99985f; // about one degree
         baked.directionalShadowMask = bake.hasShadowMask && directional->bakeMode == LightBakeMode::Mixed &&
                                       directional->castsShadows && !lighting.directionalIsMoon &&
-                                      glm::dot(glm::normalize(directional->direction), glm::normalize(bake.shadowMaskDirection)) >
-                                          kMaskDirectionTolerance;
+                                      SameBakedSunDirection(directional->direction, bake.shadowMaskDirection);
+        // Shadowmask needs a mask that still matches the sun; otherwise the sun shadows everything in realtime.
+        baked.shadowmask = baked.directionalShadowMask && lighting.shadowsEnabled &&
+                           component->GetMixedShadows() == scene::MixedShadowMode::Shadowmask;
     }
 
     SceneWindSettings BuildSceneWind(const scene::Scene *scene)

@@ -4858,18 +4858,23 @@ namespace PlutoGE::ui
                         {
                             auto *bakedLighting = m_scene->GetBakedLighting();
                             const bool baked = !bakedLighting || bakedLighting->GetLightingMode() == scene::SceneLightingMode::Baked;
+                            // The scene's Baked Lighting object, added by the first setting chosen here.
+                            const auto ensureBakedLighting = [&]() -> scene::BakedLightingComponent &
+                            {
+                                if (!bakedLighting)
+                                {
+                                    auto entity = std::make_unique<scene::Entity>();
+                                    entity->SetName("Baked Lighting");
+                                    bakedLighting = entity->CreateComponent<scene::BakedLightingComponent>();
+                                    m_scene->AddEntity(std::move(entity));
+                                }
+                                return *bakedLighting;
+                            };
                             if (ImGui::BeginMenu("Lighting Mode"))
                             {
                                 const auto setMode = [&](scene::SceneLightingMode mode)
                                 {
-                                    if (!bakedLighting)
-                                    {
-                                        auto entity = std::make_unique<scene::Entity>();
-                                        entity->SetName("Baked Lighting");
-                                        bakedLighting = entity->CreateComponent<scene::BakedLightingComponent>();
-                                        m_scene->AddEntity(std::move(entity));
-                                    }
-                                    bakedLighting->SetLightingMode(mode);
+                                    ensureBakedLighting().SetLightingMode(mode);
                                     MarkSceneDirty();
                                 };
                                 if (ImGui::MenuItem("Realtime", nullptr, !baked))
@@ -4878,6 +4883,32 @@ namespace PlutoGE::ui
                                 if (ImGui::MenuItem("Baked", nullptr, baked))
                                     setMode(scene::SceneLightingMode::Baked);
                                 ImGui::SetItemTooltip("Static meshes use their lightmaps; each light follows its Mode (Realtime, Mixed or Baked).");
+                                ImGui::EndMenu();
+                            }
+                            if (ImGui::BeginMenu("Mixed Shadows"))
+                            {
+                                const bool shadowmask = !bakedLighting ||
+                                    bakedLighting->GetMixedShadows() == scene::MixedShadowMode::Shadowmask;
+                                const auto setShadows = [&](scene::MixedShadowMode mode)
+                                {
+                                    ensureBakedLighting().SetMixedShadows(mode);
+                                    MarkSceneDirty();
+                                };
+                                if (ImGui::MenuItem("Moving Objects Only (Shadowmask)", nullptr, shadowmask))
+                                    setShadows(scene::MixedShadowMode::Shadowmask);
+                                ImGui::SetItemTooltip("Faster. Static objects' shadows come from the bake; only moving objects\n"
+                                                      "cast realtime shadows from Mixed lights. Static shadows are as sharp\n"
+                                                      "as the lightmap (Texels Per Unit).");
+                                if (ImGui::MenuItem("All Realtime", nullptr, !shadowmask))
+                                    setShadows(scene::MixedShadowMode::Realtime);
+                                ImGui::SetItemTooltip("Every object casts realtime shadows from Mixed lights; the bake only adds\n"
+                                                      "static shadows beyond the realtime shadow distance.");
+                                ImGui::Separator();
+                                // What the choice does in this scene now, or what it waits for (a bake, the sun's Mode).
+                                const auto status = scene::DescribeMixedShadows(*m_scene);
+                                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                                ImGui::TextDisabled("%s", status.message.c_str());
+                                ImGui::PopTextWrapPos();
                                 ImGui::EndMenu();
                             }
                         }

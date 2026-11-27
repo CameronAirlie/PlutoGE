@@ -22,6 +22,19 @@ namespace PlutoGE::scene
         Baked,
     };
 
+    // How a Mixed directional light's shadows reach static geometry while baked lighting is active. Serialized by
+    // value: append new modes only.
+    enum class MixedShadowMode : std::uint8_t
+    {
+        // Every caster casts realtime shadows; the baked shadow mask only adds static shadows beyond the realtime
+        // shadow distance (and when a graphics preset turns realtime shadows off).
+        Realtime,
+        // Static geometry's shadows come from the bake (lightmaps, and ambient volumes for surfaces without them);
+        // only moving objects cast realtime shadows, which are filtered only where they can fall. Faster; static
+        // shadows are as sharp as the lightmap.
+        Shadowmask,
+    };
+
     // How the lightmap bake samples. Saved with the scene, so every bake of it is reproducible.
     struct LightmapBakeSettings
     {
@@ -87,6 +100,8 @@ namespace PlutoGE::scene
 
         SceneLightingMode GetLightingMode() const { return m_mode; }
         void SetLightingMode(SceneLightingMode mode);
+        MixedShadowMode GetMixedShadows() const { return m_mixedShadows; }
+        void SetMixedShadows(MixedShadowMode mode);
         const LightmapBakeSettings &GetBakeSettings() const { return m_settings; }
         void SetBakeSettings(LightmapBakeSettings settings);
 
@@ -115,10 +130,24 @@ namespace PlutoGE::scene
         void MarkMeshesDirty() const;
 
         SceneLightingMode m_mode = SceneLightingMode::Baked;
+        // New scenes default to shadowmask; scenes saved before the setting load as Realtime, as they rendered.
+        MixedShadowMode m_mixedShadows = MixedShadowMode::Shadowmask;
         LightmapBakeSettings m_settings;
         LightmapBakeOutput m_bake;
         std::uint64_t m_revision = 0;
         std::uint64_t m_bakeRevision = 0;
         HeavyPropertyCache m_rectText;
     };
+
+    class Scene;
+
+    // What Mixed Shadows does in a scene right now, for the editor. Shadowmask applies under the conditions the
+    // renderer checks (render/SceneEnvironment.cpp ResolveBakedLighting); the message says which one is missing.
+    struct MixedShadowsStatus
+    {
+        bool shadowmask = false; // static geometry's sun shadows come from the bake
+        bool warning = false;    // something needs the user's attention (a rebake, a light's Mode)
+        std::string message;
+    };
+    MixedShadowsStatus DescribeMixedShadows(const Scene &scene);
 }

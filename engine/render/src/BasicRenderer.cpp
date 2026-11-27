@@ -34,6 +34,7 @@
 #include "SnapshotDamageTracker.h"
 #include "DecalRasterBounds.h"
 #include "DeferredProbeCoverage.h"
+#include "Shadowmask.h"
 #include "BasicDrawBatching.h"
 #include "PersistentParameterCache.h"
 #include "MaterialPreparationCache.h"
@@ -291,7 +292,7 @@ namespace PlutoGE::render
             // Light visibility mask slot per light id (MakeLightVisibilitySlotTable; 0 none, else slot + 1).
             LightVisibilitySlotTable lightVisibilitySlots{};
             // Lightmaps (LightmapSampling.slang): x lightmaps active, y directional mode (LightBakeMode), z 1 when the
-            // atlas' alpha is the directional light's static shadow mask, w reserved.
+            // atlas' alpha is the directional light's static shadow mask, w 1 under shadowmask (Shadowmask.h).
             glm::vec4 bakedLighting{0.0f};
         };
         static_assert(sizeof(BasicFrameParameters) ==
@@ -2745,7 +2746,7 @@ namespace PlutoGE::render
             const bool active = baked.active && baked.atlas;
             frameParameters.bakedLighting = glm::vec4(active ? 1.0f : 0.0f,
                 active ? static_cast<float>(baked.directionalMode) : 0.0f,
-                active && baked.directionalShadowMask ? 1.0f : 0.0f, 0.0f);
+                active && baked.directionalShadowMask ? 1.0f : 0.0f, active && baked.shadowmask ? 1.0f : 0.0f);
         }
         // Clouds shade the directional light through a map traced into the sky atlas before any receiver reads it.
         const CloudShadowMap cloudShadow = m_cloudShadowPipeline && m_cloudNoise && geometryMode != GeometryDiagnosticMode::ReferenceSky
@@ -2874,6 +2875,13 @@ namespace PlutoGE::render
             jitter[3][0] = frameParameters.temporalClipOffset.x;
             jitter[3][1] = frameParameters.temporalClipOffset.y;
             m_shadowMask->Prepare(m_width, m_height, jitter * frameParameters.viewProjection);
+            // Shadowmask: static shadows are baked, so the realtime shadow matters only where moving casters' fall.
+            m_realtimeShadowRectangles.reset();
+            if (lighting.bakedLighting.shadowmask)
+                m_realtimeShadowRectangles = RealtimeShadowRegion(shadowDraws, draws, lighting, viewProjection, m_width,
+                    m_height, m_device->GetApi() == rhi::GraphicsApi::Vulkan).rectangles;
+            m_frameStats.realtimeShadowPixels = m_realtimeShadowRectangles
+                ? ScreenRegion{*m_realtimeShadowRectangles}.PixelCount() : std::uint64_t(m_width) * m_height;
         }
         if (m_deferredLocalLightsActive)
         {
@@ -3152,7 +3160,7 @@ namespace PlutoGE::render
                 for (std::size_t index = 0; index < shadowDraws.size(); ++index)
                 {
                     const auto &draw = shadowDraws[index];
-                    if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2)
+                    if (!draw.mesh || !draw.mesh->IsValid() || !CastsRealtimeDirectionalShadow(draw, lighting) || draw.surfaceType == 1 || draw.alphaMode == 2)
                         continue;
                     HashVctValue(sceneSignature, index);
                     HashVctValue(sceneSignature, m_shadowDrawSignatures[index]);
@@ -3182,7 +3190,7 @@ namespace PlutoGE::render
                     for (std::size_t drawIndex = 0; drawIndex < shadowDraws.size(); ++drawIndex)
                     {
                         const auto &draw = shadowDraws[drawIndex];
-                        if (!draw.mesh || !draw.mesh->IsValid() || !draw.castsShadow || draw.surfaceType == 1 || draw.alphaMode == 2 ||
+                        if (!draw.mesh || !draw.mesh->IsValid() || !CastsRealtimeDirectionalShadow(draw, lighting) || draw.surfaceType == 1 || draw.alphaMode == 2 ||
                             !shadowFrustum.Intersects(draw))
                             continue;
                         if (draw.maxInstanceRadius >= 0.0f && draw.maxInstanceRadius < minimumCasterRadius)
@@ -4497,7 +4505,9 @@ namespace PlutoGE::render
                     {
                         maskCommands.BindUniformBuffer(0, drawCameraBuffer);
                         bindShadowMaps(maskCommands);
-                    });
+                    },
+                    m_realtimeShadowRectangles ? std::optional<std::span<const rhi::Scissor>>(*m_realtimeShadowRectangles)
+                                               : std::nullopt);
                 commands.EndGpuScope();
                 commands.BindTexture(DirectionalShadowMask::MaskSlot, m_shadowMask->Mask(), m_shadowSampler.Get());
             }
@@ -4724,8 +4734,8 @@ namespace PlutoGE::render
         rhi::TextureHandle deferredEnvironmentSpecular;
         // Lightmapped surfaces never defer, so a baked scene's resolve runs only around its unlightmapped draws.
         // Detail grass is generated here, with no draw bounds of its own: it needs the whole target.
-        const DeferredProbeRegion deferredProbeRegion = !deferProbeIrradiance ? DeferredProbeRegion{}
-            : m_frameStats.detailGrassFields > 0 ? DeferredProbeRegion{{rhi::Scissor{0, 0, m_width, m_height}}}
+        const ScreenRegion deferredProbeRegion = !deferProbeIrradiance ? ScreenRegion{}
+            : m_frameStats.detailGrassFields > 0 ? ScreenRegion::Whole(m_width, m_height)
             : DeferredProbePixelRegion(draws, viewProjection, m_width, m_height,
                                        m_device->GetApi() == rhi::GraphicsApi::Vulkan,
                                        lighting.bakedLighting.active && lighting.bakedLighting.atlas);

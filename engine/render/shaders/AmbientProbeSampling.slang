@@ -332,6 +332,41 @@ DiffuseGridSample sampleDiffuseVolumeAt(int volume, float3 position, float3 norm
         volumeSize(volume).xyz,resolution.xyz,int(resolution.w), volumeSize(volume).w > 0.5, positionError, volumeSky(volume));
 }
 
+// The share of the Mixed sun that static geometry lets through to `position` (1 lit, 0 in static shadow), from the
+// probes' baked sun visibility (SH row 6 .w, RhiSceneRenderer's atlas; 1 for volumes baked without it), for
+// shadowmask surfaces without lightmaps. Plain trilinear over the probes in front of the receiver, without the
+// per-direction visibility test irradiance makes: the value is a soft, coarse shadow. 1 outside every volume.
+float probeSunVisibility(float3 position, float3 receiverNormal)
+{
+    float visibility = 0;
+    float coverage = 0;
+    for (int i=0; i<int(probeOrigin.w) && coverage<0.999; ++i) {
+        const float3 uvw = diffuseVolumeCoordinates(i,position);
+        if (any(uvw<0) || any(uvw>1)) continue;
+        const float weight = max(diffuseVolumeEdgeWeight(i,uvw), 0.0001) * (1-coverage);
+        const float4 resolution = volumeResolution(i);
+        const int3 cells = int3(resolution.xyz);
+        const float3 grid = uvw * resolution.xyz - 0.5;
+        const int3 cell = int3(floor(grid));
+        const float3 fraction = frac(grid);
+        float share = 0, sum = 0;
+        [ForceUnroll] for (int neighbour = 0; neighbour < 8; ++neighbour) {
+            const int3 corner = int3(neighbour & 1, (neighbour >> 1) & 1, neighbour >> 2);
+            const int3 c = clamp(cell + corner, int3(0), cells - 1);
+            const int index = int(resolution.w) + c.x + cells.x * (c.y + cells.y * c.z);
+            const float4 probe = probeTexel(index, 0);
+            // Probes inside geometry, or behind the receiver (they see the other side of a wall), do not count.
+            if (probe.w < 0.5 || dot(receiverNormal, probe.xyz - position) < -0.05) continue;
+            const float3 w = lerp(1.0 - fraction, fraction, float3(corner));
+            share += saturate(probeTexel(index, 6).w) * w.x * w.y * w.z;
+            sum += w.x * w.y * w.z;
+        }
+        visibility += (sum > 0 ? share / sum : 1.0) * weight;
+        coverage += weight;
+    }
+    return visibility + (1.0 - min(coverage, 1.0));
+}
+
 // Composites overlapping volumes front to back: each claims only the coverage
 // earlier ones left. The result is normalized, so the outermost face of the
 // combined volumes stays a hard boundary, as with a single volume.

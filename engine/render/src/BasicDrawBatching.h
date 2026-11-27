@@ -62,6 +62,7 @@ namespace PlutoGE::render
             && a.roughnessChannel == b.roughnessChannel
             && a.flipNormalY == b.flipNormalY
             && a.castsShadow == b.castsShadow
+            && a.staticGeometry == b.staticGeometry
             && a.contributesToGi == b.contributesToGi
             && (a.terrainLayers == b.terrainLayers ||
                 (a.terrainLayers && b.terrainLayers && *a.terrainLayers == *b.terrainLayers))
@@ -302,6 +303,7 @@ namespace PlutoGE::render
                                draw.preparationRevision ? draw.preparedMaterialHash : BasicMaterialBatchHash(draw));
                 HashBatchValue(hash, draw.outlinePass);
                 HashBatchValue(hash, draw.castsShadow);
+                HashBatchValue(hash, draw.staticGeometry);
                 HashBatchValue(hash, draw.contributesToGi);
                 auto &head = heads[hash & (heads.size() - 1)];
                 Group *found = nullptr;

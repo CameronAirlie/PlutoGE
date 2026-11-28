@@ -7,6 +7,7 @@
 #include <array>
 #include <cstring>
 #include <fstream>
+#include <vector>
 
 namespace PlutoGE::scene
 {
@@ -22,13 +23,15 @@ namespace PlutoGE::scene
 
         bool KnownEncoding(std::uint32_t encoding)
         {
-            return encoding == static_cast<std::uint32_t>(render::LightmapEncoding::IrradianceShadowMask);
+            return std::ranges::any_of(render::LightmapLayerOrder, [&](render::LightmapEncoding known)
+                                       { return static_cast<std::uint32_t>(known) == encoding; });
         }
     }
 
     bool WriteLightmapFile(const std::filesystem::path &path, const render::LightmapAtlas &atlas, std::string *error)
     {
-        if (!atlas.IsValid() || atlas.width > kMaxLightmapAtlasSize || atlas.height > kMaxLightmapAtlasSize)
+        if (!atlas.IsValid() || atlas.width > kMaxLightmapAtlasSize || atlas.height > kMaxLightmapAtlasSize ||
+            atlas.layers.size() > kMaxLightmapLayers)
         {
             Fail(error, "Invalid lightmap atlas.");
             return false;
@@ -41,12 +44,18 @@ namespace PlutoGE::scene
         temporary += ".tmp";
         {
             std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-            const std::array<std::uint32_t, 4> header{kLightmapFileVersion, static_cast<std::uint32_t>(atlas.encoding),
+            const std::array<std::uint32_t, 4> header{kLightmapFileVersion, static_cast<std::uint32_t>(atlas.layers.size()),
                                                       atlas.width, atlas.height};
             file.write(kMagic.data(), kMagic.size());
             file.write(reinterpret_cast<const char *>(header.data()), sizeof(header));
-            file.write(reinterpret_cast<const char *>(atlas.texels.data()),
-                       static_cast<std::streamsize>(atlas.texels.size() * sizeof(std::uint16_t)));
+            for (const auto &layer : atlas.layers)
+            {
+                const auto encoding = static_cast<std::uint32_t>(layer.encoding);
+                file.write(reinterpret_cast<const char *>(&encoding), sizeof(encoding));
+            }
+            for (const auto &layer : atlas.layers)
+                file.write(reinterpret_cast<const char *>(layer.texels.data()),
+                           static_cast<std::streamsize>(layer.texels.size() * sizeof(std::uint16_t)));
             if (!file)
             {
                 Fail(error, "Could not write " + temporary.string());
@@ -85,25 +94,48 @@ namespace PlutoGE::scene
             Fail(error, path.string() + " is not a lightmap.");
             return std::nullopt;
         }
-        const auto [version, encoding, width, height] = header;
-        if (version != kLightmapFileVersion || !KnownEncoding(encoding) || width == 0 || height == 0 ||
-            width > kMaxLightmapAtlasSize || height > kMaxLightmapAtlasSize)
+        const auto [version, second, width, height] = header;
+        const auto unsupported = [&]() -> std::optional<render::LightmapAtlas>
         {
             Fail(error, path.string() + " has an unsupported lightmap version, encoding or size.");
             return std::nullopt;
+        };
+        if ((version != 1 && version != kLightmapFileVersion) || width == 0 || height == 0 ||
+            width > kMaxLightmapAtlasSize || height > kMaxLightmapAtlasSize)
+            return unsupported();
+        // Version 1 holds one layer and names its encoding in the header; version 2 counts layers and lists theirs.
+        std::vector<std::uint32_t> encodings;
+        if (version == 1)
+            encodings.push_back(second);
+        else
+        {
+            if (second == 0 || second > kMaxLightmapLayers)
+                return unsupported();
+            encodings.resize(second);
+            file.read(reinterpret_cast<char *>(encodings.data()),
+                      static_cast<std::streamsize>(encodings.size() * sizeof(std::uint32_t)));
         }
         render::LightmapAtlas atlas;
         atlas.width = width;
         atlas.height = height;
-        atlas.encoding = static_cast<render::LightmapEncoding>(encoding);
-        atlas.texels.resize(std::size_t(width) * height * 4u);
-        file.read(reinterpret_cast<char *>(atlas.texels.data()),
-                  static_cast<std::streamsize>(atlas.texels.size() * sizeof(std::uint16_t)));
+        for (const auto encoding : encodings)
+        {
+            if (!KnownEncoding(encoding))
+                return unsupported();
+            auto &layer = atlas.layers.emplace_back();
+            layer.encoding = static_cast<render::LightmapEncoding>(encoding);
+            layer.texels.resize(std::size_t(width) * height * 4u);
+        }
+        for (auto &layer : atlas.layers)
+            file.read(reinterpret_cast<char *>(layer.texels.data()),
+                      static_cast<std::streamsize>(layer.texels.size() * sizeof(std::uint16_t)));
         if (!file)
         {
             Fail(error, path.string() + " is truncated.");
             return std::nullopt;
         }
+        if (!atlas.IsValid())
+            return unsupported();
         return atlas;
     }
 

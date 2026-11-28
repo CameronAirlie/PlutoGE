@@ -20,6 +20,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -218,14 +219,42 @@ namespace
         render::LightmapAtlas atlas;
         atlas.width = 5;
         atlas.height = 3;
-        for (int index = 0; index < 5 * 3 * 4; ++index)
-            atlas.texels.push_back(glm::packHalf1x16(float(index) * 0.25f));
+        for (const auto encoding : {render::LightmapEncoding::IrradianceShadowMask, render::LightmapEncoding::SkyVisibility})
+        {
+            auto &layer = atlas.layers.emplace_back();
+            layer.encoding = encoding;
+            for (int index = 0; index < 5 * 3 * 4; ++index)
+                layer.texels.push_back(glm::packHalf1x16(float(index) * 0.25f + float(atlas.layers.size())));
+        }
         const auto path = std::filesystem::temp_directory_path() / "PlutoGEBakedLightingTests" / "atlas.plutolightmap";
         std::string error;
         Require(scene::WriteLightmapFile(path, atlas, &error), "Lightmap write failed: " + error);
         const auto read = scene::ReadLightmapFile(path, &error);
         Require(read.has_value(), "Lightmap read failed: " + error);
-        Require(read->width == 5 && read->height == 3 && read->texels == atlas.texels, "Lightmap file does not round trip");
+        Require(read->width == 5 && read->height == 3 && read->layers.size() == 2 &&
+                    read->layers[0].texels == atlas.layers[0].texels &&
+                    read->Find(render::LightmapEncoding::SkyVisibility)->texels == atlas.layers[1].texels,
+                "Lightmap file does not round trip its layers");
+
+        // The renderer stacks layers in LightmapLayerOrder and says where the optional ones went.
+        const auto stacked = render::StackLightmapLayers(atlas);
+        Require(stacked.layerCount == 2 && stacked.skyVisibilityLayer == 1 && stacked.texels.size() == 2u * 5 * 3 * 4,
+                "Lightmap layers do not stack in order");
+
+        // Version 1 files (one layer named in the header) still read.
+        {
+            std::ofstream file(path, std::ios::binary | std::ios::trunc);
+            const char magic[8] = {'P', 'L', 'M', 'A', 'P', 0, 0, 0};
+            const std::uint32_t header[4] = {1, static_cast<std::uint32_t>(render::LightmapEncoding::IrradianceShadowMask), 5, 3};
+            file.write(magic, sizeof(magic));
+            file.write(reinterpret_cast<const char *>(header), sizeof(header));
+            file.write(reinterpret_cast<const char *>(atlas.layers[0].texels.data()),
+                       static_cast<std::streamsize>(atlas.layers[0].texels.size() * sizeof(std::uint16_t)));
+        }
+        const auto legacy = scene::ReadLightmapFile(path, &error);
+        Require(legacy.has_value() && legacy->layers.size() == 1 && legacy->layers[0].texels == atlas.layers[0].texels &&
+                    render::StackLightmapLayers(*legacy).skyVisibilityLayer == -1,
+                "A version 1 lightmap should read as one layer: " + error);
         // Truncated files are rejected, not read as garbage.
         std::filesystem::resize_file(path, 40);
         Require(!scene::ReadLightmapFile(path, &error).has_value(), "Truncated lightmap was accepted");
@@ -246,11 +275,14 @@ namespace
         std::cout << "PASS light modes\n";
     }
 
-    float Channel(const render::LightmapAtlas &atlas, glm::vec2 uv, int channel)
+    float Channel(const render::LightmapAtlas &atlas, glm::vec2 uv, int channel,
+                  render::LightmapEncoding encoding = render::LightmapEncoding::IrradianceShadowMask)
     {
+        const auto *layer = atlas.Find(encoding);
+        Require(layer != nullptr, "The atlas has no such layer");
         const auto x = std::min(std::uint32_t(uv.x * atlas.width), atlas.width - 1);
         const auto y = std::min(std::uint32_t(uv.y * atlas.height), atlas.height - 1);
-        return glm::unpackHalf1x16(atlas.texels[(std::size_t(y) * atlas.width + x) * 4 + channel]);
+        return glm::unpackHalf1x16(layer->texels[(std::size_t(y) * atlas.width + x) * 4 + channel]);
     }
     float Luminance(const render::LightmapAtlas &atlas, glm::vec2 uv)
     {
@@ -330,7 +362,18 @@ namespace
         Require(underBox < 0.05f, "The box casts no static shadow in the mask: " + std::to_string(underBox));
         Require(open > 0.95f, "Open floor is shadowed in the mask: " + std::to_string(open));
         Require(Luminance(atlas, shadow.TopFace(*baked, 0.1f, 0.1f)) > 0.0f, "Sky light was not baked");
-        std::cout << "PASS mixed sun shadow mask\n";
+
+        // The sky visibility layer, seen along the floor's normal: open floor sees the whole sky above it, the floor
+        // under the box almost none.
+        const auto skyUp = [&](glm::vec2 uv)
+        {
+            using render::LightmapEncoding;
+            return Channel(atlas, uv, 3, LightmapEncoding::SkyVisibility) + Channel(atlas, uv, 1, LightmapEncoding::SkyVisibility);
+        };
+        const float skyOpen = skyUp(shadow.TopFace(*baked, 0.1f, 0.1f)), skyUnderBox = skyUp(shadow.TopFace(*baked, 0.5f, 0.5f));
+        Require(skyOpen > 0.85f, "Open floor should see the sky: " + std::to_string(skyOpen));
+        Require(skyUnderBox < 0.35f, "The box should hide the sky from the floor under it: " + std::to_string(skyUnderBox));
+        std::cout << "PASS mixed sun shadow mask and sky visibility\n";
     }
 
     void CheckBakedDirectLight()

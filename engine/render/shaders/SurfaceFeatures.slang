@@ -17,6 +17,9 @@
 // Directional receivers: virtual shadow maps (shadowCascadeParameters.w set) and cascades, each with shadowsEnabled.
 [vk::constant_id(4)] const bool kSurfaceVirtualShadows = true;
 [vk::constant_id(5)] const bool kSurfaceCascadedShadows = true;
+// Lightmap sampling (bakedLighting.x set and the draw's lightmap coordinate marked lightmapped). Ids 6 to 8 are the
+// constants below; render/src/SurfaceFeatures.h SurfaceFeatureConstantIds maps features to ids.
+[vk::constant_id(9)] const bool kSurfaceLightmap = true;
 
 // Not a path but a source: a prepassed pipeline takes the directional shadow from the frame's mask
 // (DirectionalShadowMask.slang) instead of filtering it. Off by default, so every other pipeline filters in place.
@@ -33,19 +36,6 @@
 // pipeline without a prepass keep their discard).
 [vk::constant_id(8)] const bool kSurfacePrepassedCoverage = false;
 
-// The G-buffer normal's alpha: below one half marks deferred probe irradiance (DiffuseProbeResolve.slang), and 0.25 and
-// 0.75 mark surfaces whose local lights the deferred pass adds. RGBA8 keeps all four values exact.
-float encodeSurfaceNormalMarks(bool probePending, bool deferredLocalLights)
-{
-    if (probePending)
-        return deferredLocalLights ? 0.25 : 0.0;
-    return deferredLocalLights ? 0.75 : 1.0;
-}
-
-bool surfaceDefersLocalLights(float normalAlpha)
-{
-    const int mark = int(round(saturate(normalAlpha) * 4.0));
-    return mark == 1 || mark == 3;
-}
+#include "SurfaceNormalMarks.slang"
 
 #endif

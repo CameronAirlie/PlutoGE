@@ -75,6 +75,9 @@ cbuffer CameraParameters : register(b0, space0)
     // 2 Baked), z 1 when the atlas' alpha is its static shadow mask, w 1 under shadowmask (static geometry's sun
     // shadow is baked: the realtime one holds moving casters only, see Shadowmask.h).
     float4 bakedLighting;
+    // Lightmap layers (LightmapSampling.slang): x the atlas texture's stacked layer count, y the sky visibility layer
+    // (-1 none), z its reflection occlusion strength, w reserved.
+    float4 lightmapLayers;
 };
 
 // Local light types, as BasicRenderer packs them into pointDirectionSpot.w: points, then spots, then rectangles.

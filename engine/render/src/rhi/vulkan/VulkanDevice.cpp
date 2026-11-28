@@ -1160,7 +1160,11 @@ namespace PlutoGE::render::rhi::vulkan
                 std::cerr << "Shader statistics: " << descriptor.debugName << (stage == VK_SHADER_STAGE_VERTEX_BIT ? " vertex" : " fragment")
                           << ": " << statistics.resourceUsage.numUsedVgprs << '/' << statistics.numAvailableVgprs << " VGPRs, "
                           << statistics.resourceUsage.numUsedSgprs << " SGPRs, " << statistics.resourceUsage.scratchMemUsageInBytes
-                          << " scratch bytes, " << descriptor.specializationConstants.size() << " specialisation constants\n";
+                          << " scratch bytes, specialisation";
+                // id=value for each constant, so a variant's registers can be traced to the paths it kept.
+                for (const auto &constant : descriptor.specializationConstants)
+                    std::cerr << ' ' << constant.id << '=' << constant.value;
+                std::cerr << '\n';
             }
         }
     }
@@ -1570,6 +1574,42 @@ namespace PlutoGE::render::rhi::vulkan
         std::atomic<std::uint64_t> uniformBytesUploaded{0};
         std::atomic<std::uint64_t> persistentUniformBytesUploaded{0};
         std::atomic<std::uint64_t> uniformUploadNanoseconds{0};
+        // PLUTO_VULKAN_MEMORY_REPORT=1 logs, once after kMemoryReportFrame frames, each heap's usage against its budget
+        // and how much the device allocated from each memory type. On integrated GPUs a device-local heap past its
+        // budget sends further allocations to slower system memory, which shows here and nowhere else.
+        static constexpr std::uint64_t kMemoryReportFrame = 200;
+        std::uint64_t memoryReportFrames = 0;
+        void ReportMemoryOnce()
+        {
+            if (++memoryReportFrames != kMemoryReportFrame || !allocator) return;
+            const char *setting = std::getenv("PLUTO_VULKAN_MEMORY_REPORT");
+            if (!setting || std::string_view(setting) != "1") return;
+            const VkPhysicalDeviceMemoryProperties *properties = nullptr;
+            vmaGetMemoryProperties(allocator, &properties);
+            std::vector<VmaBudget> budgets(properties->memoryHeapCount);
+            vmaGetHeapBudgets(allocator, budgets.data());
+            VmaTotalStatistics statistics{};
+            vmaCalculateStatistics(allocator, &statistics);
+            constexpr double MiB = 1024.0 * 1024.0;
+            for (std::uint32_t heap = 0; heap < properties->memoryHeapCount; ++heap)
+                std::cerr << "Vulkan memory heap " << heap
+                          << ((properties->memoryHeaps[heap].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? " (device local)" : "")
+                          << ": " << budgets[heap].usage / MiB << " of " << budgets[heap].budget / MiB << " MiB budget, size "
+                          << properties->memoryHeaps[heap].size / MiB << " MiB\n";
+            for (std::uint32_t type = 0; type < properties->memoryTypeCount; ++type)
+            {
+                const auto &bytes = statistics.memoryType[type].statistics.allocationBytes;
+                if (bytes == 0) continue;
+                const auto flags = properties->memoryTypes[type].propertyFlags;
+                std::cerr << "Vulkan memory type " << type << " (heap " << properties->memoryTypes[type].heapIndex
+                          << ((flags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) ? ", device local" : "")
+                          << ((flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) ? ", host visible" : "")
+                          << ((flags & VK_MEMORY_PROPERTY_HOST_CACHED_BIT) ? ", host cached" : "") << "): "
+                          << bytes / MiB << " MiB in " << statistics.memoryType[type].statistics.allocationCount
+                          << " allocations\n";
+            }
+        }
+
         void PublishUniformStats()
         {
             timingStats.uniformBytesUploaded = uniformBytesUploaded.load(std::memory_order_relaxed);
@@ -3570,6 +3610,7 @@ namespace PlutoGE::render::rhi::vulkan
                 m_impl.timingStats.gpuScopes.clear();
             }
             m_impl.PublishUniformStats();
+            m_impl.ReportMemoryOnce();
             std::unique_lock timingLock(m_impl.timingMutex);
             auto &published = m_impl.timingStatsBySubmission[frame.submissionLabel];
             const float resolvedGpuMs = published.frameGpuMs;

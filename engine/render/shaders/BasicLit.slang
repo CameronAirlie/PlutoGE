@@ -1848,16 +1848,33 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     // Inside a baked volume the grid supplies all diffuse environment light,
     // including under captures. Opaque surfaces can defer it to the
     // screen-space resolve (DiffuseProbeResolve.slang), which adds
-    // irradiance * diffuse response where normal.a = 0 marks a pending pixel.
+    // irradiance * diffuse response where normal.a marks a pending pixel (SurfaceNormalMarks.slang).
     // The resolve then also applies the grid's reflection terms (BakedEnvironment.slang);
     // here they apply only where ambientGrid.coverage > 0.
     const int gridVolume = kSurfaceDiffuseVolumes && (transparentPass || pointParameters.w != 12.0)
         ? selectDiffuseVolume(input.worldPosition) : -1;
     const bool gridCovered = gridVolume >= 0;
-    // Lightmapped surfaces take diffuse light from their texels; the grid still occludes their sky reflections.
-    const bool gridDeferred = gridCovered && !lightmap.present && !transparentPass && probeAtlasParameters.w > 0.5;
+    // Lightmapped surfaces take diffuse light from their texels, so only the grid's reflection terms (sky occlusion,
+    // capture relighting) remain for them. A lightmap with a sky visibility layer holds those too: the surface's own
+    // texels stand in for the grid, everywhere, and the probes are not touched.
+    const bool lightmapEnvironment = lightmap.present && lightmap.hasSkyVisibility;
+    // probeAtlasParameters.w: 1 when the resolve adds the grid's irradiance, 2 when it applies its reflection terms too.
+    // Other lightmapped surfaces defer those terms when the resolve applies them, else the grid is sampled here. A
+    // forward grid sample is the most expensive path in this shader, so it must not run on every lightmapped pixel.
+    const bool gridDeferred = gridCovered && !lightmapEnvironment && !transparentPass && probeAtlasParameters.w > 0.5 &&
+                              (!lightmap.present || probeAtlasParameters.w > 1.5);
+    const bool gridIrradianceDeferred = gridDeferred && !lightmap.present;
+    const int gridMark = !gridDeferred ? SurfaceProbeNone
+                       : gridIrradianceDeferred ? SurfaceProbeIrradiance : SurfaceProbeReflections;
     DiffuseGridSample ambientGrid = emptyDiffuseGridSample();
-    if (gridCovered && !gridDeferred)
+    if (lightmapEnvironment)
+    {
+        // Same conventions as a grid sample: mean radiance (the capture relighting reference) and L1 sky visibility.
+        ambientGrid.irradiance = lightmap.radiance;
+        ambientGrid.skyVisibility = lightmap.skyVisibility;
+        ambientGrid.coverage = 1;
+    }
+    else if (gridCovered && !gridDeferred)
         ambientGrid = sampleDiffuseGrid(input.worldPosition, normal, ambientReceiverNormal);
     const float3 gridDiffuse = ambientGrid.irradiance * diffuseResponse;
     const float3 lightmapDiffuse = lightmap.radiance * diffuseResponse;
@@ -1931,7 +1948,7 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
         if (captureCoverage < 1.0)
         {
             if (gridCovered)
-                farAmbient = gridDeferred ? float3(0.0)
+                farAmbient = gridIrradianceDeferred ? float3(0.0)
                     : sampleDiffuseGrid(input.worldPosition, farNormal, -ambientReceiverNormal).irradiance * farResponse;
             else if (physicalSkySettings.x > 0.5 && (transparentPass || pointParameters.w != 7.0))
                 farAmbient = cloudySky(samplePhysicalSkyIrradiance(farNormal) * farResponse * physicalSkySettings.z,
@@ -2034,11 +2051,11 @@ FragmentOutput shadeSurface(VertexOutput input, bool transparentPass, SurfaceDer
     output.indirect = shaderGraph.header.y != 0 || glass ? float4(0)
         : float4(max(ambient - environmentSpecular, 0.0),
                  lightmap.present ? BakedIndirectAlpha : transmits ? FoliageIndirectAlpha : 1.0);
-    // Alpha 0 marks deferred probe irradiance; unlit graphs never receive it.
-    // Alpha below one half marks deferred probe irradiance; 0.25 and 0.75 also mark local lights the deferred pass adds
-    // (encodeSurfaceNormalMarks).
-    output.normal = float4(normal * 0.5 + 0.5, encodeSurfaceNormalMarks(gridDeferred && shaderGraph.header.y == 0 && !glass,
-                                                                      kSurfaceDeferredLocalLights && !transparentPass));
+    // Alpha marks what the probe resolve and the deferred local lights add (encodeSurfaceNormalMarks); unlit graphs
+    // never receive the grid.
+    output.normal = float4(normal * 0.5 + 0.5,
+        encodeSurfaceNormalMarks(shaderGraph.header.y == 0 && !glass ? gridMark : SurfaceProbeNone,
+                                 kSurfaceDeferredLocalLights && !transparentPass));
     // Alpha is the material occlusion that passes rebuilding ambient light apply (DiffuseResponse.slang).
     output.material = float4(materialMetallic, materialRoughness, length(surfaceEmission), materialOcclusion);
     const float2 currentNdc = input.currentClip.xy / max(abs(input.currentClip.w), 0.00001);

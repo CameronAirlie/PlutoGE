@@ -150,7 +150,8 @@ namespace PlutoGE::render
             ? ShaderGraphVariantCache::Code{}
             : GraphFragmentVariant(m_graphVariants.get(), m_device->GetApi(), draw, layout, depthOnly);
         // Shading pipelines specialise to the lighting paths in use; depth-only ones keep the general shader.
-        const std::uint32_t features = depthOnly ? AllSurfaceFeatures : DrawSurfaceFeatures(m_surfaceFeatures, draw);
+        const std::uint32_t features = depthOnly ? AllSurfaceFeatures
+                                                 : DrawSurfaceFeatures(m_surfaceFeatures, draw, SurfaceDrawContext{.lightmapSkyVisibility = m_surfaceLightmapSkyVisibility});
         // A prepassed shading pipeline's fragments are the coverage depth's, so it can read the frame's shadow mask.
         const bool shadowMask = !depthOnly && prepassed && m_shadowMaskActive;
         // The frame's deferred local-light pass lights this draw (its layout always has the G-buffer it reads).
@@ -162,13 +163,12 @@ namespace PlutoGE::render
         // and the shading pass drops the discard, letting depth be tested before shading (kSurfacePrepassedCoverage).
         const bool prepassedCoverage = !depthOnly && prepassed && m_prepassedCoverage && draw.alphaMode == 1 &&
             !draw.shaderGraphProgram && !impostor;
-        static_assert(SurfaceFeatureCount <= 6, "GeometryPipelineKey packs surface features in bits 13-18");
         const GeometryPipelineKey key{
             static_cast<unsigned>(layout) | (unsigned(instanced) << 3) | (unsigned(standard) << 4) |
                 (unsigned(cull) << 5) | (unsigned(depthOnly) << 7) | (unsigned(prepassed) << 8) | (unsigned(depthResources) << 9) |
-                (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (features << 13) | (unsigned(shadowMask) << 19) |
-                (unsigned(deferredLocalLights) << 20) | (unsigned(prepassedCoverage) << 21) | (unsigned(grass) << 22),
-            graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
+                (unsigned(terrain) << 11) | (unsigned(impostor) << 12) | (unsigned(shadowMask) << 13) |
+                (unsigned(deferredLocalLights) << 14) | (unsigned(prepassedCoverage) << 15) | (unsigned(grass) << 16),
+            features, graphFragment ? ShaderGraphStructureHash(*draw.shaderGraphProgram) : 0};
         if (!standard && draw.shaderGraphProgram && draw.shaderGraphProgram->data.header.x > 0 &&
             !(depthOnly && depthResources != DepthResources::Full))
             ++(graphFragment ? m_frameStats.graphSpecializedDraws : m_frameStats.graphInterpretedDraws);
@@ -285,12 +285,14 @@ namespace PlutoGE::render
                                                                 bool prepassed)
     {
         const auto cull = GeometryCullMode(draw);
-        const std::uint32_t features = DrawSurfaceFeatures(m_surfaceFeatures, draw);
+        const std::uint32_t features = DrawSurfaceFeatures(m_surfaceFeatures, draw, SurfaceDrawContext{.lightmapSkyVisibility = m_surfaceLightmapSkyVisibility});
         const bool shadowMask = prepassed && m_shadowMaskActive;
         const bool deferredLocalLights = m_deferredLocalLightsActive && DeferredLocalLightEligible(draw) &&
             layout >= GeometryOutputLayout::Surface && layout != GeometryOutputLayout::SurfaceIndirect;
-        const unsigned key = static_cast<unsigned>(layout) | (unsigned(cull) << 3) | (unsigned(prepassed) << 5) | (features << 6) |
-                             (unsigned(shadowMask) << 12) | (unsigned(deferredLocalLights) << 13);
+        // Pipeline state in the low word, the surface features in the high one.
+        const std::uint64_t key = static_cast<unsigned>(layout) | (unsigned(cull) << 3) | (unsigned(prepassed) << 5) |
+                                  (unsigned(shadowMask) << 6) | (unsigned(deferredLocalLights) << 7) |
+                                  (std::uint64_t(features) << 32);
         if (const auto found = m_bindlessGeometryPipelines.find(key); found != m_bindlessGeometryPipelines.end())
             return found->second.Get();
         // The standard opaque surface with object and material inputs from GpuDrivenOpaque's tables: no material

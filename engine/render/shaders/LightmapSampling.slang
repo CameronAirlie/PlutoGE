@@ -1,7 +1,7 @@
 // Lightmaps (docs/BAKED_LIGHTING.md): static draws sample baked light from one atlas through their secondary UVs.
 // The atlas holds render::LightmapEncoding::IrradianceShadowMask: rgb is cosine-weighted mean radiance (irradiance /
 // pi, the convention every ambient layer multiplies by the diffuse response), a is the directional light's static
-// shadow mask. Requires SceneLightingParameters.slang (bakedLighting).
+// shadow mask. Requires SceneLightingParameters.slang (bakedLighting, lightmapLayers) and SurfaceFeatures.slang.
 
 // BasicRenderer::LightmapAtlasSlot / LightmapAtlasBinding (equal: OpenGL uses the binding as the texture unit). Glass (blended, never lightmapped) leaves it out: its
 // pipeline is at OpenGL's fragment sampler limit.
@@ -28,7 +28,24 @@ struct LightmapSample
     bool present;
     float3 radiance;  // mean radiance from baked sources
     float shadowMask; // 1 lit, 0 in static shadow; 1 without a mask
+    // The texel's sky visibility (render::LightmapEncoding::SkyVisibility: w share, xyz gradient), scaled by the bake's
+    // reflection occlusion; valid when hasSkyVisibility.
+    bool hasSkyVisibility;
+    float4 skyVisibility;
 };
+
+#ifndef PLUTO_GLASS
+// The atlas texture stacks the bake's layers (render::StackLightmapLayers): a chart coordinate in `layer`. It stays half
+// a texel inside the layer, so bilinear reads never take a texel of the next one.
+float2 lightmapLayerCoordinate(float2 coordinate, int layer)
+{
+    uint width, height;
+    lightmapAtlas.GetDimensions(width, height);
+    const float layers = max(lightmapLayers.x, 1.0);
+    const float halfTexel = 0.5 * layers / max(float(height), 1.0);
+    return float2(coordinate.x, (clamp(coordinate.y, halfTexel, 1.0 - halfTexel) + float(layer)) / layers);
+}
+#endif
 
 LightmapSample sampleLightmap(float3 coordinate)
 {
@@ -36,14 +53,23 @@ LightmapSample sampleLightmap(float3 coordinate)
     result.present = false;
     result.radiance = float3(0.0, 0.0, 0.0);
     result.shadowMask = 1.0;
+    result.hasSkyVisibility = false;
+    result.skyVisibility = float4(0.0, 0.0, 0.0, 1.0);
 #ifndef PLUTO_GLASS
-    if (bakedLighting.x < 0.5 || coordinate.z < 0.5)
+    if (!kSurfaceLightmap || bakedLighting.x < 0.5 || coordinate.z < 0.5)
         return result;
     // The atlas has no mips: its charts are padded for bilinear reads at full resolution only.
-    const float4 texel = lightmapAtlas.SampleLevel(coordinate.xy, 0.0);
+    const float4 texel = lightmapAtlas.SampleLevel(lightmapLayerCoordinate(coordinate.xy, 0), 0.0);
     result.present = true;
     result.radiance = max(texel.rgb, float3(0.0, 0.0, 0.0));
     result.shadowMask = bakedLighting.z > 0.5 ? saturate(texel.a) : 1.0;
+    if (lightmapLayers.y > -0.5)
+    {
+        // Occlusion strength blends towards an open sky (share 1, no gradient).
+        const float4 sky = lightmapAtlas.SampleLevel(lightmapLayerCoordinate(coordinate.xy, int(lightmapLayers.y)), 0.0);
+        result.hasSkyVisibility = true;
+        result.skyVisibility = lerp(float4(0.0, 0.0, 0.0, 1.0), sky, saturate(lightmapLayers.z));
+    }
 #endif
     return result;
 }

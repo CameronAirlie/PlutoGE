@@ -294,9 +294,12 @@ namespace PlutoGE::render
             // Lightmaps (LightmapSampling.slang): x lightmaps active, y directional mode (LightBakeMode), z 1 when the
             // atlas' alpha is the directional light's static shadow mask, w 1 under shadowmask (Shadowmask.h).
             glm::vec4 bakedLighting{0.0f};
+            // Lightmap layers (LightmapSampling.slang): x the atlas texture's stacked layer count, y the sky
+            // visibility layer (-1 none), z its reflection occlusion strength, w reserved.
+            glm::vec4 lightmapLayers{1.0f, -1.0f, 1.0f, 0.0f};
         };
         static_assert(sizeof(BasicFrameParameters) ==
-                      6800 + 16 * PLUTO_LIGHT_VISIBILITY_ID_ROWS + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
+                      6816 + 16 * PLUTO_LIGHT_VISIBILITY_ID_ROWS + 16 * PLUTO_SKY_LANE_COUNT + sizeof(CloudOcclusionParameters));
         static_assert(PLUTO_MAX_LOCAL_LIGHTS == 32, "Frame parameters carry 32 local lights");
 
         // The SurfaceFeature bits whose BasicLit paths this frame's parameters can reach (SurfaceFeatures.slang states
@@ -308,6 +311,7 @@ namespace PlutoGE::render
             if (std::ranges::any_of(frame.iblSettings, [](const glm::vec4 &settings) { return settings.x >= 0.5f; }))
                 features |= SurfaceReflectionCaptures;
             if (static_cast<int>(frame.probeOrigin.w) > 0) features |= SurfaceDiffuseVolumes;
+            if (frame.bakedLighting.x > 0.5f) features |= SurfaceLightmap;
             if (frame.shadowsEnabled != 0)
                 features |= frame.shadowCascadeParameters.w > 0.5f ? SurfaceVirtualShadows : SurfaceCascadedShadows;
             return features;
@@ -2747,6 +2751,9 @@ namespace PlutoGE::render
             frameParameters.bakedLighting = glm::vec4(active ? 1.0f : 0.0f,
                 active ? static_cast<float>(baked.directionalMode) : 0.0f,
                 active && baked.directionalShadowMask ? 1.0f : 0.0f, active && baked.shadowmask ? 1.0f : 0.0f);
+            frameParameters.lightmapLayers = glm::vec4(static_cast<float>(std::max<std::uint32_t>(baked.layerCount, 1u)),
+                baked.HasSkyVisibility() ? static_cast<float>(baked.skyVisibilityLayer) : -1.0f,
+                std::clamp(baked.reflectionOcclusion, 0.0f, 1.0f), 0.0f);
         }
         // Clouds shade the directional light through a map traced into the sky atlas before any receiver reads it.
         const CloudShadowMap cloudShadow = m_cloudShadowPipeline && m_cloudNoise && geometryMode != GeometryDiagnosticMode::ReferenceSky
@@ -2769,9 +2776,13 @@ namespace PlutoGE::render
         const bool deferProbeIrradiance = m_deferredProbeIrradiance && lighting.diffuseProbeAtlas &&
             lighting.diffuseProbeVolumeCount > 0 && geometryMode != GeometryDiagnosticMode::ReferenceProbeGrid &&
             (geometryLayout == GeometryOutputLayout::SurfaceAllIndirect || geometryLayout == GeometryOutputLayout::SurfaceReflections);
+        // The resolve also applies the grid's reflection terms when the layout writes the reflection it adjusts. Then
+        // lightmapped surfaces defer those terms too, rather than sampling the whole grid per pixel in the forward pass.
+        const bool deferProbeReflections = deferProbeIrradiance && lighting.diffuseProbeReflections &&
+            geometryLayout == GeometryOutputLayout::SurfaceReflections && m_deferredProbeIrradiance->ReflectionsAvailable();
         frameParameters.probeAtlasParameters = glm::vec4(lighting.diffuseProbeHitPointRow,
             lighting.diffuseProbeVolumesPrepared ? 1.0f : 0.0f, lighting.diffuseProbeSummaryRow,
-            deferProbeIrradiance ? 1.0f : 0.0f);
+            deferProbeReflections ? 2.0f : deferProbeIrradiance ? 1.0f : 0.0f);
         frameParameters.probeVolumes = lighting.diffuseProbeVolumes;
         frameParameters.geometryParameters.x = debugView != PostProcessDebugView::None ? 1.0f : 0.0f;
         // LightmapSampling.slang lightmapDebugColor writes these views into the albedo target.
@@ -2861,6 +2872,7 @@ namespace PlutoGE::render
         m_surfaceFeatures = m_surfaceSpecialization && m_device->GetApi() == rhi::GraphicsApi::Vulkan
             ? FrameSurfaceFeatures(frameParameters) : AllSurfaceFeatures;
         m_frameStats.surfaceFeatures = m_surfaceFeatures;
+        m_surfaceLightmapSkyVisibility = frameParameters.lightmapLayers.y > -0.5f;
         m_terrainAntiTiling = lighting.terrainAntiTiling;
         // The directional shadow is filtered once per pixel of the coverage depth when every condition for reading
         // it holds: a prepass, a shadow to filter, and no diagnostic output that needs the in-shader filter's taps.
@@ -4732,13 +4744,15 @@ namespace PlutoGE::render
         // Before decals, which relight from the composed surface colour.
         // With reflections, it returns the adjusted environment reflection later passes read.
         rhi::TextureHandle deferredEnvironmentSpecular;
-        // Lightmapped surfaces never defer, so a baked scene's resolve runs only around its unlightmapped draws.
-        // Detail grass is generated here, with no draw bounds of its own: it needs the whole target.
+        // Lightmapped surfaces defer at most the grid's reflection terms, and nothing when their lightmap holds sky
+        // visibility: then a baked scene's resolve runs only around its unlightmapped draws. Detail grass is generated
+        // here, with no draw bounds of its own: it needs the whole target.
         const ScreenRegion deferredProbeRegion = !deferProbeIrradiance ? ScreenRegion{}
             : m_frameStats.detailGrassFields > 0 ? ScreenRegion::Whole(m_width, m_height)
             : DeferredProbePixelRegion(draws, viewProjection, m_width, m_height,
                                        m_device->GetApi() == rhi::GraphicsApi::Vulkan,
-                                       lighting.bakedLighting.active && lighting.bakedLighting.atlas);
+                                       lighting.bakedLighting.active && lighting.bakedLighting.atlas &&
+                                           (!deferProbeReflections || lighting.bakedLighting.HasSkyVisibility()));
         m_frameStats.deferredProbePixels = deferredProbeRegion.PixelCount();
         if (deferProbeIrradiance && !deferredProbeRegion.Empty())
             deferredEnvironmentSpecular = m_deferredProbeIrradiance->Record({
@@ -4746,8 +4760,7 @@ namespace PlutoGE::render
                 .probeAtlas = lighting.diffuseProbeAtlas, .probeSampler = m_vctVolumeSampler.Get(), .screenSampler = m_screenSampler.Get(),
                 .depth = m_depthTarget.Get(), .normal = m_normalTarget.Get(), .albedo = m_albedoTarget.Get(),
                 .material = m_materialTarget.Get(), .indirect = m_indirectTarget.Get(), .color = m_colorTarget.Get(),
-                .environmentSpecular = lighting.diffuseProbeReflections && geometryLayout == GeometryOutputLayout::SurfaceReflections
-                    ? m_environmentSpecularTarget.Get() : rhi::TextureHandle{},
+                .environmentSpecular = deferProbeReflections ? m_environmentSpecularTarget.Get() : rhi::TextureHandle{},
                 .width = m_width, .height = m_height, .regions = deferredProbeRegion.rectangles,
                 .inverseViewProjection = m_inverseViewProjection,
                 .flipY = m_device->GetApi() == rhi::GraphicsApi::Vulkan, .zeroToOneDepth = m_device->UsesZeroToOneClipDepth()});

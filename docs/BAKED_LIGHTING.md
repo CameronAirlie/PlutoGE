@@ -120,6 +120,8 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
 | Chart Padding | 2 | Empty texels around each draw's charts, filled by dilation so bilinear reads never pick up a neighbour. |
 | Direct Shadow Samples | 16 | Shadow rays per texel for soft (Shadow Softness) directional shadows. |
 | Indirect Samples | 128 | Gather rays per texel. More samples, less noise. |
+| Sky Visibility Samples | 64 | Rays per texel for the sky visibility layer, which occludes lightmapped surfaces' sky reflections and relights reflection captures without the ambient volumes. 0 bakes no layer: lightmapped surfaces then take those terms from the volumes, at a cost. |
+| Reflection Occlusion | 1 | How strongly the sky visibility layer occludes sky reflections (0 to 1), as an ambient volume's setting does. Applies without a rebake. |
 | Bounces | 2 | Diffuse bounces. 1 is light reflected once off a surface. |
 | Bounce Strength | 1 | Scales every bounce. 1 is physically based. |
 | Denoise | on | Edge-aware filtering of the gathered light within each draw. |
@@ -136,6 +138,9 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
 - Each texel integrates three things:
   - the Baked lights' direct light, with soft shadow rays;
   - the Mixed sun's visibility, for the mask;
+  - with Sky Visibility Samples above 0, which directions reach the sky: rays spread evenly over the sphere (the probe
+    bake's set, turned per texel), those below the surface blocked, reduced by `SkyVisibilityAccumulator` to the same
+    L1 form the probes store;
   - cosine-weighted, stratified gather rays that read sky radiance when they escape. At surfaces they hit, they add that
     surface's emission and the direct light of every Mixed and Baked light, then bounce on.
 - The gathered light is denoised edge-aware within each draw, and each draw is dilated into its padding.
@@ -147,8 +152,9 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
 
 - `BakedLightingComponent` owns the lighting mode, settings and bake output: the atlas, each draw's rect and the mask's
   light direction.
-- The atlas is a `.plutolightmap` file (`LightmapFile.h`): versioned, half-float RGBA in the `IrradianceShadowMask`
-  encoding.
+- The atlas is a `.plutolightmap` file (`LightmapFile.h`): versioned, one or more half-float RGBA layers sharing the
+  charts (`LightmapAtlas::layers`): `IrradianceShadowMask`, then optionally `SkyVisibility`. Version 2 lists the layers;
+  version 1 files load as one layer. New layer kinds append a `LightmapEncoding` and a slot in `LightmapLayerOrder`.
 - Rects are stored in the scene as compact text.
 - Ambient volumes store their probes as versioned text; version 4 adds the sun's visibility and its direction. Older
   versions still load, without it.
@@ -168,8 +174,15 @@ Pixels are written by `BasicLit.slang` into the albedo target (`LightmapSampling
   virtual shadow maps or cascades, the directional shadow mask pass and its contact shadow (local lights keep theirs).
   Realtime GI (VCT injection, ray-traced DDGI) leaves it out too (`BakedLightingFrame::DirectionalBaked`), since its
   bounce is already in the lightmaps and probes.
-- Lightmapped pixels never defer to the screen-space probe resolve (`DeferredProbeIrradiance`), so it runs only over
-  32-pixel tiles touched by unlightmapped opaque draws (`DeferredProbePixelRegion`, per instance through
+- The renderer stacks the layers in one texture (`StackLightmapLayers`, `LightmapSampling.slang`
+  `lightmapLayerCoordinate`, which keeps reads half a texel inside their layer), so a new layer needs no binding.
+- With the sky visibility layer, lightmapped surfaces take sky reflection occlusion and capture relighting from their
+  texels (BasicLit `lightmapEnvironment`), everywhere rather than only inside ambient volumes, and read nothing from the
+  volumes: their pipelines compile the probe grid out (`SurfaceFeatures.h` `DrawSurfaceFeatures`). Without it they
+  defer the grid's reflection terms to the screen-space resolve when it applies them (BAKED_ENVIRONMENT_LIGHTING.md,
+  "Cost"); a forward grid sample per lightmapped pixel would cost more than the rest of their shading. Otherwise the
+  resolve (`DeferredProbeIrradiance`) runs only over 32-pixel tiles
+  touched by unlightmapped opaque draws (`DeferredProbePixelRegion`, per instance through
   `BasicDraw::localBoundingSphere`), and not at all when there are none. Wind-animated draws, detail grass and draws
   without bounds fall back to the whole view. The profiler shows the covered pixels as "RHI deferred probe resolve".
 - Shadowmask (`render/src/Shadowmask.h`): `ResolveBakedLighting` turns it on when the setting asks for it and the mask

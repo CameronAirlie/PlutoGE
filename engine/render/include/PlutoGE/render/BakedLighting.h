@@ -61,19 +61,77 @@ namespace PlutoGE::render
         // light's bounce, the Baked lights' direct light, sky and emission. A: the static shadow mask of the first
         // Mixed directional light (1 lit, 0 shadowed); 1 where there is none.
         IrradianceShadowMask = 1,
+        // How much of the sky the texel sees, by direction, for occluding sky reflections and relighting reflection
+        // captures without the ambient volumes: visibility(d) = a + dot(rgb, d), the cosine-convolved L1 form
+        // SkyVisibilityAccumulator (SkyIrradiance.h) gives the probes. Below the surface counts as blocked.
+        SkyVisibility = 2,
     };
 
-    // One lightmap page: RGBA texels, half floats, row-major from the top-left texel (UV (0,0)).
+    // One quantity over the whole atlas: RGBA texels, half floats, row-major from the top-left texel (UV (0,0)).
+    struct LightmapLayer
+    {
+        LightmapEncoding encoding = LightmapEncoding::IrradianceShadowMask;
+        std::vector<std::uint16_t> texels; // width * height * 4 half floats
+    };
+
+    // One lightmap page: every layer shares the page's size and charts (each draw's LightmapRect addresses them all).
+    // The first layer is always IrradianceShadowMask; others are optional, at most one per encoding. The renderer
+    // stacks them in one texture (LightmapSampling.slang lightmapLayerCoordinate) in LightmapLayerOrder.
     struct LightmapAtlas
     {
         std::uint32_t width = 0;
         std::uint32_t height = 0;
-        LightmapEncoding encoding = LightmapEncoding::IrradianceShadowMask;
-        std::vector<std::uint16_t> texels; // width * height * 4 half floats
+        std::vector<LightmapLayer> layers;
 
+        [[nodiscard]] const LightmapLayer *Find(LightmapEncoding encoding) const noexcept
+        {
+            for (const auto &layer : layers)
+                if (layer.encoding == encoding)
+                    return &layer;
+            return nullptr;
+        }
         [[nodiscard]] bool IsValid() const noexcept
         {
-            return width > 0 && height > 0 && texels.size() == std::size_t(width) * height * 4u;
+            if (width == 0 || height == 0 || layers.empty() || layers.front().encoding != LightmapEncoding::IrradianceShadowMask)
+                return false;
+            for (std::size_t index = 0; index < layers.size(); ++index)
+            {
+                if (layers[index].texels.size() != std::size_t(width) * height * 4u)
+                    return false;
+                for (std::size_t other = 0; other < index; ++other)
+                    if (layers[other].encoding == layers[index].encoding)
+                        return false;
+            }
+            return true;
         }
     };
+
+    // Where each encoding sits in the renderer's stacked atlas texture, so shaders address layers by constant. Append
+    // new encodings; an atlas without one leaves its slot out of the texture and the frame says so.
+    inline constexpr LightmapEncoding LightmapLayerOrder[] = {LightmapEncoding::IrradianceShadowMask,
+                                                             LightmapEncoding::SkyVisibility};
+
+    // An atlas as the renderer uploads it: its layers one above the other (width x height * layerCount texels) in
+    // LightmapLayerOrder, and where each optional layer landed (-1 when the atlas has none).
+    struct StackedLightmapAtlas
+    {
+        std::vector<std::uint16_t> texels;
+        std::uint32_t layerCount = 0;
+        int skyVisibilityLayer = -1;
+    };
+    [[nodiscard]] inline StackedLightmapAtlas StackLightmapLayers(const LightmapAtlas &atlas)
+    {
+        StackedLightmapAtlas stacked;
+        if (!atlas.IsValid())
+            return stacked;
+        for (const auto encoding : LightmapLayerOrder)
+            if (const auto *layer = atlas.Find(encoding))
+            {
+                if (encoding == LightmapEncoding::SkyVisibility)
+                    stacked.skyVisibilityLayer = static_cast<int>(stacked.layerCount);
+                stacked.texels.insert(stacked.texels.end(), layer->texels.begin(), layer->texels.end());
+                ++stacked.layerCount;
+            }
+        return stacked;
+    }
 }

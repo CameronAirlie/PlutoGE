@@ -1,9 +1,11 @@
 #include "LightmapBake.h"
 
 #include "PlutoGE/render/Mesh.h"
+#include "PlutoGE/render/SkyIrradiance.h"
 #include "PlutoGE/scene/Entity.h"
 #include "PlutoGE/scene/components/MeshComponent.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/packing.hpp>
 
 #include <algorithm>
@@ -100,7 +102,10 @@ namespace PlutoGE::scene::lightmap
         class Integrator
         {
         public:
-            explicit Integrator(const LightmapBakeInput &input) : m_input(input) {}
+            explicit Integrator(const LightmapBakeInput &input)
+                : m_input(input), m_skyDirections(bake::GenerateSphereDirections(input.settings.skyVisibilitySamples))
+            {
+            }
 
             // Mean radiance (irradiance / pi) arriving along one path, after up to `bounces` surface interactions.
             glm::vec3 TracePath(glm::vec3 origin, glm::vec3 direction, std::uint32_t seed) const
@@ -159,7 +164,35 @@ namespace PlutoGE::scene::lightmap
                 glm::vec3 direct{0.0f};
                 glm::vec3 indirect{0.0f};
                 float shadowMask = 1.0f;
+                glm::vec4 skyVisibility{0.0f, 0.0f, 0.0f, 1.0f}; // LightmapEncoding::SkyVisibility
             };
+
+            [[nodiscard]] bool BakesSkyVisibility() const noexcept { return !m_skyDirections.empty(); }
+
+            // The share of the sky a texel sees by direction (SkyVisibilityAccumulator), from rays spread evenly over
+            // the sphere as the probes trace them: those below the surface are blocked by it. The direction set turns
+            // per texel, so its pattern becomes noise the denoiser removes rather than bands.
+            glm::vec4 IntegrateSkyVisibility(const Texel &texel, const glm::vec3 &origin, std::uint32_t texelIndex) const
+            {
+                const std::uint32_t seed = Hash(texelIndex * 7919u + 17u);
+                const glm::vec3 axis = glm::normalize(glm::vec3(Unit(seed), Unit(seed ^ 0x51ed27u), Unit(seed ^ 0x2c1b3cu)) - 0.5f +
+                                                      glm::vec3(1.0e-4f));
+                const glm::mat3 rotation = glm::mat3(glm::rotate(glm::mat4(1.0f), 6.2831853f * Unit(seed ^ 0x9e37u), axis));
+                render::SkyVisibilityAccumulator sky;
+                for (const auto &base : m_skyDirections)
+                {
+                    const glm::vec3 direction = rotation * base;
+                    if (glm::dot(direction, texel.geometricNormal) <= 0.0f)
+                    {
+                        sky.Add(direction, false);
+                        continue;
+                    }
+                    const auto hit = bake::TraceScene(origin, direction, std::numeric_limits<float>::max(), *m_input.triangles,
+                                                      *m_input.acceleration, m_input.textures);
+                    sky.Add(direction, !hit.has_value());
+                }
+                return sky.Result();
+            }
 
             Result Integrate(const Texel &texel, std::uint32_t texelIndex) const
             {
@@ -167,6 +200,8 @@ namespace PlutoGE::scene::lightmap
                 const auto &settings = m_input.settings;
                 const auto &lights = *m_input.lights;
                 const glm::vec3 origin = texel.position + texel.geometricNormal * texel.rayEpsilon;
+                if (BakesSkyVisibility())
+                    result.skyVisibility = IntegrateSkyVisibility(texel, origin, texelIndex);
                 for (std::size_t index = 0; index < lights.size(); ++index)
                 {
                     const auto &light = lights[index];
@@ -208,15 +243,17 @@ namespace PlutoGE::scene::lightmap
 
         private:
             const LightmapBakeInput &m_input;
+            std::vector<glm::vec3> m_skyDirections;
         };
 
         // Edge-aware a-trous filter over one target's covered texels: neighbours on the same plane facing the same way
         // average, so the gathered noise smooths without blurring creases or contact edges.
-        void Denoise(std::vector<glm::vec3> &values, const std::vector<Texel> &texels, std::uint32_t width, std::uint32_t height,
+        template<class Value>
+        void Denoise(std::vector<Value> &values, const std::vector<Texel> &texels, std::uint32_t width, std::uint32_t height,
                      float texelWorldSize)
         {
             constexpr float kernel[3] = {3.0f / 8.0f, 1.0f / 4.0f, 1.0f / 16.0f};
-            std::vector<glm::vec3> filtered(values.size());
+            std::vector<Value> filtered(values.size());
             const float planeScale = 1.0f / std::max(texelWorldSize, 1.0e-4f);
             for (int pass = 0; pass < 3; ++pass)
             {
@@ -231,7 +268,7 @@ namespace PlutoGE::scene::lightmap
                             filtered[index] = values[index];
                             continue;
                         }
-                        glm::vec3 sum(0.0f);
+                        Value sum(0.0f);
                         float weightSum = 0.0f;
                         for (int dy = -2; dy <= 2; ++dy)
                             for (int dx = -2; dx <= 2; ++dx)
@@ -368,6 +405,54 @@ namespace PlutoGE::scene::lightmap
         return std::nullopt;
     }
 
+    namespace
+    {
+        // Grows each target's texels into the empty texels it owns (padding and chart gutters), `passes` texels deep,
+        // so bilinear reads at chart edges never pick up another target or an unbaked texel.
+        void Dilate(std::vector<glm::vec4> &values, const std::vector<std::uint32_t> &covered, const std::vector<int> &owner,
+                    std::uint32_t width, std::uint32_t height, std::uint32_t passes)
+        {
+            std::vector<bool> filled(values.size(), false);
+            for (const auto index : covered)
+                filled[index] = true;
+            for (std::uint32_t pass = 0; pass < passes; ++pass)
+            {
+                std::vector<std::pair<std::size_t, glm::vec4>> grown;
+                for (std::uint32_t y = 0; y < height; ++y)
+                    for (std::uint32_t x = 0; x < width; ++x)
+                    {
+                        const auto index = std::size_t(y) * width + x;
+                        if (filled[index] || owner[index] < 0)
+                            continue;
+                        glm::vec4 sum(0.0f);
+                        int count = 0;
+                        for (int dy = -1; dy <= 1; ++dy)
+                            for (int dx = -1; dx <= 1; ++dx)
+                            {
+                                const int sx = int(x) + dx, sy = int(y) + dy;
+                                if ((dx == 0 && dy == 0) || sx < 0 || sy < 0 || sx >= int(width) || sy >= int(height))
+                                    continue;
+                                const auto neighbour = std::size_t(sy) * width + std::size_t(sx);
+                                if (filled[neighbour] && owner[neighbour] == owner[index])
+                                {
+                                    sum += values[neighbour];
+                                    ++count;
+                                }
+                            }
+                        if (count > 0)
+                            grown.emplace_back(index, sum / float(count));
+                    }
+                if (grown.empty())
+                    break;
+                for (const auto &[index, value] : grown)
+                {
+                    values[index] = value;
+                    filled[index] = true;
+                }
+            }
+        }
+    }
+
     render::LightmapAtlas BakeAtlas(const std::vector<LightmapTarget> &targets, const LightmapLayout &layout,
                                     const LightmapBakeInput &input, const std::shared_ptr<std::atomic<bool>> &cancel,
                                     LightmapProgress *progress)
@@ -454,6 +539,7 @@ namespace PlutoGE::scene::lightmap
 
         std::vector<glm::vec3> direct(texelCount, glm::vec3(0.0f)), indirect(texelCount, glm::vec3(0.0f));
         std::vector<float> mask(texelCount, 1.0f);
+        std::vector<glm::vec4> sky(texelCount, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
         const Integrator integrator(input);
         const auto workers = bake::ResolveBakeWorkerCount(covered.size(), 64);
         bake::ParallelFor(covered.size(), workers, [&](std::size_t task, std::size_t) {
@@ -464,6 +550,7 @@ namespace PlutoGE::scene::lightmap
             direct[index] = result.direct;
             indirect[index] = result.indirect;
             mask[index] = result.shadowMask;
+            sky[index] = result.skyVisibility;
             if (progress)
                 progress->completedTexels.fetch_add(1, std::memory_order_relaxed);
         });
@@ -471,63 +558,33 @@ namespace PlutoGE::scene::lightmap
         render::LightmapAtlas atlas;
         if (bake::IsBakeCancelled(cancel))
             return atlas;
+        const float texelWorldSize = 1.0f / std::max(layout.texelsPerUnit, 1.0e-3f);
         if (input.settings.denoise && input.settings.indirectSamples > 0)
-            Denoise(indirect, texels, width, height, 1.0f / std::max(layout.texelsPerUnit, 1.0e-3f));
+            Denoise(indirect, texels, width, height, texelWorldSize);
+        if (input.settings.denoise && integrator.BakesSkyVisibility())
+            Denoise(sky, texels, width, height, texelWorldSize);
 
-        // Compose, then dilate every target's texels into its padding and chart gutters.
-        std::vector<glm::vec4> values(texelCount, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
-        std::vector<bool> filled(texelCount, false);
-        for (const auto index : covered)
+        // One layer per encoding, each dilated into its targets' padding and chart gutters.
+        const auto addLayer = [&](render::LightmapEncoding encoding, const auto &valueAt)
         {
-            values[index] = glm::vec4(direct[index] + indirect[index], mask[index]);
-            filled[index] = true;
-        }
-        for (std::uint32_t pass = 0; pass < padding + 2; ++pass)
-        {
-            std::vector<std::pair<std::size_t, glm::vec4>> grown;
-            for (std::uint32_t y = 0; y < height; ++y)
-                for (std::uint32_t x = 0; x < width; ++x)
-                {
-                    const auto index = std::size_t(y) * width + x;
-                    if (filled[index] || owner[index] < 0)
-                        continue;
-                    glm::vec4 sum(0.0f);
-                    int count = 0;
-                    for (int dy = -1; dy <= 1; ++dy)
-                        for (int dx = -1; dx <= 1; ++dx)
-                        {
-                            const int sx = int(x) + dx, sy = int(y) + dy;
-                            if ((dx == 0 && dy == 0) || sx < 0 || sy < 0 || sx >= int(width) || sy >= int(height))
-                                continue;
-                            const auto neighbour = std::size_t(sy) * width + std::size_t(sx);
-                            if (filled[neighbour] && owner[neighbour] == owner[index])
-                            {
-                                sum += values[neighbour];
-                                ++count;
-                            }
-                        }
-                    if (count > 0)
-                        grown.emplace_back(index, sum / float(count));
-                }
-            if (grown.empty())
-                break;
-            for (const auto &[index, value] : grown)
-            {
-                values[index] = value;
-                filled[index] = true;
-            }
-        }
-
+            std::vector<glm::vec4> values(texelCount, glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            for (const auto index : covered)
+                values[index] = valueAt(index);
+            Dilate(values, covered, owner, width, height, padding + 2);
+            auto &layer = atlas.layers.emplace_back();
+            layer.encoding = encoding;
+            layer.texels.resize(texelCount * 4);
+            for (std::size_t index = 0; index < texelCount; ++index)
+                for (int channel = 0; channel < 4; ++channel)
+                    layer.texels[index * 4 + channel] =
+                        glm::packHalf1x16(std::clamp(values[index][channel], -65000.0f, 65000.0f));
+        };
+        addLayer(render::LightmapEncoding::IrradianceShadowMask, [&](std::size_t index)
+                 { return glm::max(glm::vec4(direct[index] + indirect[index], mask[index]), glm::vec4(0.0f)); });
+        if (integrator.BakesSkyVisibility())
+            addLayer(render::LightmapEncoding::SkyVisibility, [&](std::size_t index) { return sky[index]; });
         atlas.width = width;
         atlas.height = height;
-        atlas.encoding = render::LightmapEncoding::IrradianceShadowMask;
-        atlas.texels.resize(texelCount * 4);
-        for (std::size_t index = 0; index < texelCount; ++index)
-        {
-            const auto value = glm::max(values[index], glm::vec4(0.0f));
-            for (int channel = 0; channel < 4; ++channel)
-                atlas.texels[index * 4 + channel] = glm::packHalf1x16(std::min(value[channel], 65000.0f));
-        }
         return atlas;
     }
 }

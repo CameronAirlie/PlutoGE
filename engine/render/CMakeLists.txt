@@ -159,6 +159,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
             list(APPEND material_dependencies "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SceneLightingParameters.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientProbeSampling.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/BakedEnvironment.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceNormalMarks.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/DiffuseResponse.slang" "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h" "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/LightVisibilityConfig.h")
         endif()
@@ -184,6 +185,7 @@ if (PLUTO_SLANGC_EXECUTABLE)
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceWetness.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceLayers.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceFeatures.slang"
+                "${CMAKE_CURRENT_SOURCE_DIR}/shaders/SurfaceNormalMarks.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/AmbientOcclusion.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/shaders/VirtualShadowTent.slang"
                 "${CMAKE_CURRENT_SOURCE_DIR}/include/PlutoGE/render/AmbientProbeConfig.h")

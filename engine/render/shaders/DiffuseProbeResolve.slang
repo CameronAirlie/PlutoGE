@@ -2,7 +2,11 @@
 //
 // The forward pass (BasicLit.slang) defers the baked probe grid for opaque
 // pixels inside a volume: it omits the grid's diffuse term and marks the pixel
-// with normal.a = 0 (the composite writes colour and indirect, never normals). The grid is low frequency, so traceMain evaluates it at
+// in normal.a (SurfaceNormalMarks.slang; the composite writes colour and
+// indirect, never normals). Lightmapped pixels take their diffuse light from
+// their texels and defer only the reflection terms (SurfaceProbeReflections):
+// the Reflections entry points trace and adjust them like any pending pixel
+// but add no irradiance. The grid is low frequency, so traceMain evaluates it at
 // half resolution and compositeMain upsamples it with depth/normal-aware
 // weights, falling back to exact evaluation where no reduced sample matches.
 // The composite adds irradiance * diffuse response to the scene colour and the
@@ -29,6 +33,7 @@
 #include "DiffuseResponse.slang"
 #include "AmbientProbeSampling.slang"
 #include "BakedEnvironment.slang"
+#include "SurfaceNormalMarks.slang"
 
 #ifndef PI
 #define PI 3.14159265358979
@@ -53,7 +58,8 @@ struct ResolveSurface
     float3 normal;         // Shading normal, as written by the geometry pass.
     float3 receiverNormal; // Geometric normal facing the camera.
     float positionError;   // Reconstruction uncertainty of position.
-    bool pending;
+    bool pending;          // The grid is resolved here: its reflection terms, and irradiance when addsIrradiance.
+    bool addsIrradiance;   // False for lightmapped surfaces (SurfaceProbeReflections).
 };
 
 float3 worldAt(int2 texel)
@@ -82,15 +88,20 @@ float3 receiverNormalAt(int2 texel, float3 position, out float footprint)
     return dot(normal, cameraPositionAmbient.xyz - position) < 0.0 ? -normal : normal;
 }
 
-ResolveSurface surfaceAt(int2 texel)
+// `receiver` reconstructs the geometric normal from depth (four more depth reads) for pending pixels; the reflection-only
+// composite does without it.
+ResolveSurface surfaceAt(int2 texel, bool receiver = true)
 {
     ResolveSurface surface;
     const float4 encodedNormal = normalTexture.Load(int3(texel, 0));
-    surface.pending = encodedNormal.a < 0.5 && depthTexture.Load(int3(texel, 0)).r > 0.000001;
+    const int mark = surfaceProbeMark(encodedNormal.a);
+    surface.pending = mark != SurfaceProbeNone && depthTexture.Load(int3(texel, 0)).r > 0.000001;
+    surface.addsIrradiance = mark == SurfaceProbeIrradiance;
     surface.position = worldAt(texel);
     surface.normal = decodeNormal(encodedNormal.xyz);
     float footprint = 0.0;
-    surface.receiverNormal = surface.pending ? receiverNormalAt(texel, surface.position, footprint) : surface.normal;
+    surface.receiverNormal = surface.pending && (receiver || surface.addsIrradiance)
+        ? receiverNormalAt(texel, surface.position, footprint) : surface.normal;
     surface.positionError = footprint * 0.5;
     return surface;
 }
@@ -126,7 +137,8 @@ ResolveSurface reducedSourceSurface(FullscreenVertexOutput input)
 float4 traceMain(FullscreenVertexOutput input) : SV_Target
 {
     const ResolveSurface surface = reducedSourceSurface(input);
-    if (!surface.pending) return float4(0, 0, 0, 0);
+    // Without the reflection terms only irradiance is resolved (reflection-only pixels never reach this variant).
+    if (!surface.pending || !surface.addsIrradiance) return float4(0, 0, 0, 0);
     return float4(gridAt(surface).irradiance, 1.0);
 }
 
@@ -188,6 +200,39 @@ DiffuseGridSample upsampledGridAt(int2 texel, ResolveSurface surface, bool withS
     return grid;
 }
 
+// The grid's reflection terms at a lightmapped pixel (SurfaceProbeReflections), upsampled from the reduced trace. Sky
+// occlusion and capture relighting are low frequency and change no diffuse light, so this is plain bilinear weighting
+// by normal agreement: no plane tests and no exact fallback, which cost the irradiance path most of its time. Coverage
+// stays zero where no reduced sample agrees, leaving the reflection as the geometry pass wrote it.
+DiffuseGridSample reflectionGridAt(int2 texel, ResolveSurface surface)
+{
+    const int2 reducedSize = int2(pass.parameters[0].zw);
+    const float2 coordinate = (float2(texel) + 0.5) * 0.5 - 0.5;
+    const int2 base = int2(floor(coordinate));
+    const float2 fraction = coordinate - float2(base);
+    DiffuseGridSample grid = emptyDiffuseGridSample();
+    grid.skyVisibility = float4(0);
+    float weightSum = 0.0;
+    [ForceUnroll] for (int y = 0; y < 2; ++y) [ForceUnroll] for (int x = 0; x < 2; ++x)
+    {
+        const int2 cell = clamp(base + int2(x, y), int2(0), reducedSize - 1);
+        const float4 reduced = reducedIrradiance.Load(int3(cell, 0));
+        if (reduced.a < 0.5) continue;
+        float similarity = max(dot(surface.normal, decodeNormal(normalTexture.Load(int3(min(cell * 2, fullSize() - 1), 0)).xyz)), 0.0);
+        similarity *= similarity; similarity *= similarity;
+        const float2 bilinear = lerp(1.0 - fraction, fraction, float2(x, y));
+        const float weight = bilinear.x * bilinear.y * similarity;
+        grid.irradiance += reduced.rgb * weight;
+        grid.skyVisibility += reducedSkyVisibility.Load(int3(cell, 0)) * weight;
+        weightSum += weight;
+    }
+    if (weightSum <= 0.0001) return emptyDiffuseGridSample();
+    grid.irradiance /= weightSum;
+    grid.skyVisibility /= weightSum;
+    grid.coverage = 1;
+    return grid;
+}
+
 // Scene colour and the indirect term SSAO occludes receive the same light.
 struct CompositeOutput
 {
@@ -200,7 +245,7 @@ CompositeOutput compositeMain(FullscreenVertexOutput input)
 {
     const int2 texel = int2(input.position.xy);
     const ResolveSurface surface = surfaceAt(texel);
-    if (!surface.pending) discard;
+    if (!surface.pending || !surface.addsIrradiance) discard;
     const float3 irradiance = upsampledGridAt(texel, surface, false).irradiance;
     CompositeOutput output;
     output.color = float4(irradiance * diffuseResponseAt(texel, surface), 0.0);
@@ -235,7 +280,7 @@ float captureRelightAt(float3 position, float3 normal, float3 gridIrradiance, ou
 CompositeReflectionsOutput compositeReflectionsMain(FullscreenVertexOutput input)
 {
     const int2 texel = int2(input.position.xy);
-    const ResolveSurface surface = surfaceAt(texel);
+    const ResolveSurface surface = surfaceAt(texel, false);
     const float4 environment = environmentSpecularTexture.Load(int3(texel, 0));
     CompositeReflectionsOutput output;
     output.color = float4(0, 0, 0, 0);
@@ -243,9 +288,14 @@ CompositeReflectionsOutput compositeReflectionsMain(FullscreenVertexOutput input
     // Every pixel writes the new reflection target; only pending ones change.
     output.environmentSpecular = environment;
     if (!surface.pending) return output;
-    const DiffuseGridSample grid = upsampledGridAt(texel, surface, true);
-    output.color = float4(grid.irradiance * diffuseResponseAt(texel, surface), 0.0);
-    output.indirect = output.color;
+    const DiffuseGridSample grid = surface.addsIrradiance ? upsampledGridAt(texel, surface, true)
+                                                          : reflectionGridAt(texel, surface);
+    if (grid.coverage <= 0) return output;
+    if (surface.addsIrradiance)
+    {
+        output.color = float4(grid.irradiance * diffuseResponseAt(texel, surface), 0.0);
+        output.indirect = output.color;
+    }
     const float roughness = saturate(materialTexture.Load(int3(texel, 0)).y);
     const float3 view = normalize(cameraPositionAmbient.xyz - surface.position);
     const float skyVisibility = bakedSkyReflectionVisibility(grid, reflect(-view, surface.normal), surface.normal, roughness);

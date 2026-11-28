@@ -43,6 +43,7 @@ namespace PlutoGE::scene
         int padding = 2;             // empty texels around every chart, so bilinear reads never bleed
         int directShadowSamples = 16; // shadow rays per texel for soft (sun-softness) shadows
         int indirectSamples = 128;   // gather rays per texel
+        int skyVisibilitySamples = 64; // rays per texel for the sky visibility layer (reflection occlusion); 0: none
         int bounces = 2;             // diffuse bounces (1: light reflected once off a surface)
         float bounceStrength = 1.0f; // scales every bounce; 1 is physically based
         bool denoise = true;         // edge-aware filtering of the gathered light
@@ -102,6 +103,10 @@ namespace PlutoGE::scene
         void SetLightingMode(SceneLightingMode mode);
         MixedShadowMode GetMixedShadows() const { return m_mixedShadows; }
         void SetMixedShadows(MixedShadowMode mode);
+        // How strongly lightmapped surfaces' baked sky visibility occludes their sky reflections, 0..1 (as an
+        // ambient volume's Reflection Occlusion does for the surfaces it lights).
+        float GetReflectionOcclusion() const { return m_reflectionOcclusion; }
+        void SetReflectionOcclusion(float strength);
         const LightmapBakeSettings &GetBakeSettings() const { return m_settings; }
         void SetBakeSettings(LightmapBakeSettings settings);
 
@@ -132,6 +137,7 @@ namespace PlutoGE::scene
         SceneLightingMode m_mode = SceneLightingMode::Baked;
         // New scenes default to shadowmask; scenes saved before the setting load as Realtime, as they rendered.
         MixedShadowMode m_mixedShadows = MixedShadowMode::Shadowmask;
+        float m_reflectionOcclusion = 1.0f;
         LightmapBakeSettings m_settings;
         LightmapBakeOutput m_bake;
         std::uint64_t m_revision = 0;

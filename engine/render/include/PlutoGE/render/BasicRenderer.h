@@ -1024,6 +1024,13 @@ namespace PlutoGE::render
             // Under shadowmask, whether static casters also leave the realtime shadow maps. Decided per frame by
             // PlanShadowmask: kept while spot shadows, volumetric fog or water read the same maps.
             bool excludeStaticCasters = false;
+            // The atlas texture's stacked layers (StackLightmapLayers) and where the sky visibility layer is (-1:
+            // none). With it, lightmapped surfaces take sky reflection occlusion and capture relighting from their own
+            // texels, scaled by reflectionOcclusion, and need nothing from the ambient volumes.
+            std::uint32_t layerCount = 1;
+            int skyVisibilityLayer = -1;
+            float reflectionOcclusion = 1.0f;
+            [[nodiscard]] bool HasSkyVisibility() const noexcept { return active && atlas && skyVisibilityLayer >= 0; }
             // The directional light is Baked: its light, shadows included, lives only in lightmaps and probes, so no
             // realtime pass (direct light, shadow maps, contact shadows, realtime GI) adds any of it.
             [[nodiscard]] bool DirectionalBaked() const noexcept
@@ -1518,6 +1525,8 @@ namespace PlutoGE::render
         bool m_shadowMaskEnabled = true;
         // This frame's SurfaceFeature bits (src/SurfaceFeatures.h); all set is the general shader.
         std::uint32_t m_surfaceFeatures = ~0u;
+        // Per-draw narrowing the frame decides (SurfaceFeatures.h SurfaceDrawContext).
+        bool m_surfaceLightmapSkyVisibility = false;
         // This frame's BasicLighting::terrainAntiTiling, for BindTerrainLayers.
         bool m_terrainAntiTiling = true;
         std::array<rhi::GraphicsPipelineDescriptor, 2> m_geometryDescriptors;
@@ -1535,17 +1544,21 @@ namespace PlutoGE::render
         struct GeometryPipelineKey
         {
             unsigned state = 0;
+            std::uint32_t features = 0; // SurfaceFeature bits (SurfaceFeatures.h)
             std::uint64_t graphStructure = 0;
             bool operator==(const GeometryPipelineKey &) const = default;
         };
         struct GeometryPipelineKeyHash
         {
             std::size_t operator()(const GeometryPipelineKey &key) const noexcept
-            { return std::hash<std::uint64_t>{}(key.graphStructure ^ (std::uint64_t(key.state) * 0x9E3779B97F4A7C15ull)); }
+            {
+                const std::uint64_t state = std::uint64_t(key.state) | (std::uint64_t(key.features) << 32);
+                return std::hash<std::uint64_t>{}(key.graphStructure ^ (state * 0x9E3779B97F4A7C15ull));
+            }
         };
         std::unordered_map<GeometryPipelineKey, rhi::GraphicsPipeline, GeometryPipelineKeyHash> m_geometryPipelines;
         BasicBindlessShaderPackage m_bindlessShaders;
-        std::unordered_map<unsigned, rhi::GraphicsPipeline> m_bindlessGeometryPipelines;
+        std::unordered_map<std::uint64_t, rhi::GraphicsPipeline> m_bindlessGeometryPipelines;
         std::unique_ptr<GpuDrivenOpaque> m_gpuDriven;
         bool m_gpuDrivenOpaqueEnabled = true;
         std::unique_ptr<GpuInstanceCulling> m_gpuInstanceCulling;

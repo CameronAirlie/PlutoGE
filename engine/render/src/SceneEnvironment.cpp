@@ -204,6 +204,7 @@ namespace PlutoGE::render
             return;
         baked.active = true;
         baked.atlasSize = {component->GetBake().atlas->width, component->GetBake().atlas->height};
+        baked.reflectionOcclusion = component->GetReflectionOcclusion();
         if (!directional)
             return;
         baked.directionalMode = directional->bakeMode;

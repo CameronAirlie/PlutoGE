@@ -381,18 +381,24 @@ namespace PlutoGE::render
         if (!m_lightmapAtlas || m_lightmapScene != scene || m_lightmapRevision != component->GetRevision())
         {
             const auto &atlas = *component->GetBake().atlas;
+            // One texture for every layer (LightmapSampling.slang lightmapLayerCoordinate): no binding per layer.
+            const auto stacked = StackLightmapLayers(atlas);
             rhi::TextureDescriptor descriptor;
             descriptor.width = atlas.width;
-            descriptor.height = atlas.height;
+            descriptor.height = atlas.height * stacked.layerCount;
             descriptor.format = rhi::Format::R16G16B16A16Float;
             // No mips: charts are padded for bilinear reads at full resolution only.
             descriptor.mipLevels = 1;
             descriptor.debugName = "Lightmap atlas";
-            m_lightmapAtlas = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, std::as_bytes(std::span(atlas.texels))));
+            m_lightmapAtlas = rhi::Texture(*m_device, m_device->CreateTexture(descriptor, std::as_bytes(std::span(stacked.texels))));
+            m_lightmapLayerCount = stacked.layerCount;
+            m_lightmapSkyVisibilityLayer = stacked.skyVisibilityLayer;
             m_lightmapScene = scene;
             m_lightmapRevision = component->GetRevision();
         }
         baked.atlas = m_lightmapAtlas.Get();
+        baked.layerCount = m_lightmapLayerCount;
+        baked.skyVisibilityLayer = m_lightmapSkyVisibilityLayer;
     }
 
     std::optional<RhiSceneRenderer::PreparedFrame> RhiSceneRenderer::Prepare(std::uint32_t width, std::uint32_t height, const CameraData &cameraData,

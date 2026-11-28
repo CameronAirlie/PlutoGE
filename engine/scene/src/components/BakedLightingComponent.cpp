@@ -112,6 +112,7 @@ namespace PlutoGE::scene
         settings.padding = std::clamp(settings.padding, 1, 16);
         settings.directShadowSamples = std::clamp(settings.directShadowSamples, 1, 256);
         settings.indirectSamples = std::clamp(settings.indirectSamples, 0, 4096);
+        settings.skyVisibilitySamples = std::clamp(settings.skyVisibilitySamples, 0, 1024);
         settings.bounces = std::clamp(settings.bounces, 0, 8);
         settings.bounceStrength = std::clamp(finite(settings.bounceStrength, 1.0f), 0.0f, 4.0f);
     }
@@ -129,6 +130,15 @@ namespace PlutoGE::scene
         if (mode == m_mixedShadows)
             return;
         m_mixedShadows = mode;
+        Touch(false);
+    }
+
+    void BakedLightingComponent::SetReflectionOcclusion(float strength)
+    {
+        strength = std::isfinite(strength) ? std::clamp(strength, 0.0f, 1.0f) : 1.0f;
+        if (strength == m_reflectionOcclusion)
+            return;
+        m_reflectionOcclusion = strength;
         Touch(false);
     }
 
@@ -226,11 +236,13 @@ namespace PlutoGE::scene
             {"Lighting Mode", PropertyType::Enum, std::to_string(static_cast<int>(m_mode)), {"Realtime", "Baked"}},
             {"Mixed Shadows", PropertyType::Enum, std::to_string(static_cast<int>(m_mixedShadows)),
              {"All Realtime", "Moving Objects Only (Shadowmask)"}},
+            {"Reflection Occlusion", PropertyType::Float, std::to_string(m_reflectionOcclusion)},
             {"Texels Per Unit", PropertyType::Float, std::to_string(m_settings.texelsPerUnit)},
             {"Max Atlas Size", PropertyType::Int, std::to_string(m_settings.maxAtlasSize)},
             {"Chart Padding", PropertyType::Int, std::to_string(m_settings.padding)},
             {"Direct Shadow Samples", PropertyType::Int, std::to_string(m_settings.directShadowSamples)},
             {"Indirect Samples", PropertyType::Int, std::to_string(m_settings.indirectSamples)},
+            {"Sky Visibility Samples", PropertyType::Int, std::to_string(m_settings.skyVisibilitySamples)},
             {"Bounces", PropertyType::Int, std::to_string(m_settings.bounces)},
             {"Bounce Strength", PropertyType::Float, std::to_string(m_settings.bounceStrength)},
             {"Denoise", PropertyType::Bool, m_settings.denoise ? "true" : "false"},
@@ -279,6 +291,8 @@ namespace PlutoGE::scene
                 else if (property.name == "Chart Padding") settings.padding = std::stoi(property.value);
                 else if (property.name == "Direct Shadow Samples") settings.directShadowSamples = std::stoi(property.value);
                 else if (property.name == "Indirect Samples") settings.indirectSamples = std::stoi(property.value);
+                else if (property.name == "Sky Visibility Samples") settings.skyVisibilitySamples = std::stoi(property.value);
+                else if (property.name == "Reflection Occlusion") SetReflectionOcclusion(std::stof(property.value));
                 else if (property.name == "Bounces") settings.bounces = std::stoi(property.value);
                 else if (property.name == "Bounce Strength") settings.bounceStrength = std::stof(property.value);
                 else if (property.name == "Denoise") settings.denoise = property.value == "true" || property.value == "1";

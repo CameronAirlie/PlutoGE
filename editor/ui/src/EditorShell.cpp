@@ -4380,9 +4380,10 @@ namespace PlutoGE::ui
                 ++frameTimingStats.renderedViewportCount;
                 frameTimingStats.editorViewportWidth = editorViewportWidth;
                 frameTimingStats.editorViewportHeight = editorViewportHeight;
+                // What the scene renders at: the panel scaled by its render scale (Supersample renders 2.25x).
                 frameTimingStats.renderedViewportPixels +=
-                    static_cast<std::uint64_t>((std::max)(editorViewportWidth, 0)) *
-                    static_cast<std::uint64_t>((std::max)(editorViewportHeight, 0));
+                    static_cast<std::uint64_t>((std::max)(viewportPanel->GetRenderExtent().width, 0)) *
+                    static_cast<std::uint64_t>((std::max)(viewportPanel->GetRenderExtent().height, 0));
                 std::vector<render::IPostProcessEffect *> editorPostProcessEffects;
                 editorPostProcessEffects.reserve(m_editorCamera.GetPostProcessEffects().size());
                 for (const auto &effect : m_editorCamera.GetPostProcessEffects())
@@ -4406,9 +4407,10 @@ namespace PlutoGE::ui
                 ++frameTimingStats.renderedViewportCount;
                 frameTimingStats.gameViewportWidth = gameViewportWidth;
                 frameTimingStats.gameViewportHeight = gameViewportHeight;
+                // What the scene renders at: the panel scaled by its render scale (Supersample renders 2.25x).
                 frameTimingStats.renderedViewportPixels +=
-                    static_cast<std::uint64_t>((std::max)(gameViewportWidth, 0)) *
-                    static_cast<std::uint64_t>((std::max)(gameViewportHeight, 0));
+                    static_cast<std::uint64_t>((std::max)(viewportPanel2->GetRenderExtent().width, 0)) *
+                    static_cast<std::uint64_t>((std::max)(viewportPanel2->GetRenderExtent().height, 0));
                 viewportPanel2->RenderFrame(*cameraComponent2, gameCameraStack.overlays);
             }
             else

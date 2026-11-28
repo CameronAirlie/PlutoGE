@@ -512,6 +512,8 @@ namespace PlutoGE::render
       rhi::Texture m_lightmapAtlas;
       const scene::Scene *m_lightmapScene = nullptr;
       std::uint64_t m_lightmapRevision = 0;
+      std::uint32_t m_lightmapLayerCount = 1;
+      int m_lightmapSkyVisibilityLayer = -1;
       void UploadLightmapAtlas(const scene::Scene *scene, BasicLighting &lighting);
       int m_diffuseProbeHitPointRow = 0, m_diffuseProbeSummaryRow = 0;
       const scene::Scene *m_diffuseProbeScene = nullptr;

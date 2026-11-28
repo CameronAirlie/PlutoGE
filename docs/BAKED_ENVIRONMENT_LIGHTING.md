@@ -80,6 +80,14 @@ the half-resolution trace writes a second target with sky visibility. The compos
 reflection and writes the adjusted one to a target that SSR and DDGI read. A layout without an environment reflection
 target gains one in that case.
 
+Lightmapped surfaces take their diffuse light from the lightmap, so only the reflection terms remain for them. A
+lightmap with a sky visibility layer (BAKED_LIGHTING.md) holds those too, and its surfaces read nothing from the
+volumes. For older bakes without it: when the resolve applies the reflection terms, lightmapped pixels defer them too (`SurfaceProbeReflections` in `SurfaceNormalMarks.slang`):
+the trace evaluates the grid at half resolution and the composite upsamples only sky visibility and capture relighting
+(`reflectionGridAt`), adding no irradiance. Without that resolve they sample the grid in the forward pass. A forward
+grid sample is the most expensive path in `BasicLit.slang`: on RocketLeg at 2008x1188 on a Vega 8 it cost about
+12 ms of a 28 ms opaque pass when every lightmapped pixel took it.
+
 ## Code map
 
 | Piece | File |

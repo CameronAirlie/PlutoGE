@@ -65,12 +65,24 @@ pipeline as it is created, the vertex and fragment stages' VGPRs, SGPRs and scra
 floor(256 / VGPRs) waves, so a shader above 128 VGPRs runs one wave and cannot hide texture latency. Scratch is
 register spill or a dynamically indexed local array; every fragment that reaches it reads and writes memory.
 
+### Memory placement (Vulkan)
+
+`PLUTO_VULKAN_MEMORY_REPORT=1` prints, once after 200 frames, each memory heap's usage against its budget and how much
+the device allocated from each memory type. On integrated GPUs the device-local heaps are small (on a Vega 8, a
+256 MiB host-visible one beside the carve-out), and VMA sends allocations past a heap's budget to slower system
+memory without an error. Check it when one pass's GPU time changes between runs while the others do not.
+
 ### Contention
 
 GPU timestamps include other processes' work that the scheduler interleaves. Close the editor, and any other GPU
 client, before benchmarking: with two editor windows open, Wind Fields measured 87.6 ms where the same build and
 settings take 45.7 ms alone. When frame time is far above `scene_gpu_ms`, or a scope is inexplicably large, suspect
 contention before the renderer.
+
+On an APU (Vega 8 in a 5700G) the CPU and GPU share one power budget, so CPU load slows the GPU too: with every core
+busy, RocketLeg's opaque pass measured 13.8 ms against 10.7 ms idle, and post-processing 10.4 against 8.7. A build,
+the antivirus scanning fresh binaries or a shader compile running beside a benchmark shows up as one slow run among
+fast ones. Benchmark on an idle machine, not straight after a build, and repeat runs.
 
 ### Geometry diagnostics
 
@@ -242,6 +254,19 @@ would skip it anyway, so images are identical (`CheckSurfaceSpecialization` in `
 compiles the defaults, the general shader, and keeps one pipeline per state as before.
 `BasicFrameStats::surfaceFeatures` reports the frame's set; `BasicRenderer::SetSurfaceSpecialization(false)` turns it off
 for comparisons.
+
+Draws narrow the frame's set further (`DrawSurfaceFeatures`, with the frame's `SurfaceDrawContext`): clear coat and
+sheen by material, lightmap sampling (`SurfaceLightmap`, constant 9) only for draws with texels, and the probe grid not
+at all for lightmapped surfaces whose lightmap holds sky visibility. Features map to constant ids through
+`SurfaceFeatureConstantIds`, so new ones take the next free id; the pipeline keys hold the feature bits whole. On
+RocketLeg (2008x1188, Vega 8) the lightmapped variant went from 206 to 152 VGPRs and the opaque pass from 10.3 to
+6.6 ms. `PLUTO_VULKAN_SHADER_STATS` prints each pipeline's specialisation constants, to tie registers to variants.
+
+Still one wave per SIMD at 152 VGPRs. Two paths each set that peak: reflection captures and the in-shader directional
+filter that prepassed pipelines keep for shadow terminators. With both compiled out the lightmapped variant drops to
+128 VGPRs (two waves) and the pass to 4.3 ms; with either alone it stays at 146 to 152. Things that did not help:
+keeping the capture loop rolled, one capture slot instead of four, dropping capture relighting, and evaluating the
+environment terms before the direct lights (220 VGPRs: their results then live across the lights).
 
 The specialised Wind Fields pipelines use 122–126 VGPRs (two waves) and no scratch. A pipeline compiles on first use
 of a new feature set, for example when the first local light appears, so expect one compile hitch per feature set.

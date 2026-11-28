@@ -2726,11 +2726,13 @@ ENTITY	1293	0	1	Baked Lighting	0.000000,0.000000,0.000000	0.000000,0.000000,0.00
 COMPONENT	1293	BakedLightingComponent	1
 PROPERTY	Lighting Mode	6	1	2	Realtime	Baked
 PROPERTY	Mixed Shadows	6	1	2	All Realtime	Moving Objects Only (Shadowmask)
+PROPERTY	Reflection Occlusion	0	1	0
 PROPERTY	Texels Per Unit	0	4	0
 PROPERTY	Max Atlas Size	1	2048	0
 PROPERTY	Chart Padding	1	2	0
 PROPERTY	Direct Shadow Samples	1	16	0
 PROPERTY	Indirect Samples	1	128	0
+PROPERTY	Sky Visibility Samples	1	64	0
 PROPERTY	Bounces	1	2	0
 PROPERTY	Bounce Strength	0	1	0
 PROPERTY	Denoise	4	true	0

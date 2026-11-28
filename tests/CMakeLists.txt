@@ -898,6 +898,10 @@ add_executable(PlutoGEBakedLightingTests BakedLightingTests.cpp)
 pluto_link_engine(PlutoGEBakedLightingTests)
 add_test(NAME PlutoGEBakedLightingTests COMMAND PlutoGEBakedLightingTests)
 
+add_executable(PlutoGELightmapLayerTests LightmapLayerTests.cpp)
+target_link_libraries(PlutoGELightmapLayerTests PRIVATE PlutoGE::Render)
+add_test(NAME PlutoGELightmapLayerTests COMMAND PlutoGELightmapLayerTests)
+
 add_executable(PlutoGEShadowmaskRenderTests ShadowmaskRenderTests.cpp)
 target_include_directories(PlutoGEShadowmaskRenderTests PRIVATE ${CMAKE_SOURCE_DIR}/engine/render/src)
 target_link_libraries(PlutoGEShadowmaskRenderTests PRIVATE PlutoGE::Render)
